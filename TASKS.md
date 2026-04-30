@@ -19,6 +19,14 @@
 - `src/GitKay.UI/MainWindow.axaml` renders the diff with nested `ItemsControl`s inside a `ScrollViewer`, which is not a gitk-like virtualization model.
 - `src/GitKay.UI/DiffProjection.cs` materializes every file, hunk, and line eagerly.
 
+## Gitk Parity Follow-up
+1. [ ] Tighten the main history layout so more commit rows are visible without scrolling, especially by reducing wasted vertical chrome in the header/search area.
+2. [ ] Replace the tiny inline secondary search entry with a more legible, persistent search surface that can expand when active and does not feel cramped.
+3. [ ] Add a unified diff mode across all files in a commit, with the current file list remaining as navigation rather than the only way to inspect changes.
+4. [ ] Allow searching the diff text itself from the main search flow, not just commit metadata and paths.
+5. [ ] Surface search matches inline in both the commit list and diff view so the user can immediately see what matched and where.
+6. [ ] Improve result context for searches by showing matched fields, file names, and counts directly in the UI.
+
 ## In Progress
 - Keep commit selection fast and predictable.
 - Reduce backend work to the minimum needed for the currently selected item.
