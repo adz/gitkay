@@ -25,7 +25,7 @@
 
 ## Next
 1. [x] Add timing instrumentation for commit click, diff load, UI projection, and first paint in `src/GitKay.Core/App.fs`, `src/GitKay.Core/GitService.fs`, and `src/GitKay.UI/MainProjection.cs`.
-2. [ ] Split selection state from diff state in `src/GitKay.Core/App.fs` so commit clicks update immediately even when diff data is not ready.
+2. [x] Split selection state from diff state in `src/GitKay.Core/App.fs` so commit clicks update immediately even when diff data is not ready.
 3. [ ] Auto-select the first commit after history load so the app opens with a selected commit and visible diff state.
 4. [ ] Accept CLI startup targets for branch, sha, tag, and `--all`, and initialize the commit history view from the selected ref set.
 5. [ ] Introduce a gitk-style diff cache in `src/GitKay.Core/GitService.fs` keyed by commit hash, with immutable entries for summary, file list, and selected-file content.

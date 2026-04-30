@@ -11,7 +11,8 @@ module App =
         {
             Status: string
             Commits: Graph.CommitGraphInfo list
-            SelectedHash: string option
+            SelectedCommitHash: string option
+            SelectedDiffHash: string option
             SelectedDiff: Models.FileDiff list option
             SelectionStartedAtTicks: int64 option
         }
@@ -42,7 +43,8 @@ module App =
             {
                 Status = "Loading history..."
                 Commits = []
-                SelectedHash = None
+                SelectedCommitHash = None
+                SelectedDiffHash = None
                 SelectedDiff = None
                 SelectionStartedAtTicks = None
             }
@@ -65,8 +67,7 @@ module App =
             let nextModel =
                 {
                     model with
-                        SelectedHash = Some hash
-                        SelectedDiff = None
+                        SelectedCommitHash = Some hash
                         SelectionStartedAtTicks = Some startedAtTicks
                 }
 
@@ -79,35 +80,29 @@ module App =
 
             nextModel, cmd
         | DiffLoaded (hash, Ok diff) ->
-            match model.SelectedHash, model.SelectionStartedAtTicks with
+            match model.SelectedCommitHash, model.SelectionStartedAtTicks with
             | Some currentHash, Some startedAtTicks when currentHash = hash ->
                 let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
                 logTiming (sprintf "commit click -> diff ready hash=%s elapsed=%.1fms" hash elapsed.TotalMilliseconds)
             | _ ->
                 ()
 
-            let nextSelectionStartedAtTicks =
-                if model.SelectedHash = Some hash then
-                    None
-                else
-                    model.SelectionStartedAtTicks
-
-            { model with SelectedDiff = Some diff; SelectionStartedAtTicks = nextSelectionStartedAtTicks }, Cmd.none
+            if model.SelectedCommitHash = Some hash then
+                { model with SelectedDiffHash = Some hash; SelectedDiff = Some diff; SelectionStartedAtTicks = None }, Cmd.none
+            else
+                model, Cmd.none
         | DiffLoaded (hash, Error err) ->
-            match model.SelectedHash, model.SelectionStartedAtTicks with
+            match model.SelectedCommitHash, model.SelectionStartedAtTicks with
             | Some currentHash, Some startedAtTicks when currentHash = hash ->
                 let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
                 logTiming (sprintf "commit click -> diff error hash=%s elapsed=%.1fms error=%s" hash elapsed.TotalMilliseconds err)
             | _ ->
                 ()
 
-            let nextSelectionStartedAtTicks =
-                if model.SelectedHash = Some hash then
-                    None
-                else
-                    model.SelectionStartedAtTicks
-
-            { model with Status = sprintf "Diff Error: %s" err; SelectionStartedAtTicks = nextSelectionStartedAtTicks }, Cmd.none
+            if model.SelectedCommitHash = Some hash then
+                { model with Status = sprintf "Diff Error: %s" err; SelectedDiffHash = None; SelectedDiff = None; SelectionStartedAtTicks = None }, Cmd.none
+            else
+                model, Cmd.none
         | CreateTag (hash, name) ->
             model, Cmd.OfFunc.either (fun () -> GitService.createTag hash name) () OperationResult (fun ex -> OperationResult (Error ex.Message))
         | CreateBranch (hash, name) ->

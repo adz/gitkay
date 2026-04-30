@@ -80,3 +80,60 @@ summary Another line
         test <@ result.[20].Hash = "abc123abc123abc123abc123abc123abc123abc1" @>
         test <@ result.[20].AuthorName = "Jane Doe" @>
         test <@ result.[21].AuthorEmail = "john@example.com" @>
+
+module AppTests =
+
+    let private sampleDiff : Models.FileDiff list =
+        [
+            {
+                OldPath = "foo.txt"
+                NewPath = "foo.txt"
+                Hunks = []
+            }
+        ]
+
+    let private emptyModel : App.Model =
+        {
+            Status = ""
+            Commits = []
+            SelectedCommitHash = None
+            SelectedDiffHash = None
+            SelectedDiff = None
+            SelectionStartedAtTicks = None
+        }
+
+    [<Fact>]
+    let ``SelectCommit should update selection without clearing diff state`` () =
+        let initial =
+            {
+                emptyModel with
+                    SelectedCommitHash = Some "old"
+                    SelectedDiffHash = Some "old"
+                    SelectedDiff = Some sampleDiff
+                    SelectionStartedAtTicks = Some 1L
+            }
+
+        let next, _ = App.update (App.Msg.SelectCommit("new", 42L)) initial
+
+        test <@ next.SelectedCommitHash = Some "new" @>
+        test <@ next.SelectedDiffHash = Some "old" @>
+        test <@ next.SelectedDiff = Some sampleDiff @>
+        test <@ next.SelectionStartedAtTicks = Some 42L @>
+
+    [<Fact>]
+    let ``DiffLoaded should ignore stale diff results`` () =
+        let initial =
+            {
+                emptyModel with
+                    SelectedCommitHash = Some "new"
+                    SelectedDiffHash = None
+                    SelectedDiff = None
+                    SelectionStartedAtTicks = Some 42L
+            }
+
+        let next, _ = App.update (App.Msg.DiffLoaded("old", Ok sampleDiff)) initial
+
+        test <@ next.SelectedCommitHash = Some "new" @>
+        test <@ next.SelectedDiffHash = None @>
+        test <@ next.SelectedDiff = None @>
+        test <@ next.SelectionStartedAtTicks = Some 42L @>

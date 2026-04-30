@@ -38,7 +38,10 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         Status = model.Status;
         SelectedDiffFiles.Clear();
 
-        if (model.SelectedDiff != null)
+        if (model.SelectedCommitHash != null
+            && model.SelectedDiffHash != null
+            && model.SelectedCommitHash.Value == model.SelectedDiffHash.Value
+            && model.SelectedDiff != null)
         {
             foreach (var file in model.SelectedDiff.Value)
             {
@@ -54,19 +57,25 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             _dispatch!
         );
 
-        if (model.SelectedHash != null)
+        CommitProjection? selectedCommit = null;
+        if (model.SelectedCommitHash != null)
         {
-            var hash = model.SelectedHash.Value;
+            var hash = model.SelectedCommitHash.Value;
             foreach (var commit in Commits)
             {
                 if (commit.FullHash == hash)
                 {
-                    SelectedCommit = commit;
+                    selectedCommit = commit;
                     break;
                 }
             }
         }
-        else
+
+        if (selectedCommit != null)
+        {
+            SelectedCommit = selectedCommit;
+        }
+        else if (SelectedCommit != null)
         {
             SelectedCommit = null;
         }
