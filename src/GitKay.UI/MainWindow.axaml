@@ -1,0 +1,159 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:GitKay.UI"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        x:Class="GitKay.UI.MainWindow"
+        x:DataType="local:MainProjection"
+        Title="GitKay">
+
+    <DockPanel>
+        <Menu DockPanel.Dock="Top">
+            <MenuItem Header="_File">
+                <MenuItem Header="_Reread refs" Command="{Binding RereadRefs}" />
+            </MenuItem>
+        </Menu>
+
+        <Border DockPanel.Dock="Bottom" Background="#007acc" Padding="4">
+            <TextBlock Text="{Binding Status}" Foreground="White" FontSize="12" />
+        </Border>
+
+        <Grid RowDefinitions="170,Auto,*">
+            <Border Grid.Row="0" Background="#1e1e1e" BorderBrush="#333" BorderThickness="0,0,0,1">
+                <ListBox ItemsSource="{Binding Commits}" SelectedItem="{Binding SelectedCommit}" Background="Transparent" BorderThickness="0">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <VirtualizingStackPanel />
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="local:CommitProjection">
+                            <Grid ColumnDefinitions="150,100,*,150,150" Background="Transparent">
+                                <Grid.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Create _Tag here..." Command="{Binding CreateTagCommand}" />
+                                        <MenuItem Header="Create _Branch here..." Command="{Binding CreateBranchCommand}" />
+                                        <Separator />
+                                        <MenuItem Header="_Cherry-pick this commit" Command="{Binding CherryPickCommand}" />
+                                        <MenuItem Header="_Revert this commit" Command="{Binding RevertCommand}" />
+                                        <Separator />
+                                        <MenuItem Header="_Reset current branch to here">
+                                            <MenuItem Header="_Soft" Command="{Binding ResetSoftCommand}" />
+                                            <MenuItem Header="_Hard" Command="{Binding ResetHardCommand}" />
+                                        </MenuItem>
+                                    </ContextMenu>
+                                </Grid.ContextMenu>
+
+                                <local:GraphRowControl Grid.Column="0" Segments="{Binding Segments}" CommitLane="{Binding Lane}" Height="25"/>
+
+                                <TextBlock Grid.Column="1" Text="{Binding Hash}" Foreground="#888" Margin="5,0" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="2" Text="{Binding Subject}" FontWeight="SemiBold" Margin="5,0" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="3" Text="{Binding Author}" Foreground="#aaa" Margin="5,0" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="4" Text="{Binding Date}" Foreground="#888" Margin="5,0" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Border>
+
+            <Border Grid.Row="1" Background="#252526" BorderBrush="#333" BorderThickness="0,1" Padding="8,6">
+                <StackPanel Spacing="3" IsVisible="{Binding SelectedCommit, Converter={x:Static local:ObjectConverters.IsNotNull}}">
+                    <SelectableTextBlock Text="{Binding SelectedCommit.FullHash}" Foreground="#4ec9b0" FontWeight="SemiBold" FontSize="12"/>
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <TextBlock Text="{Binding SelectedCommit.Author}" Foreground="#aaa" FontSize="12"/>
+                        <TextBlock Text="{Binding SelectedCommit.Date}" Foreground="#888" FontSize="12"/>
+                    </StackPanel>
+                    <SelectableTextBlock Text="{Binding SelectedCommit.Subject}" FontSize="14" Foreground="#ddd" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <Grid Grid.Row="2" ColumnDefinitions="*,4,280" Background="#1e1e1e">
+                <Border Grid.Column="0" Background="#1e1e1e" BorderBrush="#333" BorderThickness="0,1,0,0">
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding SelectedDiffFiles}" Margin="0,0,0,8">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="local:DiffFileProjection">
+                                    <Border Margin="10,10,10,0" Padding="10" Background="#252526" BorderBrush="#333" BorderThickness="1" CornerRadius="4">
+                                        <StackPanel Spacing="8">
+                                            <TextBlock Text="{Binding DisplayPath}" Foreground="#4ec9b0" FontWeight="SemiBold" FontSize="13"/>
+
+                                            <ItemsControl ItemsSource="{Binding Hunks}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="local:DiffHunkProjection">
+                                                        <StackPanel Spacing="4" Margin="0,0,0,6">
+                                                            <TextBlock Text="{Binding Header}" FontFamily="Cascadia Code,Consolas,Monospace" FontSize="11" Foreground="#888"/>
+
+                                                            <ItemsControl ItemsSource="{Binding Lines}">
+                                                                <ItemsControl.ItemTemplate>
+                                                                    <DataTemplate x:DataType="local:DiffLineProjection">
+                                                                        <Grid ColumnDefinitions="56,56,20,180,*,Auto" Margin="0,0,0,1">
+                                                                            <TextBlock Grid.Column="0"
+                                                                                       Text="{Binding OldLineNoText}"
+                                                                                       FontFamily="Cascadia Code,Consolas,Monospace"
+                                                                                       FontSize="12"
+                                                                                       Foreground="#666"
+                                                                                       HorizontalAlignment="Right"
+                                                                                       Margin="0,0,8,0"/>
+                                                                            <TextBlock Grid.Column="1"
+                                                                                       Text="{Binding NewLineNoText}"
+                                                                                       FontFamily="Cascadia Code,Consolas,Monospace"
+                                                                                       FontSize="12"
+                                                                                       Foreground="#666"
+                                                                                       HorizontalAlignment="Right"
+                                                                                       Margin="0,0,8,0"/>
+                                                                            <TextBlock Grid.Column="2"
+                                                                                       Text="{Binding Prefix}"
+                                                                                       FontFamily="Cascadia Code,Consolas,Monospace"
+                                                                                       FontSize="12"
+                                                                                       Foreground="{Binding Foreground}"
+                                                                                       Margin="0,0,6,0"/>
+                                                                            <TextBlock Grid.Column="3"
+                                                                                       Text="{Binding BlameText}"
+                                                                                       FontFamily="Cascadia Code,Consolas,Monospace"
+                                                                                       FontSize="12"
+                                                                                       Foreground="#9cdcfe"
+                                                                                       TextTrimming="CharacterEllipsis"
+                                                                                       Margin="0,0,12,0"/>
+                                                                            <TextBlock Grid.Column="4"
+                                                                                       Text="{Binding Content}"
+                                                                                       FontFamily="Cascadia Code,Consolas,Monospace"
+                                                                                       FontSize="12"
+                                                                                       Foreground="{Binding Foreground}"
+                                                                                       TextWrapping="NoWrap"/>
+                                                                        </Grid>
+                                                                    </DataTemplate>
+                                                                </ItemsControl.ItemTemplate>
+                                                            </ItemsControl>
+                                                        </StackPanel>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Border>
+
+                <GridSplitter Grid.Column="1" Width="4" HorizontalAlignment="Stretch" Background="#333" ResizeDirection="Columns"/>
+
+                <Border Grid.Column="2" Background="#252526" BorderBrush="#333" BorderThickness="1,1,0,0" Padding="8">
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Top" Text="Files" Foreground="#ddd" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                        <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding SelectedDiffFiles}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="local:DiffFileProjection">
+                                        <TextBlock Text="{Binding DisplayPath}" Foreground="#ccc" FontSize="12" Margin="0,0,0,6" TextWrapping="Wrap"/>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </DockPanel>
+                </Border>
+            </Grid>
+        </Grid>
+    </DockPanel>
+</Window>
