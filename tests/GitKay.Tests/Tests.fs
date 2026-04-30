@@ -33,6 +33,8 @@ module GitServiceTests =
         test <@ commit.AuthorEmail = "you@example.com" @>
         test <@ commit.Parents = ["a1b2c3d4"; "e5f6g7h8"] @>
         test <@ commit.Subject = "Initial commit" @>
+        test <@ commit.Message = "Initial commit" @>
+        test <@ commit.Refs = [] @>
 
     [<Fact>]
     let ``parseCommitLine should return None for invalid line`` () =
@@ -160,6 +162,71 @@ summary Another line
         test <@ entry.FileList.[0].DisplayPath = "foo.txt" @>
         test <@ entry.FileList.[1].DisplayPath = "bar.txt (new file)" @>
 
+    [<Fact>]
+    let ``searchCommitsWithDiffLoader should match metadata, refs, paths, and text`` () =
+        let commits : Models.Commit list =
+            [
+                {
+                    Hash = "abc12345abc12345abc12345abc12345abc12345"
+                    AuthorName = "Jane Doe"
+                    AuthorEmail = "jane@example.com"
+                    Timestamp = 1710000000L
+                    Parents = []
+                    Subject = "Fix parser"
+                    Message = "Fix parser\n\nNeedle body"
+                    Refs = [ "main"; "v1.0" ]
+                }
+                {
+                    Hash = "def67890def67890def67890def67890def67890"
+                    AuthorName = "John Smith"
+                    AuthorEmail = "john@example.com"
+                    Timestamp = 1710003600L
+                    Parents = []
+                    Subject = "Add docs"
+                    Message = "Add docs"
+                    Refs = [ "release/1.0" ]
+                }
+            ]
+
+        let diffLoader hash =
+            match hash with
+            | "abc12345abc12345abc12345abc12345abc12345" ->
+                Ok
+                    [
+                        sampleFile
+                            "src/needle.txt"
+                            "src/needle.txt"
+                            [
+                                {
+                                    Type = Models.Context
+                                    Content = "needle line"
+                                    OldLineNo = Some 1
+                                    NewLineNo = Some 1
+                                }
+                            ]
+                    ]
+            | _ -> Ok []
+
+        match GitService.searchCommitsWithDiffLoader commits "needle" GitService.SearchScope.All diffLoader with
+        | Error err -> failwith err
+        | Ok results ->
+            test <@ results.Length = 1 @>
+            let hit = results.Head
+            test <@ hit.Commit.Hash = "abc12345abc12345abc12345abc12345abc12345" @>
+            test <@ hit.MatchKinds |> List.contains "message" @>
+            test <@ hit.MatchKinds |> List.contains "path" @>
+            test <@ hit.MatchKinds |> List.contains "text" @>
+            test <@ hit.MatchSummary.Contains "paths: src/needle.txt" @>
+
+        match GitService.searchCommitsWithDiffLoader commits "release" GitService.SearchScope.Ref diffLoader with
+        | Error err -> failwith err
+        | Ok results ->
+            test <@ results.Length = 1 @>
+            let hit = results.Head
+            test <@ hit.Commit.Hash = "def67890def67890def67890def67890def67890" @>
+            test <@ hit.MatchKinds = [ "ref" ] @>
+            test <@ hit.MatchSummary.Contains "refs: release/1.0" @>
+
 module AppTests =
 
     let private sampleCommit hash subject : Models.Commit =
@@ -170,6 +237,8 @@ module AppTests =
             Timestamp = 1710000000L
             Parents = []
             Subject = subject
+            Message = subject
+            Refs = []
         }
 
     let private sampleFile oldPath newPath lines : Models.FileDiff =
@@ -192,10 +261,22 @@ module AppTests =
             DisplayPath = displayPath
         }
 
+    let private sampleSearchResult (commit: Models.Commit) matchKinds matchSummary : GitService.SearchResult =
+        {
+            Commit = commit
+            MatchKinds = matchKinds
+            MatchSummary = matchSummary
+            MatchedPaths = []
+            MatchedRefs = []
+        }
+
     let private emptyModel : App.Model =
         {
             Status = ""
             StartupTargets = []
+            SearchQuery = ""
+            SearchScopeKey = "all"
+            SearchResults = None
             Commits = []
             SelectedCommitHash = None
             SelectedDiffHash = None
@@ -204,6 +285,7 @@ module AppTests =
             SelectedDiffFile = None
             SelectionStartedAtTicks = None
             SelectedDiffFileStartedAtTicks = None
+            SearchStartedAtTicks = None
         }
 
     [<Fact>]
@@ -362,6 +444,49 @@ module AppTests =
         test <@ next.SelectedDiffFileStartedAtTicks = Some 42L @>
 
     [<Fact>]
+    let ``RunSearch should record the pending search and clear stale results`` () =
+        let initial =
+            {
+                emptyModel with
+                    SearchQuery = "old"
+                    SearchScopeKey = "message"
+                    SearchResults = Some [ sampleSearchResult (sampleCommit "oldhash" "Old") [ "message" ] "message" ]
+                    SearchStartedAtTicks = Some 1L
+            }
+
+        let next, _ = App.update (App.Msg.RunSearch("needle", "ref", 42L)) initial
+
+        test <@ next.SearchQuery = "needle" @>
+        test <@ next.SearchScopeKey = "ref" @>
+        test <@ next.SearchResults = None @>
+        test <@ next.SearchStartedAtTicks = Some 42L @>
+        test <@ next.Status = "Searching needle..." @>
+
+    [<Fact>]
+    let ``SearchResultsLoaded should apply the current search results`` () =
+        let commit =
+            sampleCommit "searchhash" "Search hit"
+
+        let initial =
+            {
+                emptyModel with
+                    SearchQuery = "needle"
+                    SearchScopeKey = "all"
+                    SearchStartedAtTicks = Some 42L
+            }
+
+        let next, _ =
+            App.update
+                (App.Msg.SearchResultsLoaded("needle", "all", 42L, Ok [ sampleSearchResult commit [ "message"; "path" ] "message; paths: src/needle.txt" ]))
+                initial
+
+        test <@ next.SearchResults.IsSome @>
+        test <@ next.SearchResults.Value.Length = 1 @>
+        test <@ next.SearchResults.Value.Head.Commit.Hash = "searchhash" @>
+        test <@ next.SearchStartedAtTicks = None @>
+        test <@ next.Status = "Search: 1 hit(s) for \"needle\"" @>
+
+    [<Fact>]
     let ``MainProjection should sync the selected file to the left diff focus row`` () =
         let projection = MainProjection()
         projection.SetDispatch ignore
@@ -445,6 +570,35 @@ module AppTests =
         match projection.SelectedDiffRow with
         | :? DiffFileHeaderProjection as header -> test <@ header.DisplayPath = "bar.txt (new file)" @>
         | other -> failwithf "Expected a file header after hydration, got %A" other
+
+    [<Fact>]
+    let ``MainProjection should show search results and dispatch commit selection when a result is chosen`` () =
+        let projection = MainProjection()
+        let mutable lastMsg = None
+        projection.SetDispatch (fun msg -> lastMsg <- Some msg)
+
+        let commit =
+            sampleCommit "feedfacefeedfacefeedfacefeedfacefeedface" "Search hit"
+
+        let model =
+            {
+                emptyModel with
+                    SearchQuery = "needle"
+                    SearchScopeKey = "all"
+                    SearchResults = Some [ sampleSearchResult commit [ "message" ] "message" ]
+            }
+
+        projection.Update model
+
+        test <@ projection.HasSearchResults @>
+        test <@ projection.SearchResults.Count = 1 @>
+        test <@ projection.SelectedSearchResult = null @>
+
+        projection.SelectedSearchResult <- projection.SearchResults.[0]
+
+        match lastMsg with
+        | Some (App.Msg.SelectCommit(hash, _)) -> test <@ hash = commit.Hash @>
+        | other -> failwithf "Expected search result selection to dispatch a commit selection, got %A" other
 
     [<Fact>]
     let ``DiffFileLoaded should ignore stale file results`` () =

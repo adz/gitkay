@@ -31,8 +31,9 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     public void Update(Graph.CommitGraphInfo info)
     {
         var commit = info.Commit;
+        var shortHashLength = System.Math.Min(8, commit.Hash.Length);
         FullHash = commit.Hash;
-        Hash = commit.Hash.Substring(0, 8);
+        Hash = commit.Hash.Substring(0, shortHashLength);
         Subject = commit.Subject;
         Author = commit.AuthorName;
         Date = System.DateTimeOffset.FromUnixTimeSeconds(commit.Timestamp).LocalDateTime.ToString("yyyy-MM-dd HH:mm");

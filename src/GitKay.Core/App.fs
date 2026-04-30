@@ -17,11 +17,15 @@ module App =
 
     let mutable private currentSelectionJob: SelectionJob option = None
     let mutable private currentFileSelectionJob: SelectionJob option = None
+    let mutable private currentSearchJob: SelectionJob option = None
 
     type Model =
         {
             Status: string
             StartupTargets: GitService.StartupTarget list
+            SearchQuery: string
+            SearchScopeKey: string
+            SearchResults: GitService.SearchResult list option
             Commits: Graph.CommitGraphInfo list
             SelectedCommitHash: string option
             SelectedDiffHash: string option
@@ -30,6 +34,7 @@ module App =
             SelectedDiffFile: Models.FileDiff option
             SelectionStartedAtTicks: int64 option
             SelectedDiffFileStartedAtTicks: int64 option
+            SearchStartedAtTicks: int64 option
         }
 
     type Msg =
@@ -39,6 +44,10 @@ module App =
         | DiffFilesLoaded of hash:string * startedAtTicks:int64 * Result<GitService.DiffFileSummary list, string>
         | SelectDiffFile of hash:string * oldPath:string * newPath:string * startedAtTicks:int64
         | DiffFileLoaded of hash:string * oldPath:string * newPath:string * startedAtTicks:int64 * Result<Models.FileDiff, string>
+        | SetSearchQuery of string
+        | SetSearchScope of string
+        | RunSearch of query:string * scopeKey:string * startedAtTicks:int64
+        | SearchResultsLoaded of query:string * scopeKey:string * startedAtTicks:int64 * Result<GitService.SearchResult list, string>
         | CreateTag of hash:string * name:string
         | CreateBranch of hash:string * name:string
         | CherryPick of hash:string
@@ -75,12 +84,29 @@ module App =
         | _ ->
             ()
 
+    let private clearCurrentSearchJob requestId =
+        match currentSearchJob with
+        | Some job when job.RequestId = requestId ->
+            job.Cancellation.Dispose()
+            currentSearchJob <- None
+        | _ ->
+            ()
+
     let private cancelCurrentFileSelectionJob () =
         match currentFileSelectionJob with
         | Some job ->
             job.Cancellation.Cancel()
             job.Cancellation.Dispose()
             currentFileSelectionJob <- None
+        | None ->
+            ()
+
+    let private cancelCurrentSearchJob () =
+        match currentSearchJob with
+        | Some job ->
+            job.Cancellation.Cancel()
+            job.Cancellation.Dispose()
+            currentSearchJob <- None
         | None ->
             ()
 
@@ -104,6 +130,15 @@ module App =
             do! Flow.Runtime.ensureNotCanceled "Selection canceled."
             let! diff = GitService.fetchDiffFileContent hash oldPath newPath |> Flow.fromResult
             return diff
+        }
+
+    let private loadSearchResultsFlow (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) =
+        flow {
+            do! Flow.Runtime.ensureNotCanceled "Search canceled."
+            let scope = GitService.parseSearchScope scopeKey
+            let commitList = commits |> List.map (fun info -> info.Commit)
+            let! results = GitService.searchCommits commitList query scope |> Flow.fromResult
+            return results
         }
 
     let private startDiffFilesLoad (hash: string) (startedAtTicks: int64) =
@@ -156,6 +191,31 @@ module App =
             }
             |> Async.Start)
 
+    let private startSearchLoad (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (startedAtTicks: int64) =
+        cancelCurrentSearchJob ()
+        let cancellation = new CancellationTokenSource()
+        currentSearchJob <-
+            Some
+                {
+                    RequestId = startedAtTicks
+                    Cancellation = cancellation
+                }
+
+        Cmd.ofEffect (fun dispatch ->
+            async {
+                try
+                    let! result = Flow.toAsyncResult () cancellation.Token (loadSearchResultsFlow commits query scopeKey)
+
+                    if not cancellation.IsCancellationRequested then
+                        dispatch (SearchResultsLoaded(query, scopeKey, startedAtTicks, result))
+                with
+                | :? OperationCanceledException ->
+                    ()
+                | ex when not cancellation.IsCancellationRequested ->
+                    dispatch (SearchResultsLoaded(query, scopeKey, startedAtTicks, Error ex.Message))
+            }
+            |> Async.Start)
+
     let private diffFileKeyOfSummary (summary: GitService.DiffFileSummary) : GitService.DiffFileKey =
         {
             OldPath = summary.OldPath
@@ -197,6 +257,8 @@ module App =
                 model with
                     Status = sprintf "Loaded %d commits" commits.Length
                     Commits = commits
+                    SearchResults = None
+                    SearchStartedAtTicks = None
                     SelectedCommitHash = selectedHash
                     SelectedDiffHash = if diffReadyForSelection then model.SelectedDiffHash else None
                     SelectedDiffFiles = if diffReadyForSelection then model.SelectedDiffFiles else None
@@ -224,6 +286,9 @@ module App =
             {
                 Status = sprintf "Error: %s" err
                 StartupTargets = []
+                SearchQuery = ""
+                SearchScopeKey = "all"
+                SearchResults = None
                 Commits = []
                 SelectedCommitHash = None
                 SelectedDiffHash = None
@@ -232,6 +297,7 @@ module App =
                 SelectedDiffFile = None
                 SelectionStartedAtTicks = None
                 SelectedDiffFileStartedAtTicks = None
+                SearchStartedAtTicks = None
             },
             Cmd.none
         | Ok startupTargets ->
@@ -239,6 +305,9 @@ module App =
                 {
                     Status = "Loading history..."
                     StartupTargets = startupTargets
+                    SearchQuery = ""
+                    SearchScopeKey = "all"
+                    SearchResults = None
                     Commits = []
                     SelectedCommitHash = None
                     SelectedDiffHash = None
@@ -247,6 +316,7 @@ module App =
                     SelectedDiffFile = None
                     SelectionStartedAtTicks = None
                     SelectedDiffFileStartedAtTicks = None
+                    SearchStartedAtTicks = None
                 }
 
             model, loadHistory startupTargets
@@ -254,13 +324,16 @@ module App =
     let update msg model : Model * Cmd<Msg> =
         match msg with
         | RereadRefs ->
+            cancelCurrentSearchJob ()
             let nextModel = { model with Status = "Refreshing..." }
             nextModel, loadHistory model.StartupTargets
         | HistoryLoaded (Ok commits) ->
+            cancelCurrentSearchJob ()
             let graphInfo = Graph.calculateLanes commits
             historyLoadSelection model graphInfo
         | HistoryLoaded (Error err) ->
-            { model with Status = sprintf "Error: %s" err }, Cmd.none
+            cancelCurrentSearchJob ()
+            { model with Status = sprintf "Error: %s" err; SearchResults = None; SearchStartedAtTicks = None }, Cmd.none
         | SelectCommit (hash, startedAtTicks) ->
             cancelCurrentSelectionJob ()
             cancelCurrentFileSelectionJob ()
@@ -278,6 +351,48 @@ module App =
 
             let cmd = startDiffFilesLoad hash startedAtTicks
             nextModel, cmd
+        | SetSearchQuery query ->
+            let trimmed = query.Trim()
+
+            if String.IsNullOrWhiteSpace trimmed then
+                cancelCurrentSearchJob ()
+                { model with SearchQuery = query; SearchResults = None; SearchStartedAtTicks = None }, Cmd.none
+            else
+                { model with SearchQuery = query }, Cmd.none
+        | SetSearchScope scopeKey ->
+            { model with SearchScopeKey = scopeKey }, Cmd.none
+        | RunSearch (query, scopeKey, startedAtTicks) ->
+            cancelCurrentSearchJob ()
+
+            if String.IsNullOrWhiteSpace query then
+                { model with SearchQuery = query; SearchScopeKey = scopeKey; SearchResults = None; SearchStartedAtTicks = None; Status = "Search cleared" }, Cmd.none
+            else
+                let nextModel =
+                    {
+                        model with
+                            SearchQuery = query
+                            SearchScopeKey = scopeKey
+                            SearchResults = None
+                            SearchStartedAtTicks = Some startedAtTicks
+                            Status = sprintf "Searching %s..." query
+                    }
+
+                let cmd = startSearchLoad model.Commits query scopeKey startedAtTicks
+                nextModel, cmd
+        | SearchResultsLoaded (query, scopeKey, startedAtTicks, Ok results) ->
+            match model.SearchQuery, model.SearchScopeKey, model.SearchStartedAtTicks with
+            | currentQuery, currentScopeKey, Some currentStartedAtTicks when currentQuery = query && currentScopeKey = scopeKey && currentStartedAtTicks = startedAtTicks ->
+                clearCurrentSearchJob startedAtTicks
+                { model with SearchResults = Some results; SearchStartedAtTicks = None; Status = sprintf "Search: %d hit(s) for \"%s\"" results.Length query }, Cmd.none
+            | _ ->
+                model, Cmd.none
+        | SearchResultsLoaded (query, scopeKey, startedAtTicks, Error err) ->
+            match model.SearchQuery, model.SearchScopeKey, model.SearchStartedAtTicks with
+            | currentQuery, currentScopeKey, Some currentStartedAtTicks when currentQuery = query && currentScopeKey = scopeKey && currentStartedAtTicks = startedAtTicks ->
+                clearCurrentSearchJob startedAtTicks
+                { model with SearchResults = None; SearchStartedAtTicks = None; Status = sprintf "Search Error: %s" err }, Cmd.none
+            | _ ->
+                model, Cmd.none
         | DiffFilesLoaded (hash, startedAtTicks, Ok files) ->
             match model.SelectedCommitHash, model.SelectionStartedAtTicks with
             | Some currentHash, Some currentStartedAtTicks when currentHash = hash && currentStartedAtTicks = startedAtTicks ->

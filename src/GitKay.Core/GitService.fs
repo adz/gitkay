@@ -15,6 +15,24 @@ module GitService =
         | Sha of string
         | Tag of string
 
+    type SearchScope =
+        | All
+        | Hash
+        | Message
+        | Author
+        | Path
+        | Text
+        | Ref
+
+    type SearchResult =
+        {
+            Commit: Models.Commit
+            MatchKinds: string list
+            MatchSummary: string
+            MatchedPaths: string list
+            MatchedRefs: string list
+        }
+
     let parseStartupTargets (args: string array) =
         let rec loop index accumulated =
             if index >= args.Length then
@@ -22,38 +40,48 @@ module GitService =
             else
                 match args.[index] with
                 | "--all" ->
-                    Ok [ All ]
+                    Ok [ StartupTarget.All ]
                 | "--branch" ->
                     if index + 1 >= args.Length then
                         Error "Missing branch name after --branch."
                     elif args.[index + 1].StartsWith("--") then
                         Error "Missing branch name after --branch."
                     else
-                        loop (index + 2) (Branch args.[index + 1] :: accumulated)
+                        loop (index + 2) (StartupTarget.Branch args.[index + 1] :: accumulated)
                 | arg when arg.StartsWith("--branch=") ->
-                    loop (index + 1) (Branch (arg.Substring("--branch=".Length)) :: accumulated)
+                    loop (index + 1) (StartupTarget.Branch (arg.Substring("--branch=".Length)) :: accumulated)
                 | "--sha" ->
                     if index + 1 >= args.Length then
                         Error "Missing commit hash after --sha."
                     elif args.[index + 1].StartsWith("--") then
                         Error "Missing commit hash after --sha."
                     else
-                        loop (index + 2) (Sha args.[index + 1] :: accumulated)
+                        loop (index + 2) (StartupTarget.Sha args.[index + 1] :: accumulated)
                 | arg when arg.StartsWith("--sha=") ->
-                    loop (index + 1) (Sha (arg.Substring("--sha=".Length)) :: accumulated)
+                    loop (index + 1) (StartupTarget.Sha (arg.Substring("--sha=".Length)) :: accumulated)
                 | "--tag" ->
                     if index + 1 >= args.Length then
                         Error "Missing tag name after --tag."
                     elif args.[index + 1].StartsWith("--") then
                         Error "Missing tag name after --tag."
                     else
-                        loop (index + 2) (Tag args.[index + 1] :: accumulated)
+                        loop (index + 2) (StartupTarget.Tag args.[index + 1] :: accumulated)
                 | arg when arg.StartsWith("--tag=") ->
-                    loop (index + 1) (Tag (arg.Substring("--tag=".Length)) :: accumulated)
+                    loop (index + 1) (StartupTarget.Tag (arg.Substring("--tag=".Length)) :: accumulated)
                 | arg ->
                     Error (sprintf "Unrecognized startup argument: %s" arg)
 
         loop 0 []
+
+    let parseSearchScope (value: string) =
+        match value.Trim().ToLowerInvariant() with
+        | "hash" -> SearchScope.Hash
+        | "message" -> SearchScope.Message
+        | "author" -> SearchScope.Author
+        | "path" -> SearchScope.Path
+        | "text" -> SearchScope.Text
+        | "ref" -> SearchScope.Ref
+        | _ -> SearchScope.All
 
     let private logTiming (message: string) =
         let line = sprintf "[timing] %s" message
@@ -119,6 +147,8 @@ module GitService =
                 AuthorEmail = parts.[3]
                 Parents = parts.[4].Split(' ', System.StringSplitOptions.RemoveEmptyEntries) |> Array.toList
                 Subject = parts.[5]
+                Message = parts.[5]
+                Refs = []
             }
         else
             None
@@ -179,7 +209,7 @@ module GitService =
 
         results |> List.rev |> Map.ofList
 
-    let private toCommitModel (commit: LibGit2Sharp.Commit) : Models.Commit =
+    let private toCommitModel (commit: LibGit2Sharp.Commit) (refs: string list) : Models.Commit =
         {
             Hash = commit.Sha
             Timestamp = commit.Author.When.ToUnixTimeSeconds()
@@ -187,6 +217,8 @@ module GitService =
             AuthorEmail = commit.Author.Email
             Parents = commit.Parents |> Seq.map (fun parent -> parent.Sha) |> Seq.toList
             Subject = commit.MessageShort
+            Message = commit.Message
+            Refs = refs
         }
 
     let parseDiff (output: string) : FileDiff list =
@@ -411,9 +443,40 @@ module GitService =
                     FileCount = fileList.Length
                     AddedLines = patch.LinesAdded
                     RemovedLines = patch.LinesDeleted
-                }
+            }
             FileList = fileList
         }
+
+    let private buildCommitRefs (repo: Repository) =
+        let refsByCommit = System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<string>>()
+
+        let addRef (hash: string) (name: string) =
+            if not (String.IsNullOrWhiteSpace hash) && not (String.IsNullOrWhiteSpace name) then
+                let bucket =
+                    match refsByCommit.TryGetValue hash with
+                    | true, existing -> existing
+                    | false, _ ->
+                        let created = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                        refsByCommit.[hash] <- created
+                        created
+
+                bucket.Add name |> ignore
+
+        for branch in repo.Branches do
+            if not (isNull branch.Tip) then
+                addRef branch.Tip.Sha branch.FriendlyName
+
+        for tag in repo.Tags do
+            match tag.PeeledTarget with
+            | :? Commit as commit -> addRef commit.Sha tag.FriendlyName
+            | _ -> ()
+
+        refsByCommit
+        |> Seq.map (fun kvp -> kvp.Key, kvp.Value |> Seq.toList)
+        |> Map.ofSeq
+
+    let private containsIgnoreCase (haystack: string) (needle: string) =
+        haystack.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0
 
     let private loadDiffCacheEntry (hash: string) =
         withRepository (fun repo ->
@@ -470,24 +533,24 @@ module GitService =
         )
 
     let private resolveStartupTargets (repo: Repository) (targets: StartupTarget list) =
-        let hasAll = targets |> List.exists ((=) All)
+        let hasAll = targets |> List.exists ((=) StartupTarget.All)
 
         if hasAll || List.isEmpty targets then
             Ok (box repo.Refs)
         else
             let resolveTarget target =
                 match target with
-                | All ->
+                | StartupTarget.All ->
                     Ok []
-                | Branch name ->
+                | StartupTarget.Branch name ->
                     match repo.Branches.[name] with
                     | null -> Error (sprintf "Branch not found: %s" name)
                     | branch -> Ok [ box branch ]
-                | Sha hash ->
+                | StartupTarget.Sha hash ->
                     match repo.Lookup<LibGit2Sharp.Commit>(hash) with
                     | null -> Error (sprintf "Commit not found: %s" hash)
                     | commit -> Ok [ box commit ]
-                | Tag name ->
+                | StartupTarget.Tag name ->
                     match repo.Tags.[name] with
                     | null -> Error (sprintf "Tag not found: %s" name)
                     | tag -> Ok [ box tag ]
@@ -509,12 +572,19 @@ module GitService =
             match resolveStartupTargets repo targets with
             | Error err -> Error err
             | Ok roots ->
+                let refsByCommit = buildCommitRefs repo
                 let filter = CommitFilter()
                 filter.IncludeReachableFrom <- roots
                 filter.SortBy <- CommitSortStrategies.Topological ||| CommitSortStrategies.Time
 
                 repo.Commits.QueryBy(filter)
-                |> Seq.map toCommitModel
+                |> Seq.map (fun commit ->
+                    let refs =
+                        match refsByCommit.TryFind commit.Sha with
+                        | Some names -> names
+                        | None -> []
+
+                    toCommitModel commit refs)
                 |> Seq.toList
                 |> Ok)
 
@@ -583,6 +653,162 @@ module GitService =
                 let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
                 logTiming (sprintf "file diff load hash=%s path=%s -> %s elapsed=%.1fms" hash oldPath newPath elapsed.TotalMilliseconds)
                 Ok file
+
+    let private buildSearchSummary (matchKinds: string list) (paths: string list) (refs: string list) =
+        let details = System.Collections.Generic.List<string>()
+
+        if matchKinds |> List.contains "hash" then details.Add "hash"
+        if matchKinds |> List.contains "message" then details.Add "message"
+        if matchKinds |> List.contains "author" then details.Add "author"
+        if matchKinds |> List.contains "path" then details.Add "path"
+        if matchKinds |> List.contains "text" then details.Add "text"
+        if matchKinds |> List.contains "ref" then details.Add "ref"
+
+        if paths.Length > 0 then
+            details.Add (sprintf "paths: %s" (String.Join(", ", paths)))
+
+        if refs.Length > 0 then
+            details.Add (sprintf "refs: %s" (String.Join(", ", refs)))
+
+        String.Join("; ", details)
+
+    let private searchCommitDiff
+        (query: string)
+        (loadDiff: string -> Result<FileDiff list, string>)
+        (searchPaths: bool)
+        (searchText: bool)
+        (commit: Models.Commit) =
+        match loadDiff commit.Hash with
+        | Error _ -> None
+        | Ok files ->
+            let matchedPaths = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            let mutable textMatched = false
+
+            for file in files do
+                if searchPaths && (containsIgnoreCase file.OldPath query || containsIgnoreCase file.NewPath query || containsIgnoreCase (buildDisplayPath file.OldPath file.NewPath) query) then
+                    matchedPaths.Add (buildDisplayPath file.OldPath file.NewPath) |> ignore
+
+                if searchText && not textMatched then
+                    let fileTextMatched =
+                        file.Hunks
+                        |> List.exists (fun hunk ->
+                            hunk.Lines
+                            |> List.exists (fun line -> containsIgnoreCase line.Content query))
+
+                    if fileTextMatched then
+                        textMatched <- true
+
+            let pathMatches = matchedPaths |> Seq.toList
+
+            if (searchPaths && pathMatches.Length > 0) || (searchText && textMatched) then
+                Some(pathMatches, textMatched)
+            else
+                None
+
+    let searchCommitsWithDiffLoader
+        (commits: Models.Commit list)
+        (query: string)
+        (scope: SearchScope)
+        (loadDiff: string -> Result<FileDiff list, string>)
+        =
+        let normalizedQuery = query.Trim()
+
+        if String.IsNullOrWhiteSpace normalizedQuery then
+            Error "Search query must not be empty."
+        else
+            let results =
+                commits
+                |> List.choose (fun commit ->
+                    let matchKinds = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    let matchedPaths = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    let matchedRefs = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+
+                    let addMetadataMatches () =
+                        match scope with
+                        | SearchScope.Hash ->
+                            if containsIgnoreCase commit.Hash normalizedQuery then
+                                matchKinds.Add "hash" |> ignore
+                        | SearchScope.Message ->
+                            if containsIgnoreCase commit.Subject normalizedQuery || containsIgnoreCase commit.Message normalizedQuery then
+                                matchKinds.Add "message" |> ignore
+                        | SearchScope.Author ->
+                            if containsIgnoreCase commit.AuthorName normalizedQuery || containsIgnoreCase commit.AuthorEmail normalizedQuery then
+                                matchKinds.Add "author" |> ignore
+                        | SearchScope.Ref ->
+                            let refMatches =
+                                commit.Refs
+                                |> List.filter (fun reference -> containsIgnoreCase reference normalizedQuery)
+
+                            if refMatches.Length > 0 then
+                                matchKinds.Add "ref" |> ignore
+                                refMatches |> List.iter (fun reference -> matchedRefs.Add reference |> ignore)
+                        | SearchScope.Path
+                        | SearchScope.Text ->
+                            ()
+                        | SearchScope.All ->
+                            if containsIgnoreCase commit.Hash normalizedQuery then
+                                matchKinds.Add "hash" |> ignore
+
+                            if containsIgnoreCase commit.Subject normalizedQuery || containsIgnoreCase commit.Message normalizedQuery then
+                                matchKinds.Add "message" |> ignore
+
+                            if containsIgnoreCase commit.AuthorName normalizedQuery || containsIgnoreCase commit.AuthorEmail normalizedQuery then
+                                matchKinds.Add "author" |> ignore
+
+                            let refMatches =
+                                commit.Refs
+                                |> List.filter (fun reference -> containsIgnoreCase reference normalizedQuery)
+
+                            if refMatches.Length > 0 then
+                                matchKinds.Add "ref" |> ignore
+                                refMatches |> List.iter (fun reference -> matchedRefs.Add reference |> ignore)
+
+                    addMetadataMatches ()
+
+                    match scope with
+                    | SearchScope.Path
+                    | SearchScope.Text
+                    | SearchScope.All ->
+                        let searchPaths, searchText =
+                            match scope with
+                            | SearchScope.Path -> true, false
+                            | SearchScope.Text -> false, true
+                            | SearchScope.All -> true, true
+                            | _ -> false, false
+
+                        match searchCommitDiff normalizedQuery loadDiff searchPaths searchText commit with
+                        | Some(pathMatches, textMatch) ->
+                            if pathMatches.Length > 0 then
+                                matchKinds.Add "path" |> ignore
+                                pathMatches |> List.iter (fun path -> matchedPaths.Add path |> ignore)
+
+                            if textMatch then
+                                matchKinds.Add "text" |> ignore
+                        | None ->
+                            ()
+                    | _ ->
+                        ()
+
+                    if matchKinds.Count > 0 then
+                        let kinds = matchKinds |> Seq.toList
+                        let paths = matchedPaths |> Seq.toList
+                        let refs = matchedRefs |> Seq.toList
+
+                        Some
+                            {
+                                Commit = commit
+                                MatchKinds = kinds
+                                MatchSummary = buildSearchSummary kinds paths refs
+                                MatchedPaths = paths
+                                MatchedRefs = refs
+                            }
+                    else
+                        None)
+
+            Ok results
+
+    let searchCommits (commits: Models.Commit list) (query: string) (scope: SearchScope) =
+        searchCommitsWithDiffLoader commits query scope fetchDiff
 
     let fetchFileBlame (revision: string) (path: string) =
         if path = "/dev/null" then

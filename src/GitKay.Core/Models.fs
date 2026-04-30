@@ -10,6 +10,8 @@ module Models =
             Timestamp: int64
             Parents: string list
             Subject: string
+            Message: string
+            Refs: string list
         }
 
     type BlameInfo =
