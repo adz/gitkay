@@ -13,22 +13,40 @@ public interface IDiffRowProjection
 
 public sealed class DiffFileProjection
 {
-    public DiffFileProjection(GitKay.Core.Models.FileDiff file)
+    public DiffFileProjection(GitKay.Core.GitService.DiffFileSummary summary)
     {
-        Key = new DiffFileKey(file.OldPath, file.NewPath);
-        OldPath = file.OldPath;
-        NewPath = file.NewPath;
-        DisplayPath = DiffFormatting.BuildDisplayPath(file.OldPath, file.NewPath);
-        Hunks = new ObservableCollection<DiffHunkProjection>(file.Hunks.Select(h => new DiffHunkProjection(h)));
+        Key = new DiffFileKey(summary.OldPath, summary.NewPath);
+        DisplayPath = summary.DisplayPath;
         Header = new DiffFileHeaderProjection(this);
     }
 
     public DiffFileKey Key { get; }
-    public string OldPath { get; }
-    public string NewPath { get; }
-    public string DisplayPath { get; }
-    public ObservableCollection<DiffHunkProjection> Hunks { get; }
+    public string DisplayPath { get; private set; }
+    public bool IsLoaded { get; private set; }
+    public ObservableCollection<DiffHunkProjection> Hunks { get; } = new();
     public DiffFileHeaderProjection Header { get; }
+
+    public void UpdateSummary(GitKay.Core.GitService.DiffFileSummary summary)
+    {
+        DisplayPath = summary.DisplayPath;
+    }
+
+    public void ApplyContent(GitKay.Core.Models.FileDiff file)
+    {
+        Hunks.Clear();
+        foreach (var hunk in file.Hunks.Select(h => new DiffHunkProjection(h)))
+        {
+            Hunks.Add(hunk);
+        }
+
+        IsLoaded = true;
+    }
+
+    public void ClearContent()
+    {
+        Hunks.Clear();
+        IsLoaded = false;
+    }
 }
 
 public sealed class DiffFileHeaderProjection : IDiffRowProjection

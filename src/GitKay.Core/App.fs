@@ -16,6 +16,7 @@ module App =
         }
 
     let mutable private currentSelectionJob: SelectionJob option = None
+    let mutable private currentFileSelectionJob: SelectionJob option = None
 
     type Model =
         {
@@ -24,15 +25,20 @@ module App =
             Commits: Graph.CommitGraphInfo list
             SelectedCommitHash: string option
             SelectedDiffHash: string option
-            SelectedDiff: Models.FileDiff list option
+            SelectedDiffFiles: GitService.DiffFileSummary list option
+            SelectedDiffFileKey: GitService.DiffFileKey option
+            SelectedDiffFile: Models.FileDiff option
             SelectionStartedAtTicks: int64 option
+            SelectedDiffFileStartedAtTicks: int64 option
         }
 
     type Msg =
         | RereadRefs
         | HistoryLoaded of Result<Models.Commit list, string>
         | SelectCommit of hash:string * startedAtTicks:int64
-        | DiffLoaded of hash:string * startedAtTicks:int64 * Result<Models.FileDiff list, string>
+        | DiffFilesLoaded of hash:string * startedAtTicks:int64 * Result<GitService.DiffFileSummary list, string>
+        | SelectDiffFile of hash:string * oldPath:string * newPath:string * startedAtTicks:int64
+        | DiffFileLoaded of hash:string * oldPath:string * newPath:string * startedAtTicks:int64 * Result<Models.FileDiff, string>
         | CreateTag of hash:string * name:string
         | CreateBranch of hash:string * name:string
         | CherryPick of hash:string
@@ -61,6 +67,23 @@ module App =
         | None ->
             ()
 
+    let private clearCurrentFileSelectionJob requestId =
+        match currentFileSelectionJob with
+        | Some job when job.RequestId = requestId ->
+            job.Cancellation.Dispose()
+            currentFileSelectionJob <- None
+        | _ ->
+            ()
+
+    let private cancelCurrentFileSelectionJob () =
+        match currentFileSelectionJob with
+        | Some job ->
+            job.Cancellation.Cancel()
+            job.Cancellation.Dispose()
+            currentFileSelectionJob <- None
+        | None ->
+            ()
+
     let private logTiming (message: string) =
         let line = sprintf "[timing] %s" message
         Trace.WriteLine line
@@ -69,22 +92,21 @@ module App =
         with _ ->
             ()
 
-    let private warmDiffCacheFlow (hash: string) =
+    let private loadDiffFilesFlow (hash: string) =
         flow {
             do! Flow.Runtime.ensureNotCanceled "Selection canceled."
-            let! _ = GitService.fetchDiffSummary hash |> Flow.fromResult
-            return ()
+            let! files = GitService.fetchDiffFileList hash |> Flow.fromResult
+            return files
         }
 
-    let private loadSelectedDiffFlow (hash: string) =
+    let private loadSelectedDiffFileFlow (hash: string) (oldPath: string) (newPath: string) =
         flow {
-            do! warmDiffCacheFlow hash
             do! Flow.Runtime.ensureNotCanceled "Selection canceled."
-            let! diff = GitService.fetchDiff hash |> Flow.fromResult
+            let! diff = GitService.fetchDiffFileContent hash oldPath newPath |> Flow.fromResult
             return diff
         }
 
-    let private startSelectionLoad (hash: string) (startedAtTicks: int64) =
+    let private startDiffFilesLoad (hash: string) (startedAtTicks: int64) =
         cancelCurrentSelectionJob ()
         let cancellation = new CancellationTokenSource()
         currentSelectionJob <-
@@ -97,17 +119,52 @@ module App =
         Cmd.ofEffect (fun dispatch ->
             async {
                 try
-                    let! result = Flow.toAsyncResult () cancellation.Token (loadSelectedDiffFlow hash)
+                    let! result = Flow.toAsyncResult () cancellation.Token (loadDiffFilesFlow hash)
 
                     if not cancellation.IsCancellationRequested then
-                        dispatch (DiffLoaded(hash, startedAtTicks, result))
+                        dispatch (DiffFilesLoaded(hash, startedAtTicks, result))
                 with
                 | :? OperationCanceledException ->
                     ()
                 | ex when not cancellation.IsCancellationRequested ->
-                    dispatch (DiffLoaded(hash, startedAtTicks, Error ex.Message))
+                    dispatch (DiffFilesLoaded(hash, startedAtTicks, Error ex.Message))
             }
             |> Async.Start)
+
+    let private startDiffFileLoad (hash: string) (oldPath: string) (newPath: string) (startedAtTicks: int64) =
+        cancelCurrentFileSelectionJob ()
+        let cancellation = new CancellationTokenSource()
+        currentFileSelectionJob <-
+            Some
+                {
+                    RequestId = startedAtTicks
+                    Cancellation = cancellation
+                }
+
+        Cmd.ofEffect (fun dispatch ->
+            async {
+                try
+                    let! result = Flow.toAsyncResult () cancellation.Token (loadSelectedDiffFileFlow hash oldPath newPath)
+
+                    if not cancellation.IsCancellationRequested then
+                        dispatch (DiffFileLoaded(hash, oldPath, newPath, startedAtTicks, result))
+                with
+                | :? OperationCanceledException ->
+                    ()
+                | ex when not cancellation.IsCancellationRequested ->
+                    dispatch (DiffFileLoaded(hash, oldPath, newPath, startedAtTicks, Error ex.Message))
+            }
+            |> Async.Start)
+
+    let private diffFileKeyOfSummary (summary: GitService.DiffFileSummary) : GitService.DiffFileKey =
+        {
+            OldPath = summary.OldPath
+            NewPath = summary.NewPath
+        }
+
+    let private tryFindDiffFileSummary (key: GitService.DiffFileKey) (files: GitService.DiffFileSummary list) =
+        files
+        |> List.tryFind (fun file -> file.OldPath = key.OldPath && file.NewPath = key.NewPath)
 
     let private historyLoadSelection (model: Model) (commits: Graph.CommitGraphInfo list) =
         let selectionExistsInHistory =
@@ -122,12 +179,18 @@ module App =
             | _ -> None
 
         let diffReadyForSelection =
-            match selectedHash, model.SelectedDiffHash, model.SelectedDiff with
+            match selectedHash, model.SelectedDiffHash, model.SelectedDiffFiles with
             | Some hash, Some diffHash, Some _ when hash = diffHash -> true
             | _ -> false
 
-        let shouldLoadDiff = selectedHash.IsSome && not diffReadyForSelection
-        let startedAtTicks = if shouldLoadDiff then Some(Stopwatch.GetTimestamp()) else None
+        let nextSelectionStartedAtTicks =
+            if selectedHash.IsSome && not diffReadyForSelection then
+                Some(Stopwatch.GetTimestamp())
+            else
+                None
+
+        let selectedDiffFileStartedAtTicks =
+            if diffReadyForSelection then model.SelectedDiffFileStartedAtTicks else None
 
         let nextModel =
             {
@@ -136,16 +199,21 @@ module App =
                     Commits = commits
                     SelectedCommitHash = selectedHash
                     SelectedDiffHash = if diffReadyForSelection then model.SelectedDiffHash else None
-                    SelectedDiff = if diffReadyForSelection then model.SelectedDiff else None
-                    SelectionStartedAtTicks = startedAtTicks
+                    SelectedDiffFiles = if diffReadyForSelection then model.SelectedDiffFiles else None
+                    SelectedDiffFileKey = if diffReadyForSelection then model.SelectedDiffFileKey else None
+                    SelectedDiffFile = if diffReadyForSelection then model.SelectedDiffFile else None
+                    SelectionStartedAtTicks = nextSelectionStartedAtTicks
+                    SelectedDiffFileStartedAtTicks = selectedDiffFileStartedAtTicks
             }
 
         let cmd =
-            match selectedHash, startedAtTicks with
+            match selectedHash, nextSelectionStartedAtTicks with
             | Some hash, Some startedAtTicks ->
-                startSelectionLoad hash startedAtTicks
+                startDiffFilesLoad hash startedAtTicks
             | _ ->
                 cancelCurrentSelectionJob ()
+                if not diffReadyForSelection then
+                    cancelCurrentFileSelectionJob ()
                 Cmd.none
 
         nextModel, cmd
@@ -159,8 +227,11 @@ module App =
                 Commits = []
                 SelectedCommitHash = None
                 SelectedDiffHash = None
-                SelectedDiff = None
+                SelectedDiffFiles = None
+                SelectedDiffFileKey = None
+                SelectedDiffFile = None
                 SelectionStartedAtTicks = None
+                SelectedDiffFileStartedAtTicks = None
             },
             Cmd.none
         | Ok startupTargets ->
@@ -171,8 +242,11 @@ module App =
                     Commits = []
                     SelectedCommitHash = None
                     SelectedDiffHash = None
-                    SelectedDiff = None
+                    SelectedDiffFiles = None
+                    SelectedDiffFileKey = None
+                    SelectedDiffFile = None
                     SelectionStartedAtTicks = None
+                    SelectedDiffFileStartedAtTicks = None
                 }
 
             model, loadHistory startupTargets
@@ -189,39 +263,124 @@ module App =
             { model with Status = sprintf "Error: %s" err }, Cmd.none
         | SelectCommit (hash, startedAtTicks) ->
             cancelCurrentSelectionJob ()
+            cancelCurrentFileSelectionJob ()
             let nextModel =
                 {
                     model with
                         SelectedCommitHash = Some hash
+                        SelectedDiffHash = None
+                        SelectedDiffFiles = None
+                        SelectedDiffFileKey = None
+                        SelectedDiffFile = None
                         SelectionStartedAtTicks = Some startedAtTicks
+                        SelectedDiffFileStartedAtTicks = None
                 }
 
-            let cmd = startSelectionLoad hash startedAtTicks
+            let cmd = startDiffFilesLoad hash startedAtTicks
             nextModel, cmd
-        | DiffLoaded (hash, startedAtTicks, Ok diff) ->
+        | DiffFilesLoaded (hash, startedAtTicks, Ok files) ->
             match model.SelectedCommitHash, model.SelectionStartedAtTicks with
             | Some currentHash, Some currentStartedAtTicks when currentHash = hash && currentStartedAtTicks = startedAtTicks ->
                 let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
-                logTiming (sprintf "commit click -> diff ready hash=%s elapsed=%.1fms" hash elapsed.TotalMilliseconds)
+                logTiming (sprintf "commit click -> file list ready hash=%s elapsed=%.1fms files=%d" hash elapsed.TotalMilliseconds files.Length)
             | _ ->
                 ()
 
             if model.SelectedCommitHash = Some hash && model.SelectionStartedAtTicks = Some startedAtTicks then
                 clearCurrentSelectionJob startedAtTicks
-                { model with SelectedDiffHash = Some hash; SelectedDiff = Some diff; SelectionStartedAtTicks = None }, Cmd.none
+
+                let selectedFileSummary =
+                    match model.SelectedDiffFileKey with
+                    | Some key ->
+                        tryFindDiffFileSummary key files
+                    | None ->
+                        None
+                    |> Option.orElse (files |> List.tryHead)
+
+                let selectedFileKey: GitService.DiffFileKey option =
+                    selectedFileSummary |> Option.map diffFileKeyOfSummary
+
+                let fileStartedAtTicks = Stopwatch.GetTimestamp()
+                let nextModel =
+                    {
+                        model with
+                            SelectedDiffHash = Some hash
+                            SelectedDiffFiles = Some files
+                            SelectedDiffFileKey = selectedFileKey
+                            SelectedDiffFile = None
+                            SelectionStartedAtTicks = None
+                            SelectedDiffFileStartedAtTicks = selectedFileKey |> Option.map (fun _ -> fileStartedAtTicks)
+                    }
+
+                let cmd =
+                    match selectedFileSummary with
+                    | Some file ->
+                        startDiffFileLoad hash file.OldPath file.NewPath fileStartedAtTicks
+                    | None ->
+                        Cmd.none
+
+                nextModel, cmd
             else
                 model, Cmd.none
-        | DiffLoaded (hash, startedAtTicks, Error err) ->
+        | DiffFilesLoaded (hash, startedAtTicks, Error err) ->
             match model.SelectedCommitHash, model.SelectionStartedAtTicks with
             | Some currentHash, Some currentStartedAtTicks when currentHash = hash && currentStartedAtTicks = startedAtTicks ->
                 let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
-                logTiming (sprintf "commit click -> diff error hash=%s elapsed=%.1fms error=%s" hash elapsed.TotalMilliseconds err)
+                logTiming (sprintf "commit click -> file list error hash=%s elapsed=%.1fms error=%s" hash elapsed.TotalMilliseconds err)
             | _ ->
                 ()
 
             if model.SelectedCommitHash = Some hash && model.SelectionStartedAtTicks = Some startedAtTicks then
                 clearCurrentSelectionJob startedAtTicks
-                { model with Status = sprintf "Diff Error: %s" err; SelectedDiffHash = None; SelectedDiff = None; SelectionStartedAtTicks = None }, Cmd.none
+                { model with Status = sprintf "Diff Error: %s" err; SelectedDiffHash = None; SelectedDiffFiles = None; SelectedDiffFileKey = None; SelectedDiffFile = None; SelectionStartedAtTicks = None; SelectedDiffFileStartedAtTicks = None }, Cmd.none
+            else
+                model, Cmd.none
+        | SelectDiffFile (hash, oldPath, newPath, startedAtTicks) ->
+            let key: GitService.DiffFileKey =
+                {
+                    OldPath = oldPath
+                    NewPath = newPath
+                }
+
+            if model.SelectedCommitHash = Some hash && model.SelectedDiffHash = Some hash then
+                let nextModel =
+                    {
+                        model with
+                            SelectedDiffFileKey = Some key
+                            SelectedDiffFile = None
+                            SelectedDiffFileStartedAtTicks = Some startedAtTicks
+                    }
+
+                let cmd = startDiffFileLoad hash oldPath newPath startedAtTicks
+                nextModel, cmd
+            else
+                model, Cmd.none
+        | DiffFileLoaded (hash, oldPath, newPath, startedAtTicks, Ok file) ->
+            match model.SelectedCommitHash, model.SelectedDiffHash, model.SelectedDiffFileStartedAtTicks with
+            | Some currentCommitHash, Some currentDiffHash, Some currentStartedAtTicks
+                when currentCommitHash = hash && currentDiffHash = hash && currentStartedAtTicks = startedAtTicks ->
+                let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
+                logTiming (sprintf "file click -> diff ready hash=%s path=%s elapsed=%.1fms" hash newPath elapsed.TotalMilliseconds)
+            | _ ->
+                ()
+
+            if model.SelectedCommitHash = Some hash && model.SelectedDiffHash = Some hash && model.SelectedDiffFileStartedAtTicks = Some startedAtTicks then
+                clearCurrentFileSelectionJob startedAtTicks
+                { model with SelectedDiffFile = Some file; SelectedDiffFileStartedAtTicks = None }, Cmd.none
+            else
+                model, Cmd.none
+        | DiffFileLoaded (hash, oldPath, newPath, startedAtTicks, Error err) ->
+            match model.SelectedCommitHash, model.SelectedDiffHash, model.SelectedDiffFileStartedAtTicks with
+            | Some currentCommitHash, Some currentDiffHash, Some currentStartedAtTicks
+                when currentCommitHash = hash && currentDiffHash = hash && currentStartedAtTicks = startedAtTicks ->
+                let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
+                logTiming (sprintf "file click -> diff error hash=%s path=%s elapsed=%.1fms error=%s" hash newPath elapsed.TotalMilliseconds err)
+            | _ ->
+                ()
+
+            if model.SelectedCommitHash = Some hash && model.SelectedDiffHash = Some hash && model.SelectedDiffFileStartedAtTicks = Some startedAtTicks then
+                clearCurrentFileSelectionJob startedAtTicks
+                { model with Status = sprintf "Diff Error: %s" err; SelectedDiffFile = None; SelectedDiffFileStartedAtTicks = None }, Cmd.none
             else
                 model, Cmd.none
         | CreateTag (hash, name) ->

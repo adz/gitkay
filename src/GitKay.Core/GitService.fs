@@ -324,10 +324,10 @@ module GitService =
         {
             Summary: DiffSummary
             FileList: DiffFileSummary list
-            SelectedFileContent: Map<DiffFileKey, FileDiff>
         }
 
     let private diffCache = ConcurrentDictionary<string, DiffCacheEntry>()
+    let private diffFileContentCache = ConcurrentDictionary<DiffFileKey, FileDiff>()
 
     let private buildDisplayPath oldPath newPath =
         if oldPath = "/dev/null" then
@@ -350,6 +350,25 @@ module GitService =
         {
             OldPath = file.OldPath
             NewPath = file.NewPath
+        }
+
+    let private toDiffFileSummaryFromPatchEntry (entry: PatchEntryChanges) =
+        let oldPath =
+            if String.IsNullOrWhiteSpace entry.OldPath then
+                "/dev/null"
+            else
+                entry.OldPath
+
+        let newPath =
+            if String.IsNullOrWhiteSpace entry.Path then
+                "/dev/null"
+            else
+                entry.Path
+
+        {
+            OldPath = oldPath
+            NewPath = newPath
+            DisplayPath = buildDisplayPath oldPath newPath
         }
 
     let buildDiffCacheEntry (hash: string) (files: FileDiff list) =
@@ -376,7 +395,24 @@ module GitService =
                     RemovedLines = removedLines
                 }
             FileList = files |> List.map toDiffFileSummary
-            SelectedFileContent = files |> List.map (fun file -> toDiffFileKey file, file) |> Map.ofList
+        }
+
+    let private buildDiffCacheEntryFromPatch (hash: string) (patch: Patch) =
+        let fileList =
+            patch
+            |> Seq.cast<PatchEntryChanges>
+            |> Seq.map toDiffFileSummaryFromPatchEntry
+            |> Seq.toList
+
+        {
+            Summary =
+                {
+                    Hash = hash
+                    FileCount = fileList.Length
+                    AddedLines = patch.LinesAdded
+                    RemovedLines = patch.LinesDeleted
+                }
+            FileList = fileList
         }
 
     let private loadDiffCacheEntry (hash: string) =
@@ -391,7 +427,7 @@ module GitService =
                     | Some parent -> repo.Diff.Compare<Patch>(parent.Tree, commit.Tree)
                     | None -> repo.Diff.Compare<Patch>(null, commit.Tree)
 
-                Ok (buildDiffCacheEntry hash (parseDiff patch.Content))
+                Ok (buildDiffCacheEntryFromPatch hash patch)
         )
 
     let private getDiffCacheEntry (hash: string) =
@@ -404,6 +440,34 @@ module GitService =
             | Ok entry ->
                 diffCache.TryAdd(hash, entry) |> ignore
                 Ok (entry, false)
+
+    let private loadDiffFileContent (hash: string) (oldPath: string) (newPath: string) =
+        let candidatePaths =
+            if oldPath = "/dev/null" then
+                [ newPath ]
+            elif newPath = "/dev/null" then
+                [ oldPath ]
+            elif oldPath = newPath then
+                [ oldPath ]
+            else
+                [ oldPath; newPath ]
+
+        withRepository (fun repo ->
+            let commit = repo.Lookup<LibGit2Sharp.Commit>(hash)
+
+            if isNull commit then
+                Error (sprintf "Commit not found: %s" hash)
+            else
+                use patch =
+                    match commit.Parents |> Seq.tryHead with
+                    | Some parent -> repo.Diff.Compare<Patch>(parent.Tree, commit.Tree, candidatePaths, ExplicitPathsOptions())
+                    | None -> repo.Diff.Compare<Patch>(null, commit.Tree, candidatePaths, ExplicitPathsOptions())
+
+                match parseDiff patch.Content with
+                | [ file ] -> Ok file
+                | [] -> Error (sprintf "File not found in commit %s: %s -> %s" hash oldPath newPath)
+                | _ -> Error (sprintf "Multiple files matched in commit %s: %s -> %s" hash oldPath newPath)
+        )
 
     let private resolveStartupTargets (repo: Repository) (targets: StartupTarget list) =
         let hasAll = targets |> List.exists ((=) All)
@@ -463,24 +527,29 @@ module GitService =
             logTiming (sprintf "diff load hash=%s elapsed=%.1fms error=%s" hash elapsed.TotalMilliseconds err)
             Error err
         | Ok (entry, wasCached) ->
-            let files =
-                entry.FileList
-                |> List.choose (fun file ->
-                    entry.SelectedFileContent
-                    |> Map.tryFind
-                        {
-                            OldPath = file.OldPath
-                            NewPath = file.NewPath
-                        })
+            let rec loadFiles remainingFiles accumulated =
+                match remainingFiles with
+                | [] -> Ok (List.rev accumulated)
+                | file :: rest ->
+                    match loadDiffFileContent hash file.OldPath file.NewPath with
+                    | Ok content -> loadFiles rest (content :: accumulated)
+                    | Error err -> Error err
 
-            let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
+            let files = loadFiles entry.FileList []
+            match files with
+            | Error err ->
+                let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
+                logTiming (sprintf "diff load hash=%s elapsed=%.1fms error=%s" hash elapsed.TotalMilliseconds err)
+                Error err
+            | Ok files ->
+                let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
 
-            if wasCached then
-                logTiming (sprintf "diff cache hit hash=%s elapsed=%.1fms files=%d" hash elapsed.TotalMilliseconds files.Length)
-            else
-                logTiming (sprintf "diff load hash=%s elapsed=%.1fms files=%d" hash elapsed.TotalMilliseconds files.Length)
+                if wasCached then
+                    logTiming (sprintf "diff cache hit hash=%s elapsed=%.1fms files=%d" hash elapsed.TotalMilliseconds files.Length)
+                else
+                    logTiming (sprintf "diff load hash=%s elapsed=%.1fms files=%d" hash elapsed.TotalMilliseconds files.Length)
 
-            Ok files
+                Ok files
 
     let fetchDiffSummary (hash: string) =
         match getDiffCacheEntry hash with
@@ -493,13 +562,27 @@ module GitService =
         | Ok (entry, _) -> Ok entry.FileList
 
     let fetchDiffFileContent (hash: string) (oldPath: string) (newPath: string) =
-        match getDiffCacheEntry hash with
-        | Error err -> Error err
-        | Ok (entry, _) ->
-            match entry.SelectedFileContent |> Map.tryFind { OldPath = oldPath; NewPath = newPath } with
-            | Some file -> Ok file
-            | None ->
-                Error (sprintf "File not found in commit %s: %s -> %s" hash oldPath newPath)
+        let startedAtTicks = Stopwatch.GetTimestamp()
+        let key = { OldPath = oldPath; NewPath = newPath }
+
+        match diffFileContentCache.TryGetValue key with
+        | true, file ->
+            let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
+            logTiming (sprintf "file diff cache hit hash=%s path=%s -> %s elapsed=%.1fms" hash oldPath newPath elapsed.TotalMilliseconds)
+            Ok file
+        | false, _ ->
+            let result = loadDiffFileContent hash oldPath newPath
+
+            match result with
+            | Error err ->
+                let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
+                logTiming (sprintf "file diff load hash=%s path=%s -> %s elapsed=%.1fms error=%s" hash oldPath newPath elapsed.TotalMilliseconds err)
+                Error err
+            | Ok file ->
+                diffFileContentCache.TryAdd(key, file) |> ignore
+                let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
+                logTiming (sprintf "file diff load hash=%s path=%s -> %s elapsed=%.1fms" hash oldPath newPath elapsed.TotalMilliseconds)
+                Ok file
 
     let fetchFileBlame (revision: string) (path: string) =
         if path = "/dev/null" then
