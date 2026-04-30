@@ -14,6 +14,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private bool _firstPaintLogged;
     private bool _suppressSelectionDispatch;
     private bool _suppressDiffSelectionSync;
+    private object? _commitsSource;
     private string? _selectedDiffHash;
 
     [ObservableProperty] private string _status = "";
@@ -91,13 +92,18 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             _selectedDiffHash = selectedDiffHash;
         }
 
-        Commits.SyncWith(
-            model.Commits,
-            m => m.Commit.Hash,
-            vm => vm.FullHash,
-            _ => new CommitProjection(),
-            _dispatch!
-        );
+        if (!ReferenceEquals(_commitsSource, model.Commits))
+        {
+            Commits.SyncWith(
+                model.Commits,
+                m => m.Commit.Hash,
+                vm => vm.FullHash,
+                _ => new CommitProjection(),
+                _dispatch!
+            );
+
+            _commitsSource = model.Commits;
+        }
 
         CommitProjection? selectedCommit = null;
         if (model.SelectedCommitHash != null)

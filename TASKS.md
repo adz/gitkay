@@ -35,7 +35,7 @@
 9. [x] Replace the nested diff `ItemsControl` tree in `src/GitKay.UI/MainWindow.axaml` with a virtualized or custom-rendered line view that only realizes visible rows.
 10. [x] Add file selection and focus so the right-side file list drives the left-side diff view instead of only showing a static list.
 11. [x] Make the diff pane scroll to the selected file immediately when commit selection changes.
-12. [ ] Keep the commit list virtualization lightweight and ensure selection does not trigger unnecessary remeasure/rebind work.
+12. [x] Keep the commit list virtualization lightweight and ensure selection does not trigger unnecessary remeasure/rebind work.
 13. [ ] Add lazy loading for per-file diff content so one commit can open instantly while individual files hydrate on demand.
 14. [ ] Keep write-side git operations working, but move them off the CLI only if they become hot or user-visible enough to matter.
 15. [ ] Add search UI and search plumbing for commit hash, commit message/subject, author, file/path, text across commit contents and diffs, and ref/tag/branch lookup.
