@@ -30,7 +30,7 @@
 4. [x] Accept CLI startup targets for branch, sha, tag, and `--all`, and initialize the commit history view from the selected ref set.
 5. [x] Introduce a gitk-style diff cache in `src/GitKay.Core/GitService.fs` keyed by commit hash, with immutable entries for summary, file list, and selected-file content.
 6. [x] Add `FsFlow` orchestration for diff and cache jobs in `src/GitKay.Core/App.fs`, with cancellation and latest-wins semantics.
-7. [ ] Remove blame from the normal commit-open path entirely; keep blame behind an explicit user action and file scope only.
+7. [x] Remove blame from the normal commit-open path entirely; keep blame behind an explicit user action and file scope only.
 8. [ ] Stop rebuilding the whole diff object graph on every update in `src/GitKay.UI/MainProjection.cs`; bind to cached model data instead.
 9. [ ] Replace the nested diff `ItemsControl` tree in `src/GitKay.UI/MainWindow.axaml` with a virtualized or custom-rendered line view that only realizes visible rows.
 10. [ ] Add file selection and focus so the right-side file list drives the left-side diff view instead of only showing a static list.

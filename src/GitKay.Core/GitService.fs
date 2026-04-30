@@ -179,36 +179,6 @@ module GitService =
 
         results |> List.rev |> Map.ofList
 
-    let private fetchBlameRange (revision: string) (path: string) (startLine: int) (endLine: int) =
-        if startLine > endLine || path = "/dev/null" then
-            Map.empty
-        else
-            let args =
-                sprintf "blame --line-porcelain -L %d,%d %s -- %s" startLine endLine revision (quoteArg path)
-
-            match executeGitCommand args with
-            | Ok output -> parseBlamePorcelain output
-            | Error _ -> Map.empty
-
-    let private toBlamedDiffLine (line: DiffLine) =
-        {
-            Line = line
-            Blame = None
-        }
-
-    let private toBlamedDiffHunk (hunk: DiffHunk) =
-        {
-            Header = hunk.Header
-            Lines = hunk.Lines |> List.map toBlamedDiffLine
-        }
-
-    let private toBlamedFileDiff (file: FileDiff) =
-        {
-            OldPath = file.OldPath
-            NewPath = file.NewPath
-            Hunks = file.Hunks |> List.map toBlamedDiffHunk
-        }
-
     let private toCommitModel (commit: LibGit2Sharp.Commit) : Models.Commit =
         {
             Hash = commit.Sha
@@ -531,11 +501,16 @@ module GitService =
             | None ->
                 Error (sprintf "File not found in commit %s: %s -> %s" hash oldPath newPath)
 
-    let fetchDiffWithBlame (hash: string) =
-        match fetchDiff hash with
-        | Error err -> Error err
-        | Ok files ->
-            Ok (files |> List.map toBlamedFileDiff)
+    let fetchFileBlame (revision: string) (path: string) =
+        if path = "/dev/null" then
+            Ok Map.empty
+        else
+            let args =
+                sprintf "blame --line-porcelain %s -- %s" revision (quoteArg path)
+
+            match executeGitCommand args with
+            | Ok output -> Ok (parseBlamePorcelain output)
+            | Error err -> Error err
 
     let createTag (hash: string) (name: string) =
         executeGitCommand (sprintf "tag %s %s" name hash)
