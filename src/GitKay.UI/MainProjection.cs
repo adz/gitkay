@@ -11,6 +11,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 {
     private readonly long _createdAtTicks = Stopwatch.GetTimestamp();
     private bool _firstPaintLogged;
+    private bool _suppressSelectionDispatch;
 
     [ObservableProperty] private string _status = "";
 
@@ -73,11 +74,27 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
         if (selectedCommit != null)
         {
-            SelectedCommit = selectedCommit;
+            _suppressSelectionDispatch = true;
+            try
+            {
+                SelectedCommit = selectedCommit;
+            }
+            finally
+            {
+                _suppressSelectionDispatch = false;
+            }
         }
         else if (SelectedCommit != null)
         {
-            SelectedCommit = null;
+            _suppressSelectionDispatch = true;
+            try
+            {
+                SelectedCommit = null;
+            }
+            finally
+            {
+                _suppressSelectionDispatch = false;
+            }
         }
 
         var elapsed = Stopwatch.GetElapsedTime(startedAtTicks);
@@ -105,6 +122,11 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     partial void OnSelectedCommitChanged(CommitProjection? value)
     {
+        if (_suppressSelectionDispatch)
+        {
+            return;
+        }
+
         if (value != null)
         {
             var startedAtTicks = Stopwatch.GetTimestamp();

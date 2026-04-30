@@ -83,6 +83,16 @@ summary Another line
 
 module AppTests =
 
+    let private sampleCommit hash subject : Models.Commit =
+        {
+            Hash = hash
+            AuthorName = "Author"
+            AuthorEmail = "author@example.com"
+            Timestamp = 1710000000L
+            Parents = []
+            Subject = subject
+        }
+
     let private sampleDiff : Models.FileDiff list =
         [
             {
@@ -101,6 +111,46 @@ module AppTests =
             SelectedDiff = None
             SelectionStartedAtTicks = None
         }
+
+    [<Fact>]
+    let ``HistoryLoaded should auto-select the first commit when nothing is selected`` () =
+        let commits =
+            [
+                sampleCommit "first" "First"
+                sampleCommit "second" "Second"
+            ]
+
+        let next, _ = App.update (App.Msg.HistoryLoaded (Ok commits)) emptyModel
+
+        test <@ next.Status = "Loaded 2 commits" @>
+        test <@ next.Commits.Length = 2 @>
+        test <@ next.SelectedCommitHash = Some "first" @>
+        test <@ next.SelectedDiffHash = None @>
+        test <@ next.SelectedDiff = None @>
+        test <@ next.SelectionStartedAtTicks = None @>
+
+    [<Fact>]
+    let ``HistoryLoaded should keep an existing selected commit when it still exists`` () =
+        let commits =
+            [
+                sampleCommit "first" "First"
+                sampleCommit "second" "Second"
+            ]
+
+        let initial =
+            {
+                emptyModel with
+                    SelectedCommitHash = Some "second"
+                    SelectedDiffHash = Some "second"
+                    SelectedDiff = Some sampleDiff
+            }
+
+        let next, _ = App.update (App.Msg.HistoryLoaded (Ok commits)) initial
+
+        test <@ next.SelectedCommitHash = Some "second" @>
+        test <@ next.SelectedDiffHash = Some "second" @>
+        test <@ next.SelectedDiff = Some sampleDiff @>
+        test <@ next.SelectionStartedAtTicks = None @>
 
     [<Fact>]
     let ``SelectCommit should update selection without clearing diff state`` () =

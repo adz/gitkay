@@ -38,6 +38,49 @@ module App =
         with _ ->
             ()
 
+    let private historyLoadSelection (model: Model) (commits: Graph.CommitGraphInfo list) =
+        let selectionExistsInHistory =
+            match model.SelectedCommitHash with
+            | Some hash -> commits |> List.exists (fun info -> info.Commit.Hash = hash)
+            | None -> false
+
+        let selectedHash =
+            match model.SelectedCommitHash, selectionExistsInHistory, commits with
+            | Some hash, true, _ -> Some hash
+            | _, _, firstCommit :: _ -> Some firstCommit.Commit.Hash
+            | _ -> None
+
+        let diffReadyForSelection =
+            match selectedHash, model.SelectedDiffHash, model.SelectedDiff with
+            | Some hash, Some diffHash, Some _ when hash = diffHash -> true
+            | _ -> false
+
+        let selectionChanged = selectedHash <> model.SelectedCommitHash
+
+        let nextModel =
+            {
+                model with
+                    Status = sprintf "Loaded %d commits" commits.Length
+                    Commits = commits
+                    SelectedCommitHash = selectedHash
+                    SelectedDiffHash = if diffReadyForSelection then model.SelectedDiffHash else None
+                    SelectedDiff = if diffReadyForSelection then model.SelectedDiff else None
+                    SelectionStartedAtTicks = if selectionChanged then None else model.SelectionStartedAtTicks
+            }
+
+        let cmd =
+            match selectedHash, diffReadyForSelection with
+            | Some hash, false ->
+                Cmd.OfFunc.either
+                    GitService.fetchDiff
+                    hash
+                    (fun diff -> DiffLoaded(hash, diff))
+                    (fun ex -> DiffLoaded(hash, Error ex.Message))
+            | _ ->
+                Cmd.none
+
+        nextModel, cmd
+
     let init () : Model * Cmd<Msg> =
         let model =
             {
@@ -60,7 +103,7 @@ module App =
             nextModel, cmd
         | HistoryLoaded (Ok commits) ->
             let graphInfo = Graph.calculateLanes commits
-            { model with Status = sprintf "Loaded %d commits" commits.Length; Commits = graphInfo }, Cmd.none
+            historyLoadSelection model graphInfo
         | HistoryLoaded (Error err) ->
             { model with Status = sprintf "Error: %s" err }, Cmd.none
         | SelectCommit (hash, startedAtTicks) ->
