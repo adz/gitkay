@@ -215,7 +215,7 @@ module AppTests =
         test <@ next.SelectedCommitHash = Some "first" @>
         test <@ next.SelectedDiffHash = None @>
         test <@ next.SelectedDiff = None @>
-        test <@ next.SelectionStartedAtTicks = None @>
+        test <@ next.SelectionStartedAtTicks.IsSome @>
 
     [<Fact>]
     let ``HistoryLoaded should keep an existing selected commit when it still exists`` () =
@@ -269,9 +269,34 @@ module AppTests =
                     SelectionStartedAtTicks = Some 42L
             }
 
-        let next, _ = App.update (App.Msg.DiffLoaded("old", Ok sampleDiff)) initial
+        let next, _ = App.update (App.Msg.DiffLoaded("old", 1L, Ok sampleDiff)) initial
 
         test <@ next.SelectedCommitHash = Some "new" @>
         test <@ next.SelectedDiffHash = None @>
         test <@ next.SelectedDiff = None @>
         test <@ next.SelectionStartedAtTicks = Some 42L @>
+
+    [<Fact>]
+    let ``DiffLoaded should ignore stale results for the same commit when a newer request exists`` () =
+        let initial =
+            {
+                emptyModel with
+                    SelectedCommitHash = Some "new"
+                    SelectedDiffHash = None
+                    SelectedDiff = None
+                    SelectionStartedAtTicks = Some 42L
+            }
+
+        let stale, _ = App.update (App.Msg.DiffLoaded("new", 41L, Ok sampleDiff)) initial
+
+        test <@ stale.SelectedCommitHash = Some "new" @>
+        test <@ stale.SelectedDiffHash = None @>
+        test <@ stale.SelectedDiff = None @>
+        test <@ stale.SelectionStartedAtTicks = Some 42L @>
+
+        let current, _ = App.update (App.Msg.DiffLoaded("new", 42L, Ok sampleDiff)) initial
+
+        test <@ current.SelectedCommitHash = Some "new" @>
+        test <@ current.SelectedDiffHash = Some "new" @>
+        test <@ current.SelectedDiff = Some sampleDiff @>
+        test <@ current.SelectionStartedAtTicks = None @>
