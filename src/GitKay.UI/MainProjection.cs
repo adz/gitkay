@@ -12,6 +12,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private readonly long _createdAtTicks = Stopwatch.GetTimestamp();
     private bool _firstPaintLogged;
     private bool _suppressSelectionDispatch;
+    private string? _selectedDiffHash;
 
     [ObservableProperty] private string _status = "";
 
@@ -37,17 +38,29 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     {
         var startedAtTicks = Stopwatch.GetTimestamp();
         Status = model.Status;
-        SelectedDiffFiles.Clear();
 
-        if (model.SelectedCommitHash != null
+        // The core diff is cached by commit hash, so only repopulate the UI collection when the selected diff changes.
+        var selectedDiffHash =
+            model.SelectedCommitHash != null
             && model.SelectedDiffHash != null
             && model.SelectedCommitHash.Value == model.SelectedDiffHash.Value
-            && model.SelectedDiff != null)
+            && model.SelectedDiff != null
+                ? model.SelectedDiffHash.Value
+                : null;
+
+        if (!string.Equals(_selectedDiffHash, selectedDiffHash, StringComparison.Ordinal))
         {
-            foreach (var file in model.SelectedDiff.Value)
+            SelectedDiffFiles.Clear();
+
+            if (selectedDiffHash != null && model.SelectedDiff != null)
             {
-                SelectedDiffFiles.Add(new DiffFileProjection(file));
+                foreach (var file in model.SelectedDiff.Value)
+                {
+                    SelectedDiffFiles.Add(new DiffFileProjection(file));
+                }
             }
+
+            _selectedDiffHash = selectedDiffHash;
         }
 
         Commits.SyncWith(
