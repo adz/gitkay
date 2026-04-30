@@ -1,8 +1,10 @@
 namespace GitKay.Tests
 
 open System
+open System.IO
 open Xunit
 open Swensen.Unquote
+open LibGit2Sharp
 open GitKay.Core
 open GitKay.UI
 
@@ -20,6 +22,43 @@ module GitServiceTests =
                     }
                 ]
         }
+
+    let private withTempRepository (action: string -> Repository -> 'T) =
+        let root = Path.Combine(Path.GetTempPath(), "gitkay-tests-" + Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(root) |> ignore
+
+        try
+            Repository.Init(root) |> ignore
+            use repo = new Repository(root)
+            repo.Config.Add("user.name", "GitKay Tests") |> ignore
+            repo.Config.Add("user.email", "gitkay@example.com") |> ignore
+            let previousDirectory = Environment.CurrentDirectory
+            Environment.CurrentDirectory <- root
+
+            try
+                action root repo
+            finally
+                Environment.CurrentDirectory <- previousDirectory
+        finally
+            try
+                Directory.Delete(root, true)
+            with _ ->
+                ()
+
+    let private writeFile (root: string) (relativePath: string) (contents: string) =
+        let fullPath = Path.Combine(root, relativePath)
+        let directory = Path.GetDirectoryName(fullPath)
+
+        if not (String.IsNullOrWhiteSpace directory) then
+            Directory.CreateDirectory(directory) |> ignore
+
+        File.WriteAllText(fullPath, contents)
+
+    let private commitFile (repo: Repository) (root: string) (relativePath: string) (contents: string) (message: string) =
+        writeFile root relativePath contents
+        Commands.Stage(repo, relativePath)
+        let signature = Signature("GitKay Tests", "gitkay@example.com", DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero))
+        repo.Commit(message, signature, signature)
 
     [<Fact>]
     let ``parseCommitLine should correctly parse a valid git log line`` () =
@@ -162,6 +201,89 @@ summary Another line
         test <@ entry.Summary.RemovedLines = 1 @>
         test <@ entry.FileList.[0].DisplayPath = "foo.txt" @>
         test <@ entry.FileList.[1].DisplayPath = "bar.txt (new file)" @>
+
+    [<Fact>]
+    let ``createTag and createBranch should update repository refs without the CLI`` () =
+        withTempRepository (fun root repo ->
+            let commit = commitFile repo root "base.txt" "base" "base commit"
+
+            match GitService.createTag commit.Sha "v1.0.0" with
+            | Ok _ -> ()
+            | Error err -> failwith err
+
+            match GitService.createBranch commit.Sha "topic" with
+            | Ok _ -> ()
+            | Error err -> failwith err
+
+            test <@ repo.Tags["v1.0.0"] <> null @>
+            test <@ repo.Tags["v1.0.0"].Target.Id.Sha = commit.Sha @>
+            test <@ repo.Branches["topic"] <> null @>
+            test <@ repo.Branches["topic"].Tip.Sha = commit.Sha @>)
+
+    [<Fact>]
+    let ``resetTo should move HEAD and working tree to the target commit`` () =
+        withTempRepository (fun root repo ->
+            let baseCommit = commitFile repo root "app.txt" "base" "base commit"
+            let _ = repo.CreateBranch("main", baseCommit)
+            Commands.Checkout(repo, repo.Branches["main"]) |> ignore
+
+            let updatedCommit = commitFile repo root "app.txt" "updated" "updated commit"
+
+            match GitService.resetTo baseCommit.Sha true with
+            | Ok _ -> ()
+            | Error err -> failwith err
+
+            use checkRepo = new Repository(root)
+            test <@ checkRepo.Head.Tip.Sha = baseCommit.Sha @>
+            test <@ File.ReadAllText(Path.Combine(root, "app.txt")) = "base" @>
+            test <@ checkRepo.Head.Tip.Sha <> updatedCommit.Sha @>)
+
+    [<Fact>]
+    let ``soft reset should move HEAD without rewriting the working tree`` () =
+        withTempRepository (fun root repo ->
+            let baseCommit = commitFile repo root "app.txt" "base" "base commit"
+            let _ = repo.CreateBranch("main", baseCommit)
+            Commands.Checkout(repo, repo.Branches["main"]) |> ignore
+
+            let updatedCommit = commitFile repo root "app.txt" "updated" "updated commit"
+
+            match GitService.resetTo baseCommit.Sha false with
+            | Ok _ -> ()
+            | Error err -> failwith err
+
+            use checkRepo = new Repository(root)
+            test <@ checkRepo.Head.Tip.Sha = baseCommit.Sha @>
+            test <@ File.ReadAllText(Path.Combine(root, "app.txt")) = "updated" @>
+            test <@ checkRepo.Head.Tip.Sha <> updatedCommit.Sha @>)
+
+    [<Fact>]
+    let ``cherryPick and revert should use repository-backed operations`` () =
+        withTempRepository (fun root repo ->
+            let baseCommit = commitFile repo root "app.txt" "base" "base commit"
+            let topicBranch = repo.CreateBranch("topic", baseCommit)
+            Commands.Checkout(repo, topicBranch) |> ignore
+
+            let featureCommit = commitFile repo root "app.txt" "feature" "feature commit"
+            repo.Reset(ResetMode.Hard, baseCommit)
+
+            match GitService.cherryPick featureCommit.Sha with
+            | Ok _ -> ()
+            | Error err -> failwith err
+
+            use pickedRepo = new Repository(root)
+            test <@ File.ReadAllText(Path.Combine(root, "app.txt")) = "feature" @>
+            test <@ pickedRepo.Head.Tip.Sha <> featureCommit.Sha @>
+
+            let pickedCommit = pickedRepo.Head.Tip
+
+            match GitService.revert pickedCommit.Sha with
+            | Ok _ -> ()
+            | Error err -> failwith err
+
+            use revertedRepo = new Repository(root)
+            test <@ File.ReadAllText(Path.Combine(root, "app.txt")) = "base" @>
+            test <@ revertedRepo.Head.Tip.Sha <> pickedCommit.Sha @>
+            test <@ revertedRepo.Head.Tip.Sha <> baseCommit.Sha @>)
 
     [<Fact>]
     let ``searchCommitsWithDiffLoader should match metadata, refs, paths, and text`` () =

@@ -532,6 +532,16 @@ module GitService =
                 | _ -> Error (sprintf "Multiple files matched in commit %s: %s -> %s" hash oldPath newPath)
         )
 
+    let private loadCommit (repo: Repository) (hash: string) =
+        match repo.Lookup<LibGit2Sharp.Commit>(hash) with
+        | null -> Error (sprintf "Commit not found: %s" hash)
+        | commit -> Ok commit
+
+    let private buildCommitterSignature (repo: Repository) =
+        match repo.Config.BuildSignature(DateTimeOffset.UtcNow) with
+        | null -> Error "Could not determine the git user identity. Configure user.name and user.email."
+        | signature -> Ok signature
+
     let private resolveStartupTargets (repo: Repository) (targets: StartupTarget list) =
         let hasAll = targets |> List.exists ((=) StartupTarget.All)
 
@@ -822,17 +832,65 @@ module GitService =
             | Error err -> Error err
 
     let createTag (hash: string) (name: string) =
-        executeGitCommand (sprintf "tag %s %s" name hash)
+        withRepository (fun repo ->
+            match loadCommit repo hash with
+            | Error err -> Error err
+            | Ok commit ->
+                try
+                    repo.ApplyTag(name, commit.Sha) |> ignore
+                    Ok ""
+                with ex ->
+                    Error ex.Message)
 
     let createBranch (hash: string) (name: string) =
-        executeGitCommand (sprintf "branch %s %s" name hash)
+        withRepository (fun repo ->
+            match loadCommit repo hash with
+            | Error err -> Error err
+            | Ok commit ->
+                try
+                    repo.CreateBranch(name, commit) |> ignore
+                    Ok ""
+                with ex ->
+                    Error ex.Message)
 
     let cherryPick (hash: string) =
-        executeGitCommand (sprintf "cherry-pick %s" hash)
+        withRepository (fun repo ->
+            match loadCommit repo hash, buildCommitterSignature repo with
+            | Error err, _ -> Error err
+            | _, Error err -> Error err
+            | Ok commit, Ok committer ->
+                try
+                    let result = repo.CherryPick(commit, committer)
+
+                    match result.Status with
+                    | CherryPickStatus.CherryPicked -> Ok ""
+                    | status -> Error (sprintf "Cherry-pick failed: %A" status)
+                with ex ->
+                    Error ex.Message)
 
     let resetTo (hash: string) (hard: bool) =
-        let mode = if hard then "--hard" else "--soft"
-        executeGitCommand (sprintf "reset %s %s" mode hash)
+        withRepository (fun repo ->
+            match loadCommit repo hash with
+            | Error err -> Error err
+            | Ok commit ->
+                try
+                    let mode = if hard then ResetMode.Hard else ResetMode.Soft
+                    repo.Reset(mode, commit)
+                    Ok ""
+                with ex ->
+                    Error ex.Message)
 
     let revert (hash: string) =
-        executeGitCommand (sprintf "revert --no-edit %s" hash)
+        withRepository (fun repo ->
+            match loadCommit repo hash, buildCommitterSignature repo with
+            | Error err, _ -> Error err
+            | _, Error err -> Error err
+            | Ok commit, Ok committer ->
+                try
+                    let result = repo.Revert(commit, committer)
+
+                    match result.Status with
+                    | RevertStatus.Reverted -> Ok ""
+                    | status -> Error (sprintf "Revert failed: %A" status)
+                with ex ->
+                    Error ex.Message)
