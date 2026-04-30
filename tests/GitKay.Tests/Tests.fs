@@ -6,6 +6,19 @@ open GitKay.Core
 
 module GitServiceTests =
 
+    let private sampleFile oldPath newPath lines : Models.FileDiff =
+        {
+            OldPath = oldPath
+            NewPath = newPath
+            Hunks =
+                [
+                    {
+                        Header = "@@ -1 +1 @@"
+                        Lines = lines
+                    }
+                ]
+        }
+
     [<Fact>]
     let ``parseCommitLine should correctly parse a valid git log line`` () =
         let line = "1479a0237c09d57a408759556d11f0a2830f69a5|1746014400|Your Name|you@example.com|a1b2c3d4 e5f6g7h8|Initial commit"
@@ -102,6 +115,51 @@ summary Another line
         match allResult with
         | Error err -> failwith err
         | Ok targets -> test <@ targets = [ GitService.StartupTarget.All ] @>
+
+    [<Fact>]
+    let ``buildDiffCacheEntry should cache summary, file list, and selected file content`` () =
+        let files =
+            [
+                sampleFile
+                    "foo.txt"
+                    "foo.txt"
+                    [
+                        {
+                            Type = Models.Removed
+                            Content = "line1"
+                            OldLineNo = Some 1
+                            NewLineNo = None
+                        }
+                        {
+                            Type = Models.Added
+                            Content = "line1 updated"
+                            OldLineNo = None
+                            NewLineNo = Some 1
+                        }
+                    ]
+                sampleFile
+                    "/dev/null"
+                    "bar.txt"
+                    [
+                        {
+                            Type = Models.Added
+                            Content = "new file line"
+                            OldLineNo = None
+                            NewLineNo = Some 1
+                        }
+                    ]
+            ]
+
+        let entry = GitService.buildDiffCacheEntry "abc123" files
+
+        test <@ entry.Summary.Hash = "abc123" @>
+        test <@ entry.Summary.FileCount = 2 @>
+        test <@ entry.Summary.AddedLines = 2 @>
+        test <@ entry.Summary.RemovedLines = 1 @>
+        test <@ entry.FileList.[0].DisplayPath = "foo.txt" @>
+        test <@ entry.FileList.[1].DisplayPath = "bar.txt (new file)" @>
+        test <@ entry.SelectedFileContent.ContainsKey { OldPath = "foo.txt"; NewPath = "foo.txt" } @>
+        test <@ entry.SelectedFileContent.ContainsKey { OldPath = "/dev/null"; NewPath = "bar.txt" } @>
 
 module AppTests =
 

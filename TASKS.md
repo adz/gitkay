@@ -28,7 +28,7 @@
 2. [x] Split selection state from diff state in `src/GitKay.Core/App.fs` so commit clicks update immediately even when diff data is not ready.
 3. [x] Auto-select the first commit after history load so the app opens with a selected commit and visible diff state.
 4. [x] Accept CLI startup targets for branch, sha, tag, and `--all`, and initialize the commit history view from the selected ref set.
-5. [ ] Introduce a gitk-style diff cache in `src/GitKay.Core/GitService.fs` keyed by commit hash, with immutable entries for summary, file list, and selected-file content.
+5. [x] Introduce a gitk-style diff cache in `src/GitKay.Core/GitService.fs` keyed by commit hash, with immutable entries for summary, file list, and selected-file content.
 6. [ ] Add `FsFlow` orchestration for diff and cache jobs in `src/GitKay.Core/App.fs`, with cancellation and latest-wins semantics.
 7. [ ] Remove blame from the normal commit-open path entirely; keep blame behind an explicit user action and file scope only.
 8. [ ] Stop rebuilding the whole diff object graph on every update in `src/GitKay.UI/MainProjection.cs`; bind to cached model data instead.

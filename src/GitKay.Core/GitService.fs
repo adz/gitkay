@@ -2,6 +2,7 @@ namespace GitKay.Core
 
 open System
 open System.Diagnostics
+open System.Collections.Concurrent
 open System.Text.RegularExpressions
 open GitKay.Core.Models
 open LibGit2Sharp
@@ -328,6 +329,112 @@ module GitService =
         |> List.rev
         |> List.map (fun f -> { f with Hunks = f.Hunks |> List.rev |> List.map (fun h -> { h with Lines = h.Lines |> List.rev }) })
 
+    type DiffFileKey =
+        {
+            OldPath: string
+            NewPath: string
+        }
+
+    type DiffFileSummary =
+        {
+            OldPath: string
+            NewPath: string
+            DisplayPath: string
+        }
+
+    type DiffSummary =
+        {
+            Hash: string
+            FileCount: int
+            AddedLines: int
+            RemovedLines: int
+        }
+
+    type DiffCacheEntry =
+        {
+            Summary: DiffSummary
+            FileList: DiffFileSummary list
+            SelectedFileContent: Map<DiffFileKey, FileDiff>
+        }
+
+    let private diffCache = ConcurrentDictionary<string, DiffCacheEntry>()
+
+    let private buildDisplayPath oldPath newPath =
+        if oldPath = "/dev/null" then
+            sprintf "%s (new file)" newPath
+        elif newPath = "/dev/null" then
+            sprintf "%s (deleted)" oldPath
+        elif oldPath = newPath then
+            newPath
+        else
+            sprintf "%s -> %s" oldPath newPath
+
+    let private toDiffFileSummary (file: FileDiff) =
+        {
+            OldPath = file.OldPath
+            NewPath = file.NewPath
+            DisplayPath = buildDisplayPath file.OldPath file.NewPath
+        }
+
+    let private toDiffFileKey (file: FileDiff) =
+        {
+            OldPath = file.OldPath
+            NewPath = file.NewPath
+        }
+
+    let buildDiffCacheEntry (hash: string) (files: FileDiff list) =
+        let addedLines =
+            files
+            |> List.sumBy (fun file ->
+                file.Hunks
+                |> List.sumBy (fun hunk ->
+                    hunk.Lines |> List.sumBy (fun line -> if line.Type = Added then 1 else 0)))
+
+        let removedLines =
+            files
+            |> List.sumBy (fun file ->
+                file.Hunks
+                |> List.sumBy (fun hunk ->
+                    hunk.Lines |> List.sumBy (fun line -> if line.Type = Removed then 1 else 0)))
+
+        {
+            Summary =
+                {
+                    Hash = hash
+                    FileCount = files.Length
+                    AddedLines = addedLines
+                    RemovedLines = removedLines
+                }
+            FileList = files |> List.map toDiffFileSummary
+            SelectedFileContent = files |> List.map (fun file -> toDiffFileKey file, file) |> Map.ofList
+        }
+
+    let private loadDiffCacheEntry (hash: string) =
+        withRepository (fun repo ->
+            let commit = repo.Lookup<LibGit2Sharp.Commit>(hash)
+
+            if isNull commit then
+                Error (sprintf "Commit not found: %s" hash)
+            else
+                use patch =
+                    match commit.Parents |> Seq.tryHead with
+                    | Some parent -> repo.Diff.Compare<Patch>(parent.Tree, commit.Tree)
+                    | None -> repo.Diff.Compare<Patch>(null, commit.Tree)
+
+                Ok (buildDiffCacheEntry hash (parseDiff patch.Content))
+        )
+
+    let private getDiffCacheEntry (hash: string) =
+        match diffCache.TryGetValue hash with
+        | true, entry ->
+            Ok (entry, true)
+        | false, _ ->
+            match loadDiffCacheEntry hash with
+            | Error err -> Error err
+            | Ok entry ->
+                diffCache.TryAdd(hash, entry) |> ignore
+                Ok (entry, false)
+
     let private resolveStartupTargets (repo: Repository) (targets: StartupTarget list) =
         let hasAll = targets |> List.exists ((=) All)
 
@@ -380,29 +487,49 @@ module GitService =
     let fetchDiff (hash: string) =
         let startedAtTicks = Stopwatch.GetTimestamp()
 
-        let result =
-            withRepository (fun repo ->
-                let commit = repo.Lookup<LibGit2Sharp.Commit>(hash)
-
-                if isNull commit then
-                    Error (sprintf "Commit not found: %s" hash)
-                else
-                    use patch =
-                        match commit.Parents |> Seq.tryHead with
-                        | Some parent -> repo.Diff.Compare<Patch>(parent.Tree, commit.Tree)
-                        | None -> repo.Diff.Compare<Patch>(null, commit.Tree)
-
-                    Ok (parseDiff patch.Content))
-
-        let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
-
-        match result with
-        | Ok files ->
-            logTiming (sprintf "diff load hash=%s elapsed=%.1fms files=%d" hash elapsed.TotalMilliseconds files.Length)
-            Ok files
+        match getDiffCacheEntry hash with
         | Error err ->
+            let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
             logTiming (sprintf "diff load hash=%s elapsed=%.1fms error=%s" hash elapsed.TotalMilliseconds err)
             Error err
+        | Ok (entry, wasCached) ->
+            let files =
+                entry.FileList
+                |> List.choose (fun file ->
+                    entry.SelectedFileContent
+                    |> Map.tryFind
+                        {
+                            OldPath = file.OldPath
+                            NewPath = file.NewPath
+                        })
+
+            let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
+
+            if wasCached then
+                logTiming (sprintf "diff cache hit hash=%s elapsed=%.1fms files=%d" hash elapsed.TotalMilliseconds files.Length)
+            else
+                logTiming (sprintf "diff load hash=%s elapsed=%.1fms files=%d" hash elapsed.TotalMilliseconds files.Length)
+
+            Ok files
+
+    let fetchDiffSummary (hash: string) =
+        match getDiffCacheEntry hash with
+        | Error err -> Error err
+        | Ok (entry, _) -> Ok entry.Summary
+
+    let fetchDiffFileList (hash: string) =
+        match getDiffCacheEntry hash with
+        | Error err -> Error err
+        | Ok (entry, _) -> Ok entry.FileList
+
+    let fetchDiffFileContent (hash: string) (oldPath: string) (newPath: string) =
+        match getDiffCacheEntry hash with
+        | Error err -> Error err
+        | Ok (entry, _) ->
+            match entry.SelectedFileContent |> Map.tryFind { OldPath = oldPath; NewPath = newPath } with
+            | Some file -> Ok file
+            | None ->
+                Error (sprintf "File not found in commit %s: %s -> %s" hash oldPath newPath)
 
     let fetchDiffWithBlame (hash: string) =
         match fetchDiff hash with
