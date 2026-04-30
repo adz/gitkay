@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\GitKay.Core\GitKay.Core.fsproj" />
+    <ProjectReference Include="..\..\src\GitKay.UI\GitKay.UI.csproj" />
   </ItemGroup>
 
 </Project>

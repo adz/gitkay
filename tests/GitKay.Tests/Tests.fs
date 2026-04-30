@@ -3,6 +3,7 @@ namespace GitKay.Tests
 open Xunit
 open Swensen.Unquote
 open GitKay.Core
+open GitKay.UI
 
 module GitServiceTests =
 
@@ -173,6 +174,19 @@ module AppTests =
             Subject = subject
         }
 
+    let private sampleFile oldPath newPath lines : Models.FileDiff =
+        {
+            OldPath = oldPath
+            NewPath = newPath
+            Hunks =
+                [
+                    {
+                        Header = "@@ -1 +1 @@"
+                        Lines = lines
+                    }
+                ]
+        }
+
     let private sampleDiff : Models.FileDiff list =
         [
             {
@@ -257,6 +271,64 @@ module AppTests =
         test <@ next.SelectedDiffHash = Some "old" @>
         test <@ next.SelectedDiff = Some sampleDiff @>
         test <@ next.SelectionStartedAtTicks = Some 42L @>
+
+    [<Fact>]
+    let ``MainProjection should sync the selected file to the left diff focus row`` () =
+        let projection = MainProjection()
+        projection.SetDispatch ignore
+
+        let commit =
+            sampleCommit "12345678" "Subject"
+
+        let model =
+            {
+                emptyModel with
+                    Status = "Loaded"
+                    Commits = Graph.calculateLanes [ commit ]
+                    SelectedCommitHash = Some commit.Hash
+                    SelectedDiffHash = Some commit.Hash
+                    SelectedDiff =
+                        Some
+                            [
+                                sampleFile
+                                    "foo.txt"
+                                    "foo.txt"
+                                    [
+                                        {
+                                            Type = Models.Context
+                                            Content = "line1"
+                                            OldLineNo = Some 1
+                                            NewLineNo = Some 1
+                                        }
+                                    ]
+                                sampleFile
+                                    "/dev/null"
+                                    "bar.txt"
+                                    [
+                                        {
+                                            Type = Models.Added
+                                            Content = "new file line"
+                                            OldLineNo = None
+                                            NewLineNo = Some 1
+                                        }
+                                    ]
+                            ]
+            }
+
+        projection.Update model
+
+        test <@ projection.SelectedDiffFiles.Count = 2 @>
+        test <@ projection.SelectedDiffFile.DisplayPath = "foo.txt" @>
+
+        match projection.SelectedDiffRow with
+        | :? DiffFileHeaderProjection as header -> test <@ header.DisplayPath = "foo.txt" @>
+        | other -> failwithf "Expected a file header, got %A" other
+
+        projection.SelectedDiffFile <- projection.SelectedDiffFiles.[1]
+
+        match projection.SelectedDiffRow with
+        | :? DiffFileHeaderProjection as header -> test <@ header.DisplayPath = "bar.txt (new file)" @>
+        | other -> failwithf "Expected a file header after selection sync, got %A" other
 
     [<Fact>]
     let ``DiffLoaded should ignore stale diff results`` () =

@@ -5,6 +5,8 @@ using DiffLineType = GitKay.Core.Models.LineType;
 
 namespace GitKay.UI;
 
+public readonly record struct DiffFileKey(string OldPath, string NewPath);
+
 public interface IDiffRowProjection
 {
 }
@@ -13,25 +15,31 @@ public sealed class DiffFileProjection
 {
     public DiffFileProjection(GitKay.Core.Models.FileDiff file)
     {
+        Key = new DiffFileKey(file.OldPath, file.NewPath);
         OldPath = file.OldPath;
         NewPath = file.NewPath;
         DisplayPath = DiffFormatting.BuildDisplayPath(file.OldPath, file.NewPath);
         Hunks = new ObservableCollection<DiffHunkProjection>(file.Hunks.Select(h => new DiffHunkProjection(h)));
+        Header = new DiffFileHeaderProjection(this);
     }
 
+    public DiffFileKey Key { get; }
     public string OldPath { get; }
     public string NewPath { get; }
     public string DisplayPath { get; }
     public ObservableCollection<DiffHunkProjection> Hunks { get; }
+    public DiffFileHeaderProjection Header { get; }
 }
 
 public sealed class DiffFileHeaderProjection : IDiffRowProjection
 {
     public DiffFileHeaderProjection(DiffFileProjection file)
     {
+        File = file;
         DisplayPath = file.DisplayPath;
     }
 
+    public DiffFileProjection File { get; }
     public string DisplayPath { get; }
 }
 

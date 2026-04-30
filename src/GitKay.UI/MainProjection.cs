@@ -1,6 +1,7 @@
 using System;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Elmish.Glue.Core;
 using GitKay.Core;
@@ -12,6 +13,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private readonly long _createdAtTicks = Stopwatch.GetTimestamp();
     private bool _firstPaintLogged;
     private bool _suppressSelectionDispatch;
+    private bool _suppressDiffSelectionSync;
     private string? _selectedDiffHash;
 
     [ObservableProperty] private string _status = "";
@@ -21,6 +23,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public ObservableCollection<IDiffRowProjection> SelectedDiffRows { get; } = new();
 
     [ObservableProperty] private CommitProjection? _selectedCommit;
+    [ObservableProperty] private DiffFileProjection? _selectedDiffFile;
+    [ObservableProperty] private IDiffRowProjection? _selectedDiffRow;
 
     private static void LogTiming(string message)
     {
@@ -51,6 +55,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
         if (!string.Equals(_selectedDiffHash, selectedDiffHash, StringComparison.Ordinal))
         {
+            var previousSelectedDiffFileKey = SelectedDiffFile?.Key;
+
+            SyncSelectedDiffSelection(null);
             SelectedDiffFiles.Clear();
             SelectedDiffRows.Clear();
 
@@ -60,7 +67,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                 {
                     var fileProjection = new DiffFileProjection(file);
                     SelectedDiffFiles.Add(fileProjection);
-                    SelectedDiffRows.Add(new DiffFileHeaderProjection(fileProjection));
+                    SelectedDiffRows.Add(fileProjection.Header);
 
                     foreach (var hunk in fileProjection.Hunks)
                     {
@@ -72,6 +79,13 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                         }
                     }
                 }
+
+                var selectedDiffFile =
+                    previousSelectedDiffFileKey is DiffFileKey previousKey
+                        ? SelectedDiffFiles.FirstOrDefault(file => file.Key == previousKey) ?? SelectedDiffFiles.FirstOrDefault()
+                        : SelectedDiffFiles.FirstOrDefault();
+
+                SyncSelectedDiffSelection(selectedDiffFile);
             }
 
             _selectedDiffHash = selectedDiffHash;
@@ -162,5 +176,42 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
     }
 
+    partial void OnSelectedDiffFileChanged(DiffFileProjection? value)
+    {
+        if (_suppressDiffSelectionSync)
+        {
+            return;
+        }
+
+        SyncSelectedDiffSelection(value);
+    }
+
+    partial void OnSelectedDiffRowChanged(IDiffRowProjection? value)
+    {
+        if (_suppressDiffSelectionSync)
+        {
+            return;
+        }
+
+        if (value is DiffFileHeaderProjection fileHeader)
+        {
+            SyncSelectedDiffSelection(fileHeader.File);
+        }
+    }
+
     public void RereadRefs() => _dispatch?.Invoke(GitKay.Core.App.Msg.RereadRefs);
+
+    private void SyncSelectedDiffSelection(DiffFileProjection? selectedDiffFile)
+    {
+        _suppressDiffSelectionSync = true;
+        try
+        {
+            SelectedDiffFile = selectedDiffFile;
+            SelectedDiffRow = selectedDiffFile?.Header;
+        }
+        finally
+        {
+            _suppressDiffSelectionSync = false;
+        }
+    }
 }
