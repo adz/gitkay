@@ -38,8 +38,25 @@ public partial class MainWindow : Window
             return;
         }
 
+        var projection = _projection;
+        if (projection == null)
+        {
+            return;
+        }
+
         Dispatcher.UIThread.Post(() =>
         {
+            if (!ReferenceEquals(_projection, projection))
+            {
+                return;
+            }
+
+            var target = (object?)projection.SelectedDiffRow ?? projection.SelectedDiffFile?.Header;
+            if (target != null)
+            {
+                DiffRowsListBox.ScrollIntoView(target);
+            }
+
             DiffRowsListBox.Focus();
         });
     }
