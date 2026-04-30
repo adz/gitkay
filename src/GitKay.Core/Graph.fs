@@ -37,53 +37,72 @@ module Graph =
         }
 
     let calculateLanes (commits: Models.Commit list) =
-        let mutable activeLanes = [] // List of hash strings
-        
-        let infos = 
-            commits |> List.map (fun commit ->
-                // 1. Find or assign lane for the current commit
-                let currentLane = 
-                    match activeLanes |> List.tryFindIndex (fun h -> h = commit.Hash) with
-                    | Some idx -> idx
-                    | None -> 
-                        activeLanes <- activeLanes @ [commit.Hash]
-                        activeLanes.Length - 1
-                
-                // 2. Capture segments for THIS row (leading to the NEXT row)
-                // We need to know where each active lane is going.
-                
-                // Remove current commit from active lanes for the next row
-                let lanesWithoutCurrent = 
-                    activeLanes 
-                    |> List.mapi (fun i h -> if i = currentLane then None else Some h)
-                    |> List.choose id
-                
-                // Add parents to active lanes for next row if not already there
-                let mutable nextActiveLanes = lanesWithoutCurrent
-                commit.Parents |> List.iter (fun p ->
-                    if not (List.contains p nextActiveLanes) then
-                        nextActiveLanes <- nextActiveLanes @ [p]
+        let mutable activeLanes = System.Collections.Generic.List<string>()
+        let mutable activeLaneIndexes = System.Collections.Generic.Dictionary<string, int>(System.StringComparer.Ordinal)
+        let infos = System.Collections.Generic.List<CommitGraphInfo>()
+
+        for commit in commits do
+            let currentLane =
+                match activeLaneIndexes.TryGetValue commit.Hash with
+                | true, lane -> lane
+                | false, _ ->
+                    let lane = activeLanes.Count
+                    activeLanes.Add commit.Hash
+                    activeLaneIndexes.[commit.Hash] <- lane
+                    lane
+
+            let nextActiveLanes =
+                System.Collections.Generic.List<string>(activeLanes.Count + commit.Parents.Length)
+
+            let nextLaneIndexes =
+                System.Collections.Generic.Dictionary<string, int>(
+                    activeLanes.Count + commit.Parents.Length,
+                    System.StringComparer.Ordinal
                 )
 
-                // Define segments that carry lanes from THIS row to the NEXT row
-                let segments = 
-                    activeLanes |> List.mapi (fun i hash ->
-                        if i = currentLane then
-                            // Current commit connects to all its parents
-                            commit.Parents |> List.map (fun pHash ->
-                                let targetIdx = nextActiveLanes |> List.findIndex (fun h -> h = pHash)
-                                { Lane = i; TargetLane = targetIdx; IsCommit = true; Color = i }
-                            )
-                        else
-                            // This lane is just passing through
-                            let targetIdx = nextActiveLanes |> List.findIndex (fun h -> h = hash)
-                            [{ Lane = i; TargetLane = targetIdx; IsCommit = false; Color = i }]
-                    ) |> List.concat
+            for laneIndex in 0 .. activeLanes.Count - 1 do
+                if laneIndex <> currentLane then
+                    let hash = activeLanes.[laneIndex]
+                    nextLaneIndexes.[hash] <- nextActiveLanes.Count
+                    nextActiveLanes.Add hash
 
-                let info = { Commit = commit; Lane = currentLane; Segments = segments }
-                
-                // Update activeLanes for the next iteration
-                activeLanes <- nextActiveLanes
-                info
-            )
-        infos
+            for parentHash in commit.Parents do
+                if not (nextLaneIndexes.ContainsKey parentHash) then
+                    nextLaneIndexes.[parentHash] <- nextActiveLanes.Count
+                    nextActiveLanes.Add parentHash
+
+            let segments = System.Collections.Generic.List<LaneSegment>(activeLanes.Count + commit.Parents.Length)
+
+            for laneIndex in 0 .. activeLanes.Count - 1 do
+                if laneIndex = currentLane then
+                    for parentHash in commit.Parents do
+                        let targetIdx = nextLaneIndexes.[parentHash]
+                        segments.Add
+                            {
+                                Lane = laneIndex
+                                TargetLane = targetIdx
+                                IsCommit = true
+                                Color = laneIndex
+                            }
+                else
+                    let hash = activeLanes.[laneIndex]
+                    let targetIdx = nextLaneIndexes.[hash]
+                    segments.Add
+                        {
+                            Lane = laneIndex
+                            TargetLane = targetIdx
+                            IsCommit = false
+                            Color = laneIndex
+                        }
+
+            infos.Add
+                {
+                    Commit = commit
+                    Lane = currentLane
+                    Segments = List.ofSeq segments
+                }
+
+            activeLanes <- nextActiveLanes
+            activeLaneIndexes <- nextLaneIndexes
+
+        List.ofSeq infos
