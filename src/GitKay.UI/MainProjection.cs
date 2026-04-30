@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Elmish.Glue.Core;
 using GitKay.Core;
@@ -8,6 +9,9 @@ namespace GitKay.UI;
 
 public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.App.Model, GitKay.Core.App.Msg>
 {
+    private readonly long _createdAtTicks = Stopwatch.GetTimestamp();
+    private bool _firstPaintLogged;
+
     [ObservableProperty] private string _status = "";
 
     public ObservableCollection<CommitProjection> Commits { get; } = new();
@@ -15,8 +19,22 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     [ObservableProperty] private CommitProjection? _selectedCommit;
 
+    private static void LogTiming(string message)
+    {
+        var line = $"[timing] {message}";
+        Trace.WriteLine(line);
+        try
+        {
+            Console.Error.WriteLine(line);
+        }
+        catch
+        {
+        }
+    }
+
     public void Update(GitKay.Core.App.Model model)
     {
+        var startedAtTicks = Stopwatch.GetTimestamp();
         Status = model.Status;
         SelectedDiffFiles.Clear();
 
@@ -52,6 +70,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         {
             SelectedCommit = null;
         }
+
+        var elapsed = Stopwatch.GetElapsedTime(startedAtTicks);
+        LogTiming($"ui projection elapsed={elapsed.TotalMilliseconds:F1}ms commits={model.Commits.Length} diffFiles={SelectedDiffFiles.Count}");
     }
 
     private Action<GitKay.Core.App.Msg>? _dispatch;
@@ -61,11 +82,25 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         _dispatch = dispatch;
     }
 
+    public void LogFirstPaint()
+    {
+        if (_firstPaintLogged)
+        {
+            return;
+        }
+
+        _firstPaintLogged = true;
+        var firstPaintElapsed = Stopwatch.GetElapsedTime(_createdAtTicks);
+        LogTiming($"first paint elapsed={firstPaintElapsed.TotalMilliseconds:F1}ms");
+    }
+
     partial void OnSelectedCommitChanged(CommitProjection? value)
     {
         if (value != null)
         {
-            _dispatch?.Invoke(GitKay.Core.App.Msg.NewSelectCommit(value.FullHash));
+            var startedAtTicks = Stopwatch.GetTimestamp();
+            LogTiming($"commit click hash={value.FullHash}");
+            _dispatch?.Invoke(GitKay.Core.App.Msg.NewSelectCommit(value.FullHash, startedAtTicks));
         }
     }
 

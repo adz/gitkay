@@ -8,6 +8,14 @@ open LibGit2Sharp
 
 module GitService =
 
+    let private logTiming (message: string) =
+        let line = sprintf "[timing] %s" message
+        Trace.WriteLine line
+        try
+            Console.Error.WriteLine line
+        with _ ->
+            ()
+
     let private discoverRepositoryPath () =
         Repository.Discover(Environment.CurrentDirectory)
 
@@ -286,18 +294,31 @@ module GitService =
             |> Ok)
 
     let fetchDiff (hash: string) =
-        withRepository (fun repo ->
-            let commit = repo.Lookup<LibGit2Sharp.Commit>(hash)
+        let startedAtTicks = Stopwatch.GetTimestamp()
 
-            if isNull commit then
-                Error (sprintf "Commit not found: %s" hash)
-            else
-                use patch =
-                    match commit.Parents |> Seq.tryHead with
-                    | Some parent -> repo.Diff.Compare<Patch>(parent.Tree, commit.Tree)
-                    | None -> repo.Diff.Compare<Patch>(null, commit.Tree)
+        let result =
+            withRepository (fun repo ->
+                let commit = repo.Lookup<LibGit2Sharp.Commit>(hash)
 
-                Ok (parseDiff patch.Content))
+                if isNull commit then
+                    Error (sprintf "Commit not found: %s" hash)
+                else
+                    use patch =
+                        match commit.Parents |> Seq.tryHead with
+                        | Some parent -> repo.Diff.Compare<Patch>(parent.Tree, commit.Tree)
+                        | None -> repo.Diff.Compare<Patch>(null, commit.Tree)
+
+                    Ok (parseDiff patch.Content))
+
+        let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
+
+        match result with
+        | Ok files ->
+            logTiming (sprintf "diff load hash=%s elapsed=%.1fms files=%d" hash elapsed.TotalMilliseconds files.Length)
+            Ok files
+        | Error err ->
+            logTiming (sprintf "diff load hash=%s elapsed=%.1fms error=%s" hash elapsed.TotalMilliseconds err)
+            Error err
 
     let fetchDiffWithBlame (hash: string) =
         match fetchDiff hash with

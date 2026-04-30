@@ -24,7 +24,7 @@
 - Reduce backend work to the minimum needed for the currently selected item.
 
 ## Next
-1. [ ] Add timing instrumentation for commit click, diff load, UI projection, and first paint in `src/GitKay.Core/App.fs`, `src/GitKay.Core/GitService.fs`, and `src/GitKay.UI/MainProjection.cs`.
+1. [x] Add timing instrumentation for commit click, diff load, UI projection, and first paint in `src/GitKay.Core/App.fs`, `src/GitKay.Core/GitService.fs`, and `src/GitKay.UI/MainProjection.cs`.
 2. [ ] Split selection state from diff state in `src/GitKay.Core/App.fs` so commit clicks update immediately even when diff data is not ready.
 3. [ ] Auto-select the first commit after history load so the app opens with a selected commit and visible diff state.
 4. [ ] Accept CLI startup targets for branch, sha, tag, and `--all`, and initialize the commit history view from the selected ref set.
