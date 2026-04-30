@@ -664,6 +664,26 @@ module AppTests =
         | other -> failwithf "Expected search result selection to dispatch a commit selection, got %A" other
 
     [<Fact>]
+    let ``CommitProjection should surface refs in the row summary`` () =
+        let projection = CommitProjection()
+        let commit =
+            {
+                sampleCommit "feedfacefeedfacefeedfacefeedfacefeedface" "Search hit"
+                with
+                    Refs = [ "main"; "origin/main"; "v1.0"; "release" ]
+            }
+
+        projection.Update
+            {
+                Commit = commit
+                Lane = 0
+                Segments = []
+            }
+
+        test <@ projection.HasRefs @>
+        test <@ projection.RefsSummary = "main · origin/main · v1.0 +1" @>
+
+    [<Fact>]
     let ``FatalErrorPresenter should format details for the dialog`` () =
         let ex = InvalidOperationException("boom")
         let details = FatalErrorPresenter.BuildDetails("Heading", ex)

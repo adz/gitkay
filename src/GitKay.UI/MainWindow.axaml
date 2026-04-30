@@ -62,7 +62,8 @@
                                        Foreground="#ddd"
                                        FontWeight="SemiBold"
                                        Margin="0,0,0,6" />
-                            <ListBox ItemsSource="{Binding SearchResults}"
+                            <ListBox x:Name="SearchResultsListBox"
+                                     ItemsSource="{Binding SearchResults}"
                                      SelectedItem="{Binding SelectedSearchResult}"
                                      Background="Transparent"
                                      BorderThickness="0"
@@ -137,8 +138,8 @@
                             </ItemsPanelTemplate>
                         </ListBox.ItemsPanel>
                         <ListBox.ItemTemplate>
-                            <DataTemplate x:DataType="local:CommitProjection">
-                                <Grid ColumnDefinitions="150,100,*,150,150" Background="Transparent">
+                                    <DataTemplate x:DataType="local:CommitProjection">
+                                        <Grid ColumnDefinitions="150,100,*,150,150" Background="Transparent">
                                     <Grid.ContextMenu>
                                         <ContextMenu>
                                             <MenuItem Header="Create _Tag here..." Command="{Binding CreateTagCommand}" />
@@ -154,10 +155,19 @@
                                         </ContextMenu>
                                     </Grid.ContextMenu>
 
-                                    <local:GraphRowControl Grid.Column="0" Segments="{Binding Segments}" CommitLane="{Binding Lane}" Height="25"/>
+                                    <local:GraphRowControl Grid.Column="0" Segments="{Binding Segments}" CommitLane="{Binding Lane}" Height="28"/>
 
                                     <TextBlock Grid.Column="1" Text="{Binding Hash}" Foreground="#888" Margin="5,0" VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="2" Text="{Binding Subject}" FontWeight="SemiBold" Margin="5,0" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="2" Margin="5,2" VerticalAlignment="Center" Spacing="1">
+                                        <TextBlock Text="{Binding Subject}"
+                                                   FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding RefsSummary}"
+                                                   IsVisible="{Binding HasRefs}"
+                                                   Foreground="#4ec9b0"
+                                                   FontSize="11"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
                                     <TextBlock Grid.Column="3" Text="{Binding Author}" Foreground="#aaa" Margin="5,0" VerticalAlignment="Center"/>
                                     <TextBlock Grid.Column="4" Text="{Binding Date}" Foreground="#888" Margin="5,0" HorizontalAlignment="Right" VerticalAlignment="Center"/>
                                 </Grid>
@@ -167,14 +177,19 @@
                 </DockPanel>
             </Border>
 
-            <Border Grid.Row="1" Background="#252526" BorderBrush="#333" BorderThickness="0,1" Padding="8,6">
-                <StackPanel Spacing="3" IsVisible="{Binding SelectedCommit, Converter={x:Static local:ObjectConverters.IsNotNull}}">
-                    <SelectableTextBlock Text="{Binding SelectedCommit.FullHash}" Foreground="#4ec9b0" FontWeight="SemiBold" FontSize="12"/>
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <TextBlock Text="{Binding SelectedCommit.Author}" Foreground="#aaa" FontSize="12"/>
-                        <TextBlock Text="{Binding SelectedCommit.Date}" Foreground="#888" FontSize="12"/>
-                    </StackPanel>
-                    <SelectableTextBlock Text="{Binding SelectedCommit.Subject}" FontSize="14" Foreground="#ddd" TextWrapping="Wrap"/>
+                <Border Grid.Row="1" Background="#252526" BorderBrush="#333" BorderThickness="0,1" Padding="8,6">
+                    <StackPanel Spacing="3" IsVisible="{Binding SelectedCommit, Converter={x:Static local:ObjectConverters.IsNotNull}}">
+                        <SelectableTextBlock Text="{Binding SelectedCommit.FullHash}" Foreground="#4ec9b0" FontWeight="SemiBold" FontSize="12"/>
+                        <TextBlock Text="{Binding SelectedCommit.RefsSummary}"
+                                   IsVisible="{Binding SelectedCommit.HasRefs}"
+                                   Foreground="#4ec9b0"
+                                   FontSize="11"
+                                   TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <TextBlock Text="{Binding SelectedCommit.Author}" Foreground="#aaa" FontSize="12"/>
+                            <TextBlock Text="{Binding SelectedCommit.Date}" Foreground="#888" FontSize="12"/>
+                        </StackPanel>
+                        <SelectableTextBlock Text="{Binding SelectedCommit.Subject}" FontSize="14" Foreground="#ddd" TextWrapping="Wrap"/>
                 </StackPanel>
             </Border>
 

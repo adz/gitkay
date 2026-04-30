@@ -43,7 +43,7 @@
 17. [x] Draw proper commit graph edges for branches and merges.
 18. [x] Improve graph rendering performance on larger histories.
 19. [x] Add a top-level error dialog for unrecoverable failures.
-20. [ ] Finish UI/UX polish to get closer to gitk parity.
+20. [x] Finish UI/UX polish to get closer to gitk parity.
 
 ## Later
 1. [ ] Port any remaining hot write operations to LibGit2Sharp if the CLI remains measurable.

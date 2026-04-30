@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Elmish.Glue.Core;
@@ -24,6 +25,8 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     [ObservableProperty] private string _subject = "";
     [ObservableProperty] private string _author = "";
     [ObservableProperty] private string _date = "";
+    [ObservableProperty] private string _refsSummary = "";
+    [ObservableProperty] private bool _hasRefs;
     [ObservableProperty] private int _lane = 0;
 
     public ObservableCollection<SegmentProjection> Segments { get; } = new();
@@ -37,6 +40,8 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         Subject = commit.Subject;
         Author = commit.AuthorName;
         Date = System.DateTimeOffset.FromUnixTimeSeconds(commit.Timestamp).LocalDateTime.ToString("yyyy-MM-dd HH:mm");
+        HasRefs = commit.Refs.Any();
+        RefsSummary = HasRefs ? FormatRefsSummary(commit.Refs) : "";
         Lane = info.Lane;
 
         Segments.SyncWith(
@@ -45,6 +50,22 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
             vm => vm.Key,
             _ => new SegmentProjection()
         );
+    }
+
+    private static string FormatRefsSummary(System.Collections.Generic.IEnumerable<string> refs)
+    {
+        var visibleRefs = refs.Take(3).ToArray();
+        var summary = string.Join(" · ", visibleRefs);
+
+        var totalCount = refs.Count();
+
+        if (totalCount > visibleRefs.Length)
+        {
+            var remainingCount = totalCount - visibleRefs.Length;
+            summary = string.IsNullOrEmpty(summary) ? $"+{remainingCount}" : $"{summary} +{remainingCount}";
+        }
+
+        return summary;
     }
 }
 
