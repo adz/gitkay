@@ -42,7 +42,7 @@
 16. [x] Implement gitk-style keyboard control for the commit list and diff pane, including up/down, page up/down, home/end, and focus changes between panes.
 17. [x] Draw proper commit graph edges for branches and merges.
 18. [x] Improve graph rendering performance on larger histories.
-19. [ ] Add a top-level error dialog for unrecoverable failures.
+19. [x] Add a top-level error dialog for unrecoverable failures.
 20. [ ] Finish UI/UX polish to get closer to gitk parity.
 
 ## Later

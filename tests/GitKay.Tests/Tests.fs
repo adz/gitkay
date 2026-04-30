@@ -1,5 +1,6 @@
 namespace GitKay.Tests
 
+open System
 open Xunit
 open Swensen.Unquote
 open GitKay.Core
@@ -661,6 +662,15 @@ module AppTests =
         match lastMsg with
         | Some (App.Msg.SelectCommit(hash, _)) -> test <@ hash = commit.Hash @>
         | other -> failwithf "Expected search result selection to dispatch a commit selection, got %A" other
+
+    [<Fact>]
+    let ``FatalErrorPresenter should format details for the dialog`` () =
+        let ex = InvalidOperationException("boom")
+        let details = FatalErrorPresenter.BuildDetails("Heading", ex)
+
+        test <@ details.Contains("Heading") @>
+        test <@ details.Contains("System.InvalidOperationException") @>
+        test <@ details.Contains("boom") @>
 
     [<Fact>]
     let ``DiffFileLoaded should ignore stale file results`` () =
