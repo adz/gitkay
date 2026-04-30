@@ -32,7 +32,7 @@
 6. [x] Add `FsFlow` orchestration for diff and cache jobs in `src/GitKay.Core/App.fs`, with cancellation and latest-wins semantics.
 7. [x] Remove blame from the normal commit-open path entirely; keep blame behind an explicit user action and file scope only.
 8. [x] Stop rebuilding the whole diff object graph on every update in `src/GitKay.UI/MainProjection.cs`; bind to cached model data instead.
-9. [ ] Replace the nested diff `ItemsControl` tree in `src/GitKay.UI/MainWindow.axaml` with a virtualized or custom-rendered line view that only realizes visible rows.
+9. [x] Replace the nested diff `ItemsControl` tree in `src/GitKay.UI/MainWindow.axaml` with a virtualized or custom-rendered line view that only realizes visible rows.
 10. [ ] Add file selection and focus so the right-side file list drives the left-side diff view instead of only showing a static list.
 11. [ ] Make the diff pane scroll to the selected file immediately when commit selection changes.
 12. [ ] Keep the commit list virtualization lightweight and ensure selection does not trigger unnecessary remeasure/rebind work.

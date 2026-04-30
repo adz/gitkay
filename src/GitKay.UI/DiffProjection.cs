@@ -1,8 +1,13 @@
 using System.Collections.ObjectModel;
 using System.Linq;
 using Avalonia.Media;
+using DiffLineType = GitKay.Core.Models.LineType;
 
 namespace GitKay.UI;
+
+public interface IDiffRowProjection
+{
+}
 
 public sealed class DiffFileProjection
 {
@@ -10,7 +15,7 @@ public sealed class DiffFileProjection
     {
         OldPath = file.OldPath;
         NewPath = file.NewPath;
-        DisplayPath = BuildDisplayPath(file.OldPath, file.NewPath);
+        DisplayPath = DiffFormatting.BuildDisplayPath(file.OldPath, file.NewPath);
         Hunks = new ObservableCollection<DiffHunkProjection>(file.Hunks.Select(h => new DiffHunkProjection(h)));
     }
 
@@ -18,8 +23,71 @@ public sealed class DiffFileProjection
     public string NewPath { get; }
     public string DisplayPath { get; }
     public ObservableCollection<DiffHunkProjection> Hunks { get; }
+}
 
-    private static string BuildDisplayPath(string oldPath, string newPath)
+public sealed class DiffFileHeaderProjection : IDiffRowProjection
+{
+    public DiffFileHeaderProjection(DiffFileProjection file)
+    {
+        DisplayPath = file.DisplayPath;
+    }
+
+    public string DisplayPath { get; }
+}
+
+public sealed class DiffHunkHeaderProjection : IDiffRowProjection
+{
+    public DiffHunkHeaderProjection(DiffHunkProjection hunk)
+    {
+        Header = hunk.Header;
+    }
+
+    public string Header { get; }
+}
+
+public sealed class DiffHunkProjection
+{
+    public DiffHunkProjection(GitKay.Core.Models.DiffHunk hunk)
+    {
+        Header = hunk.Header;
+        Lines = new ObservableCollection<DiffLineProjection>(hunk.Lines.Select(line => new DiffLineProjection(line)));
+    }
+
+    public string Header { get; }
+    public ObservableCollection<DiffLineProjection> Lines { get; }
+}
+
+public sealed class DiffLineProjection : IDiffRowProjection
+{
+    public DiffLineProjection(GitKay.Core.Models.DiffLine line)
+    {
+        OldLineNoText = line.OldLineNo?.ToString() ?? "";
+        NewLineNoText = line.NewLineNo?.ToString() ?? "";
+        Prefix = line.Type.Equals(DiffLineType.Added)
+            ? "+"
+            : line.Type.Equals(DiffLineType.Removed)
+                ? "-"
+                : " ";
+        Content = line.Content;
+        Foreground = line.Type.Equals(DiffLineType.Added)
+            ? Brushes.LightGreen
+            : line.Type.Equals(DiffLineType.Removed)
+                ? Brushes.IndianRed
+                : line.Type.Equals(DiffLineType.Context)
+                    ? Brushes.Gainsboro
+                    : Brushes.LightSkyBlue;
+    }
+
+    public string OldLineNoText { get; }
+    public string NewLineNoText { get; }
+    public string Prefix { get; }
+    public string Content { get; }
+    public IBrush Foreground { get; }
+}
+
+internal static class DiffFormatting
+{
+    public static string BuildDisplayPath(string oldPath, string newPath)
     {
         if (oldPath == "/dev/null")
         {
@@ -38,46 +106,4 @@ public sealed class DiffFileProjection
 
         return $"{oldPath} -> {newPath}";
     }
-}
-
-public sealed class DiffHunkProjection
-{
-    public DiffHunkProjection(GitKay.Core.Models.DiffHunk hunk)
-    {
-        Header = hunk.Header;
-        Lines = new ObservableCollection<DiffLineProjection>(hunk.Lines.Select(line => new DiffLineProjection(line)));
-    }
-
-    public string Header { get; }
-    public ObservableCollection<DiffLineProjection> Lines { get; }
-}
-
-public sealed class DiffLineProjection
-{
-    public DiffLineProjection(GitKay.Core.Models.DiffLine line)
-    {
-        var lineType = line.Type.ToString();
-        OldLineNoText = line.OldLineNo?.ToString() ?? "";
-        NewLineNoText = line.NewLineNo?.ToString() ?? "";
-        Prefix = lineType switch
-        {
-            "Added" => "+",
-            "Removed" => "-",
-            _ => " "
-        };
-        Content = line.Content;
-        Foreground = lineType switch
-        {
-            "Added" => Brushes.LightGreen,
-            "Removed" => Brushes.IndianRed,
-            "Context" => Brushes.Gainsboro,
-            _ => Brushes.LightSkyBlue
-        };
-    }
-
-    public string OldLineNoText { get; }
-    public string NewLineNoText { get; }
-    public string Prefix { get; }
-    public string Content { get; }
-    public IBrush Foreground { get; }
 }

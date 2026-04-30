@@ -18,6 +18,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     public ObservableCollection<CommitProjection> Commits { get; } = new();
     public ObservableCollection<DiffFileProjection> SelectedDiffFiles { get; } = new();
+    public ObservableCollection<IDiffRowProjection> SelectedDiffRows { get; } = new();
 
     [ObservableProperty] private CommitProjection? _selectedCommit;
 
@@ -51,12 +52,25 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         if (!string.Equals(_selectedDiffHash, selectedDiffHash, StringComparison.Ordinal))
         {
             SelectedDiffFiles.Clear();
+            SelectedDiffRows.Clear();
 
             if (selectedDiffHash != null && model.SelectedDiff != null)
             {
                 foreach (var file in model.SelectedDiff.Value)
                 {
-                    SelectedDiffFiles.Add(new DiffFileProjection(file));
+                    var fileProjection = new DiffFileProjection(file);
+                    SelectedDiffFiles.Add(fileProjection);
+                    SelectedDiffRows.Add(new DiffFileHeaderProjection(fileProjection));
+
+                    foreach (var hunk in fileProjection.Hunks)
+                    {
+                        SelectedDiffRows.Add(new DiffHunkHeaderProjection(hunk));
+
+                        foreach (var line in hunk.Lines)
+                        {
+                            SelectedDiffRows.Add(line);
+                        }
+                    }
                 }
             }
 
@@ -111,7 +125,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
 
         var elapsed = Stopwatch.GetElapsedTime(startedAtTicks);
-        LogTiming($"ui projection elapsed={elapsed.TotalMilliseconds:F1}ms commits={model.Commits.Length} diffFiles={SelectedDiffFiles.Count}");
+        LogTiming($"ui projection elapsed={elapsed.TotalMilliseconds:F1}ms commits={model.Commits.Length} diffFiles={SelectedDiffFiles.Count} diffRows={SelectedDiffRows.Count}");
     }
 
     private Action<GitKay.Core.App.Msg>? _dispatch;
