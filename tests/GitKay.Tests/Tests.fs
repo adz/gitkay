@@ -837,6 +837,64 @@ module AppTests =
         | other -> failwithf "Expected a file header after hydration, got %A" other
 
     [<Fact>]
+    let ``MainProjection should dispatch diff file selection and keep the focus row in sync`` () =
+        let projection = MainProjection()
+        let mutable lastMsg = None
+        projection.SetDispatch (fun msg -> lastMsg <- Some msg)
+
+        let commit =
+            sampleCommit "12345678" "Subject"
+
+        let fooFile =
+            sampleFile
+                "foo.txt"
+                "foo.txt"
+                [
+                    {
+                        Type = Models.Context
+                        Content = "line1"
+                        OldLineNo = Some 1
+                        NewLineNo = Some 1
+                    }
+                ]
+
+        let barSummary =
+            sampleSummary "/dev/null" "bar.txt" "bar.txt (new file)"
+
+        let fooSummary =
+            sampleSummary "foo.txt" "foo.txt" "foo.txt"
+
+        let model =
+            {
+                emptyModel with
+                    Status = "Loaded"
+                    Commits = Graph.calculateLanes [ commit ]
+                    SelectedCommitHash = Some commit.Hash
+                    SelectedDiffHash = Some commit.Hash
+                    SelectedDiffFiles = Some [ fooSummary; barSummary ]
+                    SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" }
+                    SelectedDiffFile = Some fooFile
+            }
+
+        projection.Update model
+
+        projection.SelectedDiffFile <- projection.SelectedDiffFiles.[1]
+
+        test <@ projection.SelectedDiffFile.DisplayPath = "bar.txt (new file)" @>
+        test <@ projection.SelectedDiffRows.Count = 1 @>
+
+        match projection.SelectedDiffRow with
+        | :? DiffFileHeaderProjection as header -> test <@ header.DisplayPath = "bar.txt (new file)" @>
+        | other -> failwithf "Expected the diff focus row to follow the selected file, got %A" other
+
+        match lastMsg with
+        | Some (App.Msg.SelectDiffFile(hash, oldPath, newPath, _)) ->
+            test <@ hash = commit.Hash @>
+            test <@ oldPath = "/dev/null" @>
+            test <@ newPath = "bar.txt" @>
+        | other -> failwithf "Expected a diff file selection message, got %A" other
+
+    [<Fact>]
     let ``MainProjection should show search results and dispatch commit selection when a result is chosen`` () =
         let projection = MainProjection()
         let mutable lastMsg = None
