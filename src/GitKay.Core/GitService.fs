@@ -8,6 +8,52 @@ open LibGit2Sharp
 
 module GitService =
 
+    type StartupTarget =
+        | All
+        | Branch of string
+        | Sha of string
+        | Tag of string
+
+    let parseStartupTargets (args: string array) =
+        let rec loop index accumulated =
+            if index >= args.Length then
+                Ok (List.rev accumulated)
+            else
+                match args.[index] with
+                | "--all" ->
+                    Ok [ All ]
+                | "--branch" ->
+                    if index + 1 >= args.Length then
+                        Error "Missing branch name after --branch."
+                    elif args.[index + 1].StartsWith("--") then
+                        Error "Missing branch name after --branch."
+                    else
+                        loop (index + 2) (Branch args.[index + 1] :: accumulated)
+                | arg when arg.StartsWith("--branch=") ->
+                    loop (index + 1) (Branch (arg.Substring("--branch=".Length)) :: accumulated)
+                | "--sha" ->
+                    if index + 1 >= args.Length then
+                        Error "Missing commit hash after --sha."
+                    elif args.[index + 1].StartsWith("--") then
+                        Error "Missing commit hash after --sha."
+                    else
+                        loop (index + 2) (Sha args.[index + 1] :: accumulated)
+                | arg when arg.StartsWith("--sha=") ->
+                    loop (index + 1) (Sha (arg.Substring("--sha=".Length)) :: accumulated)
+                | "--tag" ->
+                    if index + 1 >= args.Length then
+                        Error "Missing tag name after --tag."
+                    elif args.[index + 1].StartsWith("--") then
+                        Error "Missing tag name after --tag."
+                    else
+                        loop (index + 2) (Tag args.[index + 1] :: accumulated)
+                | arg when arg.StartsWith("--tag=") ->
+                    loop (index + 1) (Tag (arg.Substring("--tag=".Length)) :: accumulated)
+                | arg ->
+                    Error (sprintf "Unrecognized startup argument: %s" arg)
+
+        loop 0 []
+
     let private logTiming (message: string) =
         let line = sprintf "[timing] %s" message
         Trace.WriteLine line
@@ -282,16 +328,54 @@ module GitService =
         |> List.rev
         |> List.map (fun f -> { f with Hunks = f.Hunks |> List.rev |> List.map (fun h -> { h with Lines = h.Lines |> List.rev }) })
 
-    let fetchHistory () =
-        withRepository (fun repo ->
-            let filter = CommitFilter()
-            filter.IncludeReachableFrom <- repo.Refs
-            filter.SortBy <- CommitSortStrategies.Topological ||| CommitSortStrategies.Time
+    let private resolveStartupTargets (repo: Repository) (targets: StartupTarget list) =
+        let hasAll = targets |> List.exists ((=) All)
 
-            repo.Commits.QueryBy(filter)
-            |> Seq.map toCommitModel
-            |> Seq.toList
-            |> Ok)
+        if hasAll || List.isEmpty targets then
+            Ok (box repo.Refs)
+        else
+            let resolveTarget target =
+                match target with
+                | All ->
+                    Ok []
+                | Branch name ->
+                    match repo.Branches.[name] with
+                    | null -> Error (sprintf "Branch not found: %s" name)
+                    | branch -> Ok [ box branch ]
+                | Sha hash ->
+                    match repo.Lookup<LibGit2Sharp.Commit>(hash) with
+                    | null -> Error (sprintf "Commit not found: %s" hash)
+                    | commit -> Ok [ box commit ]
+                | Tag name ->
+                    match repo.Tags.[name] with
+                    | null -> Error (sprintf "Tag not found: %s" name)
+                    | tag -> Ok [ box tag ]
+
+            targets
+            |> List.fold
+                (fun state target ->
+                    match state with
+                    | Error _ as err -> err
+                    | Ok resolved ->
+                        match resolveTarget target with
+                        | Ok additions -> Ok (resolved @ additions)
+                        | Error err -> Error err)
+                (Ok [])
+            |> Result.map box
+
+    let fetchHistory (targets: StartupTarget list) =
+        withRepository (fun repo ->
+            match resolveStartupTargets repo targets with
+            | Error err -> Error err
+            | Ok roots ->
+                let filter = CommitFilter()
+                filter.IncludeReachableFrom <- roots
+                filter.SortBy <- CommitSortStrategies.Topological ||| CommitSortStrategies.Time
+
+                repo.Commits.QueryBy(filter)
+                |> Seq.map toCommitModel
+                |> Seq.toList
+                |> Ok)
 
     let fetchDiff (hash: string) =
         let startedAtTicks = Stopwatch.GetTimestamp()

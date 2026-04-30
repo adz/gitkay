@@ -9,6 +9,8 @@ namespace GitKay.UI;
 
 public partial class App : Application
 {
+    public static string[] StartupArgs { get; set; } = Array.Empty<string>();
+
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
@@ -23,7 +25,7 @@ public partial class App : Application
             mainWindow.DataContext = projection;
 
             var host = ElmishHost.startAndBind(
-                GitKay.Core.App.program,
+                GitKay.Core.App.program(StartupArgs),
                 model => projection.Update(model),
                 dispatch => projection.SetDispatch(dispatch)
             );

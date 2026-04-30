@@ -81,6 +81,28 @@ summary Another line
         test <@ result.[20].AuthorName = "Jane Doe" @>
         test <@ result.[21].AuthorEmail = "john@example.com" @>
 
+    [<Fact>]
+    let ``parseStartupTargets should accept branch, sha, tag, and all`` () =
+        let result =
+            GitService.parseStartupTargets
+                [|
+                    "--branch"
+                    "main"
+                    "--sha=abc123"
+                    "--tag"
+                    "v1.0.0"
+                |]
+
+        match result with
+        | Error err -> failwith err
+        | Ok targets ->
+            test <@ targets = [ GitService.StartupTarget.Branch "main"; GitService.StartupTarget.Sha "abc123"; GitService.StartupTarget.Tag "v1.0.0" ] @>
+
+        let allResult = GitService.parseStartupTargets [| "--all" |]
+        match allResult with
+        | Error err -> failwith err
+        | Ok targets -> test <@ targets = [ GitService.StartupTarget.All ] @>
+
 module AppTests =
 
     let private sampleCommit hash subject : Models.Commit =
@@ -105,12 +127,20 @@ module AppTests =
     let private emptyModel : App.Model =
         {
             Status = ""
+            StartupTargets = []
             Commits = []
             SelectedCommitHash = None
             SelectedDiffHash = None
             SelectedDiff = None
             SelectionStartedAtTicks = None
         }
+
+    [<Fact>]
+    let ``init should store parsed startup targets`` () =
+        let model, _ = App.init [| "--branch"; "topic"; "--tag"; "v1.0" |]
+
+        test <@ model.Status = "Loading history..." @>
+        test <@ model.StartupTargets = [ GitService.StartupTarget.Branch "topic"; GitService.StartupTarget.Tag "v1.0" ] @>
 
     [<Fact>]
     let ``HistoryLoaded should auto-select the first commit when nothing is selected`` () =

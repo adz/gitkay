@@ -10,6 +10,7 @@ module App =
     type Model =
         {
             Status: string
+            StartupTargets: GitService.StartupTarget list
             Commits: Graph.CommitGraphInfo list
             SelectedCommitHash: string option
             SelectedDiffHash: string option
@@ -29,6 +30,9 @@ module App =
         | Revert of hash:string
         | OperationResult of Result<string, string>
         | NoOp
+
+    let private loadHistory (targets: GitService.StartupTarget list) =
+        Cmd.OfFunc.either GitService.fetchHistory targets HistoryLoaded (fun ex -> HistoryLoaded (Error ex.Message))
 
     let private logTiming (message: string) =
         let line = sprintf "[timing] %s" message
@@ -81,26 +85,38 @@ module App =
 
         nextModel, cmd
 
-    let init () : Model * Cmd<Msg> =
-        let model =
+    let init (startupArgs: string array) : Model * Cmd<Msg> =
+        match GitService.parseStartupTargets startupArgs with
+        | Error err ->
             {
-                Status = "Loading history..."
+                Status = sprintf "Error: %s" err
+                StartupTargets = []
                 Commits = []
                 SelectedCommitHash = None
                 SelectedDiffHash = None
                 SelectedDiff = None
                 SelectionStartedAtTicks = None
-            }
+            },
+            Cmd.none
+        | Ok startupTargets ->
+            let model =
+                {
+                    Status = "Loading history..."
+                    StartupTargets = startupTargets
+                    Commits = []
+                    SelectedCommitHash = None
+                    SelectedDiffHash = None
+                    SelectedDiff = None
+                    SelectionStartedAtTicks = None
+                }
 
-        let cmd = Cmd.OfFunc.either GitService.fetchHistory () HistoryLoaded (fun ex -> HistoryLoaded (Error ex.Message))
-        model, cmd
+            model, loadHistory startupTargets
 
     let update msg model : Model * Cmd<Msg> =
         match msg with
         | RereadRefs ->
             let nextModel = { model with Status = "Refreshing..." }
-            let cmd = Cmd.OfFunc.either GitService.fetchHistory () HistoryLoaded (fun ex -> HistoryLoaded (Error ex.Message))
-            nextModel, cmd
+            nextModel, loadHistory model.StartupTargets
         | HistoryLoaded (Ok commits) ->
             let graphInfo = Graph.calculateLanes commits
             historyLoadSelection model graphInfo
@@ -163,5 +179,5 @@ module App =
         | NoOp ->
             model, Cmd.none
 
-    let program =
-        Program.mkProgram init update (fun _ _ -> ())
+    let program (startupArgs: string array) =
+        Program.mkProgram (fun () -> init startupArgs) update (fun _ _ -> ())
