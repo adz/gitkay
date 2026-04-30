@@ -125,10 +125,12 @@
                         </DockPanel>
                     </Border>
 
-                    <ListBox ItemsSource="{Binding Commits}"
+                    <ListBox x:Name="CommitListBox"
+                             ItemsSource="{Binding Commits}"
                              SelectedItem="{Binding SelectedCommit}"
                              Background="Transparent"
-                             BorderThickness="0">
+                             BorderThickness="0"
+                             KeyDown="OnCommitListBoxKeyDown">
                         <ListBox.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <VirtualizingStackPanel />
@@ -185,7 +187,9 @@
                              BorderThickness="0"
                              SelectionMode="Single"
                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                             ScrollViewer.VerticalScrollBarVisibility="Auto">
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             KeyDown="OnDiffListBoxKeyDown"
+                             GotFocus="OnDiffRowsListBoxGotFocus">
                         <ListBox.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <VirtualizingStackPanel />
@@ -263,7 +267,9 @@
                                  BorderThickness="0"
                                  SelectionMode="Single"
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                 ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 KeyDown="OnDiffListBoxKeyDown"
+                                 GotFocus="OnDiffFilesListBoxGotFocus">
                             <ListBox.ItemsPanel>
                                 <ItemsPanelTemplate>
                                     <VirtualizingStackPanel />

@@ -1,7 +1,8 @@
 using System;
 using System.ComponentModel;
-using Avalonia.Media;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Media;
 using Avalonia.Threading;
 
 namespace GitKay.UI;
@@ -9,6 +10,7 @@ namespace GitKay.UI;
 public partial class MainWindow : Window
 {
     private MainProjection? _projection;
+    private Control? _lastDiffPaneFocus;
 
     public MainWindow()
     {
@@ -57,8 +59,51 @@ public partial class MainWindow : Window
                 DiffRowsListBox.ScrollIntoView(target);
             }
 
-            DiffRowsListBox.Focus();
+            if (!DiffRowsListBox.IsKeyboardFocusWithin && !DiffFilesListBox.IsKeyboardFocusWithin)
+            {
+                DiffRowsListBox.Focus();
+            }
         });
+    }
+
+    private void OnDiffRowsListBoxGotFocus(object? sender, FocusChangedEventArgs e)
+    {
+        _lastDiffPaneFocus = DiffRowsListBox;
+    }
+
+    private void OnDiffFilesListBoxGotFocus(object? sender, FocusChangedEventArgs e)
+    {
+        _lastDiffPaneFocus = DiffFilesListBox;
+    }
+
+    private void OnCommitListBoxKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Right && e.KeyModifiers == KeyModifiers.None)
+        {
+            FocusDiffPane();
+            e.Handled = true;
+        }
+    }
+
+    private void OnDiffListBoxKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Left && e.KeyModifiers == KeyModifiers.None)
+        {
+            CommitListBox.Focus();
+            e.Handled = true;
+        }
+    }
+
+    private void FocusDiffPane()
+    {
+        var target = _lastDiffPaneFocus;
+
+        if (target == null || !target.IsVisible)
+        {
+            target = DiffRowsListBox;
+        }
+
+        target.Focus();
     }
 
     public override void Render(DrawingContext context)

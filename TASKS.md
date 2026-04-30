@@ -39,7 +39,7 @@
 13. [x] Add lazy loading for per-file diff content so one commit can open instantly while individual files hydrate on demand.
 14. [x] Keep write-side git operations working, but move them off the CLI only if they become hot or user-visible enough to matter.
 15. [x] Add search UI and search plumbing for commit hash, commit message/subject, author, file/path, text across commit contents and diffs, and ref/tag/branch lookup.
-16. [ ] Implement gitk-style keyboard control for the commit list and diff pane, including up/down, page up/down, home/end, and focus changes between panes.
+16. [x] Implement gitk-style keyboard control for the commit list and diff pane, including up/down, page up/down, home/end, and focus changes between panes.
 17. [ ] Draw proper commit graph edges for branches and merges.
 18. [ ] Improve graph rendering performance on larger histories.
 19. [ ] Add a top-level error dialog for unrecoverable failures.
