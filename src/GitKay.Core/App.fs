@@ -10,14 +10,14 @@ module App =
             Status: string
             Commits: Graph.CommitGraphInfo list
             SelectedHash: string option
-            SelectedDiff: Models.BlamedFileDiff list option
+            SelectedDiff: Models.FileDiff list option
         }
 
     type Msg =
         | RereadRefs
         | HistoryLoaded of Result<Models.Commit list, string>
         | SelectCommit of string
-        | DiffLoaded of Result<Models.BlamedFileDiff list, string>
+        | DiffLoaded of Result<Models.FileDiff list, string>
         | CreateTag of hash:string * name:string
         | CreateBranch of hash:string * name:string
         | CherryPick of hash:string
@@ -44,7 +44,7 @@ module App =
             { model with Status = sprintf "Error: %s" err }, Cmd.none
         | SelectCommit hash ->
             let nextModel = { model with SelectedHash = Some hash; SelectedDiff = None }
-            let cmd = Cmd.OfFunc.either GitService.fetchDiffWithBlame hash DiffLoaded (fun ex -> DiffLoaded (Error ex.Message))
+            let cmd = Cmd.OfFunc.either GitService.fetchDiff hash DiffLoaded (fun ex -> DiffLoaded (Error ex.Message))
             nextModel, cmd
         | DiffLoaded (Ok diff) ->
             { model with SelectedDiff = Some diff }, Cmd.none

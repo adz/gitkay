@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <PackageReference Include="FsFlow" Version="0.2.0" />
+    <PackageReference Include="LibGit2Sharp" Version="0.31.0" />
   </ItemGroup>
 
   <ItemGroup>

@@ -6,7 +6,7 @@ namespace GitKay.UI;
 
 public sealed class DiffFileProjection
 {
-    public DiffFileProjection(GitKay.Core.Models.BlamedFileDiff file)
+    public DiffFileProjection(GitKay.Core.Models.FileDiff file)
     {
         OldPath = file.OldPath;
         NewPath = file.NewPath;
@@ -42,7 +42,7 @@ public sealed class DiffFileProjection
 
 public sealed class DiffHunkProjection
 {
-    public DiffHunkProjection(GitKay.Core.Models.BlamedDiffHunk hunk)
+    public DiffHunkProjection(GitKay.Core.Models.DiffHunk hunk)
     {
         Header = hunk.Header;
         Lines = new ObservableCollection<DiffLineProjection>(hunk.Lines.Select(line => new DiffLineProjection(line)));
@@ -54,19 +54,18 @@ public sealed class DiffHunkProjection
 
 public sealed class DiffLineProjection
 {
-    public DiffLineProjection(GitKay.Core.Models.BlamedDiffLine line)
+    public DiffLineProjection(GitKay.Core.Models.DiffLine line)
     {
-        var diffLine = line.Line;
-        var lineType = diffLine.Type.ToString();
-        OldLineNoText = diffLine.OldLineNo?.ToString() ?? "";
-        NewLineNoText = diffLine.NewLineNo?.ToString() ?? "";
+        var lineType = line.Type.ToString();
+        OldLineNoText = line.OldLineNo?.ToString() ?? "";
+        NewLineNoText = line.NewLineNo?.ToString() ?? "";
         Prefix = lineType switch
         {
             "Added" => "+",
             "Removed" => "-",
             _ => " "
         };
-        Content = diffLine.Content;
+        Content = line.Content;
         Foreground = lineType switch
         {
             "Added" => Brushes.LightGreen,
@@ -74,9 +73,6 @@ public sealed class DiffLineProjection
             "Context" => Brushes.Gainsboro,
             _ => Brushes.LightSkyBlue
         };
-        BlameText = line.Blame is { } blame
-            ? $"{ShortHash(blame.Value.Hash)} {blame.Value.AuthorName}"
-            : "";
     }
 
     public string OldLineNoText { get; }
@@ -84,7 +80,4 @@ public sealed class DiffLineProjection
     public string Prefix { get; }
     public string Content { get; }
     public IBrush Foreground { get; }
-    public string BlameText { get; }
-
-    private static string ShortHash(string hash) => hash.Length > 8 ? hash.Substring(0, 8) : hash;
 }

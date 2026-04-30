@@ -1,10 +1,27 @@
 namespace GitKay.Core
 
+open System
 open System.Diagnostics
 open System.Text.RegularExpressions
 open GitKay.Core.Models
+open LibGit2Sharp
 
 module GitService =
+
+    let private discoverRepositoryPath () =
+        Repository.Discover(Environment.CurrentDirectory)
+
+    let private withRepository (action: Repository -> Result<'T, string>) =
+        try
+            let repoPath = discoverRepositoryPath ()
+
+            if String.IsNullOrWhiteSpace repoPath then
+                Error "Could not locate a Git repository."
+            else
+                use repo = new Repository(repoPath)
+                action repo
+        with ex ->
+            Error ex.Message
 
     let private quoteArg (value: string) =
         "\"" + value.Replace("\"", "\\\"") + "\""
@@ -37,7 +54,7 @@ module GitService =
         | Error _ ->
             None
 
-    let parseCommitLine (line: string) : Commit option =
+    let parseCommitLine (line: string) : Models.Commit option =
         let parts = line.TrimEnd('\r').Split('|')
         if parts.Length >= 6 then
             Some {
@@ -135,6 +152,16 @@ module GitService =
             OldPath = file.OldPath
             NewPath = file.NewPath
             Hunks = file.Hunks |> List.map toBlamedDiffHunk
+        }
+
+    let private toCommitModel (commit: LibGit2Sharp.Commit) : Models.Commit =
+        {
+            Hash = commit.Sha
+            Timestamp = commit.Author.When.ToUnixTimeSeconds()
+            AuthorName = commit.Author.Name
+            AuthorEmail = commit.Author.Email
+            Parents = commit.Parents |> Seq.map (fun parent -> parent.Sha) |> Seq.toList
+            Subject = commit.MessageShort
         }
 
     let parseDiff (output: string) : FileDiff list =
@@ -247,81 +274,30 @@ module GitService =
         |> List.rev
         |> List.map (fun f -> { f with Hunks = f.Hunks |> List.rev |> List.map (fun h -> { h with Lines = h.Lines |> List.rev }) })
 
-    let private blameFileDiff (commitHash: string) (file: FileDiff) : BlamedFileDiff =
-        let parentHash = getFirstParent commitHash
-
-        let mutable newBlameByLine = Map.empty
-        let mutable oldBlameByLine = Map.empty
-
-        file.Hunks
-        |> List.iter (fun hunk ->
-            let newLines =
-                hunk.Lines
-                |> List.choose (fun line -> line.NewLineNo)
-
-            let oldLines =
-                hunk.Lines
-                |> List.choose (fun line -> line.OldLineNo)
-
-            let newBlame =
-                match newLines with
-                | [] -> Map.empty
-                | _ -> fetchBlameRange commitHash file.NewPath (List.min newLines) (List.max newLines)
-
-            let oldBlame =
-                match parentHash, oldLines with
-                | Some parent, _ when file.OldPath <> "/dev/null" && oldLines <> [] ->
-                    fetchBlameRange parent file.OldPath (List.min oldLines) (List.max oldLines)
-                | _ ->
-                    Map.empty
-
-            newBlameByLine <- Map.fold (fun state key value -> Map.add key value state) newBlameByLine newBlame
-            oldBlameByLine <- Map.fold (fun state key value -> Map.add key value state) oldBlameByLine oldBlame
-        )
-
-        let lines : BlamedDiffHunk list =
-            file.Hunks
-            |> List.map (fun hunk ->
-                {
-                    Header = hunk.Header
-                    Lines =
-                        hunk.Lines
-                        |> List.map (fun line ->
-                            let blame =
-                                match line.Type with
-                                | Added
-                                | Context ->
-                                    line.NewLineNo |> Option.bind (fun lineNo -> Map.tryFind lineNo newBlameByLine)
-                                | Removed ->
-                                    line.OldLineNo |> Option.bind (fun lineNo -> Map.tryFind lineNo oldBlameByLine)
-                                | Header ->
-                                    None
-
-                            { Line = line; Blame = blame })
-                })
-
-        {
-            OldPath = file.OldPath
-            NewPath = file.NewPath
-            Hunks = lines
-        }
-
     let fetchHistory () =
-        // %H: Hash, %at: Auth Date (unix), %an: Auth Name, %ae: Auth Email, %P: Parent Hashes, %s: Subject
-        let args = "log --all --format=\"%H|%at|%an|%ae|%P|%s\""
-        match executeGitCommand args with
-        | Ok output ->
-            output.Replace("\r", "").Split('\n', System.StringSplitOptions.RemoveEmptyEntries)
-            |> Array.choose parseCommitLine
-            |> Array.toList
-            |> Ok
-        | Error err -> Error err
+        withRepository (fun repo ->
+            let filter = CommitFilter()
+            filter.IncludeReachableFrom <- repo.Refs
+            filter.SortBy <- CommitSortStrategies.Topological ||| CommitSortStrategies.Time
+
+            repo.Commits.QueryBy(filter)
+            |> Seq.map toCommitModel
+            |> Seq.toList
+            |> Ok)
 
     let fetchDiff (hash: string) =
-        let args = sprintf "show --format=\"\" %s" hash
-        match executeGitCommand args with
-        | Ok output -> Ok (parseDiff output)
-        | Error err -> Error err
+        withRepository (fun repo ->
+            let commit = repo.Lookup<LibGit2Sharp.Commit>(hash)
+
+            if isNull commit then
+                Error (sprintf "Commit not found: %s" hash)
+            else
+                use patch =
+                    match commit.Parents |> Seq.tryHead with
+                    | Some parent -> repo.Diff.Compare<Patch>(parent.Tree, commit.Tree)
+                    | None -> repo.Diff.Compare<Patch>(null, commit.Tree)
+
+                Ok (parseDiff patch.Content))
 
     let fetchDiffWithBlame (hash: string) =
         match fetchDiff hash with
