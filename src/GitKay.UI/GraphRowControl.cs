@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
@@ -41,44 +42,44 @@ public class GraphRowControl : Control
 
     public override void Render(DrawingContext context)
     {
-        if (Segments == null) return;
-
         double laneWidth = 15;
         double rowHeight = Bounds.Height;
         double halfHeight = rowHeight / 2;
         double dotRadius = 4;
 
-        foreach (var segment in Segments)
+        var segments = Segments?.ToArray() ?? System.Array.Empty<SegmentProjection>();
+        var commitSegments = segments.Where(segment => segment.IsCommit).ToArray();
+        var commitBrush =
+            commitSegments.Length > 0
+                ? LaneBrushes[commitSegments[0].Color % LaneBrushes.Length]
+                : LaneBrushes[CommitLane % LaneBrushes.Length];
+
+        foreach (var segment in segments.Where(segment => !segment.IsCommit).GroupBy(segment => segment.Lane))
         {
-            var brush = LaneBrushes[segment.Color % LaneBrushes.Length];
+            var firstSegment = segment.First();
+            var brush = LaneBrushes[firstSegment.Color % LaneBrushes.Length];
             var pen = new Pen(brush, 2);
 
-            double x1 = (segment.Lane + 1) * laneWidth;
-            double x2 = (segment.TargetLane + 1) * laneWidth;
+            double x = (segment.Key + 1) * laneWidth;
+            context.DrawLine(pen, new Point(x, 0), new Point(x, rowHeight));
+        }
 
-            // Draw line from current row to next row
-            // We draw from (x1, halfHeight) to (x2, rowHeight) if it's a commit?
-            // Actually, segments describe the path from THIS row to NEXT row.
-            // So we draw from (x1, halfHeight) to (x2, rowHeight + halfHeight)? No, row-based.
-            
-            // Layout: 
-            // Previous Row: (..., halfHeight)
-            // This Row: (x1, 0) -> (x1, halfHeight) [Entry]
-            // This Row: (x1, halfHeight) -> (x2, rowHeight) [Exit to next]
-            
-            // Entry line (from previous row's exit)
-            // This is handled by the fact that we draw the EXIT in the previous row.
-            // Wait, virtualized list means rows are independent.
-            // Let's draw:
-            // 1. Line from (x1, 0) to (x1, halfHeight) -- This is the continuation from previous row's exit.
-            // 2. Line from (x1, halfHeight) to (x2, rowHeight) -- This is the exit to next row.
+        if (commitSegments.Length > 0)
+        {
+            var commitLaneX = (commitSegments[0].Lane + 1) * laneWidth;
+            var pen = new Pen(commitBrush, 2);
 
-            context.DrawLine(pen, new Point(x1, 0), new Point(x1, halfHeight));
-            context.DrawLine(pen, new Point(x1, halfHeight), new Point(x2, rowHeight));
+            context.DrawLine(pen, new Point(commitLaneX, 0), new Point(commitLaneX, halfHeight));
+
+            foreach (var segment in commitSegments)
+            {
+                double targetX = (segment.TargetLane + 1) * laneWidth;
+                context.DrawLine(pen, new Point(commitLaneX, halfHeight), new Point(targetX, rowHeight));
+            }
         }
 
         // Draw the commit dot
         double cx = (CommitLane + 1) * laneWidth;
-        context.DrawEllipse(LaneBrushes[CommitLane % LaneBrushes.Length], null, new Rect(cx - dotRadius, halfHeight - dotRadius, dotRadius * 2, dotRadius * 2));
+        context.DrawEllipse(commitBrush, null, new Rect(cx - dotRadius, halfHeight - dotRadius, dotRadius * 2, dotRadius * 2));
     }
 }

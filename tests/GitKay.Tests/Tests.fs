@@ -261,6 +261,68 @@ module AppTests =
             DisplayPath = displayPath
         }
 
+    [<Fact>]
+    let ``calculateLanes should keep merge edges separate from pass-through lanes`` () =
+        let commits : Models.Commit list =
+            [
+                {
+                    Hash = "merge"
+                    AuthorName = "Author"
+                    AuthorEmail = "author@example.com"
+                    Timestamp = 1710000000L
+                    Parents = [ "left"; "right" ]
+                    Subject = "Merge branch"
+                    Message = "Merge branch"
+                    Refs = []
+                }
+                {
+                    Hash = "left"
+                    AuthorName = "Author"
+                    AuthorEmail = "author@example.com"
+                    Timestamp = 1709999940L
+                    Parents = [ "base" ]
+                    Subject = "Left"
+                    Message = "Left"
+                    Refs = []
+                }
+                {
+                    Hash = "right"
+                    AuthorName = "Author"
+                    AuthorEmail = "author@example.com"
+                    Timestamp = 1709999880L
+                    Parents = [ "base" ]
+                    Subject = "Right"
+                    Message = "Right"
+                    Refs = []
+                }
+                {
+                    Hash = "base"
+                    AuthorName = "Author"
+                    AuthorEmail = "author@example.com"
+                    Timestamp = 1709999820L
+                    Parents = []
+                    Subject = "Base"
+                    Message = "Base"
+                    Refs = []
+                }
+            ]
+
+        let graph = Graph.calculateLanes commits
+
+        test <@ graph.Length = 4 @>
+
+        let mergeRow = graph.[0]
+        test <@ mergeRow.Lane = 0 @>
+        test <@ mergeRow.Segments.Length = 2 @>
+        test <@ mergeRow.Segments |> List.forall (fun segment -> segment.IsCommit) @>
+        test <@ mergeRow.Segments |> List.map (fun segment -> segment.TargetLane) |> List.sort = [ 0; 1 ] @>
+
+        let leftRow = graph.[1]
+        test <@ leftRow.Segments.Length = 2 @>
+        test <@ leftRow.Segments |> List.exists (fun segment -> segment.IsCommit) @>
+        test <@ leftRow.Segments |> List.exists (fun segment -> not segment.IsCommit) @>
+        test <@ leftRow.Segments |> List.exists (fun segment -> segment.Lane <> segment.TargetLane) @>
+
     let private sampleSearchResult (commit: Models.Commit) matchKinds matchSummary : GitService.SearchResult =
         {
             Commit = commit
