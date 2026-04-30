@@ -337,6 +337,13 @@ module GitService =
             NewPath: string
         }
 
+    type private DiffFileContentCacheKey =
+        {
+            Hash: string
+            OldPath: string
+            NewPath: string
+        }
+
     type DiffFileSummary =
         {
             OldPath: string
@@ -359,7 +366,7 @@ module GitService =
         }
 
     let private diffCache = ConcurrentDictionary<string, DiffCacheEntry>()
-    let private diffFileContentCache = ConcurrentDictionary<DiffFileKey, FileDiff>()
+    let private diffFileContentCache = ConcurrentDictionary<DiffFileContentCacheKey, FileDiff>()
 
     let private buildDisplayPath oldPath newPath =
         if oldPath = "/dev/null" then
@@ -643,7 +650,12 @@ module GitService =
 
     let fetchDiffFileContent (hash: string) (oldPath: string) (newPath: string) =
         let startedAtTicks = Stopwatch.GetTimestamp()
-        let key = { OldPath = oldPath; NewPath = newPath }
+        let key =
+            {
+                Hash = hash
+                OldPath = oldPath
+                NewPath = newPath
+            }
 
         match diffFileContentCache.TryGetValue key with
         | true, file ->

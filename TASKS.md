@@ -47,5 +47,5 @@
 
 ## Later
 1. [x] Port any remaining hot write operations to LibGit2Sharp if the CLI remains measurable.
-2. [ ] Add tests for cache invalidation, selection ordering, and latest-wins async behavior.
+2. [x] Add tests for cache invalidation, selection ordering, and latest-wins async behavior.
 3. [ ] Add tests for diff viewer focus and file selection behavior once the UI state is explicit.

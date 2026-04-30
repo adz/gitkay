@@ -203,6 +203,22 @@ summary Another line
         test <@ entry.FileList.[1].DisplayPath = "bar.txt (new file)" @>
 
     [<Fact>]
+    let ``fetchDiffFileContent should cache file content per commit hash`` () =
+        withTempRepository (fun root repo ->
+            let firstCommit = commitFile repo root "foo.txt" "one" "first commit"
+            let secondCommit = commitFile repo root "foo.txt" "two" "second commit"
+
+            match GitService.fetchDiffFileContent firstCommit.Sha "foo.txt" "foo.txt" with
+            | Error err -> failwith err
+            | Ok firstFile ->
+                test <@ firstFile.Hunks.Head.Lines |> List.exists (fun line -> line.Type = Models.Added && line.Content = "one") @>
+
+            match GitService.fetchDiffFileContent secondCommit.Sha "foo.txt" "foo.txt" with
+            | Error err -> failwith err
+            | Ok secondFile ->
+                test <@ secondFile.Hunks.Head.Lines |> List.exists (fun line -> line.Type = Models.Added && line.Content = "two") @>)
+
+    [<Fact>]
     let ``createTag and createBranch should update repository refs without the CLI`` () =
         withTempRepository (fun root repo ->
             let commit = commitFile repo root "base.txt" "base" "base commit"
@@ -542,6 +558,50 @@ module AppTests =
         test <@ next.SelectedDiffFileStartedAtTicks = None @>
 
     [<Fact>]
+    let ``HistoryLoaded should fall back to the first commit when the previous selection is missing`` () =
+        let commits =
+            [
+                sampleCommit "first" "First"
+                sampleCommit "second" "Second"
+            ]
+
+        let selectedFile =
+            sampleFile
+                "foo.txt"
+                "foo.txt"
+                [
+                    {
+                        Type = Models.Context
+                        Content = "line1"
+                        OldLineNo = Some 1
+                        NewLineNo = Some 1
+                    }
+                ]
+
+        let initial =
+            {
+                emptyModel with
+                    SelectedCommitHash = Some "missing"
+                    SelectedDiffHash = Some "missing"
+                    SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
+                    SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" }
+                    SelectedDiffFile = Some selectedFile
+                    SelectionStartedAtTicks = Some 1L
+                    SelectedDiffFileStartedAtTicks = Some 2L
+            }
+
+        let next, _ = App.update (App.Msg.HistoryLoaded (Ok commits)) initial
+
+        test <@ next.Status = "Loaded 2 commits" @>
+        test <@ next.SelectedCommitHash = Some "first" @>
+        test <@ next.SelectedDiffHash = None @>
+        test <@ next.SelectedDiffFiles = None @>
+        test <@ next.SelectedDiffFileKey = None @>
+        test <@ next.SelectedDiffFile = None @>
+        test <@ next.SelectionStartedAtTicks.IsSome @>
+        test <@ next.SelectedDiffFileStartedAtTicks = None @>
+
+    [<Fact>]
     let ``SelectCommit should clear diff state and start loading the new file list`` () =
         let selectedFile =
             sampleFile
@@ -602,6 +662,26 @@ module AppTests =
         test <@ next.SelectedDiffFile = None @>
         test <@ next.SelectionStartedAtTicks = None @>
         test <@ next.SelectedDiffFileStartedAtTicks.IsSome @>
+
+    [<Fact>]
+    let ``DiffFilesLoaded should ignore stale file list results from an earlier selection`` () =
+        let firstSelection, _ = App.update (App.Msg.SelectCommit("old", 1L)) emptyModel
+        let currentSelection, _ = App.update (App.Msg.SelectCommit("new", 2L)) firstSelection
+
+        let staleFiles =
+            [
+                sampleSummary "foo.txt" "foo.txt" "foo.txt"
+            ]
+
+        let next, _ = App.update (App.Msg.DiffFilesLoaded("old", 1L, Ok staleFiles)) currentSelection
+
+        test <@ next.SelectedCommitHash = Some "new" @>
+        test <@ next.SelectedDiffHash = None @>
+        test <@ next.SelectedDiffFiles = None @>
+        test <@ next.SelectedDiffFileKey = None @>
+        test <@ next.SelectedDiffFile = None @>
+        test <@ next.SelectionStartedAtTicks = Some 2L @>
+        test <@ next.SelectedDiffFileStartedAtTicks = None @>
 
     [<Fact>]
     let ``SelectDiffFile should update the selected file without loading every file`` () =
