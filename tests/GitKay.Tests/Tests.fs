@@ -7,6 +7,7 @@ open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
 open Avalonia.Media
+open Avalonia.Input
 open LibGit2Sharp
 open GitKay.Core
 open GitKay.UI
@@ -182,6 +183,29 @@ diff --git a/foo.txt b/foo.txt
     [<Fact>]
     let ``GraphRowControl should bias the commit marker toward the text baseline`` () =
         test <@ GraphRowControl.GetCommitMarkerCenterY 24.0 = 14.0 @>
+
+    [<Fact>]
+    let ``MainWindowNavigation should map j and k to down and up`` () =
+        let mutable delta = 0
+
+        Assert.True(MainWindowNavigation.TryGetListNavigationDelta(Key.J, KeyModifiers.None, &delta))
+        Assert.Equal(1, delta)
+
+        Assert.True(MainWindowNavigation.TryGetListNavigationDelta(Key.K, KeyModifiers.None, &delta))
+        Assert.Equal(-1, delta)
+
+        Assert.False(MainWindowNavigation.TryGetListNavigationDelta(Key.J, KeyModifiers.Control, &delta))
+        Assert.False(MainWindowNavigation.TryGetListNavigationDelta(Key.A, KeyModifiers.None, &delta))
+
+    [<Fact>]
+    let ``MainWindowNavigation should clamp selection movement within the list`` () =
+        Assert.Equal(0, MainWindowNavigation.GetNextIndex(-1, 3, 1))
+        Assert.Equal(2, MainWindowNavigation.GetNextIndex(-1, 3, -1))
+        Assert.Equal(0, MainWindowNavigation.GetNextIndex(0, 3, -1))
+        Assert.Equal(2, MainWindowNavigation.GetNextIndex(2, 3, 1))
+        Assert.Equal(2, MainWindowNavigation.GetNextIndex(1, 3, 1))
+        Assert.Equal(0, MainWindowNavigation.GetNextIndex(1, 3, -1))
+        Assert.Equal(-1, MainWindowNavigation.GetNextIndex(1, 0, 1))
 
     [<Fact>]
     let ``parseBlamePorcelain should map blame metadata by line`` () =

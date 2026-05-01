@@ -177,8 +177,7 @@
                              BorderThickness="0"
                              MinHeight="0"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                             ScrollViewer.VerticalScrollBarVisibility="Auto"
-                             KeyDown="OnCommitListBoxKeyDown">
+                             ScrollViewer.VerticalScrollBarVisibility="Auto">
                         <ListBox.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <VirtualizingStackPanel />
@@ -510,7 +509,6 @@
                                      MinHeight="0"
                                      ScrollViewer.HorizontalScrollBarVisibility="Auto"
                                      ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                     KeyDown="OnDiffListBoxKeyDown"
                                      GotFocus="OnDiffRowsListBoxGotFocus">
                                 <ListBox.ItemsPanel>
                                     <ItemsPanelTemplate>
@@ -741,7 +739,6 @@
                                      SelectionMode="Single"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                      ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                     KeyDown="OnDiffListBoxKeyDown"
                                      GotFocus="OnDiffFilesListBoxGotFocus">
                                 <ListBox.ItemsPanel>
                                     <ItemsPanelTemplate>

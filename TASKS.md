@@ -37,7 +37,7 @@
 15. [x] Add diff presentation modes for `diff`, `side-by-side`, `new`, and `old`, with a user-selectable default.
 16. [x] Add configurable diff context line counts and wire the setting through the UI and backend.
 17. [x] Add syntax highlighting for diffs and any other rendered code/text views that can benefit from it.
-18. [ ] Add vim-style navigation bindings such as `j`/`k` for down/up, with the same behavior across the main lists.
+18. [x] Add vim-style navigation bindings such as `j`/`k` for down/up, with the same behavior across the main lists.
 19. [ ] Add command-line arguments for the major app options so the startup state can be configured non-interactively.
 20. [ ] Add an `Edit > Settings` panel for each major pane, persist settings to the right app-specific location, and load them on startup.
 21. [ ] Remember the last open position per repo and restore the window size on startup.

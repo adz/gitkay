@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
 
@@ -16,6 +17,9 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
+        CommitListBox.AddHandler(InputElement.KeyDownEvent, OnMainListBoxKeyDown, RoutingStrategies.Tunnel);
+        DiffRowsListBox.AddHandler(InputElement.KeyDownEvent, OnMainListBoxKeyDown, RoutingStrategies.Tunnel);
+        DiffFilesListBox.AddHandler(InputElement.KeyDownEvent, OnMainListBoxKeyDown, RoutingStrategies.Tunnel);
     }
 
     private void OnDataContextChanged(object? sender, EventArgs e)
@@ -114,18 +118,32 @@ public partial class MainWindow : Window
         _lastDiffPaneFocus = DiffFilesListBox;
     }
 
-    private void OnCommitListBoxKeyDown(object? sender, KeyEventArgs e)
+    private void OnMainListBoxKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Right && e.KeyModifiers == KeyModifiers.None)
+        if (sender is not ListBox listBox)
+        {
+            return;
+        }
+
+        if (MainWindowNavigation.TryGetListNavigationDelta(e.Key, e.KeyModifiers, out var delta))
+        {
+            MainWindowNavigation.TryMoveSelection(listBox, delta);
+            e.Handled = true;
+            return;
+        }
+
+        if (ReferenceEquals(listBox, CommitListBox)
+            && e.Key == Key.Right
+            && e.KeyModifiers == KeyModifiers.None)
         {
             FocusDiffPane();
             e.Handled = true;
+            return;
         }
-    }
 
-    private void OnDiffListBoxKeyDown(object? sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Left && e.KeyModifiers == KeyModifiers.None)
+        if ((ReferenceEquals(listBox, DiffRowsListBox) || ReferenceEquals(listBox, DiffFilesListBox))
+            && e.Key == Key.Left
+            && e.KeyModifiers == KeyModifiers.None)
         {
             CommitListBox.Focus();
             e.Handled = true;
