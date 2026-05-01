@@ -115,16 +115,16 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     };
 
     [ObservableProperty] private string _status = "";
-    [ObservableProperty] private string _commitRowFontFamily = "Helvetica,Arial,Liberation Sans,Noto Sans,sans-serif";
-    [ObservableProperty] private string _commitRowMonoFontFamily = "Courier,Courier New,Liberation Mono,Monospace";
-    [ObservableProperty] private double _commitRowTextFontSize = 10;
-    [ObservableProperty] private double _commitRowMetaFontSize = 10;
-    [ObservableProperty] private double _commitRowBadgeFontSize = 10;
+    [ObservableProperty] private string _commitRowFontFamily = AppSettings.DefaultCommitRowFontFamily;
+    [ObservableProperty] private string _commitRowMonoFontFamily = AppSettings.DefaultCommitRowMonoFontFamily;
+    [ObservableProperty] private double _commitRowTextFontSize = AppSettings.DefaultCommitRowTextFontSize;
+    [ObservableProperty] private double _commitRowMetaFontSize = AppSettings.DefaultCommitRowMetaFontSize;
+    [ObservableProperty] private double _commitRowBadgeFontSize = AppSettings.DefaultCommitRowBadgeFontSize;
     [ObservableProperty] private bool _showBranchRefs;
     [ObservableProperty] private bool _showStashes;
-    [ObservableProperty] private int _diffContextLineCount = 3;
+    [ObservableProperty] private int _diffContextLineCount = AppSettings.DefaultDiffContextLines;
     [ObservableProperty] private string _searchQuery = "";
-    [ObservableProperty] private double _searchDebounceSeconds = 0.5;
+    [ObservableProperty] private double _searchDebounceSeconds = AppSettings.DefaultSearchDebounceSeconds;
     [ObservableProperty] private string _commitFindQuery = "";
     [ObservableProperty] private SearchScopeProjection? _selectedSearchScope;
     [ObservableProperty] private bool _hasSearchResults;
@@ -153,6 +153,59 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     {
         SelectedDiffPresentationMode = DiffPresentationModes[0];
         SelectedDiffContextLineCount = DiffContextLineCounts.First(option => option.Count == DiffContextLineCount);
+    }
+
+    public void ApplySettings(AppSettings settings)
+    {
+        var normalized = settings.Normalize();
+
+        _suppressShowBranchRefsDispatch = true;
+        _suppressShowStashesDispatch = true;
+        _suppressDiffContextDispatch = true;
+        _suppressDiffPresentationDispatch = true;
+
+        try
+        {
+            ShowBranchRefs = normalized.ShowBranchRefs;
+            ShowStashes = normalized.ShowStashes;
+            CommitRowFontFamily = normalized.CommitRowFontFamily;
+            CommitRowMonoFontFamily = normalized.CommitRowMonoFontFamily;
+            CommitRowTextFontSize = normalized.CommitRowTextFontSize;
+            CommitRowMetaFontSize = normalized.CommitRowMetaFontSize;
+            CommitRowBadgeFontSize = normalized.CommitRowBadgeFontSize;
+            SearchDebounceSeconds = normalized.SearchDebounceSeconds;
+            DiffContextLineCount = normalized.DiffContextLines;
+            SelectedDiffContextLineCount =
+                DiffContextLineCounts.FirstOrDefault(option => option.Count == normalized.DiffContextLines)
+                ?? DiffContextLineCounts.First();
+            SelectedDiffPresentationMode =
+                DiffPresentationModes.FirstOrDefault(mode => mode.Key == normalized.DiffPresentationModeKey)
+                ?? DiffPresentationModes.First();
+        }
+        finally
+        {
+            _suppressDiffPresentationDispatch = false;
+            _suppressDiffContextDispatch = false;
+            _suppressShowStashesDispatch = false;
+            _suppressShowBranchRefsDispatch = false;
+        }
+    }
+
+    public AppSettings CaptureSettings()
+    {
+        return new AppSettings
+        {
+            ShowBranchRefs = ShowBranchRefs,
+            ShowStashes = ShowStashes,
+            DiffContextLines = DiffContextLineCount,
+            DiffPresentationModeKey = SelectedDiffPresentationMode?.Key ?? AppSettings.DefaultDiffPresentationModeKey,
+            CommitRowFontFamily = CommitRowFontFamily,
+            CommitRowMonoFontFamily = CommitRowMonoFontFamily,
+            CommitRowTextFontSize = CommitRowTextFontSize,
+            CommitRowMetaFontSize = CommitRowMetaFontSize,
+            CommitRowBadgeFontSize = CommitRowBadgeFontSize,
+            SearchDebounceSeconds = SearchDebounceSeconds,
+        };
     }
 
     private static void LogTiming(string message)

@@ -1,0 +1,168 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:GitKay.UI"
+        mc:Ignorable="d"
+        x:Class="GitKay.UI.SettingsWindow"
+        x:Name="SettingsRoot"
+        x:DataType="local:MainProjection"
+        Title="Settings"
+        Width="760"
+        Height="560"
+        MinWidth="640"
+        MinHeight="460"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner">
+    <DockPanel Margin="16">
+        <StackPanel DockPanel.Dock="Bottom"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Spacing="8"
+                    Margin="0,16,0,0">
+            <Button Content="_Close"
+                    IsDefault="True"
+                    Click="OnCloseClick" />
+        </StackPanel>
+
+        <TabControl>
+            <TabItem Header="History">
+                <ScrollViewer>
+                    <StackPanel Spacing="12" Margin="0,8,0,0">
+                        <TextBlock Text="History pane"
+                                   FontSize="18"
+                                   FontWeight="SemiBold" />
+                        <TextBlock Text="Controls for the commit history view."
+                                   Foreground="#aaa" />
+
+                        <GroupBox Header="Ref badges">
+                            <Border Padding="12">
+                                <StackPanel Spacing="8">
+                                    <CheckBox Content="Show branch refs"
+                                              IsChecked="{Binding ShowBranchRefs, Mode=TwoWay}" />
+                                    <CheckBox Content="Show stashes"
+                                              IsChecked="{Binding ShowStashes, Mode=TwoWay}" />
+                                </StackPanel>
+                            </Border>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Commit">
+                <ScrollViewer>
+                    <StackPanel Spacing="12" Margin="0,8,0,0">
+                        <TextBlock Text="Commit pane"
+                                   FontSize="18"
+                                   FontWeight="SemiBold" />
+                        <TextBlock Text="Typography used by the commit list and commit header."
+                                   Foreground="#aaa" />
+
+                        <GroupBox Header="Row typography">
+                            <Border Padding="12">
+                                <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                                      ColumnDefinitions="*,180"
+                                      RowSpacing="10"
+                                      ColumnSpacing="12">
+                                    <TextBlock Grid.Row="0"
+                                               Text="Font family"
+                                               Foreground="#ddd" />
+                                    <TextBox Grid.Row="0"
+                                             Grid.Column="1"
+                                             Text="{Binding CommitRowFontFamily, Mode=TwoWay}" />
+
+                                    <TextBlock Grid.Row="1"
+                                               Text="Mono font family"
+                                               Foreground="#ddd" />
+                                    <TextBox Grid.Row="1"
+                                             Grid.Column="1"
+                                             Text="{Binding CommitRowMonoFontFamily, Mode=TwoWay}" />
+
+                                    <TextBlock Grid.Row="2"
+                                               Text="Subject font size"
+                                               Foreground="#ddd" />
+                                    <TextBox Grid.Row="2"
+                                             Grid.Column="1"
+                                             Text="{Binding CommitRowTextFontSize, Mode=TwoWay}" />
+
+                                    <TextBlock Grid.Row="3"
+                                               Text="Meta font size"
+                                               Foreground="#ddd" />
+                                    <TextBox Grid.Row="3"
+                                             Grid.Column="1"
+                                             Text="{Binding CommitRowMetaFontSize, Mode=TwoWay}" />
+
+                                    <TextBlock Grid.Row="4"
+                                               Text="Badge font size"
+                                               Foreground="#ddd" />
+                                    <TextBox Grid.Row="4"
+                                             Grid.Column="1"
+                                             Text="{Binding CommitRowBadgeFontSize, Mode=TwoWay}" />
+                                </Grid>
+                            </Border>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Diff">
+                <ScrollViewer>
+                    <StackPanel Spacing="12" Margin="0,8,0,0">
+                        <TextBlock Text="Diff pane"
+                                   FontSize="18"
+                                   FontWeight="SemiBold" />
+                        <TextBlock Text="Presentation and search behavior for the diff view."
+                                   Foreground="#aaa" />
+
+                        <GroupBox Header="Diff presentation">
+                            <Border Padding="12">
+                                <StackPanel Spacing="10">
+                                    <StackPanel Orientation="Horizontal" Spacing="12">
+                                        <TextBlock Text="Mode"
+                                                   Foreground="#ddd"
+                                                   VerticalAlignment="Center" />
+                                        <ComboBox Width="180"
+                                                  ItemsSource="{Binding DiffPresentationModes}"
+                                                  SelectedItem="{Binding SelectedDiffPresentationMode}">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="local:DiffPresentationModeProjection">
+                                                    <TextBlock Text="{Binding Label}" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </StackPanel>
+
+                                    <StackPanel Orientation="Horizontal" Spacing="12">
+                                        <TextBlock Text="Context lines"
+                                                   Foreground="#ddd"
+                                                   VerticalAlignment="Center" />
+                                        <ComboBox Width="150"
+                                                  ItemsSource="{Binding DiffContextLineCounts}"
+                                                  SelectedItem="{Binding SelectedDiffContextLineCount}">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="local:DiffContextLineCountProjection">
+                                                    <TextBlock Text="{Binding Label}" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </StackPanel>
+
+                                    <StackPanel Orientation="Horizontal" Spacing="12">
+                                        <TextBlock Text="Search debounce"
+                                                   Foreground="#ddd"
+                                                   VerticalAlignment="Center" />
+                                        <TextBox Width="88"
+                                                 Text="{Binding SearchDebounceSeconds, Mode=TwoWay}" />
+                                        <TextBlock Text="seconds"
+                                                   Foreground="#aaa"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>

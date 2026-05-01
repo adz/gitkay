@@ -1549,6 +1549,77 @@ module AppTests =
         test <@ dispatched = [| App.Msg.SetDiffContextLines 10 |] @>
 
     [<Fact>]
+    let ``MainProjection should apply and capture persisted settings without dispatching`` () =
+        let projection = MainProjection()
+        let messages = ConcurrentQueue<App.Msg>()
+        projection.SetDispatch (fun msg -> messages.Enqueue msg |> ignore)
+
+        let settings =
+            AppSettings.Create(
+                showBranchRefs = true,
+                showStashes = true,
+                diffContextLines = 10,
+                diffPresentationModeKey = "side-by-side",
+                commitRowFontFamily = "Avenir Next",
+                commitRowMonoFontFamily = "Iosevka",
+                commitRowTextFontSize = 11.5,
+                commitRowMetaFontSize = 9.5,
+                commitRowBadgeFontSize = 8.5,
+                searchDebounceSeconds = 1.25)
+
+        projection.ApplySettings settings
+
+        test <@ projection.ShowBranchRefs @>
+        test <@ projection.ShowStashes @>
+        test <@ projection.DiffContextLineCount = 10 @>
+        test <@ projection.SelectedDiffPresentationMode.Key = "side-by-side" @>
+        test <@ projection.CommitRowFontFamily = "Avenir Next" @>
+        test <@ projection.CommitRowMonoFontFamily = "Iosevka" @>
+        test <@ projection.CommitRowTextFontSize = 11.5 @>
+        test <@ projection.CommitRowMetaFontSize = 9.5 @>
+        test <@ projection.CommitRowBadgeFontSize = 8.5 @>
+        test <@ projection.SearchDebounceSeconds = 1.25 @>
+        test <@ messages.IsEmpty @>
+
+        let captured = projection.CaptureSettings()
+
+        test <@ captured = settings.Normalize() @>
+
+    [<Fact>]
+    let ``AppSettingsStore should round-trip settings and produce startup args`` () =
+        let root = Path.Combine(Path.GetTempPath(), "gitkay-settings-" + Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(root) |> ignore
+
+        try
+            let path = Path.Combine(root, "settings.json")
+            let store = AppSettingsStore(path)
+            let settings =
+                AppSettings.Create(
+                    showBranchRefs = true,
+                    showStashes = true,
+                    diffContextLines = 10,
+                    diffPresentationModeKey = "side-by-side",
+                    commitRowFontFamily = "Avenir Next",
+                    commitRowMonoFontFamily = "Iosevka",
+                    commitRowTextFontSize = 11.5,
+                    commitRowMetaFontSize = 9.5,
+                    commitRowBadgeFontSize = 8.5,
+                    searchDebounceSeconds = 1.25)
+
+            store.Save(settings)
+
+            let loaded = store.Load()
+
+            test <@ loaded = settings.Normalize() @>
+            test <@ File.Exists(path) @>
+            test <@ loaded.ToStartupArgs() = [| "--show-branch-refs"; "--show-stashes"; "--diff-context=10"; "--diff-presentation=side-by-side" |] @>
+        finally
+            try
+                Directory.Delete(root, true)
+            with _ ->
+                ()
+
+    [<Fact>]
     let ``MainProjection should debounce live search updates as the query changes`` () =
         let projection = MainProjection()
         let messages = ConcurrentQueue<App.Msg>()

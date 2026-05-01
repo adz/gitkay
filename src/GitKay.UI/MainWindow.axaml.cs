@@ -22,6 +22,16 @@ public partial class MainWindow : Window
         DiffFilesListBox.AddHandler(InputElement.KeyDownEvent, OnMainListBoxKeyDown, RoutingStrategies.Tunnel);
     }
 
+    private async void OnSettingsMenuItemClick(object? sender, RoutedEventArgs e)
+    {
+        var settingsWindow = new SettingsWindow
+        {
+            DataContext = DataContext,
+        };
+
+        await settingsWindow.ShowDialog(this);
+    }
+
     private void OnDataContextChanged(object? sender, EventArgs e)
     {
         if (_projection != null)
