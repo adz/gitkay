@@ -11,8 +11,8 @@ namespace GitKay.UI;
 
 public class GraphRowControl : Control
 {
-    private const double CommitMarkerBaselineOffset = 2.0;
-    private const double DotRadius = 4;
+    private const double CommitMarkerBaselineOffset = 1.5;
+    private const double DotRadius = 3;
 
     public static readonly DirectProperty<GraphRowControl, IEnumerable<SegmentProjection>?> SegmentsProperty =
         AvaloniaProperty.RegisterDirect<GraphRowControl, IEnumerable<SegmentProjection>?>(
@@ -55,6 +55,15 @@ public class GraphRowControl : Control
     {
         get => GetValue(CommitLaneProperty);
         set => SetValue(CommitLaneProperty, value);
+    }
+
+    public static readonly StyledProperty<bool> ShowConnectorLineProperty =
+        AvaloniaProperty.Register<GraphRowControl, bool>(nameof(ShowConnectorLine));
+
+    public bool ShowConnectorLine
+    {
+        get => GetValue(ShowConnectorLineProperty);
+        set => SetValue(ShowConnectorLineProperty, value);
     }
 
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
@@ -138,7 +147,7 @@ public class GraphRowControl : Control
 
     public override void Render(DrawingContext context)
     {
-        double laneWidth = 15;
+        double laneWidth = 9;
         double rowHeight = Bounds.Height;
         double commitMarkerCenterY = GetCommitMarkerCenterY(rowHeight);
 
@@ -169,7 +178,7 @@ public class GraphRowControl : Control
             }
 
             var brush = LaneBrushes[segment.Color % LaneBrushes.Length];
-            var pen = new Pen(brush, 2);
+            var pen = new Pen(brush, 1.5);
             double x = (segment.Lane + 1) * laneWidth;
             context.DrawLine(pen, new Point(x, 0), new Point(x, rowHeight));
         }
@@ -177,7 +186,7 @@ public class GraphRowControl : Control
         if (firstCommitSegment != null)
         {
             var commitLaneX = (firstCommitSegment.Lane + 1) * laneWidth;
-            var pen = new Pen(commitBrush, 2);
+            var pen = new Pen(commitBrush, 1.5);
 
             context.DrawLine(pen, new Point(commitLaneX, 0), new Point(commitLaneX, commitMarkerCenterY));
 
@@ -192,6 +201,20 @@ public class GraphRowControl : Control
 
                 double targetX = (segment.TargetLane + 1) * laneWidth;
                 context.DrawLine(pen, new Point(commitLaneX, commitMarkerCenterY), new Point(targetX, rowHeight));
+            }
+
+            if (ShowConnectorLine)
+            {
+                var connectorStartX = commitLaneX + DotRadius;
+                var connectorEndX = Math.Max(connectorStartX, Bounds.Width - 1);
+
+                if (connectorEndX > connectorStartX)
+                {
+                    context.DrawLine(
+                        pen,
+                        new Point(connectorStartX, commitMarkerCenterY),
+                        new Point(connectorEndX, commitMarkerCenterY));
+                }
             }
         }
 

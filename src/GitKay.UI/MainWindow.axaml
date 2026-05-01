@@ -5,6 +5,7 @@
         xmlns:local="clr-namespace:GitKay.UI"
         mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
         x:Class="GitKay.UI.MainWindow"
+        x:Name="RootWindow"
         x:DataType="local:MainProjection"
         Title="GitKay">
 
@@ -14,6 +15,9 @@
                 <MenuItem Header="_Reread refs" Command="{Binding RereadRefs}" />
             </MenuItem>
             <MenuItem Header="_View">
+                <MenuItem Header="Show _branch refs"
+                          ToggleType="CheckBox"
+                          IsChecked="{Binding ShowBranchRefs, Mode=TwoWay}" />
                 <MenuItem Header="_Show stashes"
                           ToggleType="CheckBox"
                           IsChecked="{Binding ShowStashes, Mode=TwoWay}" />
@@ -24,10 +28,57 @@
             <TextBlock Text="{Binding Status}" Foreground="White" FontSize="12" />
         </Border>
 
-        <Grid RowDefinitions="3*,6,Auto,6,5*" MinHeight="0">
-            <Border Grid.Row="0" Background="#1e1e1e" BorderBrush="#333" BorderThickness="0,0,0,1">
-                <Grid MinHeight="0">
+        <Grid RowDefinitions="Auto,6,*"
+              MinHeight="0">
+            <Border Grid.Row="0"
+                    Background="#1e1e1e"
+                    BorderBrush="#333"
+                    BorderThickness="0,0,0,1">
+                <Grid MinHeight="0" RowDefinitions="Auto,*">
+                    <Border Grid.Row="0"
+                            Background="#252526E6"
+                            BorderBrush="#3a3d41"
+                            BorderThickness="0,0,0,1"
+                            Padding="8,6">
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="8">
+                            <TextBlock Text="Search"
+                                       Foreground="#ddd"
+                                       FontWeight="SemiBold"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,4,0" />
+
+                            <TextBox Grid.Column="1"
+                                     MinWidth="320"
+                                     HorizontalAlignment="Stretch"
+                                     Text="{Binding SearchQuery, Mode=TwoWay}"
+                                     PlaceholderText="Search hash, message, author, path, text, ref">
+                                <TextBox.KeyBindings>
+                                    <KeyBinding Gesture="Enter" Command="{Binding SearchCommand}" />
+                                </TextBox.KeyBindings>
+                            </TextBox>
+
+                            <ComboBox Grid.Column="2"
+                                      Width="160"
+                                      ItemsSource="{Binding SearchScopes}"
+                                      SelectedItem="{Binding SelectedSearchScope}">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="local:SearchScopeProjection">
+                                        <TextBlock Text="{Binding Label}" />
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+
+                            <Button Grid.Column="3"
+                                    Content="_Search"
+                                    Command="{Binding SearchCommand}" />
+                            <Button Grid.Column="4"
+                                    Content="_Clear"
+                                    Command="{Binding ClearSearchCommand}" />
+                        </Grid>
+                    </Border>
+
                     <ListBox x:Name="CommitListBox"
+                             Grid.Row="1"
                              ItemsSource="{Binding VisibleCommits}"
                              SelectedItem="{Binding SelectedCommit}"
                              Background="Transparent"
@@ -56,11 +107,11 @@
                         </ListBox.Styles>
                         <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="local:CommitProjection">
-                                <Border Margin="0,1"
+                                <Border Margin="0"
                                         Padding="0"
                                         Background="{Binding RowBackground}"
-                                        CornerRadius="4">
-                                    <Grid ColumnDefinitions="112,72,*,110,110" MinHeight="32" Background="Transparent">
+                                        CornerRadius="2">
+                                    <Grid ColumnDefinitions="48,*,54,110,110" MinHeight="16" Background="Transparent">
                                         <Grid.ContextMenu>
                                             <ContextMenu>
                                                 <MenuItem Header="Create _Tag here..." Command="{Binding CreateTagCommand}" />
@@ -79,25 +130,19 @@
                                         <local:GraphRowControl Grid.Column="0"
                                                                Segments="{Binding Segments}"
                                                                CommitLane="{Binding Lane}"
-                                                               Height="24"
+                                                               ShowConnectorLine="{Binding HasRefBadges}"
+                                                               Height="14"
                                                                VerticalAlignment="Center" />
 
-                                        <TextBlock Grid.Column="1"
-                                                   Text="{Binding Hash}"
-                                                   Foreground="#888"
-                                                   FontSize="10"
-                                                   Margin="2,0"
-                                                   VerticalAlignment="Center"
-                                                   FontFamily="Cascadia Code,Consolas,Monospace" />
-
-                                        <StackPanel Grid.Column="2" Margin="4,1" VerticalAlignment="Center" Spacing="2">
-                                            <TextBlock Text="{Binding Subject}"
-                                                       FontWeight="SemiBold"
-                                                       FontSize="11"
-                                                       TextTrimming="CharacterEllipsis" />
+                                        <Grid Grid.Column="1"
+                                              Margin="0,0,2,0"
+                                              ColumnDefinitions="Auto,*"
+                                              ColumnSpacing="2"
+                                              VerticalAlignment="Center">
                                             <ItemsControl ItemsSource="{Binding RefBadges}"
                                                           IsVisible="{Binding HasRefBadges}"
-                                                          HorizontalAlignment="Left">
+                                                          HorizontalAlignment="Left"
+                                                          VerticalAlignment="Center">
                                                 <ItemsControl.ItemsPanel>
                                                     <ItemsPanelTemplate>
                                                         <WrapPanel />
@@ -105,103 +150,92 @@
                                                 </ItemsControl.ItemsPanel>
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate x:DataType="local:CommitRefProjection">
-                                                        <Border Background="{Binding Background}"
-                                                                BorderBrush="{Binding BorderBrush}"
-                                                                BorderThickness="1"
-                                                                CornerRadius="10"
-                                                                Margin="0,0,4,0"
-                                                                Padding="6,1">
-                                                            <TextBlock Text="{Binding Text}"
-                                                                       Foreground="{Binding Foreground}"
-                                                                       FontSize="9"
-                                                                       FontWeight="SemiBold"
-                                                                       TextTrimming="CharacterEllipsis" />
-                                                        </Border>
+                                                        <Grid Margin="0,0,2,0"
+                                                              VerticalAlignment="Center"
+                                                              HorizontalAlignment="Left"
+                                                              ClipToBounds="False">
+                                                            <Border IsVisible="{Binding IsNotTag}"
+                                                                    Background="{Binding Background}"
+                                                                    BorderBrush="{Binding BorderBrush}"
+                                                                    BorderThickness="1"
+                                                                    CornerRadius="0"
+                                                                    Padding="3,0,3,0"
+                                                                    MinHeight="14">
+                                                                <TextBlock Text="{Binding Text}"
+                                                                           Foreground="{Binding Foreground}"
+                                                                           FontSize="{Binding DataContext.CommitRowBadgeFontSize, ElementName=RootWindow}"
+                                                                           FontWeight="SemiBold"
+                                                                           TextTrimming="CharacterEllipsis"
+                                                                           VerticalAlignment="Center" />
+                                                            </Border>
+                                                            <Grid IsVisible="{Binding IsTag}"
+                                                                  ColumnDefinitions="7,Auto"
+                                                                  MinHeight="14">
+                                                                <Path Grid.Column="0"
+                                                                      Data="M 7,0 L 7,14 L 0,7 Z"
+                                                                      Fill="{Binding Background}"
+                                                                      Stroke="{Binding BorderBrush}"
+                                                                      StrokeThickness="1"
+                                                                      Stretch="Fill"
+                                                                      VerticalAlignment="Stretch"
+                                                                      HorizontalAlignment="Stretch" />
+                                                                <Border Grid.Column="1"
+                                                                        Background="{Binding Background}"
+                                                                        BorderBrush="{Binding BorderBrush}"
+                                                                        BorderThickness="1"
+                                                                        Margin="-1,0,0,0"
+                                                                        Padding="4,0,4,0">
+                                                                    <TextBlock Text="{Binding Text}"
+                                                                               Foreground="{Binding Foreground}"
+                                                                               FontSize="{Binding DataContext.CommitRowBadgeFontSize, ElementName=RootWindow}"
+                                                                               FontWeight="SemiBold"
+                                                                               TextTrimming="CharacterEllipsis"
+                                                                               VerticalAlignment="Center" />
+                                                                </Border>
+                                                            </Grid>
+                                                        </Grid>
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
-                                            <TextBlock Text="{Binding SecondarySummary}"
-                                                       IsVisible="{Binding HasSecondarySummary}"
-                                                       Foreground="#8fbcd4"
-                                                       FontSize="9"
-                                                       TextTrimming="CharacterEllipsis" />
-                                        </StackPanel>
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding Subject}"
+                                                       FontWeight="SemiBold"
+                                                       FontSize="{Binding DataContext.CommitRowTextFontSize, ElementName=RootWindow}"
+                                                       FontFamily="{Binding DataContext.CommitRowFontFamily, ElementName=RootWindow}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" />
+                                        </Grid>
+
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{Binding Hash}"
+                                                   Foreground="#888"
+                                                   FontSize="{Binding DataContext.CommitRowTextFontSize, ElementName=RootWindow}"
+                                                   Margin="2,0,0,0"
+                                                   VerticalAlignment="Center"
+                                                   FontFamily="{Binding DataContext.CommitRowMonoFontFamily, ElementName=RootWindow}" />
 
                                         <TextBlock Grid.Column="3"
                                                    Text="{Binding Author}"
                                                    Foreground="#aaa"
-                                                   FontSize="10"
+                                                   FontSize="{Binding DataContext.CommitRowMetaFontSize, ElementName=RootWindow}"
                                                    Margin="2,0"
                                                    VerticalAlignment="Center"
-                                                   TextTrimming="CharacterEllipsis" />
+                                                   TextTrimming="CharacterEllipsis"
+                                                   FontFamily="{Binding DataContext.CommitRowFontFamily, ElementName=RootWindow}" />
 
                                         <TextBlock Grid.Column="4"
                                                    Text="{Binding Date}"
                                                    Foreground="#888"
-                                                   FontSize="10"
+                                                   FontSize="{Binding DataContext.CommitRowMetaFontSize, ElementName=RootWindow}"
                                                    Margin="2,0"
                                                    HorizontalAlignment="Right"
-                                                   VerticalAlignment="Center" />
+                                                   VerticalAlignment="Center"
+                                                   FontFamily="{Binding DataContext.CommitRowFontFamily, ElementName=RootWindow}" />
                                     </Grid>
                                 </Border>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-
-                    <Border HorizontalAlignment="Left"
-                            VerticalAlignment="Top"
-                            Width="540"
-                            Margin="8"
-                            Background="#252526E6"
-                            BorderBrush="#3a3d41"
-                            BorderThickness="1"
-                            CornerRadius="8"
-                            Padding="10"
-                            IsVisible="{Binding IsSearchPanelExpanded}">
-                        <Grid RowDefinitions="Auto,Auto" RowSpacing="8">
-                            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="8">
-                                <TextBlock Text="Search"
-                                           Foreground="#ddd"
-                                           FontWeight="SemiBold"
-                                           VerticalAlignment="Center"
-                                           Margin="0,0,4,0" />
-
-                                <TextBox Grid.Column="1"
-                                         MinWidth="320"
-                                         HorizontalAlignment="Stretch"
-                                         Text="{Binding SearchQuery, Mode=TwoWay}"
-                                         PlaceholderText="Search hash, message, author, path, text, ref">
-                                    <TextBox.KeyBindings>
-                                        <KeyBinding Gesture="Enter" Command="{Binding SearchCommand}" />
-                                    </TextBox.KeyBindings>
-                                </TextBox>
-
-                                <ComboBox Grid.Column="2"
-                                          Width="160"
-                                          ItemsSource="{Binding SearchScopes}"
-                                          SelectedItem="{Binding SelectedSearchScope}">
-                                    <ComboBox.ItemTemplate>
-                                        <DataTemplate x:DataType="local:SearchScopeProjection">
-                                            <TextBlock Text="{Binding Label}" />
-                                        </DataTemplate>
-                                    </ComboBox.ItemTemplate>
-                                </ComboBox>
-
-                                <Button Grid.Column="3"
-                                        Content="_Search"
-                                        Command="{Binding SearchCommand}" />
-                                <Button Grid.Column="4"
-                                        Content="_Clear"
-                                        Command="{Binding ClearSearchCommand}" />
-                            </Grid>
-
-                            <TextBlock Grid.Row="1"
-                                       Text="The commit list filters in place as matches arrive. Press Enter to search immediately; the scope menu narrows which fields are matched."
-                                       Foreground="#a0a0a0"
-                                       FontSize="11"
-                                       TextWrapping="Wrap" />
-                        </Grid>
-                    </Border>
                 </Grid>
             </Border>
 
@@ -210,222 +244,254 @@
                           HorizontalAlignment="Stretch"
                           VerticalAlignment="Stretch"
                           Background="#333"
-                          ResizeDirection="Rows" />
+                          ResizeDirection="Rows"
+                          ResizeBehavior="PreviousAndNext" />
 
-            <Border Grid.Row="2" Background="#252526" BorderBrush="#333" BorderThickness="0,1" Padding="8,6">
+            <Grid Grid.Row="2"
+                  RowDefinitions="Auto,*"
+                  MinHeight="0">
+                <Border Grid.Row="0"
+                    Background="#252526"
+                    BorderBrush="#333"
+                    BorderThickness="0,1"
+                    Padding="8,6">
                 <StackPanel Spacing="3" IsVisible="{Binding SelectedCommit, Converter={x:Static local:ObjectConverters.IsNotNull}}">
-                        <SelectableTextBlock Text="{Binding SelectedCommit.FullHash}" Foreground="#4ec9b0" FontWeight="SemiBold" FontSize="12"/>
-                        <ItemsControl ItemsSource="{Binding SelectedCommit.RefBadges}"
-                                      IsVisible="{Binding SelectedCommit.HasRefBadges}"
-                                      HorizontalAlignment="Left">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <WrapPanel />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="local:CommitRefProjection">
-                                    <Border Background="{Binding Background}"
+                    <SelectableTextBlock Text="{Binding SelectedCommit.FullHash}" Foreground="#4ec9b0" FontWeight="SemiBold" FontSize="12"/>
+                    <ItemsControl ItemsSource="{Binding SelectedCommit.RefBadges}"
+                                  IsVisible="{Binding SelectedCommit.HasRefBadges}"
+                                  HorizontalAlignment="Left">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="local:CommitRefProjection">
+                                <Grid Margin="0,0,2,0"
+                                      VerticalAlignment="Center"
+                                      HorizontalAlignment="Left"
+                                      ClipToBounds="False">
+                                    <Border IsVisible="{Binding IsNotTag}"
+                                            Background="{Binding Background}"
                                             BorderBrush="{Binding BorderBrush}"
                                             BorderThickness="1"
-                                            CornerRadius="10"
-                                            Margin="0,0,4,0"
-                                            Padding="6,1">
+                                            CornerRadius="0"
+                                            Padding="3,0,3,0"
+                                            MinHeight="14">
                                         <TextBlock Text="{Binding Text}"
                                                    Foreground="{Binding Foreground}"
-                                                   FontSize="9"
+                                                   FontSize="{Binding DataContext.CommitRowBadgeFontSize, ElementName=RootWindow}"
                                                    FontWeight="SemiBold"
-                                                   TextTrimming="CharacterEllipsis" />
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center" />
                                     </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                        <StackPanel Orientation="Horizontal" Spacing="12">
-                            <TextBlock Text="{Binding SelectedCommit.Author}" Foreground="#aaa" FontSize="12"/>
-                            <TextBlock Text="{Binding SelectedCommit.Date}" Foreground="#888" FontSize="12"/>
-                        </StackPanel>
-                        <SelectableTextBlock Text="{Binding SelectedCommit.Subject}"
-                                             FontSize="14"
-                                             Foreground="#ddd"
-                                             TextTrimming="CharacterEllipsis"
-                                             TextWrapping="NoWrap" />
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <TextBlock Text="Find in commit"
-                                       Foreground="#aaa"
-                                       FontSize="11"
-                                       VerticalAlignment="Center" />
-                            <TextBox Width="260"
-                                     Text="{Binding CommitFindQuery, Mode=TwoWay}"
-                                     PlaceholderText="Search within the selected commit">
-                                <TextBox.KeyBindings>
-                                    <KeyBinding Gesture="Enter" Command="{Binding FindInCommitCommand}" />
-                                </TextBox.KeyBindings>
-                            </TextBox>
-                            <Button Content="Find _next"
-                                    Command="{Binding FindInCommitCommand}" />
-                        </StackPanel>
-                    </StackPanel>
-            </Border>
-
-            <GridSplitter Grid.Row="3"
-                          Height="6"
-                          HorizontalAlignment="Stretch"
-                          VerticalAlignment="Stretch"
-                          Background="#333"
-                          ResizeDirection="Rows" />
-
-            <Grid Grid.Row="4" ColumnDefinitions="*,6,280" Background="#1e1e1e">
-                <Border Grid.Column="0" Background="#1e1e1e" BorderBrush="#333" BorderThickness="0,1,0,0">
-                    <DockPanel>
-                        <TextBlock DockPanel.Dock="Top"
-                                   Text="Unified diff"
-                                   Foreground="#ddd"
-                                   FontWeight="SemiBold"
-                                   Margin="10,8,10,6" />
-                        <ListBox x:Name="DiffRowsListBox"
-                                 ItemsSource="{Binding SelectedDiffRows}"
-                                 SelectedItem="{Binding SelectedDiffRow}"
-                                 Background="Transparent"
-                                 BorderThickness="0"
-                                 SelectionMode="Single"
-                                 MinHeight="0"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                 KeyDown="OnDiffListBoxKeyDown"
-                                 GotFocus="OnDiffRowsListBoxGotFocus">
-                            <ListBox.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <VirtualizingStackPanel />
-                                </ItemsPanelTemplate>
-                            </ListBox.ItemsPanel>
-                            <ListBox.Styles>
-                                <Style Selector="ListBoxItem">
-                                    <Setter Property="Padding" Value="0" />
-                                    <Setter Property="Background" Value="Transparent" />
-                                    <Setter Property="BorderThickness" Value="0" />
-                                </Style>
-                                <Style Selector="ListBoxItem:selected">
-                                    <Setter Property="Background" Value="#333" />
-                                </Style>
-                                <Style Selector="ListBoxItem:pointerover">
-                                    <Setter Property="Background" Value="#2a2a2a" />
-                                </Style>
-                            </ListBox.Styles>
-                            <ListBox.DataTemplates>
-                                <DataTemplate DataType="{x:Type local:DiffFileHeaderProjection}" x:DataType="local:DiffFileHeaderProjection">
-                                    <Border Margin="10,10,10,0" Padding="10" Background="#252526" BorderBrush="#333" BorderThickness="1" CornerRadius="4">
-                                        <TextBlock Text="{Binding DisplayPath}" Foreground="#4ec9b0" FontWeight="SemiBold" FontSize="13"/>
-                                    </Border>
-                                </DataTemplate>
-                                <DataTemplate DataType="{x:Type local:DiffHunkHeaderProjection}" x:DataType="local:DiffHunkHeaderProjection">
-                                    <TextBlock Margin="20,8,10,2"
-                                               Text="{Binding Header}"
-                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                               FontSize="11"
-                                               Foreground="#888"/>
-                                </DataTemplate>
-                                <DataTemplate DataType="{x:Type local:DiffLineProjection}" x:DataType="local:DiffLineProjection">
-                                    <Grid Margin="20,0,10,1"
-                                          ColumnDefinitions="40,40,16,*"
-                                          Background="{Binding RowBackground}">
-                                        <TextBlock Grid.Column="0"
-                                                   Text="{Binding OldLineNoText}"
-                                                   FontFamily="Cascadia Code,Consolas,Monospace"
-                                                   FontSize="10"
-                                                   Foreground="#666"
-                                                   HorizontalAlignment="Right"
-                                                   Margin="0,0,6,0"/>
-                                        <TextBlock Grid.Column="1"
-                                                   Text="{Binding NewLineNoText}"
-                                                   FontFamily="Cascadia Code,Consolas,Monospace"
-                                                   FontSize="10"
-                                                   Foreground="#666"
-                                                   HorizontalAlignment="Right"
-                                                   Margin="0,0,6,0"/>
-                                        <TextBlock Grid.Column="2"
-                                                   Text="{Binding Prefix}"
-                                                   FontFamily="Cascadia Code,Consolas,Monospace"
-                                                   FontSize="10"
-                                                   Foreground="{Binding Foreground}"
-                                                   Margin="0,0,4,0"/>
-                                        <TextBlock Grid.Column="3"
-                                                   FontFamily="Cascadia Code,Consolas,Monospace"
-                                                   FontSize="10"
-                                                   TextWrapping="NoWrap">
-                                            <TextBlock.Inlines>
-                                                <Run Text="{Binding MatchPrefix}"
-                                                     Foreground="{Binding Foreground}" />
-                                                <Run Text="{Binding MatchText}"
-                                                     Foreground="{Binding MatchForeground}"
-                                                     FontWeight="{Binding MatchFontWeight}"
-                                                     TextDecorations="Underline" />
-                                                <Run Text="{Binding MatchSuffix}"
-                                                     Foreground="{Binding Foreground}" />
-                                            </TextBlock.Inlines>
-                                        </TextBlock>
+                                    <Grid IsVisible="{Binding IsTag}"
+                                          ColumnDefinitions="7,Auto"
+                                          MinHeight="14">
+                                        <Path Grid.Column="0"
+                                              Data="M 7,0 L 7,14 L 0,7 Z"
+                                              Fill="{Binding Background}"
+                                              Stroke="{Binding BorderBrush}"
+                                              StrokeThickness="1"
+                                              Stretch="Fill"
+                                              VerticalAlignment="Stretch"
+                                              HorizontalAlignment="Stretch" />
+                                        <Border Grid.Column="1"
+                                                Background="{Binding Background}"
+                                                BorderBrush="{Binding BorderBrush}"
+                                                BorderThickness="1"
+                                                Margin="-1,0,0,0"
+                                                Padding="4,0,4,0">
+                                            <TextBlock Text="{Binding Text}"
+                                                       Foreground="{Binding Foreground}"
+                                                       FontSize="{Binding DataContext.CommitRowBadgeFontSize, ElementName=RootWindow}"
+                                                       FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" />
+                                        </Border>
                                     </Grid>
-                                </DataTemplate>
-                            </ListBox.DataTemplates>
-                        </ListBox>
-                    </DockPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <TextBlock Text="{Binding SelectedCommit.Author}" Foreground="#aaa" FontSize="12"/>
+                        <TextBlock Text="{Binding SelectedCommit.Date}" Foreground="#888" FontSize="12"/>
+                    </StackPanel>
+                    <SelectableTextBlock Text="{Binding SelectedCommit.Subject}"
+                                         FontSize="14"
+                                         Foreground="#ddd"
+                                         TextTrimming="CharacterEllipsis"
+                                         TextWrapping="NoWrap" />
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="Find in commit"
+                                   Foreground="#aaa"
+                                   FontSize="11"
+                                   VerticalAlignment="Center" />
+                        <TextBox Width="260"
+                                 Text="{Binding CommitFindQuery, Mode=TwoWay}"
+                                 PlaceholderText="Search within the selected commit">
+                            <TextBox.KeyBindings>
+                                <KeyBinding Gesture="Enter" Command="{Binding FindInCommitCommand}" />
+                            </TextBox.KeyBindings>
+                        </TextBox>
+                        <Button Content="Find _next"
+                                Command="{Binding FindInCommitCommand}" />
+                    </StackPanel>
+                    </StackPanel>
                 </Border>
 
-                <GridSplitter Grid.Column="1"
-                              Width="6"
-                              HorizontalAlignment="Stretch"
-                              VerticalAlignment="Stretch"
-                              Background="#333"
-                              ResizeDirection="Columns" />
-
-                <Border Grid.Column="2" Background="#252526" BorderBrush="#333" BorderThickness="1,1,0,0" Padding="8">
-                    <DockPanel>
-                        <TextBlock DockPanel.Dock="Top" Text="Files" Foreground="#ddd" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                        <ListBox x:Name="DiffFilesListBox"
-                                 ItemsSource="{Binding SelectedDiffFiles}"
-                                 SelectedItem="{Binding SelectedDiffFile}"
-                                 Background="Transparent"
-                                 BorderThickness="0"
-                                 SelectionMode="Single"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                 KeyDown="OnDiffListBoxKeyDown"
-                                 GotFocus="OnDiffFilesListBoxGotFocus">
-                            <ListBox.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <VirtualizingStackPanel />
-                                </ItemsPanelTemplate>
-                            </ListBox.ItemsPanel>
-                            <ListBox.Styles>
-                                <Style Selector="ListBoxItem">
-                                    <Setter Property="Padding" Value="0" />
-                                    <Setter Property="Background" Value="Transparent" />
-                                    <Setter Property="BorderThickness" Value="0" />
-                                </Style>
-                                <Style Selector="ListBoxItem:selected">
-                                    <Setter Property="Background" Value="#333" />
-                                </Style>
-                                <Style Selector="ListBoxItem:pointerover">
-                                    <Setter Property="Background" Value="#2a2a2a" />
-                                </Style>
-                            </ListBox.Styles>
-                            <ListBox.ItemTemplate>
-                                <DataTemplate x:DataType="local:DiffFileProjection">
-                                    <StackPanel Margin="6,6,6,6" Spacing="2">
-                                        <TextBlock Text="{Binding DisplayPath}"
-                                                   Foreground="#ccc"
-                                                   FontSize="12"
-                                                   TextWrapping="Wrap" />
-                                        <TextBlock Text="{Binding SearchMatchSummary}"
-                                                   IsVisible="{Binding HasSearchMatch}"
-                                                   Foreground="#d7ba7d"
+                <Grid Grid.Row="1" ColumnDefinitions="*,280" Background="#1e1e1e">
+                    <Border Grid.Column="0" Background="#1e1e1e" BorderBrush="#333" BorderThickness="0,1,0,0">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Top"
+                                       Text="Unified diff"
+                                       Foreground="#ddd"
+                                       FontWeight="SemiBold"
+                                       Margin="10,8,10,6" />
+                            <ListBox x:Name="DiffRowsListBox"
+                                     ItemsSource="{Binding SelectedDiffRows}"
+                                     SelectedItem="{Binding SelectedDiffRow}"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     SelectionMode="Single"
+                                     MinHeight="0"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     KeyDown="OnDiffListBoxKeyDown"
+                                     GotFocus="OnDiffRowsListBoxGotFocus">
+                                <ListBox.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <VirtualizingStackPanel />
+                                    </ItemsPanelTemplate>
+                                </ListBox.ItemsPanel>
+                                <ListBox.Styles>
+                                    <Style Selector="ListBoxItem">
+                                        <Setter Property="Padding" Value="0" />
+                                        <Setter Property="Background" Value="Transparent" />
+                                        <Setter Property="BorderThickness" Value="0" />
+                                    </Style>
+                                    <Style Selector="ListBoxItem:selected">
+                                        <Setter Property="Background" Value="#333" />
+                                    </Style>
+                                    <Style Selector="ListBoxItem:pointerover">
+                                        <Setter Property="Background" Value="#2a2a2a" />
+                                    </Style>
+                                </ListBox.Styles>
+                                <ListBox.DataTemplates>
+                                    <DataTemplate DataType="{x:Type local:DiffFileHeaderProjection}" x:DataType="local:DiffFileHeaderProjection">
+                                        <Border Margin="10,10,10,0" Padding="10" Background="#252526" BorderBrush="#333" BorderThickness="1" CornerRadius="4">
+                                            <TextBlock Text="{Binding DisplayPath}" Foreground="#4ec9b0" FontWeight="SemiBold" FontSize="13"/>
+                                        </Border>
+                                    </DataTemplate>
+                                    <DataTemplate DataType="{x:Type local:DiffHunkHeaderProjection}" x:DataType="local:DiffHunkHeaderProjection">
+                                        <TextBlock Margin="20,8,10,2"
+                                                   Text="{Binding Header}"
+                                                   FontFamily="Cascadia Code,Consolas,Monospace"
                                                    FontSize="11"
-                                                   TextTrimming="CharacterEllipsis" />
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
-                    </DockPanel>
-                </Border>
+                                                   Foreground="#888"/>
+                                    </DataTemplate>
+                                    <DataTemplate DataType="{x:Type local:DiffLineProjection}" x:DataType="local:DiffLineProjection">
+                                        <Grid Margin="20,0,10,1"
+                                              ColumnDefinitions="40,40,16,*"
+                                              Background="{Binding RowBackground}">
+                                            <TextBlock Grid.Column="0"
+                                                       Text="{Binding OldLineNoText}"
+                                                       FontFamily="Cascadia Code,Consolas,Monospace"
+                                                       FontSize="10"
+                                                       Foreground="#666"
+                                                       HorizontalAlignment="Right"
+                                                       Margin="0,0,6,0"/>
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding NewLineNoText}"
+                                                       FontFamily="Cascadia Code,Consolas,Monospace"
+                                                       FontSize="10"
+                                                       Foreground="#666"
+                                                       HorizontalAlignment="Right"
+                                                       Margin="0,0,6,0"/>
+                                            <TextBlock Grid.Column="2"
+                                                       Text="{Binding Prefix}"
+                                                       FontFamily="Cascadia Code,Consolas,Monospace"
+                                                       FontSize="10"
+                                                       Foreground="{Binding Foreground}"
+                                                       Margin="0,0,4,0"/>
+                                            <TextBlock Grid.Column="3"
+                                                       FontFamily="Cascadia Code,Consolas,Monospace"
+                                                       FontSize="10"
+                                                       TextWrapping="NoWrap">
+                                                <TextBlock.Inlines>
+                                                    <Run Text="{Binding MatchPrefix}"
+                                                         Foreground="{Binding Foreground}" />
+                                                    <Run Text="{Binding MatchText}"
+                                                         Foreground="{Binding MatchForeground}"
+                                                         FontWeight="{Binding MatchFontWeight}"
+                                                         TextDecorations="Underline" />
+                                                    <Run Text="{Binding MatchSuffix}"
+                                                         Foreground="{Binding Foreground}" />
+                                                </TextBlock.Inlines>
+                                            </TextBlock>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.DataTemplates>
+                            </ListBox>
+                        </DockPanel>
+                    </Border>
+
+                    <Border Grid.Column="1"
+                            Width="280"
+                            Background="#252526"
+                            BorderBrush="#333"
+                            BorderThickness="1,1,0,0"
+                            Padding="8">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Top" Text="Files" Foreground="#ddd" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                            <ListBox x:Name="DiffFilesListBox"
+                                     ItemsSource="{Binding SelectedDiffFiles}"
+                                     SelectedItem="{Binding SelectedDiffFile}"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     SelectionMode="Single"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     KeyDown="OnDiffListBoxKeyDown"
+                                     GotFocus="OnDiffFilesListBoxGotFocus">
+                                <ListBox.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <VirtualizingStackPanel />
+                                    </ItemsPanelTemplate>
+                                </ListBox.ItemsPanel>
+                                <ListBox.Styles>
+                                    <Style Selector="ListBoxItem">
+                                        <Setter Property="Padding" Value="0" />
+                                        <Setter Property="Background" Value="Transparent" />
+                                        <Setter Property="BorderThickness" Value="0" />
+                                    </Style>
+                                    <Style Selector="ListBoxItem:selected">
+                                        <Setter Property="Background" Value="#333" />
+                                    </Style>
+                                    <Style Selector="ListBoxItem:pointerover">
+                                        <Setter Property="Background" Value="#2a2a2a" />
+                                    </Style>
+                                </ListBox.Styles>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="local:DiffFileProjection">
+                                        <StackPanel Margin="6,6,6,6" Spacing="2">
+                                            <TextBlock Text="{Binding DisplayPath}"
+                                                       Foreground="#ccc"
+                                                       FontSize="12"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding SearchMatchSummary}"
+                                                       IsVisible="{Binding HasSearchMatch}"
+                                                       Foreground="#d7ba7d"
+                                                       FontSize="11"
+                                                       TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+                    </Border>
+                </Grid>
             </Grid>
         </Grid>
     </DockPanel>

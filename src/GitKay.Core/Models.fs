@@ -12,6 +12,7 @@ module Models =
         {
             Name: string
             Kind: CommitRefKind
+            IsCurrentHead: bool
         }
 
     type Commit =

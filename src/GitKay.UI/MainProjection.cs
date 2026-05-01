@@ -20,6 +20,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private bool _suppressDiffSelectionSync;
     private bool _suppressSearchDispatch;
     private bool _suppressSearchSelectionDispatch;
+    private bool _suppressShowBranchRefsDispatch;
     private bool _suppressShowStashesDispatch;
     private object? _commitsSource;
     private object? _commitSearchResultsSource;
@@ -46,6 +47,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     };
 
     [ObservableProperty] private string _status = "";
+    [ObservableProperty] private string _commitRowFontFamily = "Helvetica,Arial,Liberation Sans,Noto Sans,sans-serif";
+    [ObservableProperty] private string _commitRowMonoFontFamily = "Courier,Courier New,Liberation Mono,Monospace";
+    [ObservableProperty] private double _commitRowTextFontSize = 9;
+    [ObservableProperty] private double _commitRowMetaFontSize = 9;
+    [ObservableProperty] private double _commitRowBadgeFontSize = 9;
+    [ObservableProperty] private bool _showBranchRefs;
     [ObservableProperty] private bool _showStashes;
     [ObservableProperty] private string _searchQuery = "";
     [ObservableProperty] private string _commitFindQuery = "";
@@ -81,6 +88,19 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     {
         var startedAtTicks = Stopwatch.GetTimestamp();
         Status = model.Status;
+        if (ShowBranchRefs != model.ShowBranchRefs)
+        {
+            _suppressShowBranchRefsDispatch = true;
+            try
+            {
+                ShowBranchRefs = model.ShowBranchRefs;
+            }
+            finally
+            {
+                _suppressShowBranchRefsDispatch = false;
+            }
+        }
+
         if (ShowStashes != model.ShowStashes)
         {
             _suppressShowStashesDispatch = true;
@@ -313,11 +333,22 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             _commitsSource = model.Commits;
         }
 
+        ApplyRefVisibility();
+
         if (commitsChanged || searchResultsChanged)
         {
             ApplyCommitSearchMatches(model.SearchResults?.Value);
             UpdateVisibleCommits(model, commitsChanged, searchResultsChanged);
             _commitSearchResultsSource = searchResultsSource;
+        }
+    }
+
+    private void ApplyRefVisibility()
+    {
+        foreach (var commit in Commits)
+        {
+            commit.ShowBranchRefs = ShowBranchRefs;
+            commit.ShowStashes = ShowStashes;
         }
     }
 
@@ -468,6 +499,16 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
 
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetShowStashes(value));
+    }
+
+    partial void OnShowBranchRefsChanged(bool value)
+    {
+        if (_suppressShowBranchRefsDispatch)
+        {
+            return;
+        }
+
+        _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetShowBranchRefs(value));
     }
 
     partial void OnSelectedSearchScopeChanged(SearchScopeProjection? value)

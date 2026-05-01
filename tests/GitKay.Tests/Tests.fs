@@ -12,11 +12,18 @@ open GitKay.Core
 open GitKay.UI
 
 module private RefHelpers =
-    let commitRef (kind: Models.CommitRefKind) (name: string) : Models.CommitRef = { Name = name; Kind = kind }
-    let branchRef name = commitRef Models.CommitRefKind.Branch name
-    let remoteRef name = commitRef Models.CommitRefKind.Remote name
-    let tagRef name = commitRef Models.CommitRefKind.Tag name
-    let stashRef name = commitRef Models.CommitRefKind.Stash name
+    let commitRef (kind: Models.CommitRefKind) (name: string) (isCurrentHead: bool option) : Models.CommitRef =
+        {
+            Name = name
+            Kind = kind
+            IsCurrentHead = defaultArg isCurrentHead false
+        }
+
+    let branchRef name = commitRef Models.CommitRefKind.Branch name None
+    let currentBranchRef name = commitRef Models.CommitRefKind.Branch name (Some true)
+    let remoteRef name = commitRef Models.CommitRefKind.Remote name None
+    let tagRef name = commitRef Models.CommitRefKind.Tag name None
+    let stashRef name = commitRef Models.CommitRefKind.Stash name None
 
 module GitServiceTests =
 
@@ -259,6 +266,25 @@ summary Another line
                 test <@ secondFile.Hunks.Head.Lines |> List.exists (fun line -> line.Type = Models.Added && line.Content = "two") @>)
 
     [<Fact>]
+    let ``fetchDiffFileContent should load root commit file contents`` () =
+        withTempRepository (fun root repo ->
+            let firstCommit = commitFile repo root "foo.txt" "one" "first commit"
+
+            match GitService.fetchDiffFileList firstCommit.Sha with
+            | Error err -> failwith err
+            | Ok files ->
+                test <@ files.Length = 1 @>
+                test <@ files.Head.OldPath = "/dev/null" @>
+                test <@ files.Head.NewPath = "foo.txt" @>
+
+                match GitService.fetchDiffFileContent firstCommit.Sha files.Head.OldPath files.Head.NewPath with
+                | Error err -> failwith err
+                | Ok file ->
+                    test <@ file.OldPath = "/dev/null" @>
+                    test <@ file.NewPath = "foo.txt" @>
+                    test <@ file.Hunks.Head.Lines |> List.exists (fun line -> line.Type = Models.Added && line.Content = "one") @>)
+
+    [<Fact>]
     let ``createTag and createBranch should update repository refs without the CLI`` () =
         withTempRepository (fun root repo ->
             let commit = commitFile repo root "base.txt" "base" "base commit"
@@ -285,10 +311,13 @@ summary Another line
 
             match repo.Stashes.Add(signature, "wip") with
             | null -> failwith "Stash creation failed."
-            | _ ->
+            | stash ->
+                let stashHash = stash.WorkTree.Sha
+
                 match GitService.fetchHistory false [ GitService.StartupTarget.All ] with
                 | Error err -> failwith err
                 | Ok commits ->
+                    test <@ commits |> List.exists (fun commit -> commit.Hash = stashHash) |> not @>
                     test <@ commits |> List.exists (fun commit -> commit.Refs |> List.exists (fun ref -> ref.Kind = Models.CommitRefKind.Stash)) |> not @>
                     test <@ commits |> List.exists (fun commit -> commit.Refs |> List.exists (fun ref -> ref.Name = "stash@{0}")) |> not @>)
 
@@ -301,10 +330,13 @@ summary Another line
 
             match repo.Stashes.Add(signature, "wip") with
             | null -> failwith "Stash creation failed."
-            | _ ->
+            | stash ->
+                let stashHash = stash.WorkTree.Sha
+
                 match GitService.fetchHistory true [ GitService.StartupTarget.All ] with
                 | Error err -> failwith err
                 | Ok commits ->
+                    test <@ commits |> List.exists (fun commit -> commit.Hash = stashHash) @>
                     test <@ commits |> List.exists (fun commit -> commit.Refs |> List.exists (fun ref -> ref.Kind = Models.CommitRefKind.Stash)) @>
                     test <@ commits |> List.exists (fun commit -> commit.Refs |> List.exists (fun ref -> ref.Name = "stash@{0}") ) @>)
 
@@ -652,6 +684,55 @@ module AppTests =
         test <@ rightRow.Segments |> List.exists (fun segment -> not segment.IsCommit && segment.Lane = 0 && segment.TargetLane = 0) @>
         test <@ rightRow.Segments |> List.exists (fun segment -> segment.IsCommit && segment.TargetLane = 1) @>
 
+    [<Fact>]
+    let ``calculateLanes should keep an occupied parent lane anchored through a fork`` () =
+        let commits : Models.Commit list =
+            [
+                {
+                    Hash = "seed"
+                    AuthorName = "Author"
+                    AuthorEmail = "author@example.com"
+                    Timestamp = 1710000000L
+                    Parents = [ "a"; "b" ]
+                    Subject = "Seed"
+                    Message = "Seed"
+                    Refs = []
+                }
+                {
+                    Hash = "a"
+                    AuthorName = "Author"
+                    AuthorEmail = "author@example.com"
+                    Timestamp = 1709999940L
+                    Parents = [ "b" ]
+                    Subject = "A"
+                    Message = "A"
+                    Refs = []
+                }
+                {
+                    Hash = "b"
+                    AuthorName = "Author"
+                    AuthorEmail = "author@example.com"
+                    Timestamp = 1709999880L
+                    Parents = []
+                    Subject = "B"
+                    Message = "B"
+                    Refs = []
+                }
+            ]
+
+        let graph = Graph.calculateLanes commits
+
+        test <@ graph.Length = 3 @>
+
+        let seedRow = graph.[0]
+        test <@ seedRow.Lane = 0 @>
+        test <@ seedRow.Segments |> List.map (fun segment -> segment.TargetLane) |> List.sort = [ 0; 1 ] @>
+
+        let forkRow = graph.[1]
+        test <@ forkRow.Lane = 0 @>
+        test <@ forkRow.Segments |> List.exists (fun segment -> segment.IsCommit && segment.TargetLane = 1) @>
+        test <@ forkRow.Segments |> List.exists (fun segment -> not segment.IsCommit && segment.Lane = 1 && segment.TargetLane = 1) @>
+
     let private sampleSearchResult (commit: Models.Commit) matchKinds matchSummary : GitService.SearchResult =
         {
             Commit = commit
@@ -680,6 +761,7 @@ module AppTests =
         {
             Status = ""
             StartupTargets = []
+            ShowBranchRefs = false
             ShowStashes = false
             SearchQuery = ""
             SearchScopeKey = "all"
@@ -1343,6 +1425,8 @@ module AppTests =
     [<Fact>]
     let ``CommitProjection should surface refs in the row summary`` () =
         let projection = CommitProjection()
+        projection.ShowBranchRefs <- true
+        projection.ShowStashes <- true
         let commit =
             {
                 sampleCommit "feedfacefeedfacefeedfacefeedfacefeedface" "Search hit"
@@ -1367,12 +1451,71 @@ module AppTests =
         test <@ projection.RefsSummary = "main · origin/main · v1.0 +1" @>
         test <@ projection.HasRefBadges @>
         test <@ projection.RefBadges.Count = 4 @>
-        test <@ projection.RefBadges.[0].Kind = CommitRefKind.Branch @>
-        test <@ projection.RefBadges.[1].Kind = CommitRefKind.Remote @>
-        test <@ projection.RefBadges.[2].Kind = CommitRefKind.Tag @>
+        test <@ projection.RefBadges.[0].Kind = CommitRefKind.Tag @>
+        test <@ projection.RefBadges.[1].Kind = CommitRefKind.Branch @>
+        test <@ projection.RefBadges.[2].Kind = CommitRefKind.Remote @>
         test <@ projection.RefBadges.[3].Kind = CommitRefKind.Stash @>
-        test <@ projection.RefBadges.[0].Text = "main" @>
+        test <@ projection.RefBadges.[0].Text = "v1.0" @>
         test <@ projection.RefBadges.[3].Text = "stash@{0}" @>
+
+    [<Fact>]
+    let ``CommitProjection should hide non-current branch refs until enabled`` () =
+        let projection = CommitProjection()
+        let commit =
+            {
+                sampleCommit "feedfacefeedfacefeedfacefeedfacefeedface" "Search hit"
+                with
+                    Refs =
+                        [
+                            RefHelpers.branchRef "topic"
+                            RefHelpers.currentBranchRef "main"
+                            RefHelpers.tagRef "v1.0"
+                        ]
+            }
+
+        projection.Update
+            {
+                Commit = commit
+                Lane = 0
+                Segments = []
+            }
+
+        test <@ projection.RefBadges.Count = 2 @>
+        test <@ projection.RefBadges |> Seq.map (fun badge -> badge.Text) |> Seq.toList = [ "v1.0"; "main" ] @>
+
+        projection.ShowBranchRefs <- true
+
+        test <@ projection.RefBadges.Count = 3 @>
+
+    [<Fact>]
+    let ``CommitProjection should initialize segment keys before syncing`` () =
+        let projection = CommitProjection()
+        let commit =
+            sampleCommit "feedfacefeedfacefeedfacefeedfacefeedface" "Search hit"
+
+        projection.Update
+            {
+                Commit = commit
+                Lane = 0
+                Segments =
+                    [
+                        {
+                            Lane = 0
+                            TargetLane = 0
+                            IsCommit = true
+                            Color = 0
+                        }
+                        {
+                            Lane = 1
+                            TargetLane = 1
+                            IsCommit = false
+                            Color = 1
+                        }
+                    ]
+            }
+
+        test <@ projection.Segments.Count = 2 @>
+        test <@ projection.Segments |> Seq.forall (fun segment -> segment.Key <> "") @>
 
     [<Fact>]
     let ``FatalErrorPresenter should format details for the dialog`` () =

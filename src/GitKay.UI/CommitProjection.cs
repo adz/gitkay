@@ -36,9 +36,12 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     [ObservableProperty] private bool _hasSecondarySummary;
     [ObservableProperty] private string _secondarySummary = "";
     [ObservableProperty] private int _lane = 0;
+    [ObservableProperty] private bool _showBranchRefs = false;
+    [ObservableProperty] private bool _showStashes = false;
 
     public ObservableCollection<SegmentProjection> Segments { get; } = new();
     public ObservableCollection<CommitRefProjection> RefBadges { get; } = new();
+    private GitKay.Core.Models.CommitRef[] _refs = Array.Empty<GitKay.Core.Models.CommitRef>();
 
     public void Update(Graph.CommitGraphInfo info)
     {
@@ -49,9 +52,10 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         Subject = commit.Subject;
         Author = commit.AuthorName;
         Date = System.DateTimeOffset.FromUnixTimeSeconds(commit.Timestamp).LocalDateTime.ToString("yyyy-MM-dd HH:mm");
-        HasRefs = commit.Refs.Any();
-        RefsSummary = HasRefs ? FormatRefsSummary(commit.Refs) : "";
-        UpdateRefBadges(commit.Refs);
+        _refs = commit.Refs.ToArray();
+        HasRefs = _refs.Any();
+        RefsSummary = HasRefs ? FormatRefsSummary(_refs) : "";
+        UpdateRefBadges();
         Lane = info.Lane;
         UpdateSecondarySummary();
 
@@ -59,7 +63,12 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
             info.Segments,
             m => $"{m.Lane}-{m.TargetLane}-{m.IsCommit}",
             vm => vm.Key,
-            _ => new SegmentProjection()
+            segment =>
+            {
+                var projection = new SegmentProjection();
+                projection.Update(segment);
+                return projection;
+            }
         );
     }
 
@@ -87,12 +96,18 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         HasSecondarySummary = !string.IsNullOrWhiteSpace(SecondarySummary);
     }
 
-    private void UpdateRefBadges(System.Collections.Generic.IEnumerable<GitKay.Core.Models.CommitRef> refs)
+    partial void OnShowBranchRefsChanged(bool value) => UpdateRefBadges();
+    partial void OnShowStashesChanged(bool value) => UpdateRefBadges();
+
+    private void UpdateRefBadges()
     {
         RefBadges.Clear();
 
-        foreach (var badge in refs
-                     .OrderBy(refItem => (int)refItem.Kind)
+        foreach (var badge in _refs
+                     .Where(ShouldDisplayRef)
+                     .OrderBy(refItem => refItem.Kind == GitKay.Core.Models.CommitRefKind.Tag ? 0 : 1)
+                     .ThenBy(refItem => refItem.IsCurrentHead ? 0 : 1)
+                     .ThenBy(refItem => (int)refItem.Kind)
                      .ThenBy(refItem => refItem.Name, StringComparer.OrdinalIgnoreCase)
                      .Select(CreateRefBadge))
         {
@@ -118,6 +133,18 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         return summary;
     }
 
+    private bool ShouldDisplayRef(GitKay.Core.Models.CommitRef reference)
+    {
+        return reference.Kind switch
+        {
+            GitKay.Core.Models.CommitRefKind.Tag => true,
+            GitKay.Core.Models.CommitRefKind.Stash => ShowStashes,
+            GitKay.Core.Models.CommitRefKind.Branch => ShowBranchRefs || reference.IsCurrentHead,
+            GitKay.Core.Models.CommitRefKind.Remote => true,
+            _ => true
+        };
+    }
+
     private static CommitRefProjection CreateRefBadge(GitKay.Core.Models.CommitRef reference)
     {
         return reference.Kind switch
@@ -141,23 +168,24 @@ public enum CommitRefKind
 
 public sealed class CommitRefProjection
 {
-    private static readonly IBrush BranchBackground = new SolidColorBrush(Color.FromRgb(0x23, 0x4b, 0x2f));
-    private static readonly IBrush BranchBorder = new SolidColorBrush(Color.FromRgb(0x5f, 0x9b, 0x6b));
-    private static readonly IBrush BranchForeground = new SolidColorBrush(Color.FromRgb(0xe2, 0xf4, 0xe4));
-    private static readonly IBrush RemoteBackground = new SolidColorBrush(Color.FromRgb(0x1c, 0x3a, 0x54));
-    private static readonly IBrush RemoteBorder = new SolidColorBrush(Color.FromRgb(0x5a, 0x90, 0xc2));
-    private static readonly IBrush RemoteForeground = new SolidColorBrush(Color.FromRgb(0xd9, 0xec, 0xff));
-    private static readonly IBrush TagBackground = new SolidColorBrush(Color.FromRgb(0x4a, 0x3c, 0x14));
-    private static readonly IBrush TagBorder = new SolidColorBrush(Color.FromRgb(0xc8, 0xa9, 0x5f));
-    private static readonly IBrush TagForeground = new SolidColorBrush(Color.FromRgb(0xff, 0xf1, 0xc9));
-    private static readonly IBrush StashBackground = new SolidColorBrush(Color.FromRgb(0x3d, 0x36, 0x50));
-    private static readonly IBrush StashBorder = new SolidColorBrush(Color.FromRgb(0x8d, 0x7d, 0xb5));
-    private static readonly IBrush StashForeground = new SolidColorBrush(Color.FromRgb(0xe9, 0xe4, 0xff));
+    private static readonly IBrush BranchBackground = new SolidColorBrush(Color.FromRgb(0x00, 0xff, 0x00));
+    private static readonly IBrush BranchBorder = Brushes.Black;
+    private static readonly IBrush BranchForeground = Brushes.Black;
+    private static readonly IBrush RemoteBackground = new SolidColorBrush(Color.FromRgb(0xff, 0xdd, 0xaa));
+    private static readonly IBrush RemoteBorder = Brushes.Black;
+    private static readonly IBrush RemoteForeground = Brushes.Black;
+    private static readonly IBrush TagBackground = Brushes.Yellow;
+    private static readonly IBrush TagBorder = Brushes.Black;
+    private static readonly IBrush TagForeground = Brushes.Black;
+    private static readonly IBrush StashBackground = new SolidColorBrush(Color.FromRgb(0xee, 0xee, 0xee));
+    private static readonly IBrush StashBorder = Brushes.Black;
+    private static readonly IBrush StashForeground = Brushes.Black;
 
     public CommitRefProjection(string text, CommitRefKind kind)
     {
         Text = text;
         Kind = kind;
+        IsCurrentHead = false;
 
         var styles = kind switch
         {
@@ -175,6 +203,9 @@ public sealed class CommitRefProjection
 
     public string Text { get; }
     public CommitRefKind Kind { get; }
+    public bool IsCurrentHead { get; }
+    public bool IsTag => Kind == CommitRefKind.Tag;
+    public bool IsNotTag => !IsTag;
     public IBrush Background { get; }
     public IBrush BorderBrush { get; }
     public IBrush Foreground { get; }

@@ -37,6 +37,9 @@ module Graph =
         }
 
     let calculateLanes (commits: Models.Commit list) =
+        let emptyLane = ""
+        let isOccupied hash = not (System.String.IsNullOrEmpty hash)
+
         let mutable activeLanes = System.Collections.Generic.List<string>()
         let mutable activeLaneIndexes = System.Collections.Generic.Dictionary<string, int>(System.StringComparer.Ordinal)
         let infos = System.Collections.Generic.List<CommitGraphInfo>()
@@ -46,63 +49,77 @@ module Graph =
                 match activeLaneIndexes.TryGetValue commit.Hash with
                 | true, lane -> lane
                 | false, _ ->
-                    let lane = activeLanes.Count
-                    activeLanes.Add commit.Hash
+                    let lane = activeLanes.FindIndex(fun hash -> System.String.IsNullOrEmpty hash)
+
+                    let lane =
+                        if lane >= 0 then lane
+                        else activeLanes.Count
+
+                    if lane = activeLanes.Count then
+                        activeLanes.Add commit.Hash
+                    else
+                        activeLanes.[lane] <- commit.Hash
+
                     activeLaneIndexes.[commit.Hash] <- lane
                     lane
 
-            let occupiedHashes =
-                System.Collections.Generic.HashSet<string>(activeLanes, System.StringComparer.Ordinal)
-
             let nextActiveLanes =
-                System.Collections.Generic.List<string>(activeLanes.Count + commit.Parents.Length)
+                System.Collections.Generic.List<string>(activeLanes)
 
-            // Keep neighboring lanes anchored while the current lane is replaced by any new
-            // parents. This preserves continuity through merges/forks instead of compacting all
-            // lanes toward the left on every step.
-            for laneIndex in 0 .. currentLane - 1 do
-                nextActiveLanes.Add activeLanes.[laneIndex]
-
-            for parentHash in commit.Parents do
-                if occupiedHashes.Add parentHash then
-                    nextActiveLanes.Add parentHash
-
-            for laneIndex in currentLane + 1 .. activeLanes.Count - 1 do
-                nextActiveLanes.Add activeLanes.[laneIndex]
+            if currentLane < nextActiveLanes.Count then
+                nextActiveLanes.[currentLane] <- emptyLane
 
             let nextLaneIndexes =
-                System.Collections.Generic.Dictionary<string, int>(
-                    nextActiveLanes.Count,
-                    System.StringComparer.Ordinal
-                )
+                System.Collections.Generic.Dictionary<string, int>(System.StringComparer.Ordinal)
 
             for laneIndex in 0 .. nextActiveLanes.Count - 1 do
                 let hash = nextActiveLanes.[laneIndex]
-                nextLaneIndexes.[hash] <- laneIndex
+                if isOccupied hash then
+                    nextLaneIndexes.[hash] <- laneIndex
+
+            let tryPlaceParent (parentHash: string) =
+                match nextLaneIndexes.TryGetValue parentHash with
+                | true, lane -> lane
+                | false, _ ->
+                    let lane =
+                        if currentLane < nextActiveLanes.Count && not (isOccupied nextActiveLanes.[currentLane]) then
+                            currentLane
+                        else
+                            let emptyLaneIndex = nextActiveLanes.FindIndex(fun hash -> not (isOccupied hash))
+                            if emptyLaneIndex >= 0 then emptyLaneIndex else nextActiveLanes.Count
+
+                    if lane = nextActiveLanes.Count then
+                        nextActiveLanes.Add parentHash
+                    else
+                        nextActiveLanes.[lane] <- parentHash
+
+                    nextLaneIndexes.[parentHash] <- lane
+                    lane
 
             let segments = System.Collections.Generic.List<LaneSegment>(activeLanes.Count + commit.Parents.Length)
 
+            for parentHash in commit.Parents do
+                let targetIdx = tryPlaceParent parentHash
+                segments.Add
+                    {
+                        Lane = currentLane
+                        TargetLane = targetIdx
+                        IsCommit = true
+                        Color = currentLane
+                    }
+
             for laneIndex in 0 .. activeLanes.Count - 1 do
-                if laneIndex = currentLane then
-                    for parentHash in commit.Parents do
-                        let targetIdx = nextLaneIndexes.[parentHash]
+                if laneIndex <> currentLane then
+                    let hash = activeLanes.[laneIndex]
+                    if isOccupied hash then
+                        let targetIdx = nextLaneIndexes.[hash]
                         segments.Add
                             {
                                 Lane = laneIndex
                                 TargetLane = targetIdx
-                                IsCommit = true
+                                IsCommit = false
                                 Color = laneIndex
                             }
-                else
-                    let hash = activeLanes.[laneIndex]
-                    let targetIdx = nextLaneIndexes.[hash]
-                    segments.Add
-                        {
-                            Lane = laneIndex
-                            TargetLane = targetIdx
-                            IsCommit = false
-                            Color = laneIndex
-                        }
 
             infos.Add
                 {

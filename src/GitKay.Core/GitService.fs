@@ -436,11 +436,22 @@ module GitService =
             FileList = files |> List.map toDiffFileSummary
         }
 
-    let private buildDiffCacheEntryFromPatch (hash: string) (patch: Patch) =
+    let private buildDiffCacheEntryFromPatch (hash: string) (isRootCommit: bool) (patch: Patch) =
+        let normalizeEntry (entry: PatchEntryChanges) =
+            if isRootCommit && String.Equals(entry.OldPath, entry.Path, StringComparison.Ordinal) then
+                let newPath = if String.IsNullOrWhiteSpace entry.Path then "/dev/null" else entry.Path
+                {
+                    OldPath = "/dev/null"
+                    NewPath = newPath
+                    DisplayPath = buildDisplayPath "/dev/null" newPath
+                }
+            else
+                toDiffFileSummaryFromPatchEntry entry
+
         let fileList =
             patch
             |> Seq.cast<PatchEntryChanges>
-            |> Seq.map toDiffFileSummaryFromPatchEntry
+            |> Seq.map normalizeEntry
             |> Seq.toList
 
         {
@@ -457,7 +468,7 @@ module GitService =
     let private buildCommitRefs (includeStashes: bool) (repo: Repository) =
         let refsByCommit = System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<Models.CommitRef>>()
 
-        let addRef (hash: string) (kind: Models.CommitRefKind) (name: string) =
+        let addRef (hash: string) (kind: Models.CommitRefKind) (name: string) (isCurrentHead: bool) =
             if not (String.IsNullOrWhiteSpace hash) && not (String.IsNullOrWhiteSpace name) then
                 let bucket =
                     match refsByCommit.TryGetValue hash with
@@ -466,22 +477,25 @@ module GitService =
                         let created = System.Collections.Generic.HashSet<Models.CommitRef>()
                         refsByCommit.[hash] <- created
                         created
-
-                bucket.Add { Name = name; Kind = kind } |> ignore
+                bucket.Add { Name = name; Kind = kind; IsCurrentHead = isCurrentHead } |> ignore
 
         for branch in repo.Branches do
-            if not (isNull branch.Tip) then
+            if not (isNull branch.Tip)
+               && not (
+                   branch.IsRemote
+                   && branch.FriendlyName.EndsWith("/HEAD", StringComparison.OrdinalIgnoreCase)
+               ) then
                 let kind =
                     if branch.IsRemote then
                         Models.CommitRefKind.Remote
                     else
                         Models.CommitRefKind.Branch
 
-                addRef branch.Tip.Sha kind branch.FriendlyName
+                addRef branch.Tip.Sha kind branch.FriendlyName branch.IsCurrentRepositoryHead
 
         for tag in repo.Tags do
             match tag.PeeledTarget with
-            | :? Commit as commit -> addRef commit.Sha Models.CommitRefKind.Tag tag.FriendlyName
+            | :? Commit as commit -> addRef commit.Sha Models.CommitRefKind.Tag tag.FriendlyName false
             | _ -> ()
 
         if includeStashes then
@@ -489,7 +503,7 @@ module GitService =
             |> Seq.mapi (fun index stash -> index, stash)
             |> Seq.iter (fun (index, stash) ->
                 if not (isNull stash.WorkTree) then
-                    addRef stash.WorkTree.Sha Models.CommitRefKind.Stash (sprintf "stash@{%d}" index))
+                    addRef stash.WorkTree.Sha Models.CommitRefKind.Stash (sprintf "stash@{%d}" index) false)
 
         refsByCommit
         |> Seq.map (fun kvp ->
@@ -504,7 +518,11 @@ module GitService =
 
     let private buildDefaultHistoryRoots (includeStashes: bool) (repo: Repository) =
         seq {
-            yield! repo.Refs |> Seq.map box
+            yield!
+                repo.Refs
+                |> Seq.filter (fun reference ->
+                    not (String.Equals(reference.CanonicalName, "refs/stash", StringComparison.Ordinal)))
+                |> Seq.map box
             if includeStashes then
                 yield!
                     repo.Stashes
@@ -525,12 +543,13 @@ module GitService =
             if isNull commit then
                 Error (sprintf "Commit not found: %s" hash)
             else
+                let isRootCommit = commit.Parents |> Seq.isEmpty
                 use patch =
                     match commit.Parents |> Seq.tryHead with
                     | Some parent -> repo.Diff.Compare<Patch>(parent.Tree, commit.Tree)
                     | None -> repo.Diff.Compare<Patch>(null, commit.Tree)
 
-                Ok (buildDiffCacheEntryFromPatch hash patch)
+                Ok (buildDiffCacheEntryFromPatch hash isRootCommit patch)
         )
 
     let private getDiffCacheEntry (hash: string) =
@@ -628,6 +647,7 @@ module GitService =
                 filter.SortBy <- CommitSortStrategies.Topological ||| CommitSortStrategies.Time
 
                 repo.Commits.QueryBy(filter)
+                |> Seq.distinctBy (fun commit -> commit.Sha)
                 |> Seq.map (fun commit ->
                     let refs =
                         match refsByCommit.TryFind commit.Sha with

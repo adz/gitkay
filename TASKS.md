@@ -3,7 +3,6 @@
 ## Done
 - Repo foundation, `.slnx`, `mise`, .NET 10.0, Avalonia v12, F# core, C# UI, tests, and centralized artifacts.
 - History loading, commit selection, diff loading, search plumbing, graph rendering, and context-menu git operations are in place.
-- `dev-docs/design-decisions.md` captures the architectural changes that should guide future work.
 
 ## Target
 - Keep selection, search, and diff navigation fast.
@@ -28,3 +27,6 @@
 5. [x] Restore graph continuity through forks and merges so branch lines stay readable.
 6. [x] Hide stashes by default and add an explicit option to show them.
 7. [x] Tighten graph marker alignment with the commit text baseline.
+8. [ ] Replace Avalonia grid splitters with explicit drag-resize pane sizing so the top, middle, bottom, and diff/file panes resize independently.
+9. [ ] Make commit search highlight matching commit rows in place, show which fields matched, and stop filtering nonmatching commits out of the history list.
+10. [ ] Make diff search debounce-apply, highlight matched files, lines, and terms, and keep the diff pane visibly annotated while searching.

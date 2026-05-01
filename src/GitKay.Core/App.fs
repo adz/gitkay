@@ -23,6 +23,7 @@ module App =
         {
             Status: string
             StartupTargets: GitService.StartupTarget list
+            ShowBranchRefs: bool
             ShowStashes: bool
             SearchQuery: string
             SearchScopeKey: string
@@ -40,6 +41,7 @@ module App =
 
     type Msg =
         | RereadRefs
+        | SetShowBranchRefs of bool
         | SetShowStashes of bool
         | HistoryLoaded of Result<Models.Commit list, string>
         | SelectCommit of hash:string * startedAtTicks:int64
@@ -290,6 +292,7 @@ module App =
             {
                 Status = sprintf "Error: %s" err
                 StartupTargets = []
+                ShowBranchRefs = false
                 ShowStashes = false
                 SearchQuery = ""
                 SearchScopeKey = "all"
@@ -310,6 +313,7 @@ module App =
                 {
                     Status = "Loading history..."
                     StartupTargets = startupTargets
+                    ShowBranchRefs = false
                     ShowStashes = false
                     SearchQuery = ""
                     SearchScopeKey = "all"
@@ -333,6 +337,8 @@ module App =
             cancelCurrentSearchJob ()
             let nextModel = { model with Status = "Refreshing..." }
             nextModel, loadHistory model.ShowStashes model.StartupTargets
+        | SetShowBranchRefs showBranchRefs ->
+            { model with ShowBranchRefs = showBranchRefs }, Cmd.none
         | SetShowStashes showStashes ->
             cancelCurrentSearchJob ()
             let nextModel =
