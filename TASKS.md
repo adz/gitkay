@@ -30,7 +30,7 @@
 8. [x] Keep the top history and bottom diff split with a single splitter; the commit-info row should fit content.
 9. [x] Make commit search highlight matching commit rows in place, show which fields matched, and stop filtering nonmatching commits out of the history list.
 10. [x] Make diff search debounce-apply, highlight matched files, lines, and terms, and keep the diff pane visibly annotated while searching.
-11. [ ] Increase the default height of the bottom diff section so it has enough room without manual resizing.
+11. [x] Increase the default height of the bottom diff section so it has enough room without manual resizing.
 12. [ ] Increase the default commit list font size slightly so commit rows read more clearly.
 13. [ ] Add resizable columns for the history, commit, and diff layouts so the main panes can be tuned without code changes.
 14. [ ] Hide search panes by default, but keep them easy to open inline from the history and diff areas.
