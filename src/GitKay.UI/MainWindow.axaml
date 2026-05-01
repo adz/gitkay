@@ -22,8 +22,8 @@
         <Grid RowDefinitions="250,Auto,*">
             <Border Grid.Row="0" Background="#1e1e1e" BorderBrush="#333" BorderThickness="0,0,0,1">
                 <DockPanel LastChildFill="True">
-                    <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="8,8,8,6">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
+                    <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="6,6,6,4">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
                             <TextBox Width="280"
                                      Text="{Binding SearchQuery, Mode=TwoWay}"
                                      PlaceholderText="Search hash, message, author, path, text, ref">
@@ -52,16 +52,17 @@
                             BorderBrush="#333"
                             BorderThickness="1"
                             CornerRadius="4"
-                            Height="104"
-                            Padding="6"
-                            Margin="8,0,8,8"
+                            Height="84"
+                            Padding="4"
+                            Margin="6,0,6,6"
                             IsVisible="{Binding HasSearchResults}">
                         <DockPanel LastChildFill="True">
                             <TextBlock DockPanel.Dock="Top"
                                        Text="Search results"
                                        Foreground="#ddd"
                                        FontWeight="SemiBold"
-                                       Margin="0,0,0,6" />
+                                       FontSize="11"
+                                       Margin="0,0,0,4" />
                             <ListBox x:Name="SearchResultsListBox"
                                      ItemsSource="{Binding SearchResults}"
                                      SelectedItem="{Binding SelectedSearchResult}"
@@ -90,7 +91,7 @@
                                 </ListBox.Styles>
                                 <ListBox.ItemTemplate>
                                     <DataTemplate x:DataType="local:SearchResultProjection">
-                                        <Border Padding="6,5">
+                                        <Border Padding="4,2">
                                             <Grid ColumnDefinitions="120,*,150,150,260" Background="Transparent">
                                                 <TextBlock Grid.Column="0"
                                                            Text="{Binding Hash}"
@@ -157,8 +158,8 @@
 
                                     <local:GraphRowControl Grid.Column="0" Segments="{Binding Segments}" CommitLane="{Binding Lane}" Height="28"/>
 
-                                    <TextBlock Grid.Column="1" Text="{Binding Hash}" Foreground="#888" Margin="5,0" VerticalAlignment="Center"/>
-                                    <StackPanel Grid.Column="2" Margin="5,2" VerticalAlignment="Center" Spacing="1">
+                                    <TextBlock Grid.Column="1" Text="{Binding Hash}" Foreground="#888" Margin="4,0" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="2" Margin="4,1" VerticalAlignment="Center" Spacing="1">
                                         <TextBlock Text="{Binding Subject}"
                                                    FontWeight="SemiBold"
                                                    TextTrimming="CharacterEllipsis" />
@@ -168,8 +169,8 @@
                                                    FontSize="11"
                                                    TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
-                                    <TextBlock Grid.Column="3" Text="{Binding Author}" Foreground="#aaa" Margin="5,0" VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="4" Text="{Binding Date}" Foreground="#888" Margin="5,0" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="3" Text="{Binding Author}" Foreground="#aaa" Margin="4,0" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="4" Text="{Binding Date}" Foreground="#888" Margin="4,0" HorizontalAlignment="Right" VerticalAlignment="Center"/>
                                 </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
