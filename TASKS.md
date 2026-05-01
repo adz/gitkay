@@ -21,7 +21,7 @@
 
 ## Gitk Parity Follow-up
 1. [x] Tighten the main history layout so more commit rows are visible without scrolling, especially by reducing wasted vertical chrome in the header/search area.
-2. [ ] Replace the tiny inline secondary search entry with a more legible, persistent search surface that can expand when active and does not feel cramped.
+2. [x] Replace the tiny inline secondary search entry with a more legible, persistent search surface that can expand when active and does not feel cramped.
 3. [ ] Add a unified diff mode across all files in a commit, with the current file list remaining as navigation rather than the only way to inspect changes.
 4. [ ] Allow searching the diff text itself from the main search flow, not just commit metadata and paths.
 5. [ ] Surface search matches inline in both the commit list and diff view so the user can immediately see what matched and where.

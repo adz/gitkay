@@ -41,6 +41,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private string _searchQuery = "";
     [ObservableProperty] private SearchScopeProjection? _selectedSearchScope;
     [ObservableProperty] private bool _hasSearchResults;
+    [ObservableProperty] private bool _isSearchPanelExpanded;
 
     public ObservableCollection<CommitProjection> Commits { get; } = new();
     public ObservableCollection<SearchResultProjection> SearchResults { get; } = new();
@@ -109,6 +110,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                 _suppressSearchDispatch = false;
             }
         }
+
+        IsSearchPanelExpanded = !string.IsNullOrWhiteSpace(model.SearchQuery) || model.SearchResults != null;
 
         var searchResultsChanged = !ReferenceEquals(_searchResultsSource, searchResultsSource);
 
