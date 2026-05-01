@@ -5,12 +5,30 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Elmish.Glue.Core;
 using GitKay.Core;
 
 namespace GitKay.UI;
+
+internal readonly record struct DiffSearchStatusStyle(IBrush Foreground, IBrush Background);
+
+internal static class DiffSearchStatusBrushes
+{
+    public static readonly DiffSearchStatusStyle Pending = new(
+        new SolidColorBrush(Color.FromRgb(242, 201, 125)),
+        new SolidColorBrush(Color.FromArgb(36, 90, 66, 20)));
+
+    public static readonly DiffSearchStatusStyle Applied = new(
+        new SolidColorBrush(Color.FromRgb(78, 201, 176)),
+        new SolidColorBrush(Color.FromArgb(30, 78, 201, 176)));
+
+    public static readonly DiffSearchStatusStyle Empty = new(
+        new SolidColorBrush(Color.FromRgb(215, 186, 125)),
+        new SolidColorBrush(Color.FromArgb(28, 76, 58, 18)));
+}
 
 public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.App.Model, GitKay.Core.App.Msg>
 {
@@ -33,7 +51,11 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private string? _selectedSearchResultHash;
     private string? _diffSearchQuery;
     private string? _diffSearchScopeKey;
+    private string? _pendingDiffSearchQuery;
+    private string? _pendingDiffSearchScopeKey;
+    private long _pendingDiffSearchReadyAtTicks;
     private CancellationTokenSource? _searchDebounceCancellation;
+    private CancellationTokenSource? _diffSearchDebounceCancellation;
 
     public ObservableCollection<SearchScopeProjection> SearchScopes { get; } = new()
     {
@@ -60,6 +82,11 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private SearchScopeProjection? _selectedSearchScope;
     [ObservableProperty] private bool _hasSearchResults;
     [ObservableProperty] private bool _isSearchPanelExpanded;
+    [ObservableProperty] private bool _hasDiffSearchStatus;
+    [ObservableProperty] private bool _isDiffSearchPending;
+    [ObservableProperty] private string _diffSearchStatusText = "";
+    [ObservableProperty] private IBrush _diffSearchStatusForeground = Brushes.Transparent;
+    [ObservableProperty] private IBrush _diffSearchStatusBackground = Brushes.Transparent;
 
     public ObservableCollection<CommitProjection> Commits { get; } = new();
     public ObservableCollection<CommitProjection> VisibleCommits { get; } = new();
@@ -214,8 +241,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                 ? (object?)model.SelectedDiff.Value
                 : null;
 
+        var searchQuery = model.SearchQuery.Trim();
         var searchStateChanged =
-            !string.Equals(_diffSearchQuery, model.SearchQuery, StringComparison.Ordinal)
+            !string.Equals(_diffSearchQuery, searchQuery, StringComparison.Ordinal)
             || !string.Equals(_diffSearchScopeKey, model.SearchScopeKey, StringComparison.Ordinal);
 
         var diffCollectionChanged =
@@ -236,7 +264,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             _selectedDiffFilesSource = null;
             _selectedDiffFileKey = null;
             _selectedDiffFileSource = null;
-            _diffSearchQuery = model.SearchQuery;
+            RefreshDiffSearchState(model, searchQuery, searchStateChanged, false, false);
+            _diffSearchQuery = searchQuery;
             _diffSearchScopeKey = model.SearchScopeKey;
             return;
         }
@@ -266,12 +295,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             var selectedDiffFile = ResolveSelectedDiffFile(model, previousSelectedDiffFileKey);
 
             SyncSelectedDiffSelection(selectedDiffFile);
-            ApplySearchStateToSelectedDiff(model);
             RenderSelectedDiffRows();
             _selectedDiffFileKey = selectedDiffFile?.Key;
-            _diffSearchQuery = model.SearchQuery;
-            _diffSearchScopeKey = model.SearchScopeKey;
-            return;
         }
 
         if (model.SelectedDiffFiles != null)
@@ -295,7 +320,6 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                     }
                 }
 
-                ApplySearchStateToSelectedDiff(model);
                 RenderSelectedDiffRows();
                 _selectedDiffFileSource = selectedDiffContentSource;
             }
@@ -306,15 +330,235 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                 _selectedDiffFileKey = selectedDiffFileKey;
             }
 
-            if (searchStateChanged && !diffContentChanged)
-            {
-                ApplySearchStateToSelectedDiff(model);
-            }
+            RefreshDiffSearchState(model, searchQuery, searchStateChanged, diffContentChanged, true);
+        }
+        else
+        {
+            RefreshDiffSearchState(model, searchQuery, searchStateChanged, diffCollectionChanged, false);
         }
 
-        _diffSearchQuery = model.SearchQuery;
+        _diffSearchQuery = searchQuery;
         _diffSearchScopeKey = model.SearchScopeKey;
     }
+
+    private void RefreshDiffSearchState(
+        GitKay.Core.App.Model model,
+        string searchQuery,
+        bool searchStateChanged,
+        bool diffContentChanged,
+        bool hasSelectedDiff)
+    {
+        if (string.IsNullOrWhiteSpace(searchQuery))
+        {
+            CancelDiffSearchDebounce();
+            _pendingDiffSearchQuery = null;
+            _pendingDiffSearchScopeKey = null;
+            _pendingDiffSearchReadyAtTicks = 0;
+            IsDiffSearchPending = false;
+            SetDiffSearchStatus("", Brushes.Transparent, Brushes.Transparent);
+
+            if (hasSelectedDiff)
+            {
+                ClearSearchStateToSelectedDiff(model.SearchScopeKey);
+            }
+
+            return;
+        }
+
+        if (searchStateChanged)
+        {
+            StartDiffSearchDebounce(model, searchQuery);
+            return;
+        }
+
+        if (TryApplyPendingDiffSearch(model, searchQuery, hasSelectedDiff))
+        {
+            return;
+        }
+
+        if (hasSelectedDiff && diffContentChanged && !IsDiffSearchPending)
+        {
+            ApplySearchStateToSelectedDiff(searchQuery, model.SearchScopeKey);
+            SetDiffSearchAppliedStatus(searchQuery);
+        }
+        else if (IsDiffSearchPending)
+        {
+            SetDiffSearchPendingStatus(searchQuery);
+        }
+        else if (SelectedDiffFiles.Count > 0)
+        {
+            SetDiffSearchAppliedStatus(searchQuery);
+        }
+    }
+
+    private void StartDiffSearchDebounce(GitKay.Core.App.Model model, string searchQuery)
+    {
+        CancelDiffSearchDebounce();
+
+        _pendingDiffSearchQuery = searchQuery;
+        _pendingDiffSearchScopeKey = model.SearchScopeKey;
+        _pendingDiffSearchReadyAtTicks = Stopwatch.GetTimestamp() + SecondsToStopwatchTicks(SearchDebounceSeconds);
+        IsDiffSearchPending = true;
+
+        if (SelectedDiffFiles.Count > 0)
+        {
+            ClearSearchStateToSelectedDiff(model.SearchScopeKey);
+        }
+
+        SetDiffSearchPendingStatus(searchQuery);
+
+        if (SearchDebounceSeconds > 0d)
+        {
+            ScheduleDiffSearchDebounce();
+        }
+
+        _ = TryApplyPendingDiffSearch(model, searchQuery, true);
+    }
+
+    private bool TryApplyPendingDiffSearch(GitKay.Core.App.Model model, string searchQuery, bool hasSelectedDiff)
+    {
+        if (!IsDiffSearchPending || _pendingDiffSearchQuery == null || _pendingDiffSearchScopeKey == null)
+        {
+            return false;
+        }
+
+        if (!string.Equals(_pendingDiffSearchQuery, searchQuery, StringComparison.Ordinal)
+            || !string.Equals(_pendingDiffSearchScopeKey, model.SearchScopeKey, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (Stopwatch.GetTimestamp() < _pendingDiffSearchReadyAtTicks)
+        {
+            return false;
+        }
+
+        if (!hasSelectedDiff || SelectedDiffFiles.Count == 0)
+        {
+            SetDiffSearchPendingStatus(searchQuery);
+            return false;
+        }
+
+        CancelDiffSearchDebounce();
+        _pendingDiffSearchQuery = null;
+        _pendingDiffSearchScopeKey = null;
+        _pendingDiffSearchReadyAtTicks = 0;
+        IsDiffSearchPending = false;
+
+        ApplySearchStateToSelectedDiff(searchQuery, model.SearchScopeKey);
+        SetDiffSearchAppliedStatus(searchQuery);
+        return true;
+    }
+
+    private void SetDiffSearchPendingStatus(string searchQuery)
+    {
+        SetDiffSearchStatus(
+            $"Searching diff for \"{searchQuery}\"...",
+            DiffSearchStatusBrushes.Pending.Foreground,
+            DiffSearchStatusBrushes.Pending.Background);
+    }
+
+    private void SetDiffSearchAppliedStatus(string searchQuery)
+    {
+        var fileMatchCount = SelectedDiffFiles.Count(file => file.HasSearchMatch);
+        var lineMatchCount = SelectedDiffFiles.Sum(
+            file => file.Hunks.Sum(hunk => hunk.Lines.Count(line => line.IsSearchMatch)));
+
+        var statusText =
+            fileMatchCount == 0 && lineMatchCount == 0
+                ? $"Diff search: no matches for \"{searchQuery}\""
+                : $"Diff search: {FormatSearchCount(fileMatchCount, "file")} and {FormatSearchCount(lineMatchCount, "line")} matched";
+
+        var statusBrushes =
+            fileMatchCount == 0 && lineMatchCount == 0
+                ? DiffSearchStatusBrushes.Empty
+                : DiffSearchStatusBrushes.Applied;
+
+        SetDiffSearchStatus(statusText, statusBrushes.Foreground, statusBrushes.Background);
+    }
+
+    private void SetDiffSearchStatus(string text, IBrush foreground, IBrush background)
+    {
+        DiffSearchStatusText = text;
+        DiffSearchStatusForeground = foreground;
+        DiffSearchStatusBackground = background;
+        HasDiffSearchStatus = !string.IsNullOrWhiteSpace(text);
+    }
+
+    private void ClearSearchStateToSelectedDiff(string scopeKey)
+    {
+        foreach (var file in SelectedDiffFiles)
+        {
+            file.ApplySearchState("", scopeKey);
+        }
+    }
+
+    private void ApplySearchStateToSelectedDiff(string query, string scopeKey)
+    {
+        foreach (var file in SelectedDiffFiles)
+        {
+            file.ApplySearchState(query, scopeKey);
+        }
+    }
+
+    private void ScheduleDiffSearchDebounce()
+    {
+        if (string.IsNullOrWhiteSpace(_pendingDiffSearchQuery))
+        {
+            return;
+        }
+
+        var cancellation = new CancellationTokenSource();
+        _diffSearchDebounceCancellation = cancellation;
+
+        _ = DebounceDiffSearchAsync(cancellation, TimeSpan.FromSeconds(Math.Max(0d, SearchDebounceSeconds)));
+    }
+
+    private async Task DebounceDiffSearchAsync(CancellationTokenSource cancellation, TimeSpan delay)
+    {
+        try
+        {
+            await Task.Delay(delay, cancellation.Token);
+
+            if (cancellation.IsCancellationRequested || !ReferenceEquals(_diffSearchDebounceCancellation, cancellation))
+            {
+                return;
+            }
+
+            _dispatch?.Invoke(GitKay.Core.App.Msg.NoOp);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_diffSearchDebounceCancellation, cancellation))
+            {
+                _diffSearchDebounceCancellation = null;
+            }
+
+            cancellation.Dispose();
+        }
+    }
+
+    private void CancelDiffSearchDebounce()
+    {
+        if (_diffSearchDebounceCancellation == null)
+        {
+            return;
+        }
+
+        _diffSearchDebounceCancellation.Cancel();
+        _diffSearchDebounceCancellation = null;
+    }
+
+    private static long SecondsToStopwatchTicks(double seconds) =>
+        seconds <= 0d
+            ? 0L
+            : (long)(seconds * Stopwatch.Frequency);
+
+    private static string FormatSearchCount(int count, string singularLabel) =>
+        count == 1 ? $"1 {singularLabel}" : $"{count} {singularLabel}s";
 
     private void UpdateCommits(GitKay.Core.App.Model model)
     {
@@ -749,24 +993,6 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             {
                 commit.ApplySearchMatch(null);
             }
-        }
-    }
-
-    private void ApplySearchStateToSelectedDiff(GitKay.Core.App.Model model)
-    {
-        if (model.SelectedDiffFiles == null || model.SelectedCommitHash == null || model.SelectedDiffHash == null)
-        {
-            return;
-        }
-
-        if (model.SelectedCommitHash.Value != model.SelectedDiffHash.Value)
-        {
-            return;
-        }
-
-        foreach (var file in SelectedDiffFiles)
-        {
-            file.ApplySearchState(model.SearchQuery, model.SearchScopeKey);
         }
     }
 

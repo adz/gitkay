@@ -1391,9 +1391,10 @@ module AppTests =
         test <@ obj.ReferenceEquals(otherVm.RowBackground, Brushes.Transparent) @>
 
     [<Fact>]
-    let ``MainProjection should surface search matches inline in the diff view`` () =
+    let ``MainProjection should debounce diff search and surface matches inline in the diff view`` () =
         let projection = MainProjection()
         projection.SetDispatch ignore
+        projection.SearchDebounceSeconds <- 0.1
 
         let commit =
             sampleCommit "12345678" "Subject"
@@ -1431,9 +1432,28 @@ module AppTests =
         projection.Update model
 
         test <@ projection.SelectedDiffFiles.Count = 1 @>
+        test <@ not projection.SelectedDiffFiles.[0].HasSearchMatch @>
+        test <@ projection.SelectedDiffFiles.[0].SearchMatchSummary = "" @>
+        test <@ projection.HasDiffSearchStatus @>
+        test <@ projection.DiffSearchStatusText = "Searching diff for \"needle\"..." @>
+        test <@ projection.SelectedDiffRows.Count = 3 @>
+
+        Task.Delay(50).Wait()
+        projection.Update model
+
+        test <@ not projection.SelectedDiffFiles.[0].HasSearchMatch @>
+        test <@ projection.SelectedDiffFiles.[0].SearchMatchSummary = "" @>
+        test <@ projection.SelectedDiffFiles.[0].MatchText = "" @>
+        test <@ not projection.SelectedDiffFiles.[0].Header.HasSearchMatch @>
+        test <@ projection.SelectedDiffFiles.[0].Header.MatchText = "" @>
+        test <@ projection.DiffSearchStatusText = "Searching diff for \"needle\"..." @>
+
+        Task.Delay(200).Wait()
+        projection.Update model
+
         test <@ projection.SelectedDiffFiles.[0].HasSearchMatch @>
         test <@ projection.SelectedDiffFiles.[0].SearchMatchSummary = "path · text" @>
-        test <@ projection.SelectedDiffRows.Count = 3 @>
+        test <@ projection.DiffSearchStatusText = "Diff search: 1 file and 1 line matched" @>
 
         let diffLine =
             projection.SelectedDiffRows
@@ -1443,6 +1463,7 @@ module AppTests =
             |> Seq.head
 
         test <@ diffLine.IsSearchMatch @>
+        test <@ diffLine.MatchText = "needle" @>
 
     [<Fact>]
     let ``CommitProjection should surface refs in the row summary`` () =

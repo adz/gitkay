@@ -14,6 +14,33 @@ public interface IDiffRowProjection
 {
 }
 
+internal static class DiffSearchPresentation
+{
+    public static readonly IBrush MatchBackground = new SolidColorBrush(Color.FromArgb(24, 78, 201, 176));
+    public static readonly IBrush MatchBorderBrush = new SolidColorBrush(Color.FromArgb(96, 78, 201, 176));
+    public static readonly IBrush MatchForeground = new SolidColorBrush(Color.FromRgb(215, 186, 125));
+    public static readonly FontWeight MatchFontWeight = FontWeight.SemiBold;
+
+    public static (string Prefix, string Match, string Suffix, bool HasMatch) Split(string value, string query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return (value, "", "", false);
+        }
+
+        var index = value.IndexOf(query, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
+        {
+            return (value, "", "", false);
+        }
+
+        var prefix = index > 0 ? value[..index] : "";
+        var match = value.Substring(index, query.Length);
+        var suffix = index + query.Length < value.Length ? value[(index + query.Length)..] : "";
+        return (prefix, match, suffix, true);
+    }
+}
+
 public partial class DiffFileProjection : ObservableObject
 {
     public DiffFileProjection(GitKay.Core.GitService.DiffFileSummary summary)
@@ -28,6 +55,13 @@ public partial class DiffFileProjection : ObservableObject
     [ObservableProperty] private bool _isLoaded;
     [ObservableProperty] private bool _hasSearchMatch;
     [ObservableProperty] private string _searchMatchSummary = "";
+    [ObservableProperty] private IBrush _rowBackground = Brushes.Transparent;
+    [ObservableProperty] private IBrush _borderBrush = Brushes.Transparent;
+    [ObservableProperty] private string _matchPrefix = "";
+    [ObservableProperty] private string _matchText = "";
+    [ObservableProperty] private string _matchSuffix = "";
+    [ObservableProperty] private IBrush _matchForeground = DiffSearchPresentation.MatchForeground;
+    [ObservableProperty] private FontWeight _matchFontWeight = FontWeight.Normal;
     public ObservableCollection<DiffHunkProjection> Hunks { get; } = new();
     public DiffFileHeaderProjection Header { get; }
 
@@ -52,6 +86,7 @@ public partial class DiffFileProjection : ObservableObject
     {
         Hunks.Clear();
         IsLoaded = false;
+        ClearSearchState();
     }
 
     public void ApplySearchState(string query, string scopeKey)
@@ -97,12 +132,22 @@ public partial class DiffFileProjection : ObservableObject
         var hasSearchMatch = pathMatch || textMatch;
         HasSearchMatch = hasSearchMatch;
         SearchMatchSummary = hasSearchMatch ? BuildSearchSummary(pathMatch, textMatch) : "";
+        UpdateSearchHighlight(normalizedQuery, pathMatch, hasSearchMatch);
+        Header.ApplySearchState(normalizedQuery, pathMatch, textMatch, SearchMatchSummary);
     }
 
     private void ClearSearchState(string scopeKey)
     {
         HasSearchMatch = false;
         SearchMatchSummary = "";
+        RowBackground = Brushes.Transparent;
+        BorderBrush = Brushes.Transparent;
+        MatchPrefix = DisplayPath;
+        MatchText = "";
+        MatchSuffix = "";
+        MatchForeground = DiffSearchPresentation.MatchForeground;
+        MatchFontWeight = FontWeight.Normal;
+        Header.ClearSearchState();
 
         var searchText = scopeKey is "all" or "text";
         foreach (var hunk in Hunks)
@@ -111,6 +156,39 @@ public partial class DiffFileProjection : ObservableObject
             {
                 line.ApplySearchState("", searchText);
             }
+        }
+    }
+
+    private void ClearSearchState()
+    {
+        ClearSearchState("all");
+    }
+
+    private void UpdateSearchHighlight(string query, bool pathMatch, bool hasSearchMatch)
+    {
+        RowBackground = hasSearchMatch
+            ? DiffSearchPresentation.MatchBackground
+            : Brushes.Transparent;
+        BorderBrush = hasSearchMatch
+            ? DiffSearchPresentation.MatchBorderBrush
+            : Brushes.Transparent;
+
+        if (pathMatch)
+        {
+            var (prefix, match, suffix, _) = DiffSearchPresentation.Split(DisplayPath, query);
+            MatchPrefix = prefix;
+            MatchText = match;
+            MatchSuffix = suffix;
+            MatchForeground = DiffSearchPresentation.MatchForeground;
+            MatchFontWeight = DiffSearchPresentation.MatchFontWeight;
+        }
+        else
+        {
+            MatchPrefix = DisplayPath;
+            MatchText = "";
+            MatchSuffix = "";
+            MatchForeground = DiffSearchPresentation.MatchForeground;
+            MatchFontWeight = FontWeight.Normal;
         }
     }
 
@@ -145,8 +223,60 @@ public sealed partial class DiffFileHeaderProjection : ObservableObject, IDiffRo
 
     public DiffFileProjection File { get; }
     [ObservableProperty] private string _displayPath = "";
+    [ObservableProperty] private bool _hasSearchMatch;
+    [ObservableProperty] private string _searchMatchSummary = "";
+    [ObservableProperty] private IBrush _rowBackground = Brushes.Transparent;
+    [ObservableProperty] private IBrush _borderBrush = Brushes.Transparent;
+    [ObservableProperty] private string _matchPrefix = "";
+    [ObservableProperty] private string _matchText = "";
+    [ObservableProperty] private string _matchSuffix = "";
+    [ObservableProperty] private IBrush _matchForeground = DiffSearchPresentation.MatchForeground;
+    [ObservableProperty] private FontWeight _matchFontWeight = FontWeight.Normal;
 
     public void UpdateDisplayPath(string displayPath) => DisplayPath = displayPath;
+
+    public void ApplySearchState(string query, bool pathMatch, bool textMatch, string searchMatchSummary)
+    {
+        HasSearchMatch = pathMatch || textMatch;
+        SearchMatchSummary = HasSearchMatch ? searchMatchSummary : "";
+        RowBackground = HasSearchMatch
+            ? DiffSearchPresentation.MatchBackground
+            : Brushes.Transparent;
+        BorderBrush = HasSearchMatch
+            ? DiffSearchPresentation.MatchBorderBrush
+            : Brushes.Transparent;
+
+        if (pathMatch)
+        {
+            var (prefix, match, suffix, _) = DiffSearchPresentation.Split(DisplayPath, query);
+            MatchPrefix = prefix;
+            MatchText = match;
+            MatchSuffix = suffix;
+            MatchForeground = DiffSearchPresentation.MatchForeground;
+            MatchFontWeight = DiffSearchPresentation.MatchFontWeight;
+        }
+        else
+        {
+            MatchPrefix = DisplayPath;
+            MatchText = "";
+            MatchSuffix = "";
+            MatchForeground = DiffSearchPresentation.MatchForeground;
+            MatchFontWeight = FontWeight.Normal;
+        }
+    }
+
+    public void ClearSearchState()
+    {
+        HasSearchMatch = false;
+        SearchMatchSummary = "";
+        RowBackground = Brushes.Transparent;
+        BorderBrush = Brushes.Transparent;
+        MatchPrefix = DisplayPath;
+        MatchText = "";
+        MatchSuffix = "";
+        MatchForeground = DiffSearchPresentation.MatchForeground;
+        MatchFontWeight = FontWeight.Normal;
+    }
 }
 
 public sealed class DiffHunkHeaderProjection : IDiffRowProjection
@@ -190,7 +320,7 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
                 : line.Type.Equals(DiffLineType.Context)
                     ? Brushes.Gainsboro
                     : Brushes.LightSkyBlue;
-        MatchForeground = Brushes.White;
+        MatchForeground = DiffSearchPresentation.MatchForeground;
     }
 
     public string OldLineNoText { get; }
@@ -200,10 +330,11 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
     public IBrush Foreground { get; }
     [ObservableProperty] private bool _isSearchMatch;
     [ObservableProperty] private IBrush _rowBackground = Brushes.Transparent;
+    [ObservableProperty] private IBrush _borderBrush = Brushes.Transparent;
     [ObservableProperty] private string _matchPrefix = "";
     [ObservableProperty] private string _matchText = "";
     [ObservableProperty] private string _matchSuffix = "";
-    [ObservableProperty] private IBrush _matchForeground = Brushes.White;
+    [ObservableProperty] private IBrush _matchForeground = DiffSearchPresentation.MatchForeground;
     [ObservableProperty] private FontWeight _matchFontWeight = FontWeight.Normal;
 
     private static string FormatLineNumber(FSharpOption<int> lineNumber) =>
@@ -218,24 +349,27 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
 
         IsSearchMatch = isSearchMatch;
         RowBackground = isSearchMatch
-            ? new SolidColorBrush(Color.FromArgb(20, 78, 201, 176))
+            ? DiffSearchPresentation.MatchBackground
+            : Brushes.Transparent;
+        BorderBrush = isSearchMatch
+            ? DiffSearchPresentation.MatchBorderBrush
             : Brushes.Transparent;
 
         if (isSearchMatch)
         {
-            var index = Content.IndexOf(query, StringComparison.OrdinalIgnoreCase);
-            MatchPrefix = index > 0 ? Content[..index] : "";
-            MatchText = index >= 0 ? Content.Substring(index, query.Length) : "";
-            MatchSuffix = index >= 0 ? Content[(index + query.Length)..] : Content;
-            MatchForeground = Brushes.White;
-            MatchFontWeight = FontWeight.SemiBold;
+            var (prefix, match, suffix, _) = DiffSearchPresentation.Split(Content, query);
+            MatchPrefix = prefix;
+            MatchText = match;
+            MatchSuffix = suffix;
+            MatchForeground = DiffSearchPresentation.MatchForeground;
+            MatchFontWeight = DiffSearchPresentation.MatchFontWeight;
         }
         else
         {
             MatchPrefix = Content;
             MatchText = "";
             MatchSuffix = "";
-            MatchForeground = Brushes.White;
+            MatchForeground = DiffSearchPresentation.MatchForeground;
             MatchFontWeight = FontWeight.Normal;
         }
 
