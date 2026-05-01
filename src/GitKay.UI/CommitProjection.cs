@@ -27,6 +27,8 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     [ObservableProperty] private string _date = "";
     [ObservableProperty] private string _refsSummary = "";
     [ObservableProperty] private bool _hasRefs;
+    [ObservableProperty] private bool _hasSearchMatch;
+    [ObservableProperty] private string _searchMatchSummary = "";
     [ObservableProperty] private int _lane = 0;
 
     public ObservableCollection<SegmentProjection> Segments { get; } = new();
@@ -50,6 +52,12 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
             vm => vm.Key,
             _ => new SegmentProjection()
         );
+    }
+
+    public void ApplySearchMatch(GitKay.Core.GitService.SearchResult? result)
+    {
+        HasSearchMatch = result != null;
+        SearchMatchSummary = result?.MatchSummary ?? "";
     }
 
     private static string FormatRefsSummary(System.Collections.Generic.IEnumerable<string> refs)

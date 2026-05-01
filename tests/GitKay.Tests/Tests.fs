@@ -1016,6 +1016,91 @@ module AppTests =
         | other -> failwithf "Expected search result selection to dispatch a commit selection, got %A" other
 
     [<Fact>]
+    let ``MainProjection should surface search matches inline in commit rows`` () =
+        let projection = MainProjection()
+        projection.SetDispatch ignore
+
+        let matchingCommit =
+            sampleCommit "feedfacefeedfacefeedfacefeedfacefeedface" "Search hit"
+
+        let otherCommit =
+            sampleCommit "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" "Other"
+
+        let model =
+            {
+                emptyModel with
+                    Status = "Loaded"
+                    Commits = Graph.calculateLanes [ matchingCommit; otherCommit ]
+                    SearchQuery = "needle"
+                    SearchScopeKey = "all"
+                    SearchResults = Some [ sampleSearchResult matchingCommit [ "message"; "path" ] "message; paths: src/needle.txt" ]
+            }
+
+        projection.Update model
+
+        let matchingVm = projection.Commits |> Seq.find (fun commit -> commit.FullHash = matchingCommit.Hash)
+        let otherVm = projection.Commits |> Seq.find (fun commit -> commit.FullHash = otherCommit.Hash)
+
+        test <@ matchingVm.HasSearchMatch @>
+        test <@ matchingVm.SearchMatchSummary = "message; paths: src/needle.txt" @>
+        test <@ not otherVm.HasSearchMatch @>
+        test <@ otherVm.SearchMatchSummary = "" @>
+
+    [<Fact>]
+    let ``MainProjection should surface search matches inline in the diff view`` () =
+        let projection = MainProjection()
+        projection.SetDispatch ignore
+
+        let commit =
+            sampleCommit "12345678" "Subject"
+
+        let file =
+            sampleFile
+                "src/needle.txt"
+                "src/needle.txt"
+                [
+                    {
+                        Type = Models.Context
+                        Content = "needle line"
+                        OldLineNo = Some 1
+                        NewLineNo = Some 1
+                    }
+                ]
+
+        let summary =
+            sampleSummary "src/needle.txt" "src/needle.txt" "src/needle.txt"
+
+        let model =
+            {
+                emptyModel with
+                    Status = "Loaded"
+                    Commits = Graph.calculateLanes [ commit ]
+                    SelectedCommitHash = Some commit.Hash
+                    SelectedDiffHash = Some commit.Hash
+                    SelectedDiffFiles = Some [ summary ]
+                    SelectedDiff = Some [ file ]
+                    SelectedDiffFileKey = Some { OldPath = "src/needle.txt"; NewPath = "src/needle.txt" }
+                    SearchQuery = "needle"
+                    SearchScopeKey = "all"
+            }
+
+        projection.Update model
+
+        test <@ projection.SelectedDiffFiles.Count = 1 @>
+        test <@ projection.SelectedDiffFiles.[0].HasSearchMatch @>
+        test <@ projection.SelectedDiffFiles.[0].SearchMatchSummary = "path · text" @>
+        test <@ projection.SelectedDiffRows.Count = 3 @>
+
+        let diffLine =
+            projection.SelectedDiffRows
+            |> Seq.choose (function
+                | :? DiffLineProjection as line -> Some line
+                | _ -> None)
+            |> Seq.head
+
+        test <@ diffLine.IsSearchMatch @>
+
+    [<Fact>]
     let ``CommitProjection should surface refs in the row summary`` () =
         let projection = CommitProjection()
         let commit =

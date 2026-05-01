@@ -19,12 +19,15 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private bool _suppressSearchDispatch;
     private bool _suppressSearchSelectionDispatch;
     private object? _commitsSource;
+    private object? _commitSearchResultsSource;
     private string? _selectedDiffHash;
     private object? _selectedDiffFilesSource;
     private DiffFileKey? _selectedDiffFileKey;
     private object? _selectedDiffFileSource;
     private object? _searchResultsSource;
     private string? _selectedSearchResultHash;
+    private string? _diffSearchQuery;
+    private string? _diffSearchScopeKey;
 
     public ObservableCollection<SearchScopeProjection> SearchScopes { get; } = new()
     {
@@ -170,6 +173,10 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                 ? (object?)model.SelectedDiff.Value
                 : null;
 
+        var searchStateChanged =
+            !string.Equals(_diffSearchQuery, model.SearchQuery, StringComparison.Ordinal)
+            || !string.Equals(_diffSearchScopeKey, model.SearchScopeKey, StringComparison.Ordinal);
+
         var diffCollectionChanged =
             !string.Equals(_selectedDiffHash, selectedDiffHash, StringComparison.Ordinal)
             || !ReferenceEquals(_selectedDiffFilesSource, selectedDiffFilesSource)
@@ -188,6 +195,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             _selectedDiffFilesSource = null;
             _selectedDiffFileKey = null;
             _selectedDiffFileSource = null;
+            _diffSearchQuery = model.SearchQuery;
+            _diffSearchScopeKey = model.SearchScopeKey;
             return;
         }
 
@@ -216,8 +225,11 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             var selectedDiffFile = ResolveSelectedDiffFile(model, previousSelectedDiffFileKey);
 
             SyncSelectedDiffSelection(selectedDiffFile);
+            ApplySearchStateToSelectedDiff(model);
             RenderSelectedDiffRows();
             _selectedDiffFileKey = selectedDiffFile?.Key;
+            _diffSearchQuery = model.SearchQuery;
+            _diffSearchScopeKey = model.SearchScopeKey;
             return;
         }
 
@@ -242,21 +254,34 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                     }
                 }
 
+                ApplySearchStateToSelectedDiff(model);
                 RenderSelectedDiffRows();
                 _selectedDiffFileSource = selectedDiffContentSource;
             }
 
-            if (selectionChanged || diffContentChanged)
+            if (selectionChanged || diffContentChanged || searchStateChanged)
             {
                 SyncSelectedDiffSelection(selectedDiffFile);
                 _selectedDiffFileKey = selectedDiffFileKey;
             }
+
+            if (searchStateChanged && !diffContentChanged)
+            {
+                ApplySearchStateToSelectedDiff(model);
+            }
         }
+
+        _diffSearchQuery = model.SearchQuery;
+        _diffSearchScopeKey = model.SearchScopeKey;
     }
 
     private void UpdateCommits(GitKay.Core.App.Model model)
     {
-        if (!ReferenceEquals(_commitsSource, model.Commits))
+        var searchResultsSource = model.SearchResults != null ? (object?)model.SearchResults.Value : null;
+        var commitsChanged = !ReferenceEquals(_commitsSource, model.Commits);
+        var searchResultsChanged = !ReferenceEquals(_commitSearchResultsSource, searchResultsSource);
+
+        if (commitsChanged)
         {
             Commits.SyncWith(
                 model.Commits,
@@ -266,6 +291,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                 _dispatch!);
 
             _commitsSource = model.Commits;
+        }
+
+        if (commitsChanged || searchResultsChanged)
+        {
+            ApplyCommitSearchMatches(model.SearchResults?.Value);
+            _commitSearchResultsSource = searchResultsSource;
         }
     }
 
@@ -518,6 +549,41 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             {
                 fileProjection.ClearContent();
             }
+        }
+    }
+
+    private void ApplyCommitSearchMatches(IEnumerable<GitKay.Core.GitService.SearchResult>? results)
+    {
+        var resultsByHash = results?.ToDictionary(result => result.Commit.Hash);
+
+        foreach (var commit in Commits)
+        {
+            if (resultsByHash != null && resultsByHash.TryGetValue(commit.FullHash, out var result))
+            {
+                commit.ApplySearchMatch(result);
+            }
+            else
+            {
+                commit.ApplySearchMatch(null);
+            }
+        }
+    }
+
+    private void ApplySearchStateToSelectedDiff(GitKay.Core.App.Model model)
+    {
+        if (model.SelectedDiffFiles == null || model.SelectedCommitHash == null || model.SelectedDiffHash == null)
+        {
+            return;
+        }
+
+        if (model.SelectedCommitHash.Value != model.SelectedDiffHash.Value)
+        {
+            return;
+        }
+
+        foreach (var file in SelectedDiffFiles)
+        {
+            file.ApplySearchState(model.SearchQuery, model.SearchScopeKey);
         }
     }
 

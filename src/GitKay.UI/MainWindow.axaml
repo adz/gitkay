@@ -195,6 +195,11 @@
                                         <TextBlock Text="{Binding Subject}"
                                                    FontWeight="SemiBold"
                                                    TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding SearchMatchSummary}"
+                                                   IsVisible="{Binding HasSearchMatch}"
+                                                   Foreground="#d7ba7d"
+                                                   FontSize="11"
+                                                   TextTrimming="CharacterEllipsis" />
                                         <TextBlock Text="{Binding RefsSummary}"
                                                    IsVisible="{Binding HasRefs}"
                                                    Foreground="#4ec9b0"
@@ -276,7 +281,9 @@
                                                Foreground="#888"/>
                                 </DataTemplate>
                                 <DataTemplate DataType="{x:Type local:DiffLineProjection}" x:DataType="local:DiffLineProjection">
-                                    <Grid Margin="20,0,10,1" ColumnDefinitions="56,56,20,*">
+                                    <Grid Margin="20,0,10,1"
+                                          ColumnDefinitions="56,56,20,*"
+                                          Background="{Binding RowBackground}">
                                         <TextBlock Grid.Column="0"
                                                    Text="{Binding OldLineNoText}"
                                                    FontFamily="Cascadia Code,Consolas,Monospace"
@@ -345,7 +352,17 @@
                             </ListBox.Styles>
                             <ListBox.ItemTemplate>
                                 <DataTemplate x:DataType="local:DiffFileProjection">
-                                    <TextBlock Text="{Binding DisplayPath}" Foreground="#ccc" FontSize="12" Margin="6,6,6,6" TextWrapping="Wrap"/>
+                                    <StackPanel Margin="6,6,6,6" Spacing="2">
+                                        <TextBlock Text="{Binding DisplayPath}"
+                                                   Foreground="#ccc"
+                                                   FontSize="12"
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding SearchMatchSummary}"
+                                                   IsVisible="{Binding HasSearchMatch}"
+                                                   Foreground="#d7ba7d"
+                                                   FontSize="11"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
