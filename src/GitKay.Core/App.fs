@@ -26,6 +26,7 @@ module App =
             ShowBranchRefs: bool
             ShowStashes: bool
             DiffContextLines: int
+            DiffPresentationModeKey: string
             SearchQuery: string
             SearchScopeKey: string
             SearchResults: GitService.SearchResult list option
@@ -45,6 +46,7 @@ module App =
         | SetShowBranchRefs of bool
         | SetShowStashes of bool
         | SetDiffContextLines of int
+        | SetDiffPresentationMode of string
         | HistoryLoaded of Result<Models.Commit list, string>
         | SelectCommit of hash:string * startedAtTicks:int64
         | DiffFilesLoaded of hash:string * startedAtTicks:int64 * Result<GitService.DiffFileSummary list, string>
@@ -289,7 +291,7 @@ module App =
         nextModel, cmd
 
     let init (startupArgs: string array) : Model * Cmd<Msg> =
-        match GitService.parseStartupTargets startupArgs with
+        match GitService.parseStartupOptions startupArgs with
         | Error err ->
             {
                 Status = sprintf "Error: %s" err
@@ -297,6 +299,7 @@ module App =
                 ShowBranchRefs = false
                 ShowStashes = false
                 DiffContextLines = 3
+                DiffPresentationModeKey = "diff"
                 SearchQuery = ""
                 SearchScopeKey = "all"
                 SearchResults = None
@@ -311,16 +314,17 @@ module App =
                 SearchStartedAtTicks = None
             },
             Cmd.none
-        | Ok startupTargets ->
+        | Ok startupOptions ->
             let model =
                 {
                     Status = "Loading history..."
-                    StartupTargets = startupTargets
-                    ShowBranchRefs = false
-                    ShowStashes = false
-                    DiffContextLines = 3
-                    SearchQuery = ""
-                    SearchScopeKey = "all"
+                    StartupTargets = startupOptions.StartupTargets
+                    ShowBranchRefs = startupOptions.ShowBranchRefs
+                    ShowStashes = startupOptions.ShowStashes
+                    DiffContextLines = startupOptions.DiffContextLines
+                    DiffPresentationModeKey = startupOptions.DiffPresentationModeKey
+                    SearchQuery = startupOptions.SearchQuery
+                    SearchScopeKey = startupOptions.SearchScopeKey
                     SearchResults = None
                     Commits = []
                     SelectedCommitHash = None
@@ -333,7 +337,7 @@ module App =
                     SearchStartedAtTicks = None
                 }
 
-            model, loadHistory false startupTargets
+            model, loadHistory startupOptions.ShowStashes startupOptions.StartupTargets
 
     let update msg model : Model * Cmd<Msg> =
         match msg with
@@ -374,10 +378,26 @@ module App =
                 | None ->
                     cancelCurrentDiffJob ()
                     nextModel, Cmd.none
+        | SetDiffPresentationMode diffPresentationModeKey ->
+            { model with DiffPresentationModeKey = diffPresentationModeKey }, Cmd.none
         | HistoryLoaded (Ok commits) ->
             cancelCurrentSearchJob ()
             let graphInfo = Graph.calculateLanes commits
-            historyLoadSelection model graphInfo
+            let nextModel, historyCmd = historyLoadSelection model graphInfo
+            let searchQuery = nextModel.SearchQuery.Trim()
+
+            if String.IsNullOrWhiteSpace searchQuery then
+                nextModel, historyCmd
+            else
+                let startedAtTicks = Stopwatch.GetTimestamp()
+                let searchModel =
+                    {
+                        nextModel with
+                            SearchStartedAtTicks = Some startedAtTicks
+                            Status = sprintf "Searching %s..." nextModel.SearchQuery
+                    }
+
+                searchModel, Cmd.batch [ historyCmd; startSearchLoad searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey startedAtTicks ]
         | HistoryLoaded (Error err) ->
             cancelCurrentSearchJob ()
             { model with Status = sprintf "Error: %s" err; SearchResults = None; SearchStartedAtTicks = None }, Cmd.none

@@ -255,6 +255,33 @@ summary Another line
         | Ok targets -> test <@ targets = [ GitService.StartupTarget.All ] @>
 
     [<Fact>]
+    let ``parseStartupOptions should accept the major app options`` () =
+        let result =
+            GitService.parseStartupOptions
+                [|
+                    "--all"
+                    "--show-branch-refs"
+                    "--show-stashes"
+                    "--diff-context=10"
+                    "--diff-presentation"
+                    "side-by-side"
+                    "--search"
+                    "needle"
+                    "--search-scope=message"
+                |]
+
+        match result with
+        | Error err -> failwith err
+        | Ok options ->
+            test <@ options.StartupTargets = [ GitService.StartupTarget.All ] @>
+            test <@ options.ShowBranchRefs @>
+            test <@ options.ShowStashes @>
+            test <@ options.DiffContextLines = 10 @>
+            test <@ options.DiffPresentationModeKey = "side-by-side" @>
+            test <@ options.SearchQuery = "needle" @>
+            test <@ options.SearchScopeKey = "message" @>
+
+    [<Fact>]
     let ``buildDiffCacheEntry should cache summary and file list`` () =
         let files =
             [
@@ -834,6 +861,7 @@ module AppTests =
             ShowBranchRefs = false
             ShowStashes = false
             DiffContextLines = 3
+            DiffPresentationModeKey = "diff"
             SearchQuery = ""
             SearchScopeKey = "all"
             SearchResults = None
@@ -849,12 +877,31 @@ module AppTests =
         }
 
     [<Fact>]
-    let ``init should store parsed startup targets`` () =
-        let model, _ = App.init [| "--branch"; "topic"; "--tag"; "v1.0" |]
+    let ``init should store parsed startup options`` () =
+        let model, _ =
+            App.init
+                [|
+                    "--branch"
+                    "topic"
+                    "--tag"
+                    "v1.0"
+                    "--show-branch-refs"
+                    "--show-stashes"
+                    "--diff-context=10"
+                    "--diff-presentation=side-by-side"
+                    "--search=needle"
+                    "--search-scope=message"
+                |]
 
         test <@ model.Status = "Loading history..." @>
         test <@ model.StartupTargets = [ GitService.StartupTarget.Branch "topic"; GitService.StartupTarget.Tag "v1.0" ] @>
-        test <@ not model.ShowStashes @>
+        test <@ model.ShowBranchRefs @>
+        test <@ model.ShowStashes @>
+        test <@ model.DiffContextLines = 10 @>
+        test <@ model.DiffPresentationModeKey = "side-by-side" @>
+        test <@ model.SearchQuery = "needle" @>
+        test <@ model.SearchScopeKey = "message" @>
+        test <@ model.SearchStartedAtTicks = None @>
 
     [<Fact>]
     let ``HistoryLoaded should auto-select the first commit when nothing is selected`` () =
@@ -875,6 +922,28 @@ module AppTests =
         test <@ next.SelectedDiffFileKey = None @>
         test <@ next.SelectionStartedAtTicks.IsSome @>
         test <@ next.SelectedDiffStartedAtTicks.IsSome @>
+
+    [<Fact>]
+    let ``HistoryLoaded should start the initial search when a startup query is present`` () =
+        let commits =
+            [
+                sampleCommit "first" "First"
+                sampleCommit "second" "Second"
+            ]
+
+        let next, _ =
+            App.update
+                (App.Msg.HistoryLoaded (Ok commits))
+                {
+                    emptyModel with
+                        SearchQuery = "needle"
+                        SearchScopeKey = "message"
+                }
+
+        test <@ next.Status = "Searching needle..." @>
+        test <@ next.SearchResults = None @>
+        test <@ next.SearchStartedAtTicks.IsSome @>
+        test <@ next.SelectedCommitHash = Some "first" @>
 
     [<Fact>]
     let ``SetShowStashes should update the view state`` () =
@@ -917,6 +986,12 @@ module AppTests =
         test <@ next.SelectedDiff = None @>
         test <@ next.SelectedDiffFileKey = initial.SelectedDiffFileKey @>
         test <@ next.SelectedDiffStartedAtTicks.IsSome @>
+
+    [<Fact>]
+    let ``SetDiffPresentationMode should update the view state`` () =
+        let next, _ = App.update (App.Msg.SetDiffPresentationMode "side-by-side") emptyModel
+
+        test <@ next.DiffPresentationModeKey = "side-by-side" @>
 
     [<Fact>]
     let ``HistoryLoaded should keep an existing selected commit when it still exists`` () =
@@ -1431,6 +1506,8 @@ module AppTests =
     [<Fact>]
     let ``MainProjection should default to unified diff presentation and allow local mode changes`` () =
         let projection = MainProjection()
+        let messages = ConcurrentQueue<App.Msg>()
+        projection.SetDispatch (fun msg -> messages.Enqueue msg |> ignore)
 
         test <@ projection.IsUnifiedDiffMode @>
         test <@ projection.SelectedDiffPresentationModeLabel = "Diff" @>
@@ -1439,6 +1516,18 @@ module AppTests =
 
         test <@ projection.IsSideBySideDiffMode @>
         test <@ projection.SelectedDiffPresentationModeLabel = "Side-by-side" @>
+        test <@ messages.ToArray() = [| App.Msg.SetDiffPresentationMode "side-by-side" |] @>
+
+    [<Fact>]
+    let ``MainProjection should sync diff presentation mode from model startup state`` () =
+        let projection = MainProjection()
+        projection.SetDispatch ignore
+
+        projection.Update { emptyModel with DiffPresentationModeKey = "side-by-side" }
+
+        test <@ projection.IsSideBySideDiffMode @>
+        test <@ projection.SelectedDiffPresentationModeLabel = "Side-by-side" @>
+        test <@ projection.SelectedDiffPresentationMode.Key = "side-by-side" @>
 
     [<Fact>]
     let ``MainProjection should sync and dispatch diff context line count changes`` () =

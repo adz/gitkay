@@ -65,6 +65,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private bool _suppressShowBranchRefsDispatch;
     private bool _suppressShowStashesDispatch;
     private bool _suppressDiffContextDispatch;
+    private bool _suppressDiffPresentationDispatch;
     private object? _commitsSource;
     private object? _commitSearchResultsSource;
     private object? _visibleCommitsSource;
@@ -198,6 +199,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
 
         UpdateDiffContextState(model);
+        UpdateDiffPresentationState(model);
         UpdateSearchState(model);
         UpdateDiffState(model);
         UpdateCommits(model);
@@ -431,6 +433,26 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             finally
             {
                 _suppressDiffContextDispatch = false;
+            }
+        }
+    }
+
+    private void UpdateDiffPresentationState(GitKay.Core.App.Model model)
+    {
+        var selectedPresentationMode =
+            DiffPresentationModes.FirstOrDefault(mode => mode.Key == model.DiffPresentationModeKey)
+            ?? DiffPresentationModes.First();
+
+        if (!ReferenceEquals(SelectedDiffPresentationMode, selectedPresentationMode))
+        {
+            _suppressDiffPresentationDispatch = true;
+            try
+            {
+                SelectedDiffPresentationMode = selectedPresentationMode;
+            }
+            finally
+            {
+                _suppressDiffPresentationDispatch = false;
             }
         }
     }
@@ -879,6 +901,13 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         OnPropertyChanged(nameof(IsSideBySideDiffMode));
         OnPropertyChanged(nameof(IsNewDiffMode));
         OnPropertyChanged(nameof(IsOldDiffMode));
+
+        if (_suppressDiffPresentationDispatch || value == null)
+        {
+            return;
+        }
+
+        _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetDiffPresentationMode(value.Key));
     }
 
     partial void OnSelectedDiffFileChanged(DiffFileProjection? value)

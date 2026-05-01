@@ -34,54 +34,276 @@ module GitService =
             MatchedRefs: string list
         }
 
-    let parseStartupTargets (args: string array) =
-        let rec loop index accumulated =
+    type StartupOptions =
+        {
+            StartupTargets: StartupTarget list
+            ShowBranchRefs: bool
+            ShowStashes: bool
+            DiffContextLines: int
+            DiffPresentationModeKey: string
+            SearchQuery: string
+            SearchScopeKey: string
+        }
+
+    let defaultStartupOptions =
+        {
+            StartupTargets = []
+            ShowBranchRefs = false
+            ShowStashes = false
+            DiffContextLines = 3
+            DiffPresentationModeKey = "diff"
+            SearchQuery = ""
+            SearchScopeKey = "all"
+        }
+
+    let private tryParseSearchScopeKey (value: string) =
+        match value.Trim().ToLowerInvariant() with
+        | "hash" -> Some "hash"
+        | "message" -> Some "message"
+        | "author" -> Some "author"
+        | "path" -> Some "path"
+        | "text" -> Some "text"
+        | "ref" -> Some "ref"
+        | "all" -> Some "all"
+        | _ -> None
+
+    let private tryParseDiffPresentationModeKey (value: string) =
+        match value.Trim().ToLowerInvariant() with
+        | "diff" -> Some "diff"
+        | "side-by-side" -> Some "side-by-side"
+        | "new" -> Some "new"
+        | "old" -> Some "old"
+        | _ -> None
+
+    let private tryConsumeValue (args: string array) index optionName valueLabel allowEmpty =
+        let inlinePrefix = optionName + "="
+        let arg = args.[index]
+
+        if arg.StartsWith(inlinePrefix) then
+            let value = arg.Substring(inlinePrefix.Length)
+
+            if allowEmpty || not (String.IsNullOrWhiteSpace value) then
+                Ok(value, index + 1)
+            else
+                Error (sprintf "Missing %s after %s." valueLabel optionName)
+        elif index + 1 < args.Length && not (args.[index + 1].StartsWith("--")) then
+            Ok(args.[index + 1], index + 2)
+        else
+            Error (sprintf "Missing %s after %s." valueLabel optionName)
+
+    let parseStartupOptions (args: string array) =
+        let mutable index = 0
+        let mutable hasAll = false
+        let mutable targets = ResizeArray<StartupTarget>()
+        let mutable showBranchRefs = defaultStartupOptions.ShowBranchRefs
+        let mutable showStashes = defaultStartupOptions.ShowStashes
+        let mutable diffContextLines = defaultStartupOptions.DiffContextLines
+        let mutable diffPresentationModeKey = defaultStartupOptions.DiffPresentationModeKey
+        let mutable searchQuery = defaultStartupOptions.SearchQuery
+        let mutable searchScopeKey = defaultStartupOptions.SearchScopeKey
+
+        let rec loop () =
             if index >= args.Length then
-                Ok (List.rev accumulated)
+                let startupTargets =
+                    if hasAll then
+                        [ StartupTarget.All ]
+                    else
+                        List.ofSeq targets
+
+                Ok
+                    {
+                        StartupTargets = startupTargets
+                        ShowBranchRefs = showBranchRefs
+                        ShowStashes = showStashes
+                        DiffContextLines = diffContextLines
+                        DiffPresentationModeKey = diffPresentationModeKey
+                        SearchQuery = searchQuery
+                        SearchScopeKey = searchScopeKey
+                    }
             else
                 match args.[index] with
                 | "--all" ->
-                    Ok [ StartupTarget.All ]
+                    hasAll <- true
+                    index <- index + 1
+                    loop ()
+                | "--show-branch-refs" ->
+                    showBranchRefs <- true
+                    index <- index + 1
+                    loop ()
+                | "--hide-branch-refs" ->
+                    showBranchRefs <- false
+                    index <- index + 1
+                    loop ()
+                | "--show-stashes" ->
+                    showStashes <- true
+                    index <- index + 1
+                    loop ()
+                | "--hide-stashes" ->
+                    showStashes <- false
+                    index <- index + 1
+                    loop ()
+                | "--diff-context" ->
+                    match tryConsumeValue args index "--diff-context" "diff context line count" false with
+                    | Error err -> Error err
+                    | Ok (value, nextIndex) ->
+                        match Int32.TryParse value with
+                        | true, parsed ->
+                            diffContextLines <- max 0 parsed
+                            index <- nextIndex
+                            loop ()
+                        | false, _ ->
+                            Error (sprintf "Invalid diff context line count: %s" value)
+                | arg when arg.StartsWith("--diff-context=") ->
+                    let value = arg.Substring("--diff-context=".Length)
+
+                    match Int32.TryParse value with
+                    | true, parsed ->
+                        diffContextLines <- max 0 parsed
+                        index <- index + 1
+                        loop ()
+                    | false, _ ->
+                        Error (sprintf "Invalid diff context line count: %s" value)
+                | "--diff-presentation" ->
+                    match tryConsumeValue args index "--diff-presentation" "diff presentation mode" false with
+                    | Error err -> Error err
+                    | Ok (value, nextIndex) ->
+                        match tryParseDiffPresentationModeKey value with
+                        | Some modeKey ->
+                            diffPresentationModeKey <- modeKey
+                            index <- nextIndex
+                            loop ()
+                        | None ->
+                            Error (sprintf "Invalid diff presentation mode: %s" value)
+                | arg when arg.StartsWith("--diff-presentation=") ->
+                    let value = arg.Substring("--diff-presentation=".Length)
+
+                    match tryParseDiffPresentationModeKey value with
+                    | Some modeKey ->
+                        diffPresentationModeKey <- modeKey
+                        index <- index + 1
+                        loop ()
+                    | None ->
+                        Error (sprintf "Invalid diff presentation mode: %s" value)
+                | "--search" ->
+                    match tryConsumeValue args index "--search" "search query" true with
+                    | Error err -> Error err
+                    | Ok (value, nextIndex) ->
+                        searchQuery <- value
+                        index <- nextIndex
+                        loop ()
+                | arg when arg.StartsWith("--search=") ->
+                    searchQuery <- arg.Substring("--search=".Length)
+                    index <- index + 1
+                    loop ()
+                | "--search-scope" ->
+                    match tryConsumeValue args index "--search-scope" "search scope" false with
+                    | Error err -> Error err
+                    | Ok (value, nextIndex) ->
+                        match tryParseSearchScopeKey value with
+                        | Some scopeKey ->
+                            searchScopeKey <- scopeKey
+                            index <- nextIndex
+                            loop ()
+                        | None ->
+                            Error (sprintf "Invalid search scope: %s" value)
+                | arg when arg.StartsWith("--search-scope=") ->
+                    let value = arg.Substring("--search-scope=".Length)
+
+                    match tryParseSearchScopeKey value with
+                    | Some scopeKey ->
+                        searchScopeKey <- scopeKey
+                        index <- index + 1
+                        loop ()
+                    | None ->
+                        Error (sprintf "Invalid search scope: %s" value)
                 | "--branch" ->
-                    if index + 1 >= args.Length then
-                        Error "Missing branch name after --branch."
-                    elif args.[index + 1].StartsWith("--") then
-                        Error "Missing branch name after --branch."
+                    if hasAll then
+                        index <-
+                            if index + 1 < args.Length && not (args.[index + 1].StartsWith("--")) then
+                                index + 2
+                            else
+                                index + 1
+
+                        loop ()
                     else
-                        loop (index + 2) (StartupTarget.Branch args.[index + 1] :: accumulated)
+                        match tryConsumeValue args index "--branch" "branch name" false with
+                        | Error err -> Error err
+                        | Ok (value, nextIndex) ->
+                            targets.Add(StartupTarget.Branch value)
+                            index <- nextIndex
+                            loop ()
                 | arg when arg.StartsWith("--branch=") ->
-                    loop (index + 1) (StartupTarget.Branch (arg.Substring("--branch=".Length)) :: accumulated)
+                    let value = arg.Substring("--branch=".Length)
+
+                    if not hasAll then
+                        targets.Add(StartupTarget.Branch value)
+
+                    index <- index + 1
+                    loop ()
                 | "--sha" ->
-                    if index + 1 >= args.Length then
-                        Error "Missing commit hash after --sha."
-                    elif args.[index + 1].StartsWith("--") then
-                        Error "Missing commit hash after --sha."
+                    if hasAll then
+                        index <-
+                            if index + 1 < args.Length && not (args.[index + 1].StartsWith("--")) then
+                                index + 2
+                            else
+                                index + 1
+
+                        loop ()
                     else
-                        loop (index + 2) (StartupTarget.Sha args.[index + 1] :: accumulated)
+                        match tryConsumeValue args index "--sha" "commit hash" false with
+                        | Error err -> Error err
+                        | Ok (value, nextIndex) ->
+                            targets.Add(StartupTarget.Sha value)
+                            index <- nextIndex
+                            loop ()
                 | arg when arg.StartsWith("--sha=") ->
-                    loop (index + 1) (StartupTarget.Sha (arg.Substring("--sha=".Length)) :: accumulated)
+                    let value = arg.Substring("--sha=".Length)
+
+                    if not hasAll then
+                        targets.Add(StartupTarget.Sha value)
+
+                    index <- index + 1
+                    loop ()
                 | "--tag" ->
-                    if index + 1 >= args.Length then
-                        Error "Missing tag name after --tag."
-                    elif args.[index + 1].StartsWith("--") then
-                        Error "Missing tag name after --tag."
+                    if hasAll then
+                        index <-
+                            if index + 1 < args.Length && not (args.[index + 1].StartsWith("--")) then
+                                index + 2
+                            else
+                                index + 1
+
+                        loop ()
                     else
-                        loop (index + 2) (StartupTarget.Tag args.[index + 1] :: accumulated)
+                        match tryConsumeValue args index "--tag" "tag name" false with
+                        | Error err -> Error err
+                        | Ok (value, nextIndex) ->
+                            targets.Add(StartupTarget.Tag value)
+                            index <- nextIndex
+                            loop ()
                 | arg when arg.StartsWith("--tag=") ->
-                    loop (index + 1) (StartupTarget.Tag (arg.Substring("--tag=".Length)) :: accumulated)
+                    let value = arg.Substring("--tag=".Length)
+
+                    if not hasAll then
+                        targets.Add(StartupTarget.Tag value)
+
+                    index <- index + 1
+                    loop ()
                 | arg ->
                     Error (sprintf "Unrecognized startup argument: %s" arg)
 
-        loop 0 []
+        loop ()
+
+    let parseStartupTargets (args: string array) =
+        parseStartupOptions args |> Result.map (fun options -> options.StartupTargets)
 
     let parseSearchScope (value: string) =
-        match value.Trim().ToLowerInvariant() with
-        | "hash" -> SearchScope.Hash
-        | "message" -> SearchScope.Message
-        | "author" -> SearchScope.Author
-        | "path" -> SearchScope.Path
-        | "text" -> SearchScope.Text
-        | "ref" -> SearchScope.Ref
+        match tryParseSearchScopeKey value with
+        | Some "hash" -> SearchScope.Hash
+        | Some "message" -> SearchScope.Message
+        | Some "author" -> SearchScope.Author
+        | Some "path" -> SearchScope.Path
+        | Some "text" -> SearchScope.Text
+        | Some "ref" -> SearchScope.Ref
         | _ -> SearchScope.All
 
     let private logTiming (message: string) =
