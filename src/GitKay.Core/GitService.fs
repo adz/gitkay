@@ -44,6 +44,8 @@ module GitService =
             SearchQuery: string
             SearchScopeKey: string
             SelectedCommitHash: string option
+            HelpRequested: bool
+            VersionRequested: bool
         }
 
     let defaultStartupOptions =
@@ -56,6 +58,8 @@ module GitService =
             SearchQuery = ""
             SearchScopeKey = "all"
             SelectedCommitHash = None
+            HelpRequested = false
+            VersionRequested = false
         }
 
     let private tryParseSearchScopeKey (value: string) =
@@ -93,6 +97,25 @@ module GitService =
         else
             Error (sprintf "Missing %s after %s." valueLabel optionName)
 
+    let getHelpText () =
+        "Usage: gitkay [options]\n\n" +
+        "Options:\n" +
+        "  --help, -h               Show this help message\n" +
+        "  --version, -v            Show version information\n" +
+        "  --all                    Show commits from all branches and tags\n" +
+        "  --branch <name>          Show commits from the specified branch\n" +
+        "  --sha <hash>             Show commits from the specified commit hash\n" +
+        "  --tag <name>             Show commits from the specified tag\n" +
+        "  --select <hash>          Select the specified commit on startup\n" +
+        "  --search <query>         Filter commits by the specified search query\n" +
+        "  --search-scope <scope>   Set search scope (all, hash, message, author, path, text, ref)\n" +
+        "  --show-branch-refs       Show branch and tag markers in the history list\n" +
+        "  --hide-branch-refs       Hide branch and tag markers in the history list\n" +
+        "  --show-stashes           Show stashes in the history list\n" +
+        "  --hide-stashes           Hide stashes in the history list\n" +
+        "  --diff-context <n>       Number of context lines to show in diffs\n" +
+        "  --diff-presentation <m>  Diff presentation mode (diff, side-by-side, new, old)\n"
+
     let parseStartupOptions (args: string array) =
         let mutable index = 0
         let mutable hasAll = false
@@ -104,6 +127,8 @@ module GitService =
         let mutable searchQuery = defaultStartupOptions.SearchQuery
         let mutable searchScopeKey = defaultStartupOptions.SearchScopeKey
         let mutable selectedCommitHash = defaultStartupOptions.SelectedCommitHash
+        let mutable helpRequested = false
+        let mutable versionRequested = false
 
         let rec loop () =
             if index >= args.Length then
@@ -123,9 +148,19 @@ module GitService =
                         SearchQuery = searchQuery
                         SearchScopeKey = searchScopeKey
                         SelectedCommitHash = selectedCommitHash
+                        HelpRequested = helpRequested
+                        VersionRequested = versionRequested
                     }
             else
                 match args.[index] with
+                | "--help" | "-h" ->
+                    helpRequested <- true
+                    index <- index + 1
+                    loop ()
+                | "--version" | "-v" ->
+                    versionRequested <- true
+                    index <- index + 1
+                    loop ()
                 | "--all" ->
                     hasAll <- true
                     index <- index + 1

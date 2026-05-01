@@ -11,6 +11,23 @@ class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        var optionsResult = GitKay.Core.GitService.parseStartupOptions(args);
+        if (optionsResult.IsOk)
+        {
+            var options = optionsResult.ResultValue;
+            if (options.HelpRequested)
+            {
+                Console.WriteLine(GitKay.Core.GitService.getHelpText());
+                return;
+            }
+            if (options.VersionRequested)
+            {
+                var version = typeof(Program).Assembly.GetName().Version;
+                Console.WriteLine($"gitkay version {version}");
+                return;
+            }
+        }
+
         App.StartupArgs = args;
 
         BuildAvaloniaApp()
