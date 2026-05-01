@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Avalonia.Media;
 using Elmish.Glue.Core;
 using GitKay.Core;
 
@@ -29,6 +30,7 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     [ObservableProperty] private bool _hasRefs;
     [ObservableProperty] private bool _hasSearchMatch;
     [ObservableProperty] private string _searchMatchSummary = "";
+    [ObservableProperty] private IBrush _rowBackground = Brushes.Transparent;
     [ObservableProperty] private bool _hasSecondarySummary;
     [ObservableProperty] private string _secondarySummary = "";
     [ObservableProperty] private int _lane = 0;
@@ -61,6 +63,10 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     {
         HasSearchMatch = result != null;
         SearchMatchSummary = result?.MatchSummary ?? "";
+        RowBackground =
+            result != null
+                ? new SolidColorBrush(Color.FromArgb(28, 78, 201, 176))
+                : Brushes.Transparent;
         UpdateSecondarySummary();
     }
 

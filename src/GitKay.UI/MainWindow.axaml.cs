@@ -37,8 +37,7 @@ public partial class MainWindow : Window
     {
         if (e.PropertyName != nameof(MainProjection.SelectedCommit)
             && e.PropertyName != nameof(MainProjection.Commits)
-            && e.PropertyName != nameof(MainProjection.SelectedSearchResult)
-            && e.PropertyName != nameof(MainProjection.SearchResults)
+            && e.PropertyName != nameof(MainProjection.VisibleCommits)
             && e.PropertyName != nameof(MainProjection.SelectedDiffFile)
             && e.PropertyName != nameof(MainProjection.SelectedDiffRow)
             && e.PropertyName != nameof(MainProjection.SelectedDiffFiles))
@@ -62,11 +61,6 @@ public partial class MainWindow : Window
             if (projection.SelectedCommit != null)
             {
                 CommitListBox.ScrollIntoView(projection.SelectedCommit);
-            }
-
-            if (projection.SelectedSearchResult != null)
-            {
-                SearchResultsListBox.ScrollIntoView(projection.SelectedSearchResult);
             }
 
             if (projection.SelectedDiffFile != null)

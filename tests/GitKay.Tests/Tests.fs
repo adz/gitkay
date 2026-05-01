@@ -6,6 +6,7 @@ open System.IO
 open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
+open Avalonia.Media
 open LibGit2Sharp
 open GitKay.Core
 open GitKay.UI
@@ -1030,17 +1031,20 @@ module AppTests =
         | other -> failwithf "Expected a diff file selection message, got %A" other
 
     [<Fact>]
-    let ``MainProjection should show search results and dispatch commit selection when a result is chosen`` () =
+    let ``MainProjection should filter the commit list to matching commits`` () =
         let projection = MainProjection()
-        let mutable lastMsg = None
-        projection.SetDispatch (fun msg -> lastMsg <- Some msg)
+        projection.SetDispatch ignore
 
         let commit =
             sampleCommit "feedfacefeedfacefeedfacefeedfacefeedface" "Search hit"
+        let otherCommit =
+            sampleCommit "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" "Other"
 
         let model =
             {
                 emptyModel with
+                    Status = "Loaded"
+                    Commits = Graph.calculateLanes [ commit; otherCommit ]
                     SearchQuery = "needle"
                     SearchScopeKey = "all"
                     SearchResults = Some [ sampleSearchResult commit [ "message" ] "message" ]
@@ -1050,13 +1054,8 @@ module AppTests =
 
         test <@ projection.HasSearchResults @>
         test <@ projection.SearchResults.Count = 1 @>
-        test <@ projection.SelectedSearchResult = null @>
-
-        projection.SelectedSearchResult <- projection.SearchResults.[0]
-
-        match lastMsg with
-        | Some (App.Msg.SelectCommit(hash, _)) -> test <@ hash = commit.Hash @>
-        | other -> failwithf "Expected search result selection to dispatch a commit selection, got %A" other
+        test <@ projection.VisibleCommits.Count = 1 @>
+        test <@ projection.VisibleCommits.[0].FullHash = commit.Hash @>
 
     [<Fact>]
     let ``MainProjection should debounce live search updates as the query changes`` () =
@@ -1135,8 +1134,10 @@ module AppTests =
 
         test <@ matchingVm.HasSearchMatch @>
         test <@ matchingVm.SearchMatchSummary = "message; paths: src/needle.txt" @>
+        test <@ not (obj.ReferenceEquals(matchingVm.RowBackground, Brushes.Transparent)) @>
         test <@ not otherVm.HasSearchMatch @>
         test <@ otherVm.SearchMatchSummary = "" @>
+        test <@ obj.ReferenceEquals(otherVm.RowBackground, Brushes.Transparent) @>
 
     [<Fact>]
     let ``MainProjection should surface search matches inline in the diff view`` () =

@@ -22,6 +22,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private bool _suppressSearchSelectionDispatch;
     private object? _commitsSource;
     private object? _commitSearchResultsSource;
+    private object? _visibleCommitsSource;
     private string? _selectedDiffHash;
     private object? _selectedDiffFilesSource;
     private DiffFileKey? _selectedDiffFileKey;
@@ -51,6 +52,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private bool _isSearchPanelExpanded;
 
     public ObservableCollection<CommitProjection> Commits { get; } = new();
+    public ObservableCollection<CommitProjection> VisibleCommits { get; } = new();
     public ObservableCollection<SearchResultProjection> SearchResults { get; } = new();
     public ObservableCollection<DiffFileProjection> SelectedDiffFiles { get; } = new();
     public ObservableCollection<IDiffRowProjection> SelectedDiffRows { get; } = new();
@@ -300,8 +302,46 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         if (commitsChanged || searchResultsChanged)
         {
             ApplyCommitSearchMatches(model.SearchResults?.Value);
+            UpdateVisibleCommits(model, commitsChanged, searchResultsChanged);
             _commitSearchResultsSource = searchResultsSource;
         }
+    }
+
+    private void UpdateVisibleCommits(GitKay.Core.App.Model model, bool commitsChanged, bool searchResultsChanged)
+    {
+        var visibleCommitsSource =
+            model.SearchResults != null
+                ? (object?)model.SearchResults.Value
+                : model.Commits;
+
+        if (!commitsChanged && !searchResultsChanged && ReferenceEquals(_visibleCommitsSource, visibleCommitsSource))
+        {
+            return;
+        }
+
+        VisibleCommits.Clear();
+
+        if (model.SearchResults == null)
+        {
+            foreach (var commit in Commits)
+            {
+                VisibleCommits.Add(commit);
+            }
+        }
+        else
+        {
+            var commitsByHash = Commits.ToDictionary(commit => commit.FullHash);
+
+            foreach (var result in model.SearchResults.Value)
+            {
+                if (commitsByHash.TryGetValue(result.Commit.Hash, out var commit))
+                {
+                    VisibleCommits.Add(commit);
+                }
+            }
+        }
+
+        _visibleCommitsSource = visibleCommitsSource;
     }
 
     private void UpdateSelectedCommit(GitKay.Core.App.Model model)
