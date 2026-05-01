@@ -27,7 +27,7 @@
 5. [x] Restore graph continuity through forks and merges so branch lines stay readable.
 6. [x] Hide stashes by default and add an explicit option to show them.
 7. [x] Tighten graph marker alignment with the commit text baseline.
-8. [ ] Keep the top history and bottom diff split with a single splitter; the commit-info row should fit content.
+8. [x] Keep the top history and bottom diff split with a single splitter; the commit-info row should fit content.
 9. [ ] Make commit search highlight matching commit rows in place, show which fields matched, and stop filtering nonmatching commits out of the history list.
 10. [ ] Make diff search debounce-apply, highlight matched files, lines, and terms, and keep the diff pane visibly annotated while searching.
 11. [ ] Increase the default height of the bottom diff section so it has enough room without manual resizing.

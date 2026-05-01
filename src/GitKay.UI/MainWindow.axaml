@@ -28,7 +28,7 @@
             <TextBlock Text="{Binding Status}" Foreground="White" FontSize="12" />
         </Border>
 
-        <Grid RowDefinitions="3*,6,2*"
+        <Grid RowDefinitions="Auto,6,*"
               MinHeight="0">
             <Border Grid.Row="0"
                     Background="#1e1e1e"
