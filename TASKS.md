@@ -40,6 +40,6 @@
 18. [x] Add vim-style navigation bindings such as `j`/`k` for down/up, with the same behavior across the main lists.
 19. [x] Add command-line arguments for the major app options so the startup state can be configured non-interactively.
 20. [x] Add an `Edit > Settings` panel for each major pane, persist settings to the right app-specific location, and load them on startup.
-21. [ ] Remember the last open position per repo and restore the window size on startup.
+21. [x] Remember the last open position per repo and restore the window size on startup.
 22. [ ] Stop logging to the console and write logs to a local file only when a command-line option enables it.
 23. [ ] Reduce startup time so the app becomes interactive sooner.
