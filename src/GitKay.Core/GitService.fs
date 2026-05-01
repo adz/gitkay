@@ -43,6 +43,7 @@ module GitService =
             DiffPresentationModeKey: string
             SearchQuery: string
             SearchScopeKey: string
+            SelectedCommitHash: string option
         }
 
     let defaultStartupOptions =
@@ -54,6 +55,7 @@ module GitService =
             DiffPresentationModeKey = "diff"
             SearchQuery = ""
             SearchScopeKey = "all"
+            SelectedCommitHash = None
         }
 
     let private tryParseSearchScopeKey (value: string) =
@@ -101,6 +103,7 @@ module GitService =
         let mutable diffPresentationModeKey = defaultStartupOptions.DiffPresentationModeKey
         let mutable searchQuery = defaultStartupOptions.SearchQuery
         let mutable searchScopeKey = defaultStartupOptions.SearchScopeKey
+        let mutable selectedCommitHash = defaultStartupOptions.SelectedCommitHash
 
         let rec loop () =
             if index >= args.Length then
@@ -119,6 +122,7 @@ module GitService =
                         DiffPresentationModeKey = diffPresentationModeKey
                         SearchQuery = searchQuery
                         SearchScopeKey = searchScopeKey
+                        SelectedCommitHash = selectedCommitHash
                     }
             else
                 match args.[index] with
@@ -216,6 +220,18 @@ module GitService =
                         loop ()
                     | None ->
                         Error (sprintf "Invalid search scope: %s" value)
+                | "--select" ->
+                    match tryConsumeValue args index "--select" "commit hash" false with
+                    | Error err -> Error err
+                    | Ok (value, nextIndex) ->
+                        selectedCommitHash <- Some value
+                        index <- nextIndex
+                        loop ()
+                | arg when arg.StartsWith("--select=") ->
+                    let value = arg.Substring("--select=".Length)
+                    selectedCommitHash <- Some value
+                    index <- index + 1
+                    loop ()
                 | "--branch" ->
                     if hasAll then
                         index <-
@@ -363,6 +379,11 @@ module GitService =
                 action repo
         with ex ->
             Error ex.Message
+
+    let tryDiscoverRepositoryPath () =
+        match discoverRepositoryPath () with
+        | Ok repoPath -> Path.TrimEndingDirectorySeparator(Path.GetFullPath(repoPath))
+        | Error _ -> null
 
     let private quoteArg (value: string) =
         "\"" + value.Replace("\"", "\\\"") + "\""

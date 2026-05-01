@@ -268,6 +268,7 @@ summary Another line
                     "--search"
                     "needle"
                     "--search-scope=message"
+                    "--select=abc123"
                 |]
 
         match result with
@@ -280,6 +281,15 @@ summary Another line
             test <@ options.DiffPresentationModeKey = "side-by-side" @>
             test <@ options.SearchQuery = "needle" @>
             test <@ options.SearchScopeKey = "message" @>
+            test <@ options.SelectedCommitHash = Some "abc123" @>
+
+    [<Fact>]
+    let ``tryDiscoverRepositoryPath should locate the current repository`` () =
+        withTempRepository (fun root _ ->
+            match GitService.tryDiscoverRepositoryPath() with
+            | null -> failwith "Expected a repository path."
+            | repoPath ->
+                test <@ repoPath.Contains(root) @>)
 
     [<Fact>]
     let ``buildDiffCacheEntry should cache summary and file list`` () =
@@ -902,6 +912,12 @@ module AppTests =
         test <@ model.SearchQuery = "needle" @>
         test <@ model.SearchScopeKey = "message" @>
         test <@ model.SearchStartedAtTicks = None @>
+
+    [<Fact>]
+    let ``init should store an initial selected commit hash`` () =
+        let model, _ = App.init [| "--select=deadbeef" |]
+
+        test <@ model.SelectedCommitHash = Some "deadbeef" @>
 
     [<Fact>]
     let ``HistoryLoaded should auto-select the first commit when nothing is selected`` () =
@@ -1613,6 +1629,34 @@ module AppTests =
             test <@ loaded = settings.Normalize() @>
             test <@ File.Exists(path) @>
             test <@ loaded.ToStartupArgs() = [| "--show-branch-refs"; "--show-stashes"; "--diff-context=10"; "--diff-presentation=side-by-side" |] @>
+        finally
+            try
+                Directory.Delete(root, true)
+            with _ ->
+                ()
+
+    [<Fact>]
+    let ``AppUiStateStore should round-trip window size and repo selection`` () =
+        let root = Path.Combine(Path.GetTempPath(), "gitkay-ui-state-" + Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(root) |> ignore
+
+        try
+            let path = Path.Combine(root, "ui-state.json")
+            let store = AppUiStateStore(path)
+            let repoKey = Path.Combine(root, ".git")
+            let state =
+                AppUiState.Default
+                    .WithWindowSize(1280.0, 720.0)
+                    .WithRepoSelection(repoKey, "abc123")
+
+            store.Save(state)
+
+            let loaded = store.Load()
+
+            test <@ loaded.WindowWidth = Nullable 1280.0 @>
+            test <@ loaded.WindowHeight = Nullable 720.0 @>
+            test <@ loaded.GetLastSelectedCommitHash(repoKey) = "abc123" @>
+            test <@ File.Exists(path) @>
         finally
             try
                 Directory.Delete(root, true)

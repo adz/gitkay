@@ -42,8 +42,24 @@ public partial class App : Application
             try
             {
                 var settingsStore = new AppSettingsStore();
+                var uiStateStore = new AppUiStateStore();
                 var persistedSettings = settingsStore.Load();
+                var persistedUiState = uiStateStore.Load();
+                var repoKey = GitService.tryDiscoverRepositoryPath();
+                var currentUiState = persistedUiState;
                 var startupArgs = persistedSettings.ToStartupArgs();
+
+                if (!string.IsNullOrWhiteSpace(repoKey))
+                {
+                    var restoredCommitHash = persistedUiState.GetLastSelectedCommitHash(repoKey);
+                    if (!string.IsNullOrWhiteSpace(restoredCommitHash))
+                    {
+                        var mergedSelectArgs = new string[startupArgs.Length + 1];
+                        startupArgs.CopyTo(mergedSelectArgs, 0);
+                        mergedSelectArgs[startupArgs.Length] = $"--select={restoredCommitHash}";
+                        startupArgs = mergedSelectArgs;
+                    }
+                }
 
                 if (StartupArgs.Length > 0)
                 {
@@ -54,6 +70,16 @@ public partial class App : Application
                 }
 
                 var mainWindow = new MainWindow();
+                if (persistedUiState.WindowWidth.HasValue)
+                {
+                    mainWindow.Width = persistedUiState.WindowWidth.Value;
+                }
+
+                if (persistedUiState.WindowHeight.HasValue)
+                {
+                    mainWindow.Height = persistedUiState.WindowHeight.Value;
+                }
+
                 var projection = new MainProjection();
                 projection.ApplySettings(persistedSettings);
                 mainWindow.DataContext = projection;
@@ -77,6 +103,15 @@ public partial class App : Application
                 {
                     if (string.IsNullOrWhiteSpace(e.PropertyName) || !persistedPropertyNames.Contains(e.PropertyName))
                     {
+                        if (!string.Equals(e.PropertyName, nameof(MainProjection.SelectedCommit), StringComparison.Ordinal)
+                            || string.IsNullOrWhiteSpace(repoKey)
+                            || projection.SelectedCommit == null)
+                        {
+                            return;
+                        }
+
+                        currentUiState = currentUiState.WithRepoSelection(repoKey, projection.SelectedCommit.FullHash);
+                        uiStateStore.Save(currentUiState);
                         return;
                     }
 
@@ -90,7 +125,17 @@ public partial class App : Application
                 );
 
                 desktop.MainWindow = mainWindow;
-                desktop.Exit += (s, e) => ((IDisposable)host).Dispose();
+                desktop.Exit += (s, e) =>
+                {
+                    if (!string.IsNullOrWhiteSpace(repoKey) && projection.SelectedCommit != null)
+                    {
+                        currentUiState = currentUiState.WithRepoSelection(repoKey, projection.SelectedCommit.FullHash);
+                    }
+
+                    currentUiState = currentUiState.WithWindowSize(mainWindow.Bounds.Width, mainWindow.Bounds.Height);
+                    uiStateStore.Save(currentUiState);
+                    ((IDisposable)host).Dispose();
+                };
             }
             catch (Exception ex)
             {
