@@ -172,6 +172,14 @@ diff --git a/foo.txt b/foo.txt
         test <@ removedProjection.NewContent = "" @>
 
     [<Fact>]
+    let ``SyntaxHighlighting should classify common code tokens`` () =
+        let tokens = SyntaxHighlighting.Tokenize("""let total = 42 // comment""")
+
+        test <@ tokens |> Seq.exists (fun token -> token.Text = "let" && token.Kind = HighlightKind.Keyword) @>
+        test <@ tokens |> Seq.exists (fun token -> token.Text = "42" && token.Kind = HighlightKind.Number) @>
+        test <@ tokens |> Seq.exists (fun token -> token.Text.StartsWith("//") && token.Kind = HighlightKind.Comment) @>
+
+    [<Fact>]
     let ``GraphRowControl should bias the commit marker toward the text baseline`` () =
         test <@ GraphRowControl.GetCommitMarkerCenterY 24.0 = 14.0 @>
 

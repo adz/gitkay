@@ -564,7 +564,7 @@
                                     </DataTemplate>
                                     <DataTemplate DataType="{x:Type local:DiffHunkHeaderProjection}" x:DataType="local:DiffHunkHeaderProjection">
                                         <TextBlock Margin="20,8,10,2"
-                                                   Text="{Binding Header}"
+                                                   Inlines="{Binding HeaderInlines}"
                                                    FontFamily="Cascadia Code,Consolas,Monospace"
                                                    FontSize="11"
                                                    Foreground="#888"/>
@@ -602,18 +602,9 @@
                                                     <TextBlock Grid.Column="3"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
                                                                FontSize="10"
-                                                               TextWrapping="NoWrap">
-                                                        <TextBlock.Inlines>
-                                                            <Run Text="{Binding MatchPrefix}"
-                                                                 Foreground="{Binding Foreground}" />
-                                                            <Run Text="{Binding MatchText}"
-                                                                 Foreground="{Binding MatchForeground}"
-                                                                 FontWeight="{Binding MatchFontWeight}"
-                                                                 TextDecorations="Underline" />
-                                                            <Run Text="{Binding MatchSuffix}"
-                                                                 Foreground="{Binding Foreground}" />
-                                                        </TextBlock.Inlines>
-                                                    </TextBlock>
+                                                               TextWrapping="NoWrap"
+                                                               Foreground="{Binding Foreground}"
+                                                               Inlines="{Binding ContentInlines}" />
                                                 </Grid>
                                             </Border>
 
@@ -636,8 +627,8 @@
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
                                                                FontSize="10"
                                                                TextWrapping="NoWrap"
-                                                               Text="{Binding OldContent}"
-                                                               Foreground="{Binding Foreground}" />
+                                                               Foreground="{Binding Foreground}"
+                                                               Inlines="{Binding OldContentInlines}" />
                                                     <TextBlock Grid.Column="2"
                                                                Text="{Binding Prefix}"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
@@ -655,12 +646,9 @@
                                                     <TextBlock Grid.Column="4"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
                                                                FontSize="10"
-                                                               TextWrapping="NoWrap">
-                                                        <TextBlock.Inlines>
-                                                            <Run Text="{Binding NewContent}"
-                                                                 Foreground="{Binding Foreground}" />
-                                                        </TextBlock.Inlines>
-                                                    </TextBlock>
+                                                               TextWrapping="NoWrap"
+                                                               Foreground="{Binding Foreground}"
+                                                               Inlines="{Binding NewContentInlines}" />
                                                 </Grid>
                                             </Border>
 
@@ -686,11 +674,11 @@
                                                                HorizontalAlignment="Right"
                                                                Margin="0,0,6,0"/>
                                                     <TextBlock Grid.Column="2"
-                                                               Text="{Binding NewContent}"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
                                                                FontSize="10"
                                                                Foreground="{Binding Foreground}"
-                                                               TextWrapping="NoWrap" />
+                                                               TextWrapping="NoWrap"
+                                                               Inlines="{Binding NewContentInlines}" />
                                                 </Grid>
                                             </Border>
 
@@ -710,11 +698,11 @@
                                                                HorizontalAlignment="Right"
                                                                Margin="0,0,6,0"/>
                                                     <TextBlock Grid.Column="1"
-                                                               Text="{Binding OldContent}"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
                                                                FontSize="10"
                                                                Foreground="{Binding Foreground}"
-                                                               TextWrapping="NoWrap" />
+                                                               TextWrapping="NoWrap"
+                                                               Inlines="{Binding OldContentInlines}" />
                                                     <TextBlock Grid.Column="2"
                                                                Text="{Binding Prefix}"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"

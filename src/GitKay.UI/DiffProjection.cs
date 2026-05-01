@@ -2,6 +2,7 @@ using System;
 using System.Collections.ObjectModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
+using Avalonia.Controls.Documents;
 using Avalonia.Media;
 using Microsoft.FSharp.Core;
 using DiffLineType = GitKay.Core.Models.LineType;
@@ -284,9 +285,11 @@ public sealed class DiffHunkHeaderProjection : IDiffRowProjection
     public DiffHunkHeaderProjection(DiffHunkProjection hunk)
     {
         Header = hunk.Header;
+        HeaderInlines = SyntaxHighlighting.BuildHunkHeaderInlines(hunk.Header);
     }
 
     public string Header { get; }
+    public InlineCollection HeaderInlines { get; }
 }
 
 public sealed class DiffHunkProjection
@@ -323,6 +326,7 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
                     ? Brushes.Gainsboro
                     : Brushes.LightSkyBlue;
         MatchForeground = DiffSearchPresentation.MatchForeground;
+        RefreshInlines("", false);
     }
 
     public string OldLineNoText { get; }
@@ -340,16 +344,24 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
     [ObservableProperty] private string _matchSuffix = "";
     [ObservableProperty] private IBrush _matchForeground = DiffSearchPresentation.MatchForeground;
     [ObservableProperty] private FontWeight _matchFontWeight = FontWeight.Normal;
+    [ObservableProperty] private InlineCollection _oldContentInlines = new();
+    [ObservableProperty] private InlineCollection _newContentInlines = new();
+    [ObservableProperty] private InlineCollection _contentInlines = new();
+    private string _searchQuery = "";
+    private bool _searchTextEnabled;
 
     private static string FormatLineNumber(FSharpOption<int> lineNumber) =>
         lineNumber is null ? "" : lineNumber.Value.ToString();
 
     public bool ApplySearchState(string query, bool searchTextEnabled)
     {
+        _searchQuery = query.Trim();
+        _searchTextEnabled = searchTextEnabled;
+
         var isSearchMatch =
             searchTextEnabled
-            && !string.IsNullOrWhiteSpace(query)
-            && Content.Contains(query, StringComparison.OrdinalIgnoreCase);
+            && !string.IsNullOrWhiteSpace(_searchQuery)
+            && Content.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase);
 
         IsSearchMatch = isSearchMatch;
         RowBackground = isSearchMatch
@@ -361,7 +373,7 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
 
         if (isSearchMatch)
         {
-            var (prefix, match, suffix, _) = DiffSearchPresentation.Split(Content, query);
+            var (prefix, match, suffix, _) = DiffSearchPresentation.Split(Content, _searchQuery);
             MatchPrefix = prefix;
             MatchText = match;
             MatchSuffix = suffix;
@@ -377,7 +389,16 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
             MatchFontWeight = FontWeight.Normal;
         }
 
+        RefreshInlines(_searchQuery, _searchTextEnabled);
+
         return isSearchMatch;
+    }
+
+    private void RefreshInlines(string query, bool searchTextEnabled)
+    {
+        ContentInlines = SyntaxHighlighting.BuildCodeInlines(Content, Foreground, searchTextEnabled ? query : null);
+        OldContentInlines = SyntaxHighlighting.BuildCodeInlines(OldContent, Foreground, searchTextEnabled ? query : null);
+        NewContentInlines = SyntaxHighlighting.BuildCodeInlines(NewContent, Foreground, searchTextEnabled ? query : null);
     }
 }
 

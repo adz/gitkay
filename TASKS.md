@@ -36,7 +36,7 @@
 14. [x] Hide search panes by default, but keep them easy to open inline from the history and diff areas.
 15. [x] Add diff presentation modes for `diff`, `side-by-side`, `new`, and `old`, with a user-selectable default.
 16. [x] Add configurable diff context line counts and wire the setting through the UI and backend.
-17. [ ] Add syntax highlighting for diffs and any other rendered code/text views that can benefit from it.
+17. [x] Add syntax highlighting for diffs and any other rendered code/text views that can benefit from it.
 18. [ ] Add vim-style navigation bindings such as `j`/`k` for down/up, with the same behavior across the main lists.
 19. [ ] Add command-line arguments for the major app options so the startup state can be configured non-interactively.
 20. [ ] Add an `Edit > Settings` panel for each major pane, persist settings to the right app-specific location, and load them on startup.
