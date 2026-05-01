@@ -366,6 +366,50 @@ summary Another line
             test <@ hit.MatchKinds = [ "ref" ] @>
             test <@ hit.MatchSummary.Contains "refs: release/1.0" @>
 
+    [<Fact>]
+    let ``searchCommitsWithDiffLoader should match diff text in the all scope even when metadata and paths do not match`` () =
+        let commit : Models.Commit =
+            {
+                Hash = "feedfacefeedfacefeedfacefeedfacefeedface"
+                AuthorName = "Jane Doe"
+                AuthorEmail = "jane@example.com"
+                Timestamp = 1710000000L
+                Parents = []
+                Subject = "No metadata hit"
+                Message = "No metadata hit"
+                Refs = []
+            }
+
+        let diffLoader hash =
+            match hash with
+            | "feedfacefeedfacefeedfacefeedfacefeedface" ->
+                Ok
+                    [
+                        sampleFile
+                            "src/other.txt"
+                            "src/other.txt"
+                            [
+                                {
+                                    Type = Models.Context
+                                    Content = "needle line in diff text"
+                                    OldLineNo = Some 1
+                                    NewLineNo = Some 1
+                                }
+                            ]
+                    ]
+            | _ -> Ok []
+
+        match GitService.searchCommitsWithDiffLoader [ commit ] "needle" GitService.SearchScope.All diffLoader with
+        | Error err -> failwith err
+        | Ok results ->
+            test <@ results.Length = 1 @>
+            let hit = results.Head
+            test <@ hit.Commit.Hash = commit.Hash @>
+            test <@ hit.MatchKinds = [ "text" ] @>
+            test <@ hit.MatchSummary = "text" @>
+            test <@ hit.MatchedPaths = [] @>
+            test <@ hit.MatchedRefs = [] @>
+
 module AppTests =
 
     let private sampleCommit hash subject : Models.Commit =
