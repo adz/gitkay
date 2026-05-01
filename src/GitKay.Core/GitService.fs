@@ -2,6 +2,7 @@ namespace GitKay.Core
 
 open System
 open System.Diagnostics
+open System.IO
 open System.Collections.Concurrent
 open System.Text.RegularExpressions
 open GitKay.Core.Models
@@ -92,15 +93,50 @@ module GitService =
             ()
 
     let private discoverRepositoryPath () =
-        Repository.Discover(Environment.CurrentDirectory)
+        let candidateRoots =
+            seq {
+                yield Environment.CurrentDirectory
+                yield AppContext.BaseDirectory
+
+                match Environment.ProcessPath with
+                | null -> ()
+                | processPath ->
+                    yield Path.GetDirectoryName(processPath)
+
+                    try
+                        let processFile = FileInfo(processPath)
+                        match processFile.ResolveLinkTarget(true) with
+                        | null -> ()
+                        | resolved -> yield Path.GetDirectoryName(resolved.FullName)
+                    with _ ->
+                        ()
+            }
+            |> Seq.choose (fun value ->
+                if String.IsNullOrWhiteSpace value then None else Some value)
+            |> Seq.distinct
+            |> Seq.toList
+
+        let rec tryDiscover roots errors =
+            match roots with
+            | [] -> Error (sprintf "Could not locate a Git repository. Tried: %s" (String.Join(", ", List.rev errors)))
+            | root :: rest ->
+                try
+                    let repoPath = Repository.Discover(root)
+
+                    if String.IsNullOrWhiteSpace repoPath then
+                        tryDiscover rest (root :: errors)
+                    else
+                        Ok repoPath
+                with _ ->
+                    tryDiscover rest (root :: errors)
+
+        tryDiscover candidateRoots []
 
     let private withRepository (action: Repository -> Result<'T, string>) =
         try
-            let repoPath = discoverRepositoryPath ()
-
-            if String.IsNullOrWhiteSpace repoPath then
-                Error "Could not locate a Git repository."
-            else
+            match discoverRepositoryPath () with
+            | Error err -> Error err
+            | Ok repoPath ->
                 use repo = new Repository(repoPath)
                 action repo
         with ex ->

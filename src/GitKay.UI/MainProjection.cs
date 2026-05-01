@@ -55,6 +55,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private bool _showBranchRefs;
     [ObservableProperty] private bool _showStashes;
     [ObservableProperty] private string _searchQuery = "";
+    [ObservableProperty] private double _searchDebounceSeconds = 0.5;
     [ObservableProperty] private string _commitFindQuery = "";
     [ObservableProperty] private SearchScopeProjection? _selectedSearchScope;
     [ObservableProperty] private bool _hasSearchResults;
@@ -630,14 +631,14 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         var cancellation = new CancellationTokenSource();
         _searchDebounceCancellation = cancellation;
 
-        _ = DebounceSearchAsync(cancellation);
+        _ = DebounceSearchAsync(cancellation, TimeSpan.FromSeconds(Math.Max(0d, SearchDebounceSeconds)));
     }
 
-    private async Task DebounceSearchAsync(CancellationTokenSource cancellation)
+    private async Task DebounceSearchAsync(CancellationTokenSource cancellation, TimeSpan delay)
     {
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(1), cancellation.Token);
+            await Task.Delay(delay, cancellation.Token);
 
             if (cancellation.IsCancellationRequested || !ReferenceEquals(_searchDebounceCancellation, cancellation))
             {

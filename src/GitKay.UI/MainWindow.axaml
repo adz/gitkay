@@ -28,7 +28,7 @@
             <TextBlock Text="{Binding Status}" Foreground="White" FontSize="12" />
         </Border>
 
-        <Grid RowDefinitions="Auto,6,*"
+        <Grid RowDefinitions="3*,6,2*"
               MinHeight="0">
             <Border Grid.Row="0"
                     Background="#1e1e1e"
@@ -40,7 +40,7 @@
                             BorderBrush="#3a3d41"
                             BorderThickness="0,0,0,1"
                             Padding="8,6">
-                        <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="8">
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="8">
                             <TextBlock Text="Search"
                                        Foreground="#ddd"
                                        FontWeight="SemiBold"
@@ -74,6 +74,19 @@
                             <Button Grid.Column="4"
                                     Content="_Clear"
                                     Command="{Binding ClearSearchCommand}" />
+                            <StackPanel Grid.Column="5"
+                                        Orientation="Horizontal"
+                                        Spacing="4"
+                                        VerticalAlignment="Center">
+                                <TextBlock Text="Debounce"
+                                           Foreground="#aaa"
+                                           FontSize="11"
+                                           VerticalAlignment="Center" />
+                                <TextBox Width="56"
+                                         HorizontalAlignment="Left"
+                                         Text="{Binding SearchDebounceSeconds, Mode=TwoWay}"
+                                         ToolTip.Tip="Search debounce in seconds" />
+                            </StackPanel>
                         </Grid>
                     </Border>
 
@@ -341,7 +354,9 @@
                     </StackPanel>
                 </Border>
 
-                <Grid Grid.Row="1" ColumnDefinitions="*,280" Background="#1e1e1e">
+                <Grid Grid.Row="1"
+                      ColumnDefinitions="*,280"
+                      Background="#1e1e1e">
                     <Border Grid.Column="0" Background="#1e1e1e" BorderBrush="#333" BorderThickness="0,1,0,0">
                         <DockPanel>
                             <TextBlock DockPanel.Dock="Top"
