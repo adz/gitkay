@@ -42,6 +42,18 @@ public sealed class DiffPresentationModeProjection
     public string Label { get; }
 }
 
+public sealed class DiffContextLineCountProjection
+{
+    public DiffContextLineCountProjection(int count)
+    {
+        Count = count;
+        Label = count == 1 ? "1 line" : $"{count} lines";
+    }
+
+    public int Count { get; }
+    public string Label { get; }
+}
+
 public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.App.Model, GitKay.Core.App.Msg>
 {
     private readonly long _createdAtTicks = Stopwatch.GetTimestamp();
@@ -52,6 +64,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private bool _suppressSearchSelectionDispatch;
     private bool _suppressShowBranchRefsDispatch;
     private bool _suppressShowStashesDispatch;
+    private bool _suppressDiffContextDispatch;
     private object? _commitsSource;
     private object? _commitSearchResultsSource;
     private object? _visibleCommitsSource;
@@ -78,6 +91,17 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         new DiffPresentationModeProjection("old", "Old"),
     };
 
+    public ObservableCollection<DiffContextLineCountProjection> DiffContextLineCounts { get; } = new()
+    {
+        new DiffContextLineCountProjection(0),
+        new DiffContextLineCountProjection(1),
+        new DiffContextLineCountProjection(2),
+        new DiffContextLineCountProjection(3),
+        new DiffContextLineCountProjection(5),
+        new DiffContextLineCountProjection(10),
+        new DiffContextLineCountProjection(20),
+    };
+
     public ObservableCollection<SearchScopeProjection> SearchScopes { get; } = new()
     {
         new SearchScopeProjection("all", "All"),
@@ -97,6 +121,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private double _commitRowBadgeFontSize = 10;
     [ObservableProperty] private bool _showBranchRefs;
     [ObservableProperty] private bool _showStashes;
+    [ObservableProperty] private int _diffContextLineCount = 3;
     [ObservableProperty] private string _searchQuery = "";
     [ObservableProperty] private double _searchDebounceSeconds = 0.5;
     [ObservableProperty] private string _commitFindQuery = "";
@@ -109,6 +134,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private IBrush _diffSearchStatusForeground = Brushes.Transparent;
     [ObservableProperty] private IBrush _diffSearchStatusBackground = Brushes.Transparent;
     [ObservableProperty] private DiffPresentationModeProjection? _selectedDiffPresentationMode;
+    [ObservableProperty] private DiffContextLineCountProjection? _selectedDiffContextLineCount;
     [ObservableProperty] private string _selectedDiffPresentationModeLabel = "Diff";
 
     public ObservableCollection<CommitProjection> Commits { get; } = new();
@@ -125,6 +151,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public MainProjection()
     {
         SelectedDiffPresentationMode = DiffPresentationModes[0];
+        SelectedDiffContextLineCount = DiffContextLineCounts.First(option => option.Count == DiffContextLineCount);
     }
 
     private static void LogTiming(string message)
@@ -170,6 +197,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             }
         }
 
+        UpdateDiffContextState(model);
         UpdateSearchState(model);
         UpdateDiffState(model);
         UpdateCommits(model);
@@ -380,6 +408,31 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
         _diffSearchQuery = searchQuery;
         _diffSearchScopeKey = model.SearchScopeKey;
+    }
+
+    private void UpdateDiffContextState(GitKay.Core.App.Model model)
+    {
+        if (DiffContextLineCount != model.DiffContextLines)
+        {
+            DiffContextLineCount = model.DiffContextLines;
+        }
+
+        var selectedContextLineCount =
+            DiffContextLineCounts.FirstOrDefault(option => option.Count == model.DiffContextLines)
+            ?? DiffContextLineCounts.FirstOrDefault();
+
+        if (!ReferenceEquals(SelectedDiffContextLineCount, selectedContextLineCount))
+        {
+            _suppressDiffContextDispatch = true;
+            try
+            {
+                SelectedDiffContextLineCount = selectedContextLineCount;
+            }
+            finally
+            {
+                _suppressDiffContextDispatch = false;
+            }
+        }
     }
 
     private void RefreshDiffSearchState(
@@ -777,6 +830,17 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
 
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetShowBranchRefs(value));
+    }
+
+    partial void OnSelectedDiffContextLineCountChanged(DiffContextLineCountProjection? value)
+    {
+        if (_suppressDiffContextDispatch || value == null)
+        {
+            return;
+        }
+
+        DiffContextLineCount = value.Count;
+        _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetDiffContextLines(value.Count));
     }
 
     partial void OnSelectedSearchScopeChanged(SearchScopeProjection? value)

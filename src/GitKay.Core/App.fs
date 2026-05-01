@@ -25,6 +25,7 @@ module App =
             StartupTargets: GitService.StartupTarget list
             ShowBranchRefs: bool
             ShowStashes: bool
+            DiffContextLines: int
             SearchQuery: string
             SearchScopeKey: string
             SearchResults: GitService.SearchResult list option
@@ -43,6 +44,7 @@ module App =
         | RereadRefs
         | SetShowBranchRefs of bool
         | SetShowStashes of bool
+        | SetDiffContextLines of int
         | HistoryLoaded of Result<Models.Commit list, string>
         | SelectCommit of hash:string * startedAtTicks:int64
         | DiffFilesLoaded of hash:string * startedAtTicks:int64 * Result<GitService.DiffFileSummary list, string>
@@ -112,19 +114,19 @@ module App =
             return files
         }
 
-    let private loadDiffFlow (hash: string) =
+    let private loadDiffFlow (contextLines: int) (hash: string) =
         flow {
             do! Flow.Runtime.ensureNotCanceled "Selection canceled."
-            let! diff = GitService.fetchDiff hash |> Flow.fromResult
+            let! diff = GitService.fetchDiff contextLines hash |> Flow.fromResult
             return diff
         }
 
-    let private loadSearchResultsFlow (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) =
+    let private loadSearchResultsFlow (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) =
         flow {
             do! Flow.Runtime.ensureNotCanceled "Search canceled."
             let scope = GitService.parseSearchScope scopeKey
             let commitList = commits |> List.map (fun info -> info.Commit)
-            let! results = GitService.searchCommits commitList query scope |> Flow.fromResult
+            let! results = GitService.searchCommits contextLines commitList query scope |> Flow.fromResult
             return results
         }
 
@@ -170,7 +172,7 @@ module App =
         | None ->
             ()
 
-    let private startDiffLoad (hash: string) (startedAtTicks: int64) =
+    let private startDiffLoad (hash: string) (startedAtTicks: int64) (contextLines: int) =
         cancelCurrentDiffJob ()
         let cancellation = new CancellationTokenSource()
         currentDiffJob <-
@@ -183,7 +185,7 @@ module App =
         Cmd.ofEffect (fun dispatch ->
             async {
                 try
-                    let! result = Flow.toAsyncResult () cancellation.Token (loadDiffFlow hash)
+                    let! result = Flow.toAsyncResult () cancellation.Token (loadDiffFlow contextLines hash)
 
                     if not cancellation.IsCancellationRequested then
                         dispatch (DiffLoaded(hash, startedAtTicks, result))
@@ -195,7 +197,7 @@ module App =
             }
             |> Async.Start)
 
-    let private startSearchLoad (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (startedAtTicks: int64) =
+    let private startSearchLoad (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (startedAtTicks: int64) =
         cancelCurrentSearchJob ()
         let cancellation = new CancellationTokenSource()
         currentSearchJob <-
@@ -208,7 +210,7 @@ module App =
         Cmd.ofEffect (fun dispatch ->
             async {
                 try
-                    let! result = Flow.toAsyncResult () cancellation.Token (loadSearchResultsFlow commits query scopeKey)
+                    let! result = Flow.toAsyncResult () cancellation.Token (loadSearchResultsFlow contextLines commits query scopeKey)
 
                     if not cancellation.IsCancellationRequested then
                         dispatch (SearchResultsLoaded(query, scopeKey, startedAtTicks, result))
@@ -277,7 +279,7 @@ module App =
         let cmd =
             match selectedHash, nextSelectionStartedAtTicks with
             | Some hash, Some startedAtTicks ->
-                Cmd.batch [ startDiffFilesLoad hash startedAtTicks; startDiffLoad hash startedAtTicks ]
+                Cmd.batch [ startDiffFilesLoad hash startedAtTicks; startDiffLoad hash startedAtTicks model.DiffContextLines ]
             | _ ->
                 cancelCurrentSelectionJob ()
                 if not diffReadyForSelection then
@@ -294,6 +296,7 @@ module App =
                 StartupTargets = []
                 ShowBranchRefs = false
                 ShowStashes = false
+                DiffContextLines = 3
                 SearchQuery = ""
                 SearchScopeKey = "all"
                 SearchResults = None
@@ -315,6 +318,7 @@ module App =
                     StartupTargets = startupTargets
                     ShowBranchRefs = false
                     ShowStashes = false
+                    DiffContextLines = 3
                     SearchQuery = ""
                     SearchScopeKey = "all"
                     SearchResults = None
@@ -349,6 +353,27 @@ module App =
                 }
 
             nextModel, loadHistory showStashes model.StartupTargets
+        | SetDiffContextLines diffContextLines ->
+            let normalizedContextLines = max 0 diffContextLines
+
+            if normalizedContextLines = model.DiffContextLines then
+                model, Cmd.none
+            else
+                let nextModel =
+                    {
+                        model with
+                            DiffContextLines = normalizedContextLines
+                            SelectedDiff = None
+                            SelectedDiffStartedAtTicks = model.SelectedCommitHash |> Option.map (fun _ -> Stopwatch.GetTimestamp())
+                    }
+
+                match model.SelectedCommitHash with
+                | Some hash ->
+                    let startedAtTicks = nextModel.SelectedDiffStartedAtTicks.Value
+                    nextModel, startDiffLoad hash startedAtTicks normalizedContextLines
+                | None ->
+                    cancelCurrentDiffJob ()
+                    nextModel, Cmd.none
         | HistoryLoaded (Ok commits) ->
             cancelCurrentSearchJob ()
             let graphInfo = Graph.calculateLanes commits
@@ -371,7 +396,7 @@ module App =
                         SelectedDiffStartedAtTicks = Some startedAtTicks
                 }
 
-            let cmd = Cmd.batch [ startDiffFilesLoad hash startedAtTicks; startDiffLoad hash startedAtTicks ]
+            let cmd = Cmd.batch [ startDiffFilesLoad hash startedAtTicks; startDiffLoad hash startedAtTicks model.DiffContextLines ]
             nextModel, cmd
         | SetSearchQuery query ->
             let trimmed = query.Trim()
@@ -399,7 +424,7 @@ module App =
                             Status = sprintf "Searching %s..." query
                     }
 
-                let cmd = startSearchLoad model.Commits query scopeKey startedAtTicks
+                let cmd = startSearchLoad model.DiffContextLines model.Commits query scopeKey startedAtTicks
                 nextModel, cmd
         | SearchResultsLoaded (query, scopeKey, startedAtTicks, Ok results) ->
             match model.SearchQuery, model.SearchScopeKey, model.SearchStartedAtTicks with

@@ -62,6 +62,20 @@
                                         </DataTemplate>
                                     </ComboBox.ItemTemplate>
                                 </ComboBox>
+                                <TextBlock Text="Context lines"
+                                           Foreground="#ddd"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center"
+                                           Margin="8,0,0,0" />
+                                <ComboBox Width="110"
+                                          ItemsSource="{Binding DiffContextLineCounts}"
+                                          SelectedItem="{Binding SelectedDiffContextLineCount}">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="local:DiffContextLineCountProjection">
+                                            <TextBlock Text="{Binding Label}" />
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
                             </StackPanel>
 
                             <Grid Grid.Column="1"

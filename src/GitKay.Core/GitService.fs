@@ -378,6 +378,7 @@ module GitService =
             Hash: string
             OldPath: string
             NewPath: string
+            ContextLines: int
         }
 
     type DiffFileSummary =
@@ -403,6 +404,13 @@ module GitService =
 
     let private diffCache = ConcurrentDictionary<string, DiffCacheEntry>()
     let private diffFileContentCache = ConcurrentDictionary<DiffFileContentCacheKey, FileDiff>()
+
+    let private normalizeContextLines contextLines = max 0 contextLines
+
+    let private buildCompareOptions contextLines =
+        let options = CompareOptions()
+        options.ContextLines <- normalizeContextLines contextLines
+        options
 
     let private buildDisplayPath oldPath newPath =
         if oldPath = "/dev/null" then
@@ -599,7 +607,7 @@ module GitService =
                 diffCache.TryAdd(hash, entry) |> ignore
                 Ok (entry, false)
 
-    let private loadDiffFileContent (hash: string) (oldPath: string) (newPath: string) =
+    let private loadDiffFileContent (contextLines: int) (hash: string) (oldPath: string) (newPath: string) =
         let candidatePaths =
             if oldPath = "/dev/null" then
                 [ newPath ]
@@ -616,10 +624,11 @@ module GitService =
             if isNull commit then
                 Error (sprintf "Commit not found: %s" hash)
             else
+                let compareOptions = buildCompareOptions contextLines
                 use patch =
                     match commit.Parents |> Seq.tryHead with
-                    | Some parent -> repo.Diff.Compare<Patch>(parent.Tree, commit.Tree, candidatePaths, ExplicitPathsOptions())
-                    | None -> repo.Diff.Compare<Patch>(null, commit.Tree, candidatePaths, ExplicitPathsOptions())
+                    | Some parent -> repo.Diff.Compare<Patch>(parent.Tree, commit.Tree, candidatePaths, ExplicitPathsOptions(), compareOptions)
+                    | None -> repo.Diff.Compare<Patch>(null, commit.Tree, candidatePaths, ExplicitPathsOptions(), compareOptions)
 
                 match parseDiff patch.Content with
                 | [ file ] -> Ok file
@@ -694,7 +703,7 @@ module GitService =
                 |> Seq.toList
                 |> Ok)
 
-    let fetchDiff (hash: string) =
+    let fetchDiff (contextLines: int) (hash: string) =
         let startedAtTicks = Stopwatch.GetTimestamp()
 
         match getDiffCacheEntry hash with
@@ -707,7 +716,7 @@ module GitService =
                 match remainingFiles with
                 | [] -> Ok (List.rev accumulated)
                 | file :: rest ->
-                    match loadDiffFileContent hash file.OldPath file.NewPath with
+                    match loadDiffFileContent contextLines hash file.OldPath file.NewPath with
                     | Ok content -> loadFiles rest (content :: accumulated)
                     | Error err -> Error err
 
@@ -737,13 +746,14 @@ module GitService =
         | Error err -> Error err
         | Ok (entry, _) -> Ok entry.FileList
 
-    let fetchDiffFileContent (hash: string) (oldPath: string) (newPath: string) =
+    let fetchDiffFileContent (contextLines: int) (hash: string) (oldPath: string) (newPath: string) =
         let startedAtTicks = Stopwatch.GetTimestamp()
         let key =
             {
                 Hash = hash
                 OldPath = oldPath
                 NewPath = newPath
+                ContextLines = normalizeContextLines contextLines
             }
 
         match diffFileContentCache.TryGetValue key with
@@ -752,7 +762,7 @@ module GitService =
             logTiming (sprintf "file diff cache hit hash=%s path=%s -> %s elapsed=%.1fms" hash oldPath newPath elapsed.TotalMilliseconds)
             Ok file
         | false, _ ->
-            let result = loadDiffFileContent hash oldPath newPath
+            let result = loadDiffFileContent contextLines hash oldPath newPath
 
             match result with
             | Error err ->
@@ -918,8 +928,8 @@ module GitService =
 
             Ok results
 
-    let searchCommits (commits: Models.Commit list) (query: string) (scope: SearchScope) =
-        searchCommitsWithDiffLoader commits query scope fetchDiff
+    let searchCommits (contextLines: int) (commits: Models.Commit list) (query: string) (scope: SearchScope) =
+        searchCommitsWithDiffLoader commits query scope (fun hash -> fetchDiff contextLines hash)
 
     let fetchFileBlame (revision: string) (path: string) =
         if path = "/dev/null" then

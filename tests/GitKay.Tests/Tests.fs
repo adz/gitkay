@@ -266,20 +266,42 @@ summary Another line
         test <@ entry.FileList.[1].DisplayPath = "bar.txt (new file)" @>
 
     [<Fact>]
-    let ``fetchDiffFileContent should cache file content per commit hash`` () =
+    let ``fetchDiffFileContent should cache file content per commit hash and context lines`` () =
         withTempRepository (fun root repo ->
             let firstCommit = commitFile repo root "foo.txt" "one" "first commit"
             let secondCommit = commitFile repo root "foo.txt" "two" "second commit"
 
-            match GitService.fetchDiffFileContent firstCommit.Sha "foo.txt" "foo.txt" with
+            match GitService.fetchDiffFileContent 3 firstCommit.Sha "foo.txt" "foo.txt" with
             | Error err -> failwith err
             | Ok firstFile ->
                 test <@ firstFile.Hunks.Head.Lines |> List.exists (fun line -> line.Type = Models.Added && line.Content = "one") @>
 
-            match GitService.fetchDiffFileContent secondCommit.Sha "foo.txt" "foo.txt" with
+            match GitService.fetchDiffFileContent 3 secondCommit.Sha "foo.txt" "foo.txt" with
             | Error err -> failwith err
             | Ok secondFile ->
                 test <@ secondFile.Hunks.Head.Lines |> List.exists (fun line -> line.Type = Models.Added && line.Content = "two") @>)
+
+    [<Fact>]
+    let ``fetchDiffFileContent should respect diff context line counts`` () =
+        withTempRepository (fun root repo ->
+            let _ = commitFile repo root "foo.txt" "line1\nline2\nline3\nline4\nline5\n" "base commit"
+            let updatedCommit = commitFile repo root "foo.txt" "line1\nline2\nline3 changed\nline4\nline5\n" "updated commit"
+
+            match GitService.fetchDiffFileList updatedCommit.Sha with
+            | Error err -> failwith err
+            | Ok files ->
+                let file = files.Head
+
+                match GitService.fetchDiffFileContent 0 updatedCommit.Sha file.OldPath file.NewPath with
+                | Error err -> failwith err
+                | Ok noContext ->
+                    test <@ noContext.Hunks.Head.Lines |> List.forall (fun line -> line.Type <> Models.Context) @>
+
+                    match GitService.fetchDiffFileContent 3 updatedCommit.Sha file.OldPath file.NewPath with
+                    | Error err -> failwith err
+                    | Ok withContext ->
+                        test <@ withContext.Hunks.Head.Lines |> List.exists (fun line -> line.Type = Models.Context) @>
+                        test <@ withContext.Hunks.Head.Lines.Length > noContext.Hunks.Head.Lines.Length @>)
 
     [<Fact>]
     let ``fetchDiffFileContent should load root commit file contents`` () =
@@ -293,7 +315,7 @@ summary Another line
                 test <@ files.Head.OldPath = "/dev/null" @>
                 test <@ files.Head.NewPath = "foo.txt" @>
 
-                match GitService.fetchDiffFileContent firstCommit.Sha files.Head.OldPath files.Head.NewPath with
+                match GitService.fetchDiffFileContent 3 firstCommit.Sha files.Head.OldPath files.Head.NewPath with
                 | Error err -> failwith err
                 | Ok file ->
                     test <@ file.OldPath = "/dev/null" @>
@@ -779,6 +801,7 @@ module AppTests =
             StartupTargets = []
             ShowBranchRefs = false
             ShowStashes = false
+            DiffContextLines = 3
             SearchQuery = ""
             SearchScopeKey = "all"
             SearchResults = None
@@ -827,6 +850,41 @@ module AppTests =
 
         test <@ next.ShowStashes @>
         test <@ next.Status = "Refreshing..." @>
+
+    [<Fact>]
+    let ``SetDiffContextLines should update the view state and reload the current diff`` () =
+        let selectedFile =
+            sampleFile
+                "foo.txt"
+                "foo.txt"
+                [
+                    {
+                        Type = Models.Context
+                        Content = "line1"
+                        OldLineNo = Some 1
+                        NewLineNo = Some 1
+                    }
+                ]
+
+        let initial =
+            {
+                emptyModel with
+                    SelectedCommitHash = Some "commit"
+                    SelectedDiffHash = Some "commit"
+                    SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
+                    SelectedDiff = Some [ selectedFile ]
+                    SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" }
+                    SelectedDiffStartedAtTicks = Some 2L
+            }
+
+        let next, _ = App.update (App.Msg.SetDiffContextLines 10) initial
+
+        test <@ next.DiffContextLines = 10 @>
+        test <@ next.SelectedDiffHash = Some "commit" @>
+        test <@ next.SelectedDiffFiles = initial.SelectedDiffFiles @>
+        test <@ next.SelectedDiff = None @>
+        test <@ next.SelectedDiffFileKey = initial.SelectedDiffFileKey @>
+        test <@ next.SelectedDiffStartedAtTicks.IsSome @>
 
     [<Fact>]
     let ``HistoryLoaded should keep an existing selected commit when it still exists`` () =
@@ -1349,6 +1407,25 @@ module AppTests =
 
         test <@ projection.IsSideBySideDiffMode @>
         test <@ projection.SelectedDiffPresentationModeLabel = "Side-by-side" @>
+
+    [<Fact>]
+    let ``MainProjection should sync and dispatch diff context line count changes`` () =
+        let projection = MainProjection()
+        let messages = ConcurrentQueue<App.Msg>()
+        projection.SetDispatch (fun msg -> messages.Enqueue msg |> ignore)
+
+        projection.Update { emptyModel with DiffContextLines = 5 }
+
+        test <@ projection.DiffContextLineCount = 5 @>
+        test <@ projection.SelectedDiffContextLineCount <> null @>
+        test <@ projection.SelectedDiffContextLineCount.Count = 5 @>
+        test <@ messages.IsEmpty @>
+
+        projection.SelectedDiffContextLineCount <- projection.DiffContextLineCounts |> Seq.find (fun option -> option.Count = 10)
+
+        let dispatched = messages.ToArray()
+
+        test <@ dispatched = [| App.Msg.SetDiffContextLines 10 |] @>
 
     [<Fact>]
     let ``MainProjection should debounce live search updates as the query changes`` () =
