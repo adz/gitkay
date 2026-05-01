@@ -75,10 +75,21 @@
                                     IsVisible="{Binding IsSearchPanelExpanded}">
                                 <Grid RowDefinitions="Auto,*" RowSpacing="6">
                                     <StackPanel Spacing="2">
-                                        <TextBlock Text="Search results"
-                                                   Foreground="#ddd"
-                                                   FontWeight="SemiBold"
-                                                   FontSize="11" />
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <TextBlock Text="Search results"
+                                                       Foreground="#ddd"
+                                                       FontWeight="SemiBold"
+                                                       FontSize="11" />
+                                            <Border Background="#333"
+                                                    CornerRadius="999"
+                                                    Padding="6,1"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding SearchResults.Count}"
+                                                           Foreground="#4ec9b0"
+                                                           FontSize="11"
+                                                           FontWeight="SemiBold" />
+                                            </Border>
+                                        </StackPanel>
                                         <TextBlock Text="Press Enter to search the current query. The scope menu narrows which fields are matched."
                                                    Foreground="#888"
                                                    FontSize="11"
@@ -94,7 +105,7 @@
                                              SelectionMode="Single"
                                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                              ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                             MaxHeight="140">
+                                             MaxHeight="180">
                                         <ListBox.ItemsPanel>
                                             <ItemsPanelTemplate>
                                                 <VirtualizingStackPanel />
@@ -116,7 +127,7 @@
                                         <ListBox.ItemTemplate>
                                             <DataTemplate x:DataType="local:SearchResultProjection">
                                                 <Border Padding="8,6">
-                                                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" RowSpacing="2">
+                                                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" RowSpacing="3">
                                                         <TextBlock Grid.Column="0"
                                                                    Text="{Binding Subject}"
                                                                    FontWeight="SemiBold"
@@ -143,11 +154,25 @@
                                                                        Foreground="#888"
                                                                        VerticalAlignment="Center"
                                                                        FontSize="11" />
-                                                            <TextBlock Text="{Binding MatchSummary}"
-                                                                       Foreground="#4ec9b0"
-                                                                       VerticalAlignment="Center"
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Row="2"
+                                                                    Grid.ColumnSpan="2"
+                                                                    Spacing="2">
+                                                            <TextBlock Text="{Binding MatchedFieldsLabel}"
+                                                                       IsVisible="{Binding HasMatchedFields}"
+                                                                       Foreground="#d7ba7d"
                                                                        FontSize="11"
-                                                                       TextTrimming="CharacterEllipsis" />
+                                                                       TextWrapping="Wrap" />
+                                                            <TextBlock Text="{Binding MatchedPathsLabel}"
+                                                                       IsVisible="{Binding HasMatchedPaths}"
+                                                                       Foreground="#9cdcfe"
+                                                                       FontSize="11"
+                                                                       TextWrapping="Wrap" />
+                                                            <TextBlock Text="{Binding MatchedRefsLabel}"
+                                                                       IsVisible="{Binding HasMatchedRefs}"
+                                                                       Foreground="#c586c0"
+                                                                       FontSize="11"
+                                                                       TextWrapping="Wrap" />
                                                         </StackPanel>
                                                     </Grid>
                                                 </Border>

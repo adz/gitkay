@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Elmish.Glue.Core;
 
@@ -25,6 +28,12 @@ public partial class SearchResultProjection : ObservableObject, IProjection<GitK
     [ObservableProperty] private string _author = "";
     [ObservableProperty] private string _date = "";
     [ObservableProperty] private string _matchSummary = "";
+    [ObservableProperty] private bool _hasMatchedFields;
+    [ObservableProperty] private string _matchedFieldsLabel = "";
+    [ObservableProperty] private bool _hasMatchedPaths;
+    [ObservableProperty] private string _matchedPathsLabel = "";
+    [ObservableProperty] private bool _hasMatchedRefs;
+    [ObservableProperty] private string _matchedRefsLabel = "";
 
     public void Update(GitKay.Core.GitService.SearchResult result)
     {
@@ -35,5 +44,53 @@ public partial class SearchResultProjection : ObservableObject, IProjection<GitK
         Author = result.Commit.AuthorName;
         Date = System.DateTimeOffset.FromUnixTimeSeconds(result.Commit.Timestamp).LocalDateTime.ToString("yyyy-MM-dd HH:mm");
         MatchSummary = result.MatchSummary;
+        UpdateMatchContext(result.MatchKinds, result.MatchedPaths, result.MatchedRefs);
+    }
+
+    private void UpdateMatchContext(IEnumerable<string> matchKinds, IEnumerable<string> matchedPaths, IEnumerable<string> matchedRefs)
+    {
+        var fieldLabels = matchKinds
+            .Select(FormatMatchKind)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        HasMatchedFields = fieldLabels.Length > 0;
+        MatchedFieldsLabel = HasMatchedFields ? FormatMatchLabel("Field", fieldLabels) : "";
+
+        var pathLabels = matchedPaths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        HasMatchedPaths = pathLabels.Length > 0;
+        MatchedPathsLabel = HasMatchedPaths ? FormatMatchLabel("File", pathLabels) : "";
+
+        var refLabels = matchedRefs.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        HasMatchedRefs = refLabels.Length > 0;
+        MatchedRefsLabel = HasMatchedRefs ? FormatMatchLabel("Ref", refLabels) : "";
+    }
+
+    private static string FormatMatchLabel(string singularLabel, IReadOnlyList<string> values)
+    {
+        var countLabel = values.Count == 1 ? singularLabel : singularLabel + "s";
+        var visibleValues = values.Take(3).ToArray();
+        var label = $"{countLabel} ({values.Count}): {string.Join(", ", visibleValues)}";
+
+        if (values.Count > visibleValues.Length)
+        {
+            label += $" +{values.Count - visibleValues.Length} more";
+        }
+
+        return label;
+    }
+
+    private static string FormatMatchKind(string kind)
+    {
+        return kind.ToLowerInvariant() switch
+        {
+            "hash" => "Commit hash",
+            "message" => "Message / subject",
+            "author" => "Author",
+            "path" => "File / path",
+            "text" => "Diff text",
+            "ref" => "Ref / tag / branch",
+            _ => kind,
+        };
     }
 }

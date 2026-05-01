@@ -25,7 +25,7 @@
 3. [x] Add a unified diff mode across all files in a commit, with the current file list remaining as navigation rather than the only way to inspect changes.
 4. [x] Allow searching the diff text itself from the main search flow, not just commit metadata and paths.
 5. [x] Surface search matches inline in both the commit list and diff view so the user can immediately see what matched and where.
-6. [ ] Improve result context for searches by showing matched fields, file names, and counts directly in the UI.
+6. [x] Improve result context for searches by showing matched fields, file names, and counts directly in the UI.
 
 ## In Progress
 - Keep commit selection fast and predictable.

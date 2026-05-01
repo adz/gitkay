@@ -515,6 +515,21 @@ module AppTests =
             MatchedRefs = []
         }
 
+    let private sampleSearchResultWithContext
+        (commit: Models.Commit)
+        matchKinds
+        matchSummary
+        matchedPaths
+        matchedRefs
+        : GitService.SearchResult =
+        {
+            Commit = commit
+            MatchKinds = matchKinds
+            MatchSummary = matchSummary
+            MatchedPaths = matchedPaths
+            MatchedRefs = matchedRefs
+        }
+
     let private emptyModel : App.Model =
         {
             Status = ""
@@ -1014,6 +1029,27 @@ module AppTests =
         match lastMsg with
         | Some (App.Msg.SelectCommit(hash, _)) -> test <@ hash = commit.Hash @>
         | other -> failwithf "Expected search result selection to dispatch a commit selection, got %A" other
+
+    [<Fact>]
+    let ``SearchResultProjection should surface matched fields, files, and counts`` () =
+        let projection = SearchResultProjection()
+        let commit =
+            sampleCommit "feedfacefeedfacefeedfacefeedfacefeedface" "Search hit"
+
+        projection.Update
+            (sampleSearchResultWithContext
+                commit
+                [ "message"; "path" ]
+                "message; paths: src/needle.txt, docs/needle.txt"
+                [ "src/needle.txt"; "docs/needle.txt"; "README.md" ]
+                [ "main" ])
+
+        test <@ projection.HasMatchedFields @>
+        test <@ projection.MatchedFieldsLabel = "Fields (2): Message / subject, File / path" @>
+        test <@ projection.HasMatchedPaths @>
+        test <@ projection.MatchedPathsLabel = "Files (3): src/needle.txt, docs/needle.txt, README.md" @>
+        test <@ projection.HasMatchedRefs @>
+        test <@ projection.MatchedRefsLabel = "Ref (1): main" @>
 
     [<Fact>]
     let ``MainProjection should surface search matches inline in commit rows`` () =
