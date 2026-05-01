@@ -27,4 +27,4 @@
 4. [x] Rework branch, tag, remote-ref, and stash visuals to match gitk more closely.
 5. [x] Restore graph continuity through forks and merges so branch lines stay readable.
 6. [x] Hide stashes by default and add an explicit option to show them.
-7. [ ] Tighten graph marker alignment with the commit text baseline.
+7. [x] Tighten graph marker alignment with the commit text baseline.

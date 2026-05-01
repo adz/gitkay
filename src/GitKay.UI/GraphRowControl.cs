@@ -11,6 +11,9 @@ namespace GitKay.UI;
 
 public class GraphRowControl : Control
 {
+    private const double CommitMarkerBaselineOffset = 2.0;
+    private const double DotRadius = 4;
+
     public static readonly DirectProperty<GraphRowControl, IEnumerable<SegmentProjection>?> SegmentsProperty =
         AvaloniaProperty.RegisterDirect<GraphRowControl, IEnumerable<SegmentProjection>?>(
             nameof(Segments),
@@ -130,12 +133,14 @@ public class GraphRowControl : Control
         Brushes.Cyan, Brushes.Magenta, Brushes.Yellow, Brushes.LightGreen, Brushes.LightBlue
     };
 
+    internal static double GetCommitMarkerCenterY(double rowHeight)
+        => Math.Round(rowHeight / 2.0 + CommitMarkerBaselineOffset);
+
     public override void Render(DrawingContext context)
     {
         double laneWidth = 15;
         double rowHeight = Bounds.Height;
-        double halfHeight = rowHeight / 2;
-        double dotRadius = 4;
+        double commitMarkerCenterY = GetCommitMarkerCenterY(rowHeight);
 
         var segments = _cachedSegments;
         SegmentProjection? firstCommitSegment = null;
@@ -174,7 +179,7 @@ public class GraphRowControl : Control
             var commitLaneX = (firstCommitSegment.Lane + 1) * laneWidth;
             var pen = new Pen(commitBrush, 2);
 
-            context.DrawLine(pen, new Point(commitLaneX, 0), new Point(commitLaneX, halfHeight));
+            context.DrawLine(pen, new Point(commitLaneX, 0), new Point(commitLaneX, commitMarkerCenterY));
 
             for (int i = 0; i < segments.Length; i++)
             {
@@ -186,12 +191,12 @@ public class GraphRowControl : Control
                 }
 
                 double targetX = (segment.TargetLane + 1) * laneWidth;
-                context.DrawLine(pen, new Point(commitLaneX, halfHeight), new Point(targetX, rowHeight));
+                context.DrawLine(pen, new Point(commitLaneX, commitMarkerCenterY), new Point(targetX, rowHeight));
             }
         }
 
         // Draw the commit dot
         double cx = (CommitLane + 1) * laneWidth;
-        context.DrawEllipse(commitBrush, null, new Rect(cx - dotRadius, halfHeight - dotRadius, dotRadius * 2, dotRadius * 2));
+        context.DrawEllipse(commitBrush, null, new Rect(cx - DotRadius, commitMarkerCenterY - DotRadius, DotRadius * 2, DotRadius * 2));
     }
 }

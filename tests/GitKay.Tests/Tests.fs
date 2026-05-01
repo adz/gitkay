@@ -149,6 +149,10 @@ diff --git a/foo.txt b/foo.txt
         test <@ addedProjection.NewLineNoText = "9" @>
 
     [<Fact>]
+    let ``GraphRowControl should bias the commit marker toward the text baseline`` () =
+        test <@ GraphRowControl.GetCommitMarkerCenterY 24.0 = 14.0 @>
+
+    [<Fact>]
     let ``parseBlamePorcelain should map blame metadata by line`` () =
         let blame =
             """
