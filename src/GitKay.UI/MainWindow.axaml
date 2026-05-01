@@ -13,6 +13,11 @@
             <MenuItem Header="_File">
                 <MenuItem Header="_Reread refs" Command="{Binding RereadRefs}" />
             </MenuItem>
+            <MenuItem Header="_View">
+                <MenuItem Header="_Show stashes"
+                          ToggleType="CheckBox"
+                          IsChecked="{Binding ShowStashes, Mode=TwoWay}" />
+            </MenuItem>
         </Menu>
 
         <Border DockPanel.Dock="Bottom" Background="#007acc" Padding="4">

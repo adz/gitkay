@@ -23,6 +23,7 @@ module App =
         {
             Status: string
             StartupTargets: GitService.StartupTarget list
+            ShowStashes: bool
             SearchQuery: string
             SearchScopeKey: string
             SearchResults: GitService.SearchResult list option
@@ -39,6 +40,7 @@ module App =
 
     type Msg =
         | RereadRefs
+        | SetShowStashes of bool
         | HistoryLoaded of Result<Models.Commit list, string>
         | SelectCommit of hash:string * startedAtTicks:int64
         | DiffFilesLoaded of hash:string * startedAtTicks:int64 * Result<GitService.DiffFileSummary list, string>
@@ -56,8 +58,8 @@ module App =
         | OperationResult of Result<string, string>
         | NoOp
 
-    let private loadHistory (targets: GitService.StartupTarget list) =
-        Cmd.OfFunc.either GitService.fetchHistory targets HistoryLoaded (fun ex -> HistoryLoaded (Error ex.Message))
+    let private loadHistory (includeStashes: bool) (targets: GitService.StartupTarget list) =
+        Cmd.OfFunc.either (GitService.fetchHistory includeStashes) targets HistoryLoaded (fun ex -> HistoryLoaded (Error ex.Message))
 
     let private clearCurrentSelectionJob requestId =
         match currentSelectionJob with
@@ -288,6 +290,7 @@ module App =
             {
                 Status = sprintf "Error: %s" err
                 StartupTargets = []
+                ShowStashes = false
                 SearchQuery = ""
                 SearchScopeKey = "all"
                 SearchResults = None
@@ -307,6 +310,7 @@ module App =
                 {
                     Status = "Loading history..."
                     StartupTargets = startupTargets
+                    ShowStashes = false
                     SearchQuery = ""
                     SearchScopeKey = "all"
                     SearchResults = None
@@ -321,14 +325,24 @@ module App =
                     SearchStartedAtTicks = None
                 }
 
-            model, loadHistory startupTargets
+            model, loadHistory false startupTargets
 
     let update msg model : Model * Cmd<Msg> =
         match msg with
         | RereadRefs ->
             cancelCurrentSearchJob ()
             let nextModel = { model with Status = "Refreshing..." }
-            nextModel, loadHistory model.StartupTargets
+            nextModel, loadHistory model.ShowStashes model.StartupTargets
+        | SetShowStashes showStashes ->
+            cancelCurrentSearchJob ()
+            let nextModel =
+                {
+                    model with
+                        ShowStashes = showStashes
+                        Status = "Refreshing..."
+                }
+
+            nextModel, loadHistory showStashes model.StartupTargets
         | HistoryLoaded (Ok commits) ->
             cancelCurrentSearchJob ()
             let graphInfo = Graph.calculateLanes commits

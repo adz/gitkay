@@ -20,6 +20,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private bool _suppressDiffSelectionSync;
     private bool _suppressSearchDispatch;
     private bool _suppressSearchSelectionDispatch;
+    private bool _suppressShowStashesDispatch;
     private object? _commitsSource;
     private object? _commitSearchResultsSource;
     private object? _visibleCommitsSource;
@@ -45,6 +46,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     };
 
     [ObservableProperty] private string _status = "";
+    [ObservableProperty] private bool _showStashes;
     [ObservableProperty] private string _searchQuery = "";
     [ObservableProperty] private string _commitFindQuery = "";
     [ObservableProperty] private SearchScopeProjection? _selectedSearchScope;
@@ -79,6 +81,18 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     {
         var startedAtTicks = Stopwatch.GetTimestamp();
         Status = model.Status;
+        if (ShowStashes != model.ShowStashes)
+        {
+            _suppressShowStashesDispatch = true;
+            try
+            {
+                ShowStashes = model.ShowStashes;
+            }
+            finally
+            {
+                _suppressShowStashesDispatch = false;
+            }
+        }
 
         UpdateSearchState(model);
         UpdateDiffState(model);
@@ -444,6 +458,16 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetSearchQuery(value));
         ScheduleSearchDebounce();
+    }
+
+    partial void OnShowStashesChanged(bool value)
+    {
+        if (_suppressShowStashesDispatch)
+        {
+            return;
+        }
+
+        _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetShowStashes(value));
     }
 
     partial void OnSelectedSearchScopeChanged(SearchScopeProjection? value)

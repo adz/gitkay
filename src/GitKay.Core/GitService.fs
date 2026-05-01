@@ -454,7 +454,7 @@ module GitService =
             FileList = fileList
         }
 
-    let private buildCommitRefs (repo: Repository) =
+    let private buildCommitRefs (includeStashes: bool) (repo: Repository) =
         let refsByCommit = System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<Models.CommitRef>>()
 
         let addRef (hash: string) (kind: Models.CommitRefKind) (name: string) =
@@ -484,11 +484,12 @@ module GitService =
             | :? Commit as commit -> addRef commit.Sha Models.CommitRefKind.Tag tag.FriendlyName
             | _ -> ()
 
-        repo.Stashes
-        |> Seq.mapi (fun index stash -> index, stash)
-        |> Seq.iter (fun (index, stash) ->
-            if not (isNull stash.WorkTree) then
-                addRef stash.WorkTree.Sha Models.CommitRefKind.Stash (sprintf "stash@{%d}" index))
+        if includeStashes then
+            repo.Stashes
+            |> Seq.mapi (fun index stash -> index, stash)
+            |> Seq.iter (fun (index, stash) ->
+                if not (isNull stash.WorkTree) then
+                    addRef stash.WorkTree.Sha Models.CommitRefKind.Stash (sprintf "stash@{%d}" index))
 
         refsByCommit
         |> Seq.map (fun kvp ->
@@ -501,16 +502,17 @@ module GitService =
             |> Seq.toList)
         |> Map.ofSeq
 
-    let private buildDefaultHistoryRoots (repo: Repository) =
+    let private buildDefaultHistoryRoots (includeStashes: bool) (repo: Repository) =
         seq {
             yield! repo.Refs |> Seq.map box
-            yield!
-                repo.Stashes
-                |> Seq.choose (fun stash ->
-                    if isNull stash.WorkTree then
-                        None
-                    else
-                        Some (box stash.WorkTree))
+            if includeStashes then
+                yield!
+                    repo.Stashes
+                    |> Seq.choose (fun stash ->
+                        if isNull stash.WorkTree then
+                            None
+                        else
+                            Some (box stash.WorkTree))
         }
 
     let private containsIgnoreCase (haystack: string) (needle: string) =
@@ -580,11 +582,11 @@ module GitService =
         | null -> Error "Could not determine the git user identity. Configure user.name and user.email."
         | signature -> Ok signature
 
-    let private resolveStartupTargets (repo: Repository) (targets: StartupTarget list) =
+    let private resolveStartupTargets (includeStashes: bool) (repo: Repository) (targets: StartupTarget list) =
         let hasAll = targets |> List.exists ((=) StartupTarget.All)
 
         if hasAll || List.isEmpty targets then
-            Ok (box (buildDefaultHistoryRoots repo))
+            Ok (box (buildDefaultHistoryRoots includeStashes repo))
         else
             let resolveTarget target =
                 match target with
@@ -615,12 +617,12 @@ module GitService =
                 (Ok [])
             |> Result.map box
 
-    let fetchHistory (targets: StartupTarget list) =
+    let fetchHistory (includeStashes: bool) (targets: StartupTarget list) =
         withRepository (fun repo ->
-            match resolveStartupTargets repo targets with
+            match resolveStartupTargets includeStashes repo targets with
             | Error err -> Error err
             | Ok roots ->
-                let refsByCommit = buildCommitRefs repo
+                let refsByCommit = buildCommitRefs includeStashes repo
                 let filter = CommitFilter()
                 filter.IncludeReachableFrom <- roots
                 filter.SortBy <- CommitSortStrategies.Topological ||| CommitSortStrategies.Time

@@ -273,7 +273,7 @@ summary Another line
             test <@ repo.Branches["topic"].Tip.Sha = commit.Sha @>)
 
     [<Fact>]
-    let ``fetchHistory should include stashes and label them distinctly`` () =
+    let ``fetchHistory should hide stashes by default`` () =
         withTempRepository (fun root repo ->
             let _ = commitFile repo root "app.txt" "base" "base commit"
             File.WriteAllText(Path.Combine(root, "app.txt"), "stashed changes")
@@ -282,7 +282,23 @@ summary Another line
             match repo.Stashes.Add(signature, "wip") with
             | null -> failwith "Stash creation failed."
             | _ ->
-                match GitService.fetchHistory [ GitService.StartupTarget.All ] with
+                match GitService.fetchHistory false [ GitService.StartupTarget.All ] with
+                | Error err -> failwith err
+                | Ok commits ->
+                    test <@ commits |> List.exists (fun commit -> commit.Refs |> List.exists (fun ref -> ref.Kind = Models.CommitRefKind.Stash)) |> not @>
+                    test <@ commits |> List.exists (fun commit -> commit.Refs |> List.exists (fun ref -> ref.Name = "stash@{0}")) |> not @>)
+
+    [<Fact>]
+    let ``fetchHistory should include stashes when explicitly enabled`` () =
+        withTempRepository (fun root repo ->
+            let _ = commitFile repo root "app.txt" "base" "base commit"
+            File.WriteAllText(Path.Combine(root, "app.txt"), "stashed changes")
+            let signature = Signature("GitKay Tests", "gitkay@example.com", DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero))
+
+            match repo.Stashes.Add(signature, "wip") with
+            | null -> failwith "Stash creation failed."
+            | _ ->
+                match GitService.fetchHistory true [ GitService.StartupTarget.All ] with
                 | Error err -> failwith err
                 | Ok commits ->
                     test <@ commits |> List.exists (fun commit -> commit.Refs |> List.exists (fun ref -> ref.Kind = Models.CommitRefKind.Stash)) @>
@@ -660,6 +676,7 @@ module AppTests =
         {
             Status = ""
             StartupTargets = []
+            ShowStashes = false
             SearchQuery = ""
             SearchScopeKey = "all"
             SearchResults = None
@@ -680,6 +697,7 @@ module AppTests =
 
         test <@ model.Status = "Loading history..." @>
         test <@ model.StartupTargets = [ GitService.StartupTarget.Branch "topic"; GitService.StartupTarget.Tag "v1.0" ] @>
+        test <@ not model.ShowStashes @>
 
     [<Fact>]
     let ``HistoryLoaded should auto-select the first commit when nothing is selected`` () =
@@ -700,6 +718,13 @@ module AppTests =
         test <@ next.SelectedDiffFileKey = None @>
         test <@ next.SelectionStartedAtTicks.IsSome @>
         test <@ next.SelectedDiffStartedAtTicks.IsSome @>
+
+    [<Fact>]
+    let ``SetShowStashes should update the view state`` () =
+        let next, _ = App.update (App.Msg.SetShowStashes true) emptyModel
+
+        test <@ next.ShowStashes @>
+        test <@ next.Status = "Refreshing..." @>
 
     [<Fact>]
     let ``HistoryLoaded should keep an existing selected commit when it still exists`` () =
@@ -1153,6 +1178,27 @@ module AppTests =
         test <@ projection.SearchResults.Count = 1 @>
         test <@ projection.VisibleCommits.Count = 1 @>
         test <@ projection.VisibleCommits.[0].FullHash = commit.Hash @>
+
+    [<Fact>]
+    let ``MainProjection should sync and dispatch the stash visibility toggle`` () =
+        let projection = MainProjection()
+        let messages = ConcurrentQueue<App.Msg>()
+        projection.SetDispatch (fun msg -> messages.Enqueue msg |> ignore)
+
+        projection.Update
+            {
+                emptyModel with
+                    ShowStashes = true
+            }
+
+        test <@ projection.ShowStashes @>
+        test <@ messages.IsEmpty @>
+
+        projection.ShowStashes <- false
+
+        let dispatched = messages.ToArray()
+
+        test <@ dispatched = [| App.Msg.SetShowStashes false |] @>
 
     [<Fact>]
     let ``MainProjection should debounce live search updates as the query changes`` () =
