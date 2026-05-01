@@ -15,6 +15,7 @@ module GitService =
         | Branch of string
         | Sha of string
         | Tag of string
+        | Revision of string
 
     type SearchScope =
         | All
@@ -98,7 +99,7 @@ module GitService =
             Error (sprintf "Missing %s after %s." valueLabel optionName)
 
     let getHelpText () =
-        "Usage: gitkay [options]\n\n" +
+        "Usage: gitkay [options] [revision]\n\n" +
         "Options:\n" +
         "  --help, -h               Show this help message\n" +
         "  --version, -v            Show version information\n" +
@@ -114,7 +115,9 @@ module GitService =
         "  --show-stashes           Show stashes in the history list\n" +
         "  --hide-stashes           Hide stashes in the history list\n" +
         "  --diff-context <n>       Number of context lines to show in diffs\n" +
-        "  --diff-presentation <m>  Diff presentation mode (diff, side-by-side, new, old)\n"
+        "  --diff-presentation <m>  Diff presentation mode (diff, side-by-side, new, old)\n\n" +
+        "Arguments:\n" +
+        "  [revision]               Optional branch, tag, or commit hash to use as the history tip\n"
 
     let parseStartupOptions (args: string array) =
         let mutable index = 0
@@ -129,6 +132,7 @@ module GitService =
         let mutable selectedCommitHash = defaultStartupOptions.SelectedCommitHash
         let mutable helpRequested = false
         let mutable versionRequested = false
+        let mutable positionalTargetSeen = false
 
         let rec loop () =
             if index >= args.Length then
@@ -340,7 +344,14 @@ module GitService =
                     index <- index + 1
                     loop ()
                 | arg ->
-                    Error (sprintf "Unrecognized startup argument: %s" arg)
+                    if not (arg.StartsWith("-")) && not positionalTargetSeen then
+                        positionalTargetSeen <- true
+                        if not hasAll then
+                            targets.Add(StartupTarget.Revision arg)
+                        index <- index + 1
+                        loop ()
+                    else
+                        Error (sprintf "Unrecognized startup argument: %s" arg)
 
         loop ()
 
@@ -937,7 +948,7 @@ module GitService =
                 | StartupTarget.Branch name ->
                     match repo.Branches.[name] with
                     | null -> Error (sprintf "Branch not found: %s" name)
-                    | branch -> Ok [ box branch ]
+                    | branch -> Ok [ box branch.Reference ]
                 | StartupTarget.Sha hash ->
                     match repo.Lookup<LibGit2Sharp.Commit>(hash) with
                     | null -> Error (sprintf "Commit not found: %s" hash)
@@ -946,6 +957,25 @@ module GitService =
                     match repo.Tags.[name] with
                     | null -> Error (sprintf "Tag not found: %s" name)
                     | tag -> Ok [ box tag ]
+                | StartupTarget.Revision name ->
+                    match repo.Branches.[name] with
+                    | branch when not (isNull branch) ->
+                        Ok [ box branch.Reference ]
+                    | _ ->
+                        try
+                            let obj = repo.Lookup(name)
+                            if isNull obj then
+                                Error (sprintf "Revision not found: %s" name)
+                            else
+                                match obj with
+                                | :? Commit as c -> Ok [ box c ]
+                                | :? TagAnnotation as t -> 
+                                    match t.Target with
+                                    | :? Commit as c -> Ok [ box c ]
+                                    | _ -> Error (sprintf "Tag does not point to a commit: %s" name)
+                                | _ -> Ok [ box obj ]
+                        with _ ->
+                            Error (sprintf "Invalid revision: %s" name)
 
             targets
             |> List.fold

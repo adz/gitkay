@@ -1027,19 +1027,6 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public bool IsOldDiffMode => SelectedDiffPresentationMode?.Key == "old";
 
     [RelayCommand]
-    private void ToggleSearchPanel()
-    {
-        if (IsSearchPanelExpanded)
-        {
-            IsSearchPanelExpanded = false;
-            _searchPanelAutoOpened = false;
-            return;
-        }
-
-        IsSearchPanelExpanded = true;
-    }
-
-    [RelayCommand]
     private void Search()
     {
         CancelSearchDebounce();
@@ -1058,11 +1045,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewRunSearch("", SelectedSearchScope?.Key ?? "all", Stopwatch.GetTimestamp()));
     }
 
-    public string SearchPanelActionText => IsSearchPanelExpanded ? "Hide search" : "Search";
-
     partial void OnIsSearchPanelExpandedChanged(bool value)
     {
-        OnPropertyChanged(nameof(SearchPanelActionText));
+        // No-op for now
     }
 
     private void ScheduleSearchDebounce()
