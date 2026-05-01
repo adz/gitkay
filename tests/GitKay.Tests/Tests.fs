@@ -154,6 +154,22 @@ diff --git a/foo.txt b/foo.txt
         let addedProjection = DiffLineProjection addedLine
         test <@ addedProjection.OldLineNoText = "" @>
         test <@ addedProjection.NewLineNoText = "9" @>
+        test <@ addedProjection.OldContent = "" @>
+        test <@ addedProjection.NewContent = "line" @>
+
+        let removedLine : Models.DiffLine =
+            {
+                Type = Models.Removed
+                Content = "line"
+                OldLineNo = Some 4
+                NewLineNo = None
+            }
+
+        let removedProjection = DiffLineProjection removedLine
+        test <@ removedProjection.OldLineNoText = "4" @>
+        test <@ removedProjection.NewLineNoText = "" @>
+        test <@ removedProjection.OldContent = "line" @>
+        test <@ removedProjection.NewContent = "" @>
 
     [<Fact>]
     let ``GraphRowControl should bias the commit marker toward the text baseline`` () =
@@ -1321,6 +1337,18 @@ module AppTests =
         projection.Update emptyModel
 
         test <@ projection.IsSearchPanelExpanded @>
+
+    [<Fact>]
+    let ``MainProjection should default to unified diff presentation and allow local mode changes`` () =
+        let projection = MainProjection()
+
+        test <@ projection.IsUnifiedDiffMode @>
+        test <@ projection.SelectedDiffPresentationModeLabel = "Diff" @>
+
+        projection.SelectedDiffPresentationMode <- projection.DiffPresentationModes |> Seq.find (fun mode -> mode.Key = "side-by-side")
+
+        test <@ projection.IsSideBySideDiffMode @>
+        test <@ projection.SelectedDiffPresentationModeLabel = "Side-by-side" @>
 
     [<Fact>]
     let ``MainProjection should debounce live search updates as the query changes`` () =

@@ -30,6 +30,18 @@ internal static class DiffSearchStatusBrushes
         new SolidColorBrush(Color.FromArgb(28, 76, 58, 18)));
 }
 
+public sealed class DiffPresentationModeProjection
+{
+    public DiffPresentationModeProjection(string key, string label)
+    {
+        Key = key;
+        Label = label;
+    }
+
+    public string Key { get; }
+    public string Label { get; }
+}
+
 public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.App.Model, GitKay.Core.App.Msg>
 {
     private readonly long _createdAtTicks = Stopwatch.GetTimestamp();
@@ -57,6 +69,14 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private CancellationTokenSource? _searchDebounceCancellation;
     private CancellationTokenSource? _diffSearchDebounceCancellation;
     private bool _searchPanelAutoOpened;
+
+    public ObservableCollection<DiffPresentationModeProjection> DiffPresentationModes { get; } = new()
+    {
+        new DiffPresentationModeProjection("diff", "Diff"),
+        new DiffPresentationModeProjection("side-by-side", "Side-by-side"),
+        new DiffPresentationModeProjection("new", "New"),
+        new DiffPresentationModeProjection("old", "Old"),
+    };
 
     public ObservableCollection<SearchScopeProjection> SearchScopes { get; } = new()
     {
@@ -88,6 +108,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private string _diffSearchStatusText = "";
     [ObservableProperty] private IBrush _diffSearchStatusForeground = Brushes.Transparent;
     [ObservableProperty] private IBrush _diffSearchStatusBackground = Brushes.Transparent;
+    [ObservableProperty] private DiffPresentationModeProjection? _selectedDiffPresentationMode;
+    [ObservableProperty] private string _selectedDiffPresentationModeLabel = "Diff";
 
     public ObservableCollection<CommitProjection> Commits { get; } = new();
     public ObservableCollection<CommitProjection> VisibleCommits { get; } = new();
@@ -99,6 +121,11 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private SearchResultProjection? _selectedSearchResult;
     [ObservableProperty] private DiffFileProjection? _selectedDiffFile;
     [ObservableProperty] private IDiffRowProjection? _selectedDiffRow;
+
+    public MainProjection()
+    {
+        SelectedDiffPresentationMode = DiffPresentationModes[0];
+    }
 
     private static void LogTiming(string message)
     {
@@ -781,6 +808,15 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSelectCommit(value.FullHash, startedAtTicks));
     }
 
+    partial void OnSelectedDiffPresentationModeChanged(DiffPresentationModeProjection? value)
+    {
+        SelectedDiffPresentationModeLabel = value?.Label ?? "Diff";
+        OnPropertyChanged(nameof(IsUnifiedDiffMode));
+        OnPropertyChanged(nameof(IsSideBySideDiffMode));
+        OnPropertyChanged(nameof(IsNewDiffMode));
+        OnPropertyChanged(nameof(IsOldDiffMode));
+    }
+
     partial void OnSelectedDiffFileChanged(DiffFileProjection? value)
     {
         if (_suppressDiffSelectionSync)
@@ -838,6 +874,11 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     }
 
     public void RereadRefs() => _dispatch?.Invoke(GitKay.Core.App.Msg.RereadRefs);
+
+    public bool IsUnifiedDiffMode => SelectedDiffPresentationMode?.Key == "diff";
+    public bool IsSideBySideDiffMode => SelectedDiffPresentationMode?.Key == "side-by-side";
+    public bool IsNewDiffMode => SelectedDiffPresentationMode?.Key == "new";
+    public bool IsOldDiffMode => SelectedDiffPresentationMode?.Key == "old";
 
     [RelayCommand]
     private void ToggleSearchPanel()

@@ -307,6 +307,8 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
     {
         OldLineNoText = FormatLineNumber(line.OldLineNo);
         NewLineNoText = FormatLineNumber(line.NewLineNo);
+        OldContent = line.Type.Equals(DiffLineType.Added) ? "" : line.Content;
+        NewContent = line.Type.Equals(DiffLineType.Removed) ? "" : line.Content;
         Prefix = line.Type.Equals(DiffLineType.Added)
             ? "+"
             : line.Type.Equals(DiffLineType.Removed)
@@ -325,6 +327,8 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
 
     public string OldLineNoText { get; }
     public string NewLineNoText { get; }
+    public string OldContent { get; }
+    public string NewContent { get; }
     public string Prefix { get; }
     public string Content { get; }
     public IBrush Foreground { get; }
