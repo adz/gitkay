@@ -27,6 +27,19 @@
 5. [x] Restore graph continuity through forks and merges so branch lines stay readable.
 6. [x] Hide stashes by default and add an explicit option to show them.
 7. [x] Tighten graph marker alignment with the commit text baseline.
-8. [ ] Replace Avalonia grid splitters with explicit drag-resize pane sizing so the top, middle, bottom, and diff/file panes resize independently.
+8. [ ] Keep the top history and bottom diff split with a single splitter; the commit-info row should fit content.
 9. [ ] Make commit search highlight matching commit rows in place, show which fields matched, and stop filtering nonmatching commits out of the history list.
 10. [ ] Make diff search debounce-apply, highlight matched files, lines, and terms, and keep the diff pane visibly annotated while searching.
+11. [ ] Increase the default height of the bottom diff section so it has enough room without manual resizing.
+12. [ ] Increase the default commit list font size slightly so commit rows read more clearly.
+13. [ ] Add resizable columns for the history, commit, and diff layouts so the main panes can be tuned without code changes.
+14. [ ] Hide search panes by default, but keep them easy to open inline from the history and diff areas.
+15. [ ] Add diff presentation modes for `diff`, `side-by-side`, `new`, and `old`, with a user-selectable default.
+16. [ ] Add configurable diff context line counts and wire the setting through the UI and backend.
+17. [ ] Add syntax highlighting for diffs and any other rendered code/text views that can benefit from it.
+18. [ ] Add vim-style navigation bindings such as `j`/`k` for down/up, with the same behavior across the main lists.
+19. [ ] Add command-line arguments for the major app options so the startup state can be configured non-interactively.
+20. [ ] Add an `Edit > Settings` panel for each major pane, persist settings to the right app-specific location, and load them on startup.
+21. [ ] Remember the last open position per repo and restore the window size on startup.
+22. [ ] Stop logging to the console and write logs to a local file only when a command-line option enables it.
+23. [ ] Reduce startup time so the app becomes interactive sooner.
