@@ -34,7 +34,9 @@
                     Background="#1e1e1e"
                     BorderBrush="#333"
                     BorderThickness="0,0,0,1">
-                <Grid MinHeight="0" RowDefinitions="Auto,*">
+                <Grid MinHeight="0"
+                      RowDefinitions="Auto,12,*"
+                      Grid.IsSharedSizeScope="True">
                     <Border Grid.Row="0"
                             Background="#252526E6"
                             BorderBrush="#3a3d41"
@@ -90,8 +92,51 @@
                         </Grid>
                     </Border>
 
+                    <Border Grid.Row="1"
+                            Background="#1f1f1f"
+                            BorderBrush="#3a3d41"
+                            BorderThickness="0,0,0,1">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="48" SharedSizeGroup="HistoryGraph" />
+                                <ColumnDefinition Width="4" />
+                                <ColumnDefinition Width="*" SharedSizeGroup="HistorySubject" MinWidth="120" />
+                                <ColumnDefinition Width="4" />
+                                <ColumnDefinition Width="54" SharedSizeGroup="HistoryHash" />
+                                <ColumnDefinition Width="4" />
+                                <ColumnDefinition Width="110" SharedSizeGroup="HistoryAuthor" />
+                                <ColumnDefinition Width="4" />
+                                <ColumnDefinition Width="110" SharedSizeGroup="HistoryDate" />
+                            </Grid.ColumnDefinitions>
+                            <GridSplitter Grid.Column="1"
+                                          HorizontalAlignment="Stretch"
+                                          VerticalAlignment="Stretch"
+                                          Background="#4c4c4c"
+                                          ResizeDirection="Columns"
+                                          ResizeBehavior="PreviousAndNext" />
+                            <GridSplitter Grid.Column="3"
+                                          HorizontalAlignment="Stretch"
+                                          VerticalAlignment="Stretch"
+                                          Background="#4c4c4c"
+                                          ResizeDirection="Columns"
+                                          ResizeBehavior="PreviousAndNext" />
+                            <GridSplitter Grid.Column="5"
+                                          HorizontalAlignment="Stretch"
+                                          VerticalAlignment="Stretch"
+                                          Background="#4c4c4c"
+                                          ResizeDirection="Columns"
+                                          ResizeBehavior="PreviousAndNext" />
+                            <GridSplitter Grid.Column="7"
+                                          HorizontalAlignment="Stretch"
+                                          VerticalAlignment="Stretch"
+                                          Background="#4c4c4c"
+                                          ResizeDirection="Columns"
+                                          ResizeBehavior="PreviousAndNext" />
+                        </Grid>
+                    </Border>
+
                     <ListBox x:Name="CommitListBox"
-                             Grid.Row="1"
+                             Grid.Row="2"
                              ItemsSource="{Binding VisibleCommits}"
                              SelectedItem="{Binding SelectedCommit}"
                              Background="Transparent"
@@ -125,7 +170,14 @@
                                         Background="{Binding RowBackground}"
                                         CornerRadius="2">
                                     <Grid RowDefinitions="Auto,Auto" Background="Transparent">
-                                        <Grid Grid.Row="0" ColumnDefinitions="48,*,54,110,110" MinHeight="16" Background="Transparent">
+                                        <Grid Grid.Row="0" MinHeight="16" Background="Transparent">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="48" SharedSizeGroup="HistoryGraph" />
+                                                <ColumnDefinition Width="*" SharedSizeGroup="HistorySubject" MinWidth="120" />
+                                                <ColumnDefinition Width="54" SharedSizeGroup="HistoryHash" />
+                                                <ColumnDefinition Width="110" SharedSizeGroup="HistoryAuthor" />
+                                                <ColumnDefinition Width="110" SharedSizeGroup="HistoryDate" />
+                                            </Grid.ColumnDefinitions>
                                             <Grid.ContextMenu>
                                                 <ContextMenu>
                                                     <MenuItem Header="Create _Tag here..." Command="{Binding CreateTagCommand}" />
@@ -280,94 +332,115 @@
                     BorderBrush="#333"
                     BorderThickness="0,1"
                     Padding="8,6">
-                <StackPanel Spacing="3" IsVisible="{Binding SelectedCommit, Converter={x:Static local:ObjectConverters.IsNotNull}}">
-                    <SelectableTextBlock Text="{Binding SelectedCommit.FullHash}" Foreground="#4ec9b0" FontWeight="SemiBold" FontSize="12"/>
-                    <ItemsControl ItemsSource="{Binding SelectedCommit.RefBadges}"
-                                  IsVisible="{Binding SelectedCommit.HasRefBadges}"
-                                  HorizontalAlignment="Left">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <WrapPanel />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="local:CommitRefProjection">
-                                <Grid Margin="0,0,2,0"
-                                      VerticalAlignment="Center"
-                                      HorizontalAlignment="Left"
-                                      ClipToBounds="False">
-                                    <Border IsVisible="{Binding IsNotTag}"
-                                            Background="{Binding Background}"
-                                            BorderBrush="{Binding BorderBrush}"
-                                            BorderThickness="1"
-                                            CornerRadius="0"
-                                            Padding="3,0,3,0"
-                                            MinHeight="14">
-                                        <TextBlock Text="{Binding Text}"
-                                                   Foreground="{Binding Foreground}"
-                                                   FontSize="{Binding DataContext.CommitRowBadgeFontSize, ElementName=RootWindow}"
-                                                   FontWeight="SemiBold"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   VerticalAlignment="Center" />
-                                    </Border>
-                                    <Grid IsVisible="{Binding IsTag}"
-                                          ColumnDefinitions="7,Auto"
-                                          MinHeight="14">
-                                        <Path Grid.Column="0"
-                                              Data="M 7,0 L 7,14 L 0,7 Z"
-                                              Fill="{Binding Background}"
-                                              Stroke="{Binding BorderBrush}"
-                                              StrokeThickness="1"
-                                              Stretch="Fill"
-                                              VerticalAlignment="Stretch"
-                                              HorizontalAlignment="Stretch" />
-                                        <Border Grid.Column="1"
-                                                Background="{Binding Background}"
-                                                BorderBrush="{Binding BorderBrush}"
-                                                BorderThickness="1"
-                                                Margin="-1,0,0,0"
-                                                Padding="4,0,4,0">
-                                            <TextBlock Text="{Binding Text}"
-                                                       Foreground="{Binding Foreground}"
-                                                       FontSize="{Binding DataContext.CommitRowBadgeFontSize, ElementName=RootWindow}"
-                                                       FontWeight="SemiBold"
-                                                       TextTrimming="CharacterEllipsis"
-                                                       VerticalAlignment="Center" />
-                                        </Border>
-                                    </Grid>
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <TextBlock Text="{Binding SelectedCommit.Author}" Foreground="#aaa" FontSize="12"/>
-                        <TextBlock Text="{Binding SelectedCommit.Date}" Foreground="#888" FontSize="12"/>
-                    </StackPanel>
-                    <SelectableTextBlock Text="{Binding SelectedCommit.Subject}"
-                                         FontSize="14"
-                                         Foreground="#ddd"
-                                         TextTrimming="CharacterEllipsis"
-                                         TextWrapping="NoWrap" />
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                        <TextBlock Text="Find in commit"
-                                   Foreground="#aaa"
-                                   FontSize="11"
-                                   VerticalAlignment="Center" />
-                        <TextBox Width="260"
-                                 Text="{Binding CommitFindQuery, Mode=TwoWay}"
-                                 PlaceholderText="Search within the selected commit">
-                            <TextBox.KeyBindings>
-                                <KeyBinding Gesture="Enter" Command="{Binding FindInCommitCommand}" />
-                            </TextBox.KeyBindings>
-                        </TextBox>
-                        <Button Content="Find _next"
-                                Command="{Binding FindInCommitCommand}" />
-                    </StackPanel>
-                    </StackPanel>
+                    <Grid ColumnDefinitions="Auto,4,*,4,Auto"
+                          IsVisible="{Binding SelectedCommit, Converter={x:Static local:ObjectConverters.IsNotNull}}">
+                        <StackPanel Grid.Column="0" Spacing="3">
+                            <SelectableTextBlock Text="{Binding SelectedCommit.FullHash}" Foreground="#4ec9b0" FontWeight="SemiBold" FontSize="12"/>
+                            <ItemsControl ItemsSource="{Binding SelectedCommit.RefBadges}"
+                                          IsVisible="{Binding SelectedCommit.HasRefBadges}"
+                                          HorizontalAlignment="Left">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="local:CommitRefProjection">
+                                        <Grid Margin="0,0,2,0"
+                                              VerticalAlignment="Center"
+                                              HorizontalAlignment="Left"
+                                              ClipToBounds="False">
+                                            <Border IsVisible="{Binding IsNotTag}"
+                                                    Background="{Binding Background}"
+                                                    BorderBrush="{Binding BorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="0"
+                                                    Padding="3,0,3,0"
+                                                    MinHeight="14">
+                                                <TextBlock Text="{Binding Text}"
+                                                           Foreground="{Binding Foreground}"
+                                                           FontSize="{Binding DataContext.CommitRowBadgeFontSize, ElementName=RootWindow}"
+                                                           FontWeight="SemiBold"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           VerticalAlignment="Center" />
+                                            </Border>
+                                            <Grid IsVisible="{Binding IsTag}"
+                                                  ColumnDefinitions="7,Auto"
+                                                  MinHeight="14">
+                                                <Path Grid.Column="0"
+                                                      Data="M 7,0 L 7,14 L 0,7 Z"
+                                                      Fill="{Binding Background}"
+                                                      Stroke="{Binding BorderBrush}"
+                                                      StrokeThickness="1"
+                                                      Stretch="Fill"
+                                                      VerticalAlignment="Stretch"
+                                                      HorizontalAlignment="Stretch" />
+                                                <Border Grid.Column="1"
+                                                        Background="{Binding Background}"
+                                                        BorderBrush="{Binding BorderBrush}"
+                                                        BorderThickness="1"
+                                                        Margin="-1,0,0,0"
+                                                        Padding="4,0,4,0">
+                                                    <TextBlock Text="{Binding Text}"
+                                                               Foreground="{Binding Foreground}"
+                                                               FontSize="{Binding DataContext.CommitRowBadgeFontSize, ElementName=RootWindow}"
+                                                               FontWeight="SemiBold"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               VerticalAlignment="Center" />
+                                                </Border>
+                                            </Grid>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <GridSplitter Grid.Column="1"
+                                      HorizontalAlignment="Stretch"
+                                      VerticalAlignment="Stretch"
+                                      Background="#4c4c4c"
+                                      ResizeDirection="Columns"
+                                      ResizeBehavior="PreviousAndNext" />
+
+                        <StackPanel Grid.Column="2" Spacing="3">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <TextBlock Text="{Binding SelectedCommit.Author}" Foreground="#aaa" FontSize="12"/>
+                                <TextBlock Text="{Binding SelectedCommit.Date}" Foreground="#888" FontSize="12"/>
+                            </StackPanel>
+                            <SelectableTextBlock Text="{Binding SelectedCommit.Subject}"
+                                                 FontSize="14"
+                                                 Foreground="#ddd"
+                                                 TextTrimming="CharacterEllipsis"
+                                                 TextWrapping="NoWrap" />
+                        </StackPanel>
+
+                        <GridSplitter Grid.Column="3"
+                                      HorizontalAlignment="Stretch"
+                                      VerticalAlignment="Stretch"
+                                      Background="#4c4c4c"
+                                      ResizeDirection="Columns"
+                                      ResizeBehavior="PreviousAndNext" />
+
+                        <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="6">
+                            <TextBlock Text="Find in commit"
+                                       Foreground="#aaa"
+                                       FontSize="11"
+                                       VerticalAlignment="Center" />
+                            <TextBox Width="260"
+                                     Text="{Binding CommitFindQuery, Mode=TwoWay}"
+                                     PlaceholderText="Search within the selected commit">
+                                <TextBox.KeyBindings>
+                                    <KeyBinding Gesture="Enter" Command="{Binding FindInCommitCommand}" />
+                                </TextBox.KeyBindings>
+                            </TextBox>
+                            <Button Content="Find _next"
+                                    Command="{Binding FindInCommitCommand}" />
+                        </StackPanel>
+                    </Grid>
                 </Border>
 
                 <Grid Grid.Row="1"
-                      ColumnDefinitions="*,280"
+                      ColumnDefinitions="*,4,280"
                       Background="#1e1e1e">
                     <Border Grid.Column="0" Background="#1e1e1e" BorderBrush="#333" BorderThickness="0,1,0,0">
                         <DockPanel>
@@ -505,8 +578,15 @@
                         </DockPanel>
                     </Border>
 
-                    <Border Grid.Column="1"
-                            Width="280"
+                    <GridSplitter Grid.Column="1"
+                                  HorizontalAlignment="Stretch"
+                                  VerticalAlignment="Stretch"
+                                  Background="#4c4c4c"
+                                  ResizeDirection="Columns"
+                                  ResizeBehavior="PreviousAndNext" />
+
+                    <Border Grid.Column="2"
+                            MinWidth="200"
                             Background="#252526"
                             BorderBrush="#333"
                             BorderThickness="1,1,0,0"

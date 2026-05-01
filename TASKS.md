@@ -32,7 +32,7 @@
 10. [x] Make diff search debounce-apply, highlight matched files, lines, and terms, and keep the diff pane visibly annotated while searching.
 11. [x] Increase the default height of the bottom diff section so it has enough room without manual resizing.
 12. [x] Increase the default commit list font size slightly so commit rows read more clearly.
-13. [ ] Add resizable columns for the history, commit, and diff layouts so the main panes can be tuned without code changes.
+13. [x] Add resizable columns for the history, commit, and diff layouts so the main panes can be tuned without code changes.
 14. [ ] Hide search panes by default, but keep them easy to open inline from the history and diff areas.
 15. [ ] Add diff presentation modes for `diff`, `side-by-side`, `new`, and `old`, with a user-selectable default.
 16. [ ] Add configurable diff context line counts and wire the setting through the UI and backend.
