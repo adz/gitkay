@@ -51,25 +51,34 @@ module Graph =
                     activeLaneIndexes.[commit.Hash] <- lane
                     lane
 
+            let occupiedHashes =
+                System.Collections.Generic.HashSet<string>(activeLanes, System.StringComparer.Ordinal)
+
             let nextActiveLanes =
                 System.Collections.Generic.List<string>(activeLanes.Count + commit.Parents.Length)
 
+            // Keep neighboring lanes anchored while the current lane is replaced by any new
+            // parents. This preserves continuity through merges/forks instead of compacting all
+            // lanes toward the left on every step.
+            for laneIndex in 0 .. currentLane - 1 do
+                nextActiveLanes.Add activeLanes.[laneIndex]
+
+            for parentHash in commit.Parents do
+                if occupiedHashes.Add parentHash then
+                    nextActiveLanes.Add parentHash
+
+            for laneIndex in currentLane + 1 .. activeLanes.Count - 1 do
+                nextActiveLanes.Add activeLanes.[laneIndex]
+
             let nextLaneIndexes =
                 System.Collections.Generic.Dictionary<string, int>(
-                    activeLanes.Count + commit.Parents.Length,
+                    nextActiveLanes.Count,
                     System.StringComparer.Ordinal
                 )
 
-            for laneIndex in 0 .. activeLanes.Count - 1 do
-                if laneIndex <> currentLane then
-                    let hash = activeLanes.[laneIndex]
-                    nextLaneIndexes.[hash] <- nextActiveLanes.Count
-                    nextActiveLanes.Add hash
-
-            for parentHash in commit.Parents do
-                if not (nextLaneIndexes.ContainsKey parentHash) then
-                    nextLaneIndexes.[parentHash] <- nextActiveLanes.Count
-                    nextActiveLanes.Add parentHash
+            for laneIndex in 0 .. nextActiveLanes.Count - 1 do
+                let hash = nextActiveLanes.[laneIndex]
+                nextLaneIndexes.[hash] <- laneIndex
 
             let segments = System.Collections.Generic.List<LaneSegment>(activeLanes.Count + commit.Parents.Length)
 

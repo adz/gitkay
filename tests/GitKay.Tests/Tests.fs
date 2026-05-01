@@ -556,7 +556,81 @@ module AppTests =
         test <@ leftRow.Segments.Length = 2 @>
         test <@ leftRow.Segments |> List.exists (fun segment -> segment.IsCommit) @>
         test <@ leftRow.Segments |> List.exists (fun segment -> not segment.IsCommit) @>
-        test <@ leftRow.Segments |> List.exists (fun segment -> segment.Lane <> segment.TargetLane) @>
+        test <@ leftRow.Segments |> List.exists (fun segment -> not segment.IsCommit && segment.Lane = segment.TargetLane) @>
+
+    [<Fact>]
+    let ``calculateLanes should keep the neighboring branch lane anchored through a merge`` () =
+        let commits : Models.Commit list =
+            [
+                {
+                    Hash = "merge"
+                    AuthorName = "Author"
+                    AuthorEmail = "author@example.com"
+                    Timestamp = 1710000000L
+                    Parents = [ "left"; "right" ]
+                    Subject = "Merge branch"
+                    Message = "Merge branch"
+                    Refs = []
+                }
+                {
+                    Hash = "left"
+                    AuthorName = "Author"
+                    AuthorEmail = "author@example.com"
+                    Timestamp = 1709999940L
+                    Parents = [ "left-base" ]
+                    Subject = "Left"
+                    Message = "Left"
+                    Refs = []
+                }
+                {
+                    Hash = "right"
+                    AuthorName = "Author"
+                    AuthorEmail = "author@example.com"
+                    Timestamp = 1709999880L
+                    Parents = [ "right-base" ]
+                    Subject = "Right"
+                    Message = "Right"
+                    Refs = []
+                }
+                {
+                    Hash = "left-base"
+                    AuthorName = "Author"
+                    AuthorEmail = "author@example.com"
+                    Timestamp = 1709999820L
+                    Parents = []
+                    Subject = "Left base"
+                    Message = "Left base"
+                    Refs = []
+                }
+                {
+                    Hash = "right-base"
+                    AuthorName = "Author"
+                    AuthorEmail = "author@example.com"
+                    Timestamp = 1709999760L
+                    Parents = []
+                    Subject = "Right base"
+                    Message = "Right base"
+                    Refs = []
+                }
+            ]
+
+        let graph = Graph.calculateLanes commits
+
+        test <@ graph.Length = 5 @>
+
+        let mergeRow = graph.[0]
+        test <@ mergeRow.Lane = 0 @>
+        test <@ mergeRow.Segments |> List.map (fun segment -> segment.TargetLane) |> List.sort = [ 0; 1 ] @>
+
+        let leftRow = graph.[1]
+        test <@ leftRow.Lane = 0 @>
+        test <@ leftRow.Segments |> List.exists (fun segment -> not segment.IsCommit && segment.Lane = 1 && segment.TargetLane = 1) @>
+        test <@ leftRow.Segments |> List.exists (fun segment -> segment.IsCommit && segment.TargetLane = 0) @>
+
+        let rightRow = graph.[2]
+        test <@ rightRow.Lane = 1 @>
+        test <@ rightRow.Segments |> List.exists (fun segment -> not segment.IsCommit && segment.Lane = 0 && segment.TargetLane = 0) @>
+        test <@ rightRow.Segments |> List.exists (fun segment -> segment.IsCommit && segment.TargetLane = 1) @>
 
     let private sampleSearchResult (commit: Models.Commit) matchKinds matchSummary : GitService.SearchResult =
         {
