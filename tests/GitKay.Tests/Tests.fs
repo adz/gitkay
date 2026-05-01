@@ -1308,6 +1308,21 @@ module AppTests =
         test <@ dispatched = [| App.Msg.SetShowStashes false |] @>
 
     [<Fact>]
+    let ``MainProjection should keep the search panel hidden by default and preserve an explicit open state`` () =
+        let projection = MainProjection()
+        projection.SetDispatch ignore
+
+        test <@ not projection.IsSearchPanelExpanded @>
+
+        projection.IsSearchPanelExpanded <- true
+
+        test <@ projection.IsSearchPanelExpanded @>
+
+        projection.Update emptyModel
+
+        test <@ projection.IsSearchPanelExpanded @>
+
+    [<Fact>]
     let ``MainProjection should debounce live search updates as the query changes`` () =
         let projection = MainProjection()
         let messages = ConcurrentQueue<App.Msg>()
@@ -1434,6 +1449,7 @@ module AppTests =
         test <@ projection.SelectedDiffFiles.Count = 1 @>
         test <@ not projection.SelectedDiffFiles.[0].HasSearchMatch @>
         test <@ projection.SelectedDiffFiles.[0].SearchMatchSummary = "" @>
+        test <@ projection.IsSearchPanelExpanded @>
         test <@ projection.HasDiffSearchStatus @>
         test <@ projection.DiffSearchStatusText = "Searching diff for \"needle\"..." @>
         test <@ projection.SelectedDiffRows.Count = 3 @>

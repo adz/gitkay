@@ -35,12 +35,35 @@ public partial class MainWindow : Window
 
     private void OnProjectionPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(MainProjection.IsSearchPanelExpanded))
+        {
+            var currentProjection = _projection;
+            if (currentProjection == null || !currentProjection.IsSearchPanelExpanded)
+            {
+                return;
+            }
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!ReferenceEquals(_projection, currentProjection) || !currentProjection.IsSearchPanelExpanded)
+                {
+                    return;
+                }
+
+                SearchBox.Focus();
+                SearchBox.SelectAll();
+            });
+
+            return;
+        }
+
         if (e.PropertyName != nameof(MainProjection.SelectedCommit)
             && e.PropertyName != nameof(MainProjection.Commits)
             && e.PropertyName != nameof(MainProjection.VisibleCommits)
             && e.PropertyName != nameof(MainProjection.SelectedDiffFile)
             && e.PropertyName != nameof(MainProjection.SelectedDiffRow)
-            && e.PropertyName != nameof(MainProjection.SelectedDiffFiles))
+            && e.PropertyName != nameof(MainProjection.SelectedDiffFiles)
+            && e.PropertyName != nameof(MainProjection.IsSearchPanelExpanded))
         {
             return;
         }

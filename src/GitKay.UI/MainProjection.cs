@@ -56,6 +56,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private long _pendingDiffSearchReadyAtTicks;
     private CancellationTokenSource? _searchDebounceCancellation;
     private CancellationTokenSource? _diffSearchDebounceCancellation;
+    private bool _searchPanelAutoOpened;
 
     public ObservableCollection<SearchScopeProjection> SearchScopes { get; } = new()
     {
@@ -182,7 +183,20 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             }
         }
 
-        IsSearchPanelExpanded = !string.IsNullOrWhiteSpace(model.SearchQuery) || model.SearchResults != null;
+        var shouldAutoOpenSearchPanel =
+            !string.IsNullOrWhiteSpace(model.SearchQuery)
+            || model.SearchResults != null;
+
+        if (shouldAutoOpenSearchPanel)
+        {
+            IsSearchPanelExpanded = true;
+            _searchPanelAutoOpened = true;
+        }
+        else if (_searchPanelAutoOpened)
+        {
+            IsSearchPanelExpanded = false;
+            _searchPanelAutoOpened = false;
+        }
 
         var searchResultsChanged = !ReferenceEquals(_searchResultsSource, searchResultsSource);
 
@@ -826,6 +840,19 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public void RereadRefs() => _dispatch?.Invoke(GitKay.Core.App.Msg.RereadRefs);
 
     [RelayCommand]
+    private void ToggleSearchPanel()
+    {
+        if (IsSearchPanelExpanded)
+        {
+            IsSearchPanelExpanded = false;
+            _searchPanelAutoOpened = false;
+            return;
+        }
+
+        IsSearchPanelExpanded = true;
+    }
+
+    [RelayCommand]
     private void Search()
     {
         CancelSearchDebounce();
@@ -842,6 +869,13 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         CancelSearchDebounce();
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetSearchQuery(""));
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewRunSearch("", SelectedSearchScope?.Key ?? "all", Stopwatch.GetTimestamp()));
+    }
+
+    public string SearchPanelActionText => IsSearchPanelExpanded ? "Hide search" : "Search";
+
+    partial void OnIsSearchPanelExpandedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(SearchPanelActionText));
     }
 
     private void ScheduleSearchDebounce()
