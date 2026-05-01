@@ -165,9 +165,15 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                 ? (object?)model.SelectedDiffFiles.Value
                 : null;
 
+        var selectedDiffContentSource =
+            selectedDiffHash != null && model.SelectedDiff != null
+                ? (object?)model.SelectedDiff.Value
+                : null;
+
         var diffCollectionChanged =
             !string.Equals(_selectedDiffHash, selectedDiffHash, StringComparison.Ordinal)
-            || !ReferenceEquals(_selectedDiffFilesSource, selectedDiffFilesSource);
+            || !ReferenceEquals(_selectedDiffFilesSource, selectedDiffFilesSource)
+            || !ReferenceEquals(_selectedDiffFileSource, selectedDiffContentSource);
 
         if (selectedDiffHash == null)
         {
@@ -190,41 +196,27 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             var previousSelectedDiffFileKey = SelectedDiffFile?.Key;
 
             SyncSelectedDiffSelection(null);
-            SelectedDiffFiles.Clear();
             SelectedDiffRows.Clear();
 
             if (model.SelectedDiffFiles != null)
             {
-                SyncSelectedDiffFiles(model.SelectedDiffFiles.Value);
+                SyncSelectedDiffFiles(model.SelectedDiffFiles.Value, true);
             }
 
             _selectedDiffHash = selectedDiffHash;
             _selectedDiffFilesSource = selectedDiffFilesSource;
 
+            if (model.SelectedDiff != null)
+            {
+                SyncSelectedDiffFileContents(model.SelectedDiff.Value);
+            }
+
+            _selectedDiffFileSource = selectedDiffContentSource;
+
             var selectedDiffFile = ResolveSelectedDiffFile(model, previousSelectedDiffFileKey);
 
-            if (selectedDiffFile != null && model.SelectedDiffFile != null)
-            {
-                var loadedFile = model.SelectedDiffFile.Value;
-                var loadedKey = new DiffFileKey(loadedFile.OldPath, loadedFile.NewPath);
-
-                if (selectedDiffFile.Key.Equals(loadedKey))
-                {
-                    selectedDiffFile.ApplyContent(loadedFile);
-                    _selectedDiffFileSource = (object?)loadedFile;
-                }
-                else
-                {
-                    _selectedDiffFileSource = null;
-                }
-            }
-            else
-            {
-                _selectedDiffFileSource = null;
-            }
-
             SyncSelectedDiffSelection(selectedDiffFile);
-            RenderSelectedDiffRows(selectedDiffFile);
+            RenderSelectedDiffRows();
             _selectedDiffFileKey = selectedDiffFile?.Key;
             return;
         }
@@ -232,27 +224,32 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         if (model.SelectedDiffFiles != null)
         {
             var selectedDiffFile = ResolveSelectedDiffFile(model, _selectedDiffFileKey);
-            var selectedDiffFileContent = model.SelectedDiffFile != null ? (object?)model.SelectedDiffFile.Value : null;
             var selectedDiffFileKey = selectedDiffFile?.Key;
+            var diffContentChanged = !ReferenceEquals(_selectedDiffFileSource, selectedDiffContentSource);
+            var selectionChanged = !Nullable.Equals(_selectedDiffFileKey, selectedDiffFileKey);
 
-            if (selectedDiffFile != null && model.SelectedDiffFile != null)
+            if (diffContentChanged)
             {
-                var loadedFile = model.SelectedDiffFile.Value;
-                var loadedKey = new DiffFileKey(loadedFile.OldPath, loadedFile.NewPath);
-
-                if (selectedDiffFile.Key == loadedKey)
+                if (model.SelectedDiff != null)
                 {
-                    selectedDiffFile.ApplyContent(loadedFile);
-                    selectedDiffFileContent = (object?)loadedFile;
+                    SyncSelectedDiffFileContents(model.SelectedDiff.Value);
                 }
+                else
+                {
+                    foreach (var file in SelectedDiffFiles)
+                    {
+                        file.ClearContent();
+                    }
+                }
+
+                RenderSelectedDiffRows();
+                _selectedDiffFileSource = selectedDiffContentSource;
             }
 
-            if (!Nullable.Equals(_selectedDiffFileKey, selectedDiffFileKey) || !ReferenceEquals(_selectedDiffFileSource, selectedDiffFileContent))
+            if (selectionChanged || diffContentChanged)
             {
                 SyncSelectedDiffSelection(selectedDiffFile);
-                RenderSelectedDiffRows(selectedDiffFile);
                 _selectedDiffFileKey = selectedDiffFileKey;
-                _selectedDiffFileSource = selectedDiffFileContent;
             }
         }
     }
@@ -409,16 +406,14 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
 
         SyncSelectedDiffSelection(value);
-        RenderSelectedDiffRows(value);
 
         if (value == null || SelectedCommit == null)
         {
             return;
         }
 
-        var startedAtTicks = Stopwatch.GetTimestamp();
         LogTiming($"file click hash={SelectedCommit.FullHash} path={value.DisplayPath}");
-        _dispatch?.Invoke(GitKay.Core.App.Msg.NewSelectDiffFile(SelectedCommit.FullHash, value.Key.OldPath, value.Key.NewPath, startedAtTicks));
+        _dispatch?.Invoke(GitKay.Core.App.Msg.NewSelectDiffFile(SelectedCommit.FullHash, value.Key.OldPath, value.Key.NewPath));
     }
 
     partial void OnSelectedDiffRowChanged(IDiffRowProjection? value)
@@ -453,7 +448,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewRunSearch("", SelectedSearchScope?.Key ?? "all", Stopwatch.GetTimestamp()));
     }
 
-    private void SyncSelectedDiffFiles(IReadOnlyList<GitKay.Core.GitService.DiffFileSummary> summaries)
+    private void SyncSelectedDiffFiles(IReadOnlyList<GitKay.Core.GitService.DiffFileSummary> summaries, bool clearContent)
     {
         var existingByKey = SelectedDiffFiles.ToDictionary(file => file.Key);
 
@@ -469,6 +464,10 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             else
             {
                 fileProjection.UpdateSummary(summary);
+                if (clearContent)
+                {
+                    fileProjection.ClearContent();
+                }
             }
 
             SelectedDiffFiles.Add(fileProjection);
@@ -503,6 +502,25 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         return SelectedDiffFiles.FirstOrDefault();
     }
 
+    private void SyncSelectedDiffFileContents(IReadOnlyList<GitKay.Core.Models.FileDiff> files)
+    {
+        var filesByKey = files.ToDictionary(
+            file => new DiffFileKey(file.OldPath, file.NewPath),
+            file => file);
+
+        foreach (var fileProjection in SelectedDiffFiles)
+        {
+            if (filesByKey.TryGetValue(fileProjection.Key, out var loadedFile))
+            {
+                fileProjection.ApplyContent(loadedFile);
+            }
+            else
+            {
+                fileProjection.ClearContent();
+            }
+        }
+    }
+
     private void SyncSelectedSearchResult(SearchResultProjection? selectedSearchResult)
     {
         _suppressSearchSelectionDispatch = true;
@@ -516,29 +534,27 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
     }
 
-    private void RenderSelectedDiffRows(DiffFileProjection? selectedDiffFile)
+    private void RenderSelectedDiffRows()
     {
         SelectedDiffRows.Clear();
 
-        if (selectedDiffFile == null)
+        foreach (var file in SelectedDiffFiles)
         {
-            return;
-        }
+            SelectedDiffRows.Add(file.Header);
 
-        SelectedDiffRows.Add(selectedDiffFile.Header);
-
-        if (!selectedDiffFile.IsLoaded)
-        {
-            return;
-        }
-
-        foreach (var hunk in selectedDiffFile.Hunks)
-        {
-            SelectedDiffRows.Add(new DiffHunkHeaderProjection(hunk));
-
-            foreach (var line in hunk.Lines)
+            if (!file.IsLoaded)
             {
-                SelectedDiffRows.Add(line);
+                continue;
+            }
+
+            foreach (var hunk in file.Hunks)
+            {
+                SelectedDiffRows.Add(new DiffHunkHeaderProjection(hunk));
+
+                foreach (var line in hunk.Lines)
+                {
+                    SelectedDiffRows.Add(line);
+                }
             }
         }
     }

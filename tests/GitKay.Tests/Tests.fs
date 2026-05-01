@@ -482,10 +482,10 @@ module AppTests =
             SelectedCommitHash = None
             SelectedDiffHash = None
             SelectedDiffFiles = None
+            SelectedDiff = None
             SelectedDiffFileKey = None
-            SelectedDiffFile = None
             SelectionStartedAtTicks = None
-            SelectedDiffFileStartedAtTicks = None
+            SelectedDiffStartedAtTicks = None
             SearchStartedAtTicks = None
         }
 
@@ -511,10 +511,10 @@ module AppTests =
         test <@ next.SelectedCommitHash = Some "first" @>
         test <@ next.SelectedDiffHash = None @>
         test <@ next.SelectedDiffFiles = None @>
+        test <@ next.SelectedDiff = None @>
         test <@ next.SelectedDiffFileKey = None @>
-        test <@ next.SelectedDiffFile = None @>
         test <@ next.SelectionStartedAtTicks.IsSome @>
-        test <@ next.SelectedDiffFileStartedAtTicks = None @>
+        test <@ next.SelectedDiffStartedAtTicks.IsSome @>
 
     [<Fact>]
     let ``HistoryLoaded should keep an existing selected commit when it still exists`` () =
@@ -543,8 +543,8 @@ module AppTests =
                     SelectedCommitHash = Some "second"
                     SelectedDiffHash = Some "second"
                     SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
+                    SelectedDiff = Some [ selectedFile ]
                     SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" }
-                    SelectedDiffFile = Some selectedFile
             }
 
         let next, _ = App.update (App.Msg.HistoryLoaded (Ok commits)) initial
@@ -552,10 +552,10 @@ module AppTests =
         test <@ next.SelectedCommitHash = Some "second" @>
         test <@ next.SelectedDiffHash = Some "second" @>
         test <@ next.SelectedDiffFiles = initial.SelectedDiffFiles @>
+        test <@ next.SelectedDiff = initial.SelectedDiff @>
         test <@ next.SelectedDiffFileKey = initial.SelectedDiffFileKey @>
-        test <@ next.SelectedDiffFile = initial.SelectedDiffFile @>
         test <@ next.SelectionStartedAtTicks = None @>
-        test <@ next.SelectedDiffFileStartedAtTicks = None @>
+        test <@ next.SelectedDiffStartedAtTicks = None @>
 
     [<Fact>]
     let ``HistoryLoaded should fall back to the first commit when the previous selection is missing`` () =
@@ -585,9 +585,9 @@ module AppTests =
                     SelectedDiffHash = Some "missing"
                     SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
                     SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" }
-                    SelectedDiffFile = Some selectedFile
+                    SelectedDiff = Some [ selectedFile ]
                     SelectionStartedAtTicks = Some 1L
-                    SelectedDiffFileStartedAtTicks = Some 2L
+                    SelectedDiffStartedAtTicks = Some 2L
             }
 
         let next, _ = App.update (App.Msg.HistoryLoaded (Ok commits)) initial
@@ -596,10 +596,10 @@ module AppTests =
         test <@ next.SelectedCommitHash = Some "first" @>
         test <@ next.SelectedDiffHash = None @>
         test <@ next.SelectedDiffFiles = None @>
+        test <@ next.SelectedDiff = None @>
         test <@ next.SelectedDiffFileKey = None @>
-        test <@ next.SelectedDiffFile = None @>
         test <@ next.SelectionStartedAtTicks.IsSome @>
-        test <@ next.SelectedDiffFileStartedAtTicks = None @>
+        test <@ next.SelectedDiffStartedAtTicks.IsSome @>
 
     [<Fact>]
     let ``SelectCommit should clear diff state and start loading the new file list`` () =
@@ -623,9 +623,9 @@ module AppTests =
                     SelectedDiffHash = Some "old"
                     SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
                     SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" }
-                    SelectedDiffFile = Some selectedFile
+                    SelectedDiff = Some [ selectedFile ]
                     SelectionStartedAtTicks = Some 1L
-                    SelectedDiffFileStartedAtTicks = Some 2L
+                    SelectedDiffStartedAtTicks = Some 2L
             }
 
         let next, _ = App.update (App.Msg.SelectCommit("new", 42L)) initial
@@ -633,13 +633,13 @@ module AppTests =
         test <@ next.SelectedCommitHash = Some "new" @>
         test <@ next.SelectedDiffHash = None @>
         test <@ next.SelectedDiffFiles = None @>
+        test <@ next.SelectedDiff = None @>
         test <@ next.SelectedDiffFileKey = None @>
-        test <@ next.SelectedDiffFile = None @>
         test <@ next.SelectionStartedAtTicks = Some 42L @>
-        test <@ next.SelectedDiffFileStartedAtTicks = None @>
+        test <@ next.SelectedDiffStartedAtTicks = Some 42L @>
 
     [<Fact>]
-    let ``DiffFilesLoaded should select the first file and queue its hydration`` () =
+    let ``DiffFilesLoaded should select the first file while the unified diff is still loading`` () =
         let files =
             [
                 sampleSummary "foo.txt" "foo.txt" "foo.txt"
@@ -651,6 +651,7 @@ module AppTests =
                 emptyModel with
                     SelectedCommitHash = Some "commit"
                     SelectionStartedAtTicks = Some 7L
+                    SelectedDiffStartedAtTicks = Some 7L
             }
 
         let next, _ = App.update (App.Msg.DiffFilesLoaded("commit", 7L, Ok files)) initial
@@ -658,10 +659,10 @@ module AppTests =
         test <@ next.SelectedCommitHash = Some "commit" @>
         test <@ next.SelectedDiffHash = Some "commit" @>
         test <@ next.SelectedDiffFiles = Some files @>
+        test <@ next.SelectedDiff = None @>
         test <@ next.SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" } @>
-        test <@ next.SelectedDiffFile = None @>
         test <@ next.SelectionStartedAtTicks = None @>
-        test <@ next.SelectedDiffFileStartedAtTicks.IsSome @>
+        test <@ next.SelectedDiffStartedAtTicks = Some 7L @>
 
     [<Fact>]
     let ``DiffFilesLoaded should ignore stale file list results from an earlier selection`` () =
@@ -678,13 +679,13 @@ module AppTests =
         test <@ next.SelectedCommitHash = Some "new" @>
         test <@ next.SelectedDiffHash = None @>
         test <@ next.SelectedDiffFiles = None @>
+        test <@ next.SelectedDiff = None @>
         test <@ next.SelectedDiffFileKey = None @>
-        test <@ next.SelectedDiffFile = None @>
         test <@ next.SelectionStartedAtTicks = Some 2L @>
-        test <@ next.SelectedDiffFileStartedAtTicks = None @>
+        test <@ next.SelectedDiffStartedAtTicks = Some 2L @>
 
     [<Fact>]
-    let ``SelectDiffFile should update the selected file without loading every file`` () =
+    let ``DiffLoaded should hydrate the unified diff projection when the request is current`` () =
         let files =
             [
                 sampleSummary "foo.txt" "foo.txt" "foo.txt"
@@ -697,16 +698,65 @@ module AppTests =
                     SelectedCommitHash = Some "commit"
                     SelectedDiffHash = Some "commit"
                     SelectedDiffFiles = Some files
+                    SelectedDiffStartedAtTicks = Some 42L
                     SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" }
-                    SelectedDiffFile = Some (sampleFile "foo.txt" "foo.txt" [])
-                    SelectedDiffFileStartedAtTicks = Some 1L
             }
 
-        let next, _ = App.update (App.Msg.SelectDiffFile("commit", "/dev/null", "bar.txt", 42L)) initial
+        let diff =
+            [
+                sampleFile
+                    "foo.txt"
+                    "foo.txt"
+                    [
+                        {
+                            Type = Models.Context
+                            Content = "line1"
+                            OldLineNo = Some 1
+                            NewLineNo = Some 1
+                        }
+                    ]
+                sampleFile
+                    "/dev/null"
+                    "bar.txt"
+                    [
+                        {
+                            Type = Models.Added
+                            Content = "new file line"
+                            OldLineNo = None
+                            NewLineNo = Some 1
+                        }
+                    ]
+            ]
+
+        let next, _ = App.update (App.Msg.DiffLoaded("commit", 42L, Ok diff)) initial
+
+        test <@ next.SelectedDiffHash = Some "commit" @>
+        test <@ next.SelectedDiff = Some diff @>
+        test <@ next.SelectedDiffStartedAtTicks = None @>
+
+    [<Fact>]
+    let ``SelectDiffFile should update the navigation target without reloading the diff`` () =
+        let files =
+            [
+                sampleSummary "foo.txt" "foo.txt" "foo.txt"
+                sampleSummary "/dev/null" "bar.txt" "bar.txt (new file)"
+            ]
+
+        let initial =
+            {
+                emptyModel with
+                    SelectedCommitHash = Some "commit"
+                    SelectedDiffHash = Some "commit"
+                    SelectedDiffFiles = Some files
+                    SelectedDiff = Some [ sampleFile "foo.txt" "foo.txt" [] ]
+                    SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" }
+            }
+
+        let next, _ = App.update (App.Msg.SelectDiffFile("commit", "/dev/null", "bar.txt")) initial
 
         test <@ next.SelectedDiffFileKey = Some { OldPath = "/dev/null"; NewPath = "bar.txt" } @>
-        test <@ next.SelectedDiffFile = None @>
-        test <@ next.SelectedDiffFileStartedAtTicks = Some 42L @>
+        test <@ next.SelectedDiff = initial.SelectedDiff @>
+        test <@ next.SelectedDiffStartedAtTicks = None @>
 
     [<Fact>]
     let ``RunSearch should record the pending search and clear stale results`` () =
@@ -752,7 +802,7 @@ module AppTests =
         test <@ next.Status = "Search: 1 hit(s) for \"needle\"" @>
 
     [<Fact>]
-    let ``MainProjection should sync the selected file to the left diff focus row`` () =
+    let ``MainProjection should render the unified diff while keeping file navigation in sync`` () =
         let projection = MainProjection()
         projection.SetDispatch ignore
 
@@ -772,6 +822,19 @@ module AppTests =
                     }
                 ]
 
+        let barFile =
+            sampleFile
+                "/dev/null"
+                "bar.txt"
+                [
+                    {
+                        Type = Models.Added
+                        Content = "new file line"
+                        OldLineNo = None
+                        NewLineNo = Some 1
+                    }
+                ]
+
         let barSummary =
             sampleSummary "/dev/null" "bar.txt" "bar.txt (new file)"
 
@@ -786,15 +849,15 @@ module AppTests =
                     SelectedCommitHash = Some commit.Hash
                     SelectedDiffHash = Some commit.Hash
                     SelectedDiffFiles = Some [ fooSummary; barSummary ]
+                    SelectedDiff = Some [ fooFile; barFile ]
                     SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" }
-                    SelectedDiffFile = Some fooFile
             }
 
         projection.Update model
 
         test <@ projection.SelectedDiffFiles.Count = 2 @>
         test <@ projection.SelectedDiffFile.DisplayPath = "foo.txt" @>
-        test <@ projection.SelectedDiffRows.Count = 3 @>
+        test <@ projection.SelectedDiffRows.Count = 6 @>
 
         match projection.SelectedDiffRow with
         | :? DiffFileHeaderProjection as header -> test <@ header.DisplayPath = "foo.txt" @>
@@ -806,35 +869,7 @@ module AppTests =
         | :? DiffFileHeaderProjection as header -> test <@ header.DisplayPath = "bar.txt (new file)" @>
         | other -> failwithf "Expected a file header after selection sync, got %A" other
 
-        test <@ projection.SelectedDiffRows.Count = 1 @>
-
-        let hydratedBarFile =
-            sampleFile
-                "/dev/null"
-                "bar.txt"
-                [
-                    {
-                        Type = Models.Added
-                        Content = "new file line"
-                        OldLineNo = None
-                        NewLineNo = Some 1
-                    }
-                ]
-
-        let hydratedModel =
-            {
-                model with
-                    SelectedDiffFileKey = Some { OldPath = "/dev/null"; NewPath = "bar.txt" }
-                    SelectedDiffFile = Some hydratedBarFile
-            }
-
-        projection.Update hydratedModel
-
-        test <@ projection.SelectedDiffRows.Count = 3 @>
-
-        match projection.SelectedDiffRow with
-        | :? DiffFileHeaderProjection as header -> test <@ header.DisplayPath = "bar.txt (new file)" @>
-        | other -> failwithf "Expected a file header after hydration, got %A" other
+        test <@ projection.SelectedDiffRows.Count = 6 @>
 
     [<Fact>]
     let ``MainProjection should dispatch diff file selection and keep the focus row in sync`` () =
@@ -858,6 +893,19 @@ module AppTests =
                     }
                 ]
 
+        let barFile =
+            sampleFile
+                "/dev/null"
+                "bar.txt"
+                [
+                    {
+                        Type = Models.Added
+                        Content = "new file line"
+                        OldLineNo = None
+                        NewLineNo = Some 1
+                    }
+                ]
+
         let barSummary =
             sampleSummary "/dev/null" "bar.txt" "bar.txt (new file)"
 
@@ -872,8 +920,8 @@ module AppTests =
                     SelectedCommitHash = Some commit.Hash
                     SelectedDiffHash = Some commit.Hash
                     SelectedDiffFiles = Some [ fooSummary; barSummary ]
+                    SelectedDiff = Some [ fooFile; barFile ]
                     SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" }
-                    SelectedDiffFile = Some fooFile
             }
 
         projection.Update model
@@ -881,14 +929,14 @@ module AppTests =
         projection.SelectedDiffFile <- projection.SelectedDiffFiles.[1]
 
         test <@ projection.SelectedDiffFile.DisplayPath = "bar.txt (new file)" @>
-        test <@ projection.SelectedDiffRows.Count = 1 @>
+        test <@ projection.SelectedDiffRows.Count = 6 @>
 
         match projection.SelectedDiffRow with
         | :? DiffFileHeaderProjection as header -> test <@ header.DisplayPath = "bar.txt (new file)" @>
         | other -> failwithf "Expected the diff focus row to follow the selected file, got %A" other
 
         match lastMsg with
-        | Some (App.Msg.SelectDiffFile(hash, oldPath, newPath, _)) ->
+        | Some (App.Msg.SelectDiffFile(hash, oldPath, newPath)) ->
             test <@ hash = commit.Hash @>
             test <@ oldPath = "/dev/null" @>
             test <@ newPath = "bar.txt" @>
@@ -953,58 +1001,60 @@ module AppTests =
         test <@ details.Contains("boom") @>
 
     [<Fact>]
-    let ``DiffFileLoaded should ignore stale file results`` () =
+    let ``DiffLoaded should ignore stale unified diff results`` () =
         let initial =
             {
                 emptyModel with
                     SelectedCommitHash = Some "new"
                     SelectedDiffHash = Some "new"
                     SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
+                    SelectedDiffStartedAtTicks = Some 42L
                     SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" }
-                    SelectedDiffFileStartedAtTicks = Some 42L
             }
 
-        let loadedFile = sampleFile "foo.txt" "foo.txt" []
+        let loadedDiff = [ sampleFile "foo.txt" "foo.txt" [] ]
 
-        let next, _ = App.update (App.Msg.DiffFileLoaded("old", "foo.txt", "foo.txt", 1L, Ok loadedFile)) initial
+        let next, _ = App.update (App.Msg.DiffLoaded("old", 1L, Ok loadedDiff)) initial
 
         test <@ next.SelectedCommitHash = Some "new" @>
         test <@ next.SelectedDiffHash = Some "new" @>
         test <@ next.SelectedDiffFiles = initial.SelectedDiffFiles @>
         test <@ next.SelectedDiffFileKey = initial.SelectedDiffFileKey @>
-        test <@ next.SelectedDiffFile = None @>
-        test <@ next.SelectedDiffFileStartedAtTicks = Some 42L @>
+        test <@ next.SelectedDiff = None @>
+        test <@ next.SelectedDiffStartedAtTicks = Some 42L @>
 
     [<Fact>]
-    let ``DiffFileLoaded should apply the selected file when the request is current`` () =
+    let ``DiffLoaded should apply the unified diff when the request is current`` () =
         let initial =
             {
                 emptyModel with
                     SelectedCommitHash = Some "new"
                     SelectedDiffHash = Some "new"
                     SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
+                    SelectedDiffStartedAtTicks = Some 42L
                     SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" }
-                    SelectedDiffFileStartedAtTicks = Some 42L
             }
 
-        let loadedFile =
-            sampleFile
-                "foo.txt"
-                "foo.txt"
-                [
-                    {
-                        Type = Models.Context
-                        Content = "line1"
-                        OldLineNo = Some 1
-                        NewLineNo = Some 1
-                    }
-                ]
+        let loadedDiff =
+            [
+                sampleFile
+                    "foo.txt"
+                    "foo.txt"
+                    [
+                        {
+                            Type = Models.Context
+                            Content = "line1"
+                            OldLineNo = Some 1
+                            NewLineNo = Some 1
+                        }
+                    ]
+            ]
 
-        let current, _ = App.update (App.Msg.DiffFileLoaded("new", "foo.txt", "foo.txt", 42L, Ok loadedFile)) initial
+        let current, _ = App.update (App.Msg.DiffLoaded("new", 42L, Ok loadedDiff)) initial
 
         test <@ current.SelectedCommitHash = Some "new" @>
         test <@ current.SelectedDiffHash = Some "new" @>
         test <@ current.SelectedDiffFiles = initial.SelectedDiffFiles @>
         test <@ current.SelectedDiffFileKey = initial.SelectedDiffFileKey @>
-        test <@ current.SelectedDiffFile = Some loadedFile @>
-        test <@ current.SelectedDiffFileStartedAtTicks = None @>
+        test <@ current.SelectedDiff = Some loadedDiff @>
+        test <@ current.SelectedDiffStartedAtTicks = None @>

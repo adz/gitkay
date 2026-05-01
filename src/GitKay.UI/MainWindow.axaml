@@ -228,79 +228,86 @@
 
             <Grid Grid.Row="2" ColumnDefinitions="*,4,280" Background="#1e1e1e">
                 <Border Grid.Column="0" Background="#1e1e1e" BorderBrush="#333" BorderThickness="0,1,0,0">
-                    <ListBox x:Name="DiffRowsListBox"
-                             ItemsSource="{Binding SelectedDiffRows}"
-                             SelectedItem="{Binding SelectedDiffRow}"
-                             Background="Transparent"
-                             BorderThickness="0"
-                             SelectionMode="Single"
-                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                             ScrollViewer.VerticalScrollBarVisibility="Auto"
-                             KeyDown="OnDiffListBoxKeyDown"
-                             GotFocus="OnDiffRowsListBoxGotFocus">
-                        <ListBox.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <VirtualizingStackPanel />
-                            </ItemsPanelTemplate>
-                        </ListBox.ItemsPanel>
-                        <ListBox.Styles>
-                            <Style Selector="ListBoxItem">
-                                <Setter Property="Padding" Value="0" />
-                                <Setter Property="Background" Value="Transparent" />
-                                <Setter Property="BorderThickness" Value="0" />
-                            </Style>
-                            <Style Selector="ListBoxItem:selected">
-                                <Setter Property="Background" Value="#333" />
-                            </Style>
-                            <Style Selector="ListBoxItem:pointerover">
-                                <Setter Property="Background" Value="#2a2a2a" />
-                            </Style>
-                        </ListBox.Styles>
-                        <ListBox.DataTemplates>
-                            <DataTemplate DataType="{x:Type local:DiffFileHeaderProjection}" x:DataType="local:DiffFileHeaderProjection">
-                                <Border Margin="10,10,10,0" Padding="10" Background="#252526" BorderBrush="#333" BorderThickness="1" CornerRadius="4">
-                                    <TextBlock Text="{Binding DisplayPath}" Foreground="#4ec9b0" FontWeight="SemiBold" FontSize="13"/>
-                                </Border>
-                            </DataTemplate>
-                            <DataTemplate DataType="{x:Type local:DiffHunkHeaderProjection}" x:DataType="local:DiffHunkHeaderProjection">
-                                <TextBlock Margin="20,8,10,2"
-                                           Text="{Binding Header}"
-                                           FontFamily="Cascadia Code,Consolas,Monospace"
-                                           FontSize="11"
-                                           Foreground="#888"/>
-                            </DataTemplate>
-                            <DataTemplate DataType="{x:Type local:DiffLineProjection}" x:DataType="local:DiffLineProjection">
-                                <Grid Margin="20,0,10,1" ColumnDefinitions="56,56,20,*">
-                                    <TextBlock Grid.Column="0"
-                                               Text="{Binding OldLineNoText}"
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Top"
+                                   Text="Unified diff"
+                                   Foreground="#ddd"
+                                   FontWeight="SemiBold"
+                                   Margin="10,8,10,6" />
+                        <ListBox x:Name="DiffRowsListBox"
+                                 ItemsSource="{Binding SelectedDiffRows}"
+                                 SelectedItem="{Binding SelectedDiffRow}"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 SelectionMode="Single"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 KeyDown="OnDiffListBoxKeyDown"
+                                 GotFocus="OnDiffRowsListBoxGotFocus">
+                            <ListBox.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <VirtualizingStackPanel />
+                                </ItemsPanelTemplate>
+                            </ListBox.ItemsPanel>
+                            <ListBox.Styles>
+                                <Style Selector="ListBoxItem">
+                                    <Setter Property="Padding" Value="0" />
+                                    <Setter Property="Background" Value="Transparent" />
+                                    <Setter Property="BorderThickness" Value="0" />
+                                </Style>
+                                <Style Selector="ListBoxItem:selected">
+                                    <Setter Property="Background" Value="#333" />
+                                </Style>
+                                <Style Selector="ListBoxItem:pointerover">
+                                    <Setter Property="Background" Value="#2a2a2a" />
+                                </Style>
+                            </ListBox.Styles>
+                            <ListBox.DataTemplates>
+                                <DataTemplate DataType="{x:Type local:DiffFileHeaderProjection}" x:DataType="local:DiffFileHeaderProjection">
+                                    <Border Margin="10,10,10,0" Padding="10" Background="#252526" BorderBrush="#333" BorderThickness="1" CornerRadius="4">
+                                        <TextBlock Text="{Binding DisplayPath}" Foreground="#4ec9b0" FontWeight="SemiBold" FontSize="13"/>
+                                    </Border>
+                                </DataTemplate>
+                                <DataTemplate DataType="{x:Type local:DiffHunkHeaderProjection}" x:DataType="local:DiffHunkHeaderProjection">
+                                    <TextBlock Margin="20,8,10,2"
+                                               Text="{Binding Header}"
                                                FontFamily="Cascadia Code,Consolas,Monospace"
-                                               FontSize="12"
-                                               Foreground="#666"
-                                               HorizontalAlignment="Right"
-                                               Margin="0,0,8,0"/>
-                                    <TextBlock Grid.Column="1"
-                                               Text="{Binding NewLineNoText}"
-                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                               FontSize="12"
-                                               Foreground="#666"
-                                               HorizontalAlignment="Right"
-                                               Margin="0,0,8,0"/>
-                                    <TextBlock Grid.Column="2"
-                                               Text="{Binding Prefix}"
-                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                               FontSize="12"
-                                               Foreground="{Binding Foreground}"
-                                               Margin="0,0,6,0"/>
-                                    <TextBlock Grid.Column="3"
-                                               Text="{Binding Content}"
-                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                               FontSize="12"
-                                               Foreground="{Binding Foreground}"
-                                               TextWrapping="NoWrap"/>
-                                </Grid>
-                            </DataTemplate>
-                        </ListBox.DataTemplates>
-                    </ListBox>
+                                               FontSize="11"
+                                               Foreground="#888"/>
+                                </DataTemplate>
+                                <DataTemplate DataType="{x:Type local:DiffLineProjection}" x:DataType="local:DiffLineProjection">
+                                    <Grid Margin="20,0,10,1" ColumnDefinitions="56,56,20,*">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding OldLineNoText}"
+                                                   FontFamily="Cascadia Code,Consolas,Monospace"
+                                                   FontSize="12"
+                                                   Foreground="#666"
+                                                   HorizontalAlignment="Right"
+                                                   Margin="0,0,8,0"/>
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding NewLineNoText}"
+                                                   FontFamily="Cascadia Code,Consolas,Monospace"
+                                                   FontSize="12"
+                                                   Foreground="#666"
+                                                   HorizontalAlignment="Right"
+                                                   Margin="0,0,8,0"/>
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{Binding Prefix}"
+                                                   FontFamily="Cascadia Code,Consolas,Monospace"
+                                                   FontSize="12"
+                                                   Foreground="{Binding Foreground}"
+                                                   Margin="0,0,6,0"/>
+                                        <TextBlock Grid.Column="3"
+                                                   Text="{Binding Content}"
+                                                   FontFamily="Cascadia Code,Consolas,Monospace"
+                                                   FontSize="12"
+                                                   Foreground="{Binding Foreground}"
+                                                   TextWrapping="NoWrap"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.DataTemplates>
+                        </ListBox>
+                    </DockPanel>
                 </Border>
 
                 <GridSplitter Grid.Column="1" Width="4" HorizontalAlignment="Stretch" Background="#333" ResizeDirection="Columns"/>
