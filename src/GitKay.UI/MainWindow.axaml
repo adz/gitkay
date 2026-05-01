@@ -124,80 +124,57 @@
                                         Padding="0"
                                         Background="{Binding RowBackground}"
                                         CornerRadius="2">
-                                    <Grid ColumnDefinitions="48,*,54,110,110" MinHeight="16" Background="Transparent">
-                                        <Grid.ContextMenu>
-                                            <ContextMenu>
-                                                <MenuItem Header="Create _Tag here..." Command="{Binding CreateTagCommand}" />
-                                                <MenuItem Header="Create _Branch here..." Command="{Binding CreateBranchCommand}" />
-                                                <Separator />
-                                                <MenuItem Header="_Cherry-pick this commit" Command="{Binding CherryPickCommand}" />
-                                                <MenuItem Header="_Revert this commit" Command="{Binding RevertCommand}" />
-                                                <Separator />
-                                                <MenuItem Header="_Reset current branch to here">
-                                                    <MenuItem Header="_Soft" Command="{Binding ResetSoftCommand}" />
-                                                    <MenuItem Header="_Hard" Command="{Binding ResetHardCommand}" />
-                                                </MenuItem>
-                                            </ContextMenu>
-                                        </Grid.ContextMenu>
+                                    <Grid RowDefinitions="Auto,Auto" Background="Transparent">
+                                        <Grid Grid.Row="0" ColumnDefinitions="48,*,54,110,110" MinHeight="16" Background="Transparent">
+                                            <Grid.ContextMenu>
+                                                <ContextMenu>
+                                                    <MenuItem Header="Create _Tag here..." Command="{Binding CreateTagCommand}" />
+                                                    <MenuItem Header="Create _Branch here..." Command="{Binding CreateBranchCommand}" />
+                                                    <Separator />
+                                                    <MenuItem Header="_Cherry-pick this commit" Command="{Binding CherryPickCommand}" />
+                                                    <MenuItem Header="_Revert this commit" Command="{Binding RevertCommand}" />
+                                                    <Separator />
+                                                    <MenuItem Header="_Reset current branch to here">
+                                                        <MenuItem Header="_Soft" Command="{Binding ResetSoftCommand}" />
+                                                        <MenuItem Header="_Hard" Command="{Binding ResetHardCommand}" />
+                                                    </MenuItem>
+                                                </ContextMenu>
+                                            </Grid.ContextMenu>
 
-                                        <local:GraphRowControl Grid.Column="0"
-                                                               Segments="{Binding Segments}"
-                                                               CommitLane="{Binding Lane}"
-                                                               ShowConnectorLine="{Binding HasRefBadges}"
-                                                               Height="14"
-                                                               VerticalAlignment="Center" />
+                                            <local:GraphRowControl Grid.Column="0"
+                                                                   Segments="{Binding Segments}"
+                                                                   CommitLane="{Binding Lane}"
+                                                                   ShowConnectorLine="{Binding HasRefBadges}"
+                                                                   Height="14"
+                                                                   VerticalAlignment="Center" />
 
-                                        <Grid Grid.Column="1"
-                                              Margin="0,0,2,0"
-                                              ColumnDefinitions="Auto,*"
-                                              ColumnSpacing="2"
-                                              VerticalAlignment="Center">
-                                            <ItemsControl ItemsSource="{Binding RefBadges}"
-                                                          IsVisible="{Binding HasRefBadges}"
-                                                          HorizontalAlignment="Left"
-                                                          VerticalAlignment="Center">
-                                                <ItemsControl.ItemsPanel>
-                                                    <ItemsPanelTemplate>
-                                                        <WrapPanel />
-                                                    </ItemsPanelTemplate>
-                                                </ItemsControl.ItemsPanel>
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate x:DataType="local:CommitRefProjection">
-                                                        <Grid Margin="0,0,2,0"
-                                                              VerticalAlignment="Center"
+                                            <Grid Grid.Column="1"
+                                                  Margin="0,0,2,0"
+                                                  ColumnDefinitions="Auto,*"
+                                                  ColumnSpacing="2"
+                                                  VerticalAlignment="Center">
+                                                <ItemsControl ItemsSource="{Binding RefBadges}"
+                                                              IsVisible="{Binding HasRefBadges}"
                                                               HorizontalAlignment="Left"
-                                                              ClipToBounds="False">
-                                                            <Border IsVisible="{Binding IsNotTag}"
-                                                                    Background="{Binding Background}"
-                                                                    BorderBrush="{Binding BorderBrush}"
-                                                                    BorderThickness="1"
-                                                                    CornerRadius="0"
-                                                                    Padding="3,0,3,0"
-                                                                    MinHeight="14">
-                                                                <TextBlock Text="{Binding Text}"
-                                                                           Foreground="{Binding Foreground}"
-                                                                           FontSize="{Binding DataContext.CommitRowBadgeFontSize, ElementName=RootWindow}"
-                                                                           FontWeight="SemiBold"
-                                                                           TextTrimming="CharacterEllipsis"
-                                                                           VerticalAlignment="Center" />
-                                                            </Border>
-                                                            <Grid IsVisible="{Binding IsTag}"
-                                                                  ColumnDefinitions="7,Auto"
-                                                                  MinHeight="14">
-                                                                <Path Grid.Column="0"
-                                                                      Data="M 7,0 L 7,14 L 0,7 Z"
-                                                                      Fill="{Binding Background}"
-                                                                      Stroke="{Binding BorderBrush}"
-                                                                      StrokeThickness="1"
-                                                                      Stretch="Fill"
-                                                                      VerticalAlignment="Stretch"
-                                                                      HorizontalAlignment="Stretch" />
-                                                                <Border Grid.Column="1"
+                                                              VerticalAlignment="Center">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <WrapPanel />
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="local:CommitRefProjection">
+                                                            <Grid Margin="0,0,2,0"
+                                                                  VerticalAlignment="Center"
+                                                                  HorizontalAlignment="Left"
+                                                                  ClipToBounds="False">
+                                                                <Border IsVisible="{Binding IsNotTag}"
                                                                         Background="{Binding Background}"
                                                                         BorderBrush="{Binding BorderBrush}"
                                                                         BorderThickness="1"
-                                                                        Margin="-1,0,0,0"
-                                                                        Padding="4,0,4,0">
+                                                                        CornerRadius="0"
+                                                                        Padding="3,0,3,0"
+                                                                        MinHeight="14">
                                                                     <TextBlock Text="{Binding Text}"
                                                                                Foreground="{Binding Foreground}"
                                                                                FontSize="{Binding DataContext.CommitRowBadgeFontSize, ElementName=RootWindow}"
@@ -205,45 +182,80 @@
                                                                                TextTrimming="CharacterEllipsis"
                                                                                VerticalAlignment="Center" />
                                                                 </Border>
+                                                                <Grid IsVisible="{Binding IsTag}"
+                                                                      ColumnDefinitions="7,Auto"
+                                                                      MinHeight="14">
+                                                                    <Path Grid.Column="0"
+                                                                          Data="M 7,0 L 7,14 L 0,7 Z"
+                                                                          Fill="{Binding Background}"
+                                                                          Stroke="{Binding BorderBrush}"
+                                                                          StrokeThickness="1"
+                                                                          Stretch="Fill"
+                                                                          VerticalAlignment="Stretch"
+                                                                          HorizontalAlignment="Stretch" />
+                                                                    <Border Grid.Column="1"
+                                                                            Background="{Binding Background}"
+                                                                            BorderBrush="{Binding BorderBrush}"
+                                                                            BorderThickness="1"
+                                                                            Margin="-1,0,0,0"
+                                                                            Padding="4,0,4,0">
+                                                                        <TextBlock Text="{Binding Text}"
+                                                                                   Foreground="{Binding Foreground}"
+                                                                                   FontSize="{Binding DataContext.CommitRowBadgeFontSize, ElementName=RootWindow}"
+                                                                                   FontWeight="SemiBold"
+                                                                                   TextTrimming="CharacterEllipsis"
+                                                                                   VerticalAlignment="Center" />
+                                                                    </Border>
+                                                                </Grid>
                                                             </Grid>
-                                                        </Grid>
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
-                                            <TextBlock Grid.Column="1"
-                                                       Text="{Binding Subject}"
-                                                       FontWeight="SemiBold"
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{Binding Subject}"
+                                                           FontWeight="SemiBold"
+                                                           FontSize="{Binding DataContext.CommitRowTextFontSize, ElementName=RootWindow}"
+                                                           FontFamily="{Binding DataContext.CommitRowFontFamily, ElementName=RootWindow}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           VerticalAlignment="Center" />
+                                            </Grid>
+
+                                            <TextBlock Grid.Column="2"
+                                                       Text="{Binding Hash}"
+                                                       Foreground="#888"
                                                        FontSize="{Binding DataContext.CommitRowTextFontSize, ElementName=RootWindow}"
-                                                       FontFamily="{Binding DataContext.CommitRowFontFamily, ElementName=RootWindow}"
+                                                       Margin="2,0,0,0"
+                                                       VerticalAlignment="Center"
+                                                       FontFamily="{Binding DataContext.CommitRowMonoFontFamily, ElementName=RootWindow}" />
+
+                                            <TextBlock Grid.Column="3"
+                                                       Text="{Binding Author}"
+                                                       Foreground="#aaa"
+                                                       FontSize="{Binding DataContext.CommitRowMetaFontSize, ElementName=RootWindow}"
+                                                       Margin="2,0"
+                                                       VerticalAlignment="Center"
                                                        TextTrimming="CharacterEllipsis"
-                                                       VerticalAlignment="Center" />
+                                                       FontFamily="{Binding DataContext.CommitRowFontFamily, ElementName=RootWindow}" />
+
+                                            <TextBlock Grid.Column="4"
+                                                       Text="{Binding Date}"
+                                                       Foreground="#888"
+                                                       FontSize="{Binding DataContext.CommitRowMetaFontSize, ElementName=RootWindow}"
+                                                       Margin="2,0"
+                                                       HorizontalAlignment="Right"
+                                                       VerticalAlignment="Center"
+                                                       FontFamily="{Binding DataContext.CommitRowFontFamily, ElementName=RootWindow}" />
                                         </Grid>
 
-                                        <TextBlock Grid.Column="2"
-                                                   Text="{Binding Hash}"
-                                                   Foreground="#888"
-                                                   FontSize="{Binding DataContext.CommitRowTextFontSize, ElementName=RootWindow}"
-                                                   Margin="2,0,0,0"
-                                                   VerticalAlignment="Center"
-                                                   FontFamily="{Binding DataContext.CommitRowMonoFontFamily, ElementName=RootWindow}" />
-
-                                        <TextBlock Grid.Column="3"
-                                                   Text="{Binding Author}"
-                                                   Foreground="#aaa"
+                                        <TextBlock Grid.Row="1"
+                                                   Grid.ColumnSpan="5"
+                                                   Margin="58,0,10,4"
+                                                   Text="{Binding SecondarySummary}"
+                                                   IsVisible="{Binding HasSecondarySummary}"
+                                                   Foreground="#d7ba7d"
                                                    FontSize="{Binding DataContext.CommitRowMetaFontSize, ElementName=RootWindow}"
-                                                   Margin="2,0"
-                                                   VerticalAlignment="Center"
                                                    TextTrimming="CharacterEllipsis"
-                                                   FontFamily="{Binding DataContext.CommitRowFontFamily, ElementName=RootWindow}" />
-
-                                        <TextBlock Grid.Column="4"
-                                                   Text="{Binding Date}"
-                                                   Foreground="#888"
-                                                   FontSize="{Binding DataContext.CommitRowMetaFontSize, ElementName=RootWindow}"
-                                                   Margin="2,0"
-                                                   HorizontalAlignment="Right"
-                                                   VerticalAlignment="Center"
-                                                   FontFamily="{Binding DataContext.CommitRowFontFamily, ElementName=RootWindow}" />
+                                                   TextWrapping="NoWrap" />
                                     </Grid>
                                 </Border>
                             </DataTemplate>

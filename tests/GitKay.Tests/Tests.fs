@@ -1239,7 +1239,7 @@ module AppTests =
         | other -> failwithf "Expected a diff file selection message, got %A" other
 
     [<Fact>]
-    let ``MainProjection should filter the commit list to matching commits`` () =
+    let ``MainProjection should keep the full commit list visible when search matches`` () =
         let projection = MainProjection()
         projection.SetDispatch ignore
 
@@ -1255,15 +1255,36 @@ module AppTests =
                     Commits = Graph.calculateLanes [ commit; otherCommit ]
                     SearchQuery = "needle"
                     SearchScopeKey = "all"
-                    SearchResults = Some [ sampleSearchResult commit [ "message" ] "message" ]
+                    SearchResults =
+                        Some
+                            [
+                                sampleSearchResultWithContext
+                                    commit
+                                    [ "message"; "path" ]
+                                    "message; paths: src/needle.txt"
+                                    [ "src/needle.txt" ]
+                                    []
+                            ]
             }
 
         projection.Update model
 
         test <@ projection.HasSearchResults @>
         test <@ projection.SearchResults.Count = 1 @>
-        test <@ projection.VisibleCommits.Count = 1 @>
-        test <@ projection.VisibleCommits.[0].FullHash = commit.Hash @>
+        test <@ projection.VisibleCommits.Count = 2 @>
+
+        let matchingVm = projection.Commits |> Seq.find (fun item -> item.FullHash = commit.Hash)
+        let otherVm = projection.Commits |> Seq.find (fun item -> item.FullHash = otherCommit.Hash)
+
+        test <@ matchingVm.HasSearchMatch @>
+        test <@ matchingVm.HasMatchedFields @>
+        test <@ matchingVm.MatchedFieldsLabel = "Fields (2): Message / subject, File / path" @>
+        test <@ matchingVm.HasMatchedPaths @>
+        test <@ matchingVm.MatchedPathsLabel = "File (1): src/needle.txt" @>
+        test <@ matchingVm.HasSecondarySummary @>
+        test <@ matchingVm.SecondarySummary = "Fields (2): Message / subject, File / path · File (1): src/needle.txt" @>
+        test <@ not otherVm.HasSearchMatch @>
+        test <@ not otherVm.HasSecondarySummary @>
 
     [<Fact>]
     let ``MainProjection should sync and dispatch the stash visibility toggle`` () =

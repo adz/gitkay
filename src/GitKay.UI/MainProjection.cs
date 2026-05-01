@@ -355,36 +355,18 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     private void UpdateVisibleCommits(GitKay.Core.App.Model model, bool commitsChanged, bool searchResultsChanged)
     {
-        var visibleCommitsSource =
-            model.SearchResults != null
-                ? (object?)model.SearchResults.Value
-                : model.Commits;
+        var visibleCommitsSource = model.Commits;
 
-        if (!commitsChanged && !searchResultsChanged && ReferenceEquals(_visibleCommitsSource, visibleCommitsSource))
+        if (!commitsChanged && ReferenceEquals(_visibleCommitsSource, visibleCommitsSource))
         {
             return;
         }
 
         VisibleCommits.Clear();
 
-        if (model.SearchResults == null)
+        foreach (var commit in Commits)
         {
-            foreach (var commit in Commits)
-            {
-                VisibleCommits.Add(commit);
-            }
-        }
-        else
-        {
-            var commitsByHash = Commits.ToDictionary(commit => commit.FullHash);
-
-            foreach (var result in model.SearchResults.Value)
-            {
-                if (commitsByHash.TryGetValue(result.Commit.Hash, out var commit))
-                {
-                    VisibleCommits.Add(commit);
-                }
-            }
+            VisibleCommits.Add(commit);
         }
 
         _visibleCommitsSource = visibleCommitsSource;
