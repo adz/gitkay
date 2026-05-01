@@ -71,9 +71,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private string _status = "";
     [ObservableProperty] private string _commitRowFontFamily = "Helvetica,Arial,Liberation Sans,Noto Sans,sans-serif";
     [ObservableProperty] private string _commitRowMonoFontFamily = "Courier,Courier New,Liberation Mono,Monospace";
-    [ObservableProperty] private double _commitRowTextFontSize = 9;
-    [ObservableProperty] private double _commitRowMetaFontSize = 9;
-    [ObservableProperty] private double _commitRowBadgeFontSize = 9;
+    [ObservableProperty] private double _commitRowTextFontSize = 10;
+    [ObservableProperty] private double _commitRowMetaFontSize = 10;
+    [ObservableProperty] private double _commitRowBadgeFontSize = 10;
     [ObservableProperty] private bool _showBranchRefs;
     [ObservableProperty] private bool _showStashes;
     [ObservableProperty] private string _searchQuery = "";
