@@ -209,7 +209,7 @@ module GitService =
 
         results |> List.rev |> Map.ofList
 
-    let private toCommitModel (commit: LibGit2Sharp.Commit) (refs: string list) : Models.Commit =
+    let private toCommitModel (commit: LibGit2Sharp.Commit) (refs: Models.CommitRef list) : Models.Commit =
         {
             Hash = commit.Sha
             Timestamp = commit.Author.When.ToUnixTimeSeconds()
@@ -455,32 +455,63 @@ module GitService =
         }
 
     let private buildCommitRefs (repo: Repository) =
-        let refsByCommit = System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<string>>()
+        let refsByCommit = System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<Models.CommitRef>>()
 
-        let addRef (hash: string) (name: string) =
+        let addRef (hash: string) (kind: Models.CommitRefKind) (name: string) =
             if not (String.IsNullOrWhiteSpace hash) && not (String.IsNullOrWhiteSpace name) then
                 let bucket =
                     match refsByCommit.TryGetValue hash with
                     | true, existing -> existing
                     | false, _ ->
-                        let created = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                        let created = System.Collections.Generic.HashSet<Models.CommitRef>()
                         refsByCommit.[hash] <- created
                         created
 
-                bucket.Add name |> ignore
+                bucket.Add { Name = name; Kind = kind } |> ignore
 
         for branch in repo.Branches do
             if not (isNull branch.Tip) then
-                addRef branch.Tip.Sha branch.FriendlyName
+                let kind =
+                    if branch.IsRemote then
+                        Models.CommitRefKind.Remote
+                    else
+                        Models.CommitRefKind.Branch
+
+                addRef branch.Tip.Sha kind branch.FriendlyName
 
         for tag in repo.Tags do
             match tag.PeeledTarget with
-            | :? Commit as commit -> addRef commit.Sha tag.FriendlyName
+            | :? Commit as commit -> addRef commit.Sha Models.CommitRefKind.Tag tag.FriendlyName
             | _ -> ()
 
+        repo.Stashes
+        |> Seq.mapi (fun index stash -> index, stash)
+        |> Seq.iter (fun (index, stash) ->
+            if not (isNull stash.WorkTree) then
+                addRef stash.WorkTree.Sha Models.CommitRefKind.Stash (sprintf "stash@{%d}" index))
+
         refsByCommit
-        |> Seq.map (fun kvp -> kvp.Key, kvp.Value |> Seq.toList)
+        |> Seq.map (fun kvp ->
+            kvp.Key,
+            kvp.Value
+            |> Seq.sortWith (fun left right ->
+                match compare (int left.Kind) (int right.Kind) with
+                | 0 -> StringComparer.OrdinalIgnoreCase.Compare(left.Name, right.Name)
+                | comparison -> comparison)
+            |> Seq.toList)
         |> Map.ofSeq
+
+    let private buildDefaultHistoryRoots (repo: Repository) =
+        seq {
+            yield! repo.Refs |> Seq.map box
+            yield!
+                repo.Stashes
+                |> Seq.choose (fun stash ->
+                    if isNull stash.WorkTree then
+                        None
+                    else
+                        Some (box stash.WorkTree))
+        }
 
     let private containsIgnoreCase (haystack: string) (needle: string) =
         haystack.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0
@@ -553,7 +584,7 @@ module GitService =
         let hasAll = targets |> List.exists ((=) StartupTarget.All)
 
         if hasAll || List.isEmpty targets then
-            Ok (box repo.Refs)
+            Ok (box (buildDefaultHistoryRoots repo))
         else
             let resolveTarget target =
                 match target with
@@ -759,11 +790,11 @@ module GitService =
                         | SearchScope.Ref ->
                             let refMatches =
                                 commit.Refs
-                                |> List.filter (fun reference -> containsIgnoreCase reference normalizedQuery)
+                                |> List.filter (fun reference -> containsIgnoreCase reference.Name normalizedQuery)
 
                             if refMatches.Length > 0 then
                                 matchKinds.Add "ref" |> ignore
-                                refMatches |> List.iter (fun reference -> matchedRefs.Add reference |> ignore)
+                                refMatches |> List.iter (fun reference -> matchedRefs.Add reference.Name |> ignore)
                         | SearchScope.Path
                         | SearchScope.Text ->
                             ()
@@ -779,11 +810,11 @@ module GitService =
 
                             let refMatches =
                                 commit.Refs
-                                |> List.filter (fun reference -> containsIgnoreCase reference normalizedQuery)
+                                |> List.filter (fun reference -> containsIgnoreCase reference.Name normalizedQuery)
 
                             if refMatches.Length > 0 then
                                 matchKinds.Add "ref" |> ignore
-                                refMatches |> List.iter (fun reference -> matchedRefs.Add reference |> ignore)
+                                refMatches |> List.iter (fun reference -> matchedRefs.Add reference.Name |> ignore)
 
                     addMetadataMatches ()
 

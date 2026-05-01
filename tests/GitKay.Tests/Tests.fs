@@ -11,6 +11,13 @@ open LibGit2Sharp
 open GitKay.Core
 open GitKay.UI
 
+module private RefHelpers =
+    let commitRef (kind: Models.CommitRefKind) (name: string) : Models.CommitRef = { Name = name; Kind = kind }
+    let branchRef name = commitRef Models.CommitRefKind.Branch name
+    let remoteRef name = commitRef Models.CommitRefKind.Remote name
+    let tagRef name = commitRef Models.CommitRefKind.Tag name
+    let stashRef name = commitRef Models.CommitRefKind.Stash name
+
 module GitServiceTests =
 
     let private sampleFile oldPath newPath lines : Models.FileDiff =
@@ -266,6 +273,22 @@ summary Another line
             test <@ repo.Branches["topic"].Tip.Sha = commit.Sha @>)
 
     [<Fact>]
+    let ``fetchHistory should include stashes and label them distinctly`` () =
+        withTempRepository (fun root repo ->
+            let _ = commitFile repo root "app.txt" "base" "base commit"
+            File.WriteAllText(Path.Combine(root, "app.txt"), "stashed changes")
+            let signature = Signature("GitKay Tests", "gitkay@example.com", DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero))
+
+            match repo.Stashes.Add(signature, "wip") with
+            | null -> failwith "Stash creation failed."
+            | _ ->
+                match GitService.fetchHistory [ GitService.StartupTarget.All ] with
+                | Error err -> failwith err
+                | Ok commits ->
+                    test <@ commits |> List.exists (fun commit -> commit.Refs |> List.exists (fun ref -> ref.Kind = Models.CommitRefKind.Stash)) @>
+                    test <@ commits |> List.exists (fun commit -> commit.Refs |> List.exists (fun ref -> ref.Name = "stash@{0}") ) @>)
+
+    [<Fact>]
     let ``resetTo should move HEAD and working tree to the target commit`` () =
         withTempRepository (fun root repo ->
             let baseCommit = commitFile repo root "app.txt" "base" "base commit"
@@ -342,7 +365,7 @@ summary Another line
                     Parents = []
                     Subject = "Fix parser"
                     Message = "Fix parser\n\nNeedle body"
-                    Refs = [ "main"; "v1.0" ]
+                    Refs = [ RefHelpers.branchRef "main"; RefHelpers.tagRef "v1.0" ]
                 }
                 {
                     Hash = "def67890def67890def67890def67890def67890"
@@ -352,7 +375,7 @@ summary Another line
                     Parents = []
                     Subject = "Add docs"
                     Message = "Add docs"
-                    Refs = [ "release/1.0" ]
+                    Refs = [ RefHelpers.remoteRef "origin/release/1.0" ]
                 }
             ]
 
@@ -393,7 +416,7 @@ summary Another line
             let hit = results.Head
             test <@ hit.Commit.Hash = "def67890def67890def67890def67890def67890" @>
             test <@ hit.MatchKinds = [ "ref" ] @>
-            test <@ hit.MatchSummary.Contains "refs: release/1.0" @>
+            test <@ hit.MatchSummary.Contains "refs: origin/release/1.0" @>
 
     [<Fact>]
     let ``searchCommitsWithDiffLoader should match diff text in the all scope even when metadata and paths do not match`` () =
@@ -1200,7 +1223,13 @@ module AppTests =
             {
                 sampleCommit "feedfacefeedfacefeedfacefeedfacefeedface" "Search hit"
                 with
-                    Refs = [ "main"; "origin/main"; "v1.0"; "release" ]
+                    Refs =
+                        [
+                            RefHelpers.branchRef "main"
+                            RefHelpers.remoteRef "origin/main"
+                            RefHelpers.tagRef "v1.0"
+                            RefHelpers.stashRef "stash@{0}"
+                        ]
             }
 
         projection.Update
@@ -1212,6 +1241,14 @@ module AppTests =
 
         test <@ projection.HasRefs @>
         test <@ projection.RefsSummary = "main · origin/main · v1.0 +1" @>
+        test <@ projection.HasRefBadges @>
+        test <@ projection.RefBadges.Count = 4 @>
+        test <@ projection.RefBadges.[0].Kind = CommitRefKind.Branch @>
+        test <@ projection.RefBadges.[1].Kind = CommitRefKind.Remote @>
+        test <@ projection.RefBadges.[2].Kind = CommitRefKind.Tag @>
+        test <@ projection.RefBadges.[3].Kind = CommitRefKind.Stash @>
+        test <@ projection.RefBadges.[0].Text = "main" @>
+        test <@ projection.RefBadges.[3].Text = "stash@{0}" @>
 
     [<Fact>]
     let ``FatalErrorPresenter should format details for the dialog`` () =

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.ObjectModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -31,11 +32,13 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     [ObservableProperty] private bool _hasSearchMatch;
     [ObservableProperty] private string _searchMatchSummary = "";
     [ObservableProperty] private IBrush _rowBackground = Brushes.Transparent;
+    [ObservableProperty] private bool _hasRefBadges;
     [ObservableProperty] private bool _hasSecondarySummary;
     [ObservableProperty] private string _secondarySummary = "";
     [ObservableProperty] private int _lane = 0;
 
     public ObservableCollection<SegmentProjection> Segments { get; } = new();
+    public ObservableCollection<CommitRefProjection> RefBadges { get; } = new();
 
     public void Update(Graph.CommitGraphInfo info)
     {
@@ -48,6 +51,7 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         Date = System.DateTimeOffset.FromUnixTimeSeconds(commit.Timestamp).LocalDateTime.ToString("yyyy-MM-dd HH:mm");
         HasRefs = commit.Refs.Any();
         RefsSummary = HasRefs ? FormatRefsSummary(commit.Refs) : "";
+        UpdateRefBadges(commit.Refs);
         Lane = info.Lane;
         UpdateSecondarySummary();
 
@@ -79,18 +83,28 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
             parts.Add(SearchMatchSummary);
         }
 
-        if (!string.IsNullOrWhiteSpace(RefsSummary))
-        {
-            parts.Add(RefsSummary);
-        }
-
         SecondarySummary = string.Join(" · ", parts);
         HasSecondarySummary = !string.IsNullOrWhiteSpace(SecondarySummary);
     }
 
-    private static string FormatRefsSummary(System.Collections.Generic.IEnumerable<string> refs)
+    private void UpdateRefBadges(System.Collections.Generic.IEnumerable<GitKay.Core.Models.CommitRef> refs)
     {
-        var visibleRefs = refs.Take(3).ToArray();
+        RefBadges.Clear();
+
+        foreach (var badge in refs
+                     .OrderBy(refItem => (int)refItem.Kind)
+                     .ThenBy(refItem => refItem.Name, StringComparer.OrdinalIgnoreCase)
+                     .Select(CreateRefBadge))
+        {
+            RefBadges.Add(badge);
+        }
+
+        HasRefBadges = RefBadges.Count > 0;
+    }
+
+    private static string FormatRefsSummary(System.Collections.Generic.IEnumerable<GitKay.Core.Models.CommitRef> refs)
+    {
+        var visibleRefs = refs.Select(reference => reference.Name).Take(3).ToArray();
         var summary = string.Join(" · ", visibleRefs);
 
         var totalCount = refs.Count();
@@ -103,6 +117,67 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
 
         return summary;
     }
+
+    private static CommitRefProjection CreateRefBadge(GitKay.Core.Models.CommitRef reference)
+    {
+        return reference.Kind switch
+        {
+            GitKay.Core.Models.CommitRefKind.Branch => new CommitRefProjection(reference.Name, CommitRefKind.Branch),
+            GitKay.Core.Models.CommitRefKind.Remote => new CommitRefProjection(reference.Name, CommitRefKind.Remote),
+            GitKay.Core.Models.CommitRefKind.Tag => new CommitRefProjection(reference.Name, CommitRefKind.Tag),
+            GitKay.Core.Models.CommitRefKind.Stash => new CommitRefProjection(reference.Name, CommitRefKind.Stash),
+            _ => new CommitRefProjection(reference.Name, CommitRefKind.Branch)
+        };
+    }
+}
+
+public enum CommitRefKind
+{
+    Branch = 0,
+    Remote = 1,
+    Tag = 2,
+    Stash = 3,
+}
+
+public sealed class CommitRefProjection
+{
+    private static readonly IBrush BranchBackground = new SolidColorBrush(Color.FromRgb(0x23, 0x4b, 0x2f));
+    private static readonly IBrush BranchBorder = new SolidColorBrush(Color.FromRgb(0x5f, 0x9b, 0x6b));
+    private static readonly IBrush BranchForeground = new SolidColorBrush(Color.FromRgb(0xe2, 0xf4, 0xe4));
+    private static readonly IBrush RemoteBackground = new SolidColorBrush(Color.FromRgb(0x1c, 0x3a, 0x54));
+    private static readonly IBrush RemoteBorder = new SolidColorBrush(Color.FromRgb(0x5a, 0x90, 0xc2));
+    private static readonly IBrush RemoteForeground = new SolidColorBrush(Color.FromRgb(0xd9, 0xec, 0xff));
+    private static readonly IBrush TagBackground = new SolidColorBrush(Color.FromRgb(0x4a, 0x3c, 0x14));
+    private static readonly IBrush TagBorder = new SolidColorBrush(Color.FromRgb(0xc8, 0xa9, 0x5f));
+    private static readonly IBrush TagForeground = new SolidColorBrush(Color.FromRgb(0xff, 0xf1, 0xc9));
+    private static readonly IBrush StashBackground = new SolidColorBrush(Color.FromRgb(0x3d, 0x36, 0x50));
+    private static readonly IBrush StashBorder = new SolidColorBrush(Color.FromRgb(0x8d, 0x7d, 0xb5));
+    private static readonly IBrush StashForeground = new SolidColorBrush(Color.FromRgb(0xe9, 0xe4, 0xff));
+
+    public CommitRefProjection(string text, CommitRefKind kind)
+    {
+        Text = text;
+        Kind = kind;
+
+        var styles = kind switch
+        {
+            CommitRefKind.Branch => (BranchBackground, BranchBorder, BranchForeground),
+            CommitRefKind.Remote => (RemoteBackground, RemoteBorder, RemoteForeground),
+            CommitRefKind.Tag => (TagBackground, TagBorder, TagForeground),
+            CommitRefKind.Stash => (StashBackground, StashBorder, StashForeground),
+            _ => (BranchBackground, BranchBorder, BranchForeground)
+        };
+
+        Background = styles.Item1;
+        BorderBrush = styles.Item2;
+        Foreground = styles.Item3;
+    }
+
+    public string Text { get; }
+    public CommitRefKind Kind { get; }
+    public IBrush Background { get; }
+    public IBrush BorderBrush { get; }
+    public IBrush Foreground { get; }
 }
 
 public partial class SegmentProjection : ObservableObject, IProjection<Graph.LaneSegment>

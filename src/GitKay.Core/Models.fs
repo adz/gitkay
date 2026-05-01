@@ -2,6 +2,18 @@ namespace GitKay.Core
 
 module Models =
 
+    type CommitRefKind =
+        | Branch = 0
+        | Remote = 1
+        | Tag = 2
+        | Stash = 3
+
+    type CommitRef =
+        {
+            Name: string
+            Kind: CommitRefKind
+        }
+
     type Commit =
         {
             Hash: string
@@ -11,7 +23,7 @@ module Models =
             Parents: string list
             Subject: string
             Message: string
-            Refs: string list
+            Refs: CommitRef list
         }
 
     type BlameInfo =

@@ -55,7 +55,7 @@
                                         Padding="0"
                                         Background="{Binding RowBackground}"
                                         CornerRadius="4">
-                                    <Grid ColumnDefinitions="112,72,*,110,110" MinHeight="24" Background="Transparent">
+                                    <Grid ColumnDefinitions="112,72,*,110,110" MinHeight="32" Background="Transparent">
                                         <Grid.ContextMenu>
                                             <ContextMenu>
                                                 <MenuItem Header="Create _Tag here..." Command="{Binding CreateTagCommand}" />
@@ -85,11 +85,36 @@
                                                    VerticalAlignment="Center"
                                                    FontFamily="Cascadia Code,Consolas,Monospace" />
 
-                                        <StackPanel Grid.Column="2" Margin="4,0" VerticalAlignment="Center" Spacing="0">
+                                        <StackPanel Grid.Column="2" Margin="4,1" VerticalAlignment="Center" Spacing="2">
                                             <TextBlock Text="{Binding Subject}"
                                                        FontWeight="SemiBold"
                                                        FontSize="11"
                                                        TextTrimming="CharacterEllipsis" />
+                                            <ItemsControl ItemsSource="{Binding RefBadges}"
+                                                          IsVisible="{Binding HasRefBadges}"
+                                                          HorizontalAlignment="Left">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <WrapPanel />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="local:CommitRefProjection">
+                                                        <Border Background="{Binding Background}"
+                                                                BorderBrush="{Binding BorderBrush}"
+                                                                BorderThickness="1"
+                                                                CornerRadius="10"
+                                                                Margin="0,0,4,0"
+                                                                Padding="6,1">
+                                                            <TextBlock Text="{Binding Text}"
+                                                                       Foreground="{Binding Foreground}"
+                                                                       FontSize="9"
+                                                                       FontWeight="SemiBold"
+                                                                       TextTrimming="CharacterEllipsis" />
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
                                             <TextBlock Text="{Binding SecondarySummary}"
                                                        IsVisible="{Binding HasSecondarySummary}"
                                                        Foreground="#8fbcd4"
@@ -185,11 +210,31 @@
             <Border Grid.Row="2" Background="#252526" BorderBrush="#333" BorderThickness="0,1" Padding="8,6">
                 <StackPanel Spacing="3" IsVisible="{Binding SelectedCommit, Converter={x:Static local:ObjectConverters.IsNotNull}}">
                         <SelectableTextBlock Text="{Binding SelectedCommit.FullHash}" Foreground="#4ec9b0" FontWeight="SemiBold" FontSize="12"/>
-                        <TextBlock Text="{Binding SelectedCommit.RefsSummary}"
-                                   IsVisible="{Binding SelectedCommit.HasRefs}"
-                                   Foreground="#4ec9b0"
-                                   FontSize="11"
-                                   TextWrapping="Wrap" />
+                        <ItemsControl ItemsSource="{Binding SelectedCommit.RefBadges}"
+                                      IsVisible="{Binding SelectedCommit.HasRefBadges}"
+                                      HorizontalAlignment="Left">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="local:CommitRefProjection">
+                                    <Border Background="{Binding Background}"
+                                            BorderBrush="{Binding BorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="10"
+                                            Margin="0,0,4,0"
+                                            Padding="6,1">
+                                        <TextBlock Text="{Binding Text}"
+                                                   Foreground="{Binding Foreground}"
+                                                   FontSize="9"
+                                                   FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                         <StackPanel Orientation="Horizontal" Spacing="12">
                             <TextBlock Text="{Binding SelectedCommit.Author}" Foreground="#aaa" FontSize="12"/>
                             <TextBlock Text="{Binding SelectedCommit.Date}" Foreground="#888" FontSize="12"/>
