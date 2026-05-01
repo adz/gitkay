@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Elmish.Glue.Core;
@@ -28,6 +30,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private string? _selectedSearchResultHash;
     private string? _diffSearchQuery;
     private string? _diffSearchScopeKey;
+    private CancellationTokenSource? _searchDebounceCancellation;
 
     public ObservableCollection<SearchScopeProjection> SearchScopes { get; } = new()
     {
@@ -400,6 +403,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
 
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetSearchQuery(value));
+        ScheduleSearchDebounce();
     }
 
     partial void OnSelectedSearchScopeChanged(SearchScopeProjection? value)
@@ -410,6 +414,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
 
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetSearchScope(value.Key));
+        ScheduleSearchDebounce();
     }
 
     partial void OnSelectedSearchResultChanged(SearchResultProjection? value)
@@ -491,6 +496,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [RelayCommand]
     private void Search()
     {
+        CancelSearchDebounce();
         var query = SearchQuery;
         var scopeKey = SelectedSearchScope?.Key ?? "all";
         var startedAtTicks = Stopwatch.GetTimestamp();
@@ -501,8 +507,71 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [RelayCommand]
     private void ClearSearch()
     {
+        CancelSearchDebounce();
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetSearchQuery(""));
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewRunSearch("", SelectedSearchScope?.Key ?? "all", Stopwatch.GetTimestamp()));
+    }
+
+    private void ScheduleSearchDebounce()
+    {
+        if (string.IsNullOrWhiteSpace(SearchQuery))
+        {
+            CancelSearchDebounce();
+            return;
+        }
+
+        CancelSearchDebounce();
+
+        var cancellation = new CancellationTokenSource();
+        _searchDebounceCancellation = cancellation;
+
+        _ = DebounceSearchAsync(cancellation);
+    }
+
+    private async Task DebounceSearchAsync(CancellationTokenSource cancellation)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(1), cancellation.Token);
+
+            if (cancellation.IsCancellationRequested || !ReferenceEquals(_searchDebounceCancellation, cancellation))
+            {
+                return;
+            }
+
+            var query = SearchQuery;
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                return;
+            }
+
+            var scopeKey = SelectedSearchScope?.Key ?? "all";
+            var startedAtTicks = Stopwatch.GetTimestamp();
+            _dispatch?.Invoke(GitKay.Core.App.Msg.NewRunSearch(query, scopeKey, startedAtTicks));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_searchDebounceCancellation, cancellation))
+            {
+                _searchDebounceCancellation = null;
+            }
+
+            cancellation.Dispose();
+        }
+    }
+
+    private void CancelSearchDebounce()
+    {
+        if (_searchDebounceCancellation == null)
+        {
+            return;
+        }
+
+        _searchDebounceCancellation.Cancel();
+        _searchDebounceCancellation = null;
     }
 
     private void SyncSelectedDiffFiles(IReadOnlyList<GitKay.Core.GitService.DiffFileSummary> summaries, bool clearContent)

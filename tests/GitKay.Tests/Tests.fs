@@ -1,7 +1,9 @@
 namespace GitKay.Tests
 
 open System
+open System.Collections.Concurrent
 open System.IO
+open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
 open LibGit2Sharp
@@ -1055,6 +1057,34 @@ module AppTests =
         match lastMsg with
         | Some (App.Msg.SelectCommit(hash, _)) -> test <@ hash = commit.Hash @>
         | other -> failwithf "Expected search result selection to dispatch a commit selection, got %A" other
+
+    [<Fact>]
+    let ``MainProjection should debounce live search updates as the query changes`` () =
+        let projection = MainProjection()
+        let messages = ConcurrentQueue<App.Msg>()
+        projection.SetDispatch (fun msg -> messages.Enqueue msg |> ignore)
+
+        projection.SearchQuery <- "nee"
+        Task.Delay(200).Wait()
+        projection.SearchQuery <- "needle"
+
+        Task.Delay(1300).Wait()
+
+        let dispatched = messages.ToArray()
+        let setQueries =
+            dispatched
+            |> Array.choose (function
+                | App.Msg.SetSearchQuery query -> Some query
+                | _ -> None)
+
+        let runSearches =
+            dispatched
+            |> Array.choose (function
+                | App.Msg.RunSearch(query, scopeKey, _) -> Some(query, scopeKey)
+                | _ -> None)
+
+        test <@ setQueries = [| "nee"; "needle" |] @>
+        test <@ runSearches = [| ("needle", "all") |] @>
 
     [<Fact>]
     let ``SearchResultProjection should surface matched fields, files, and counts`` () =

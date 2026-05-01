@@ -90,7 +90,7 @@
                                                            FontWeight="SemiBold" />
                                             </Border>
                                         </StackPanel>
-                                        <TextBlock Text="Press Enter to search the current query. The scope menu narrows which fields are matched."
+                                        <TextBlock Text="Results update automatically 1 second after you stop typing. Press Enter to search immediately; the scope menu narrows which fields are matched."
                                                    Foreground="#888"
                                                    FontSize="11"
                                                    TextWrapping="Wrap" />

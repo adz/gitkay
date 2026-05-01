@@ -21,7 +21,7 @@
 - Reduce backend work to the minimum needed for the selected item.
 
 ## Next
-1. [ ] Make search results update as you type with a 1s debounce.
+1. [x] Make search results update as you type with a 1s debounce.
 2. [ ] Present search as a filtered overlay on the normal commit list, with subtle match highlighting instead of a separate results layout.
 3. [ ] Add resize handles for the main sections and commit/diff columns.
 4. [ ] Rework branch, tag, remote-ref, and stash visuals to match gitk more closely.
