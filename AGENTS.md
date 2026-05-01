@@ -49,3 +49,11 @@
   - ref/tag/branch lookup
 - Finish graph edge rendering and selection/scroll polish.
 - Improve the top-level error dialog path for unrecoverable failures.
+
+## Task Format For `scripts/ralph-loop-tasks.sh`
+- Keep loopable work items in `TASKS.md` as a numbered checklist under `## Next`.
+- Use the exact syntax `1. [ ] Task text` for open items.
+- Use the exact syntax `1. [x] Task text` for completed items.
+- Keep the number, bracket state, and period in that order so the script can find the next unchecked task.
+- Do not use bullet lists, nested checkboxes, or alternate checkbox syntax for looped tasks.
+- Preserve the task number when marking an item complete; the script expects the same number to switch from `[ ]` to `[x]`.

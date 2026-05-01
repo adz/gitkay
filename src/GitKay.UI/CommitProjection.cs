@@ -29,6 +29,8 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     [ObservableProperty] private bool _hasRefs;
     [ObservableProperty] private bool _hasSearchMatch;
     [ObservableProperty] private string _searchMatchSummary = "";
+    [ObservableProperty] private bool _hasSecondarySummary;
+    [ObservableProperty] private string _secondarySummary = "";
     [ObservableProperty] private int _lane = 0;
 
     public ObservableCollection<SegmentProjection> Segments { get; } = new();
@@ -45,6 +47,7 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         HasRefs = commit.Refs.Any();
         RefsSummary = HasRefs ? FormatRefsSummary(commit.Refs) : "";
         Lane = info.Lane;
+        UpdateSecondarySummary();
 
         Segments.SyncWith(
             info.Segments,
@@ -58,6 +61,25 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     {
         HasSearchMatch = result != null;
         SearchMatchSummary = result?.MatchSummary ?? "";
+        UpdateSecondarySummary();
+    }
+
+    private void UpdateSecondarySummary()
+    {
+        var parts = new System.Collections.Generic.List<string>();
+
+        if (!string.IsNullOrWhiteSpace(SearchMatchSummary))
+        {
+            parts.Add(SearchMatchSummary);
+        }
+
+        if (!string.IsNullOrWhiteSpace(RefsSummary))
+        {
+            parts.Add(RefsSummary);
+        }
+
+        SecondarySummary = string.Join(" · ", parts);
+        HasSecondarySummary = !string.IsNullOrWhiteSpace(SecondarySummary);
     }
 
     private static string FormatRefsSummary(System.Collections.Generic.IEnumerable<string> refs)

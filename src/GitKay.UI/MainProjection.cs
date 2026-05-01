@@ -42,6 +42,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     [ObservableProperty] private string _status = "";
     [ObservableProperty] private string _searchQuery = "";
+    [ObservableProperty] private string _commitFindQuery = "";
     [ObservableProperty] private SearchScopeProjection? _selectedSearchScope;
     [ObservableProperty] private bool _hasSearchResults;
     [ObservableProperty] private bool _isSearchPanelExpanded;
@@ -460,6 +461,31 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
     }
 
+    [RelayCommand]
+    private void FindInCommit()
+    {
+        var query = CommitFindQuery.Trim();
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return;
+        }
+
+        var matches = SelectedDiffRows.Where(row => RowMatchesFindQuery(row, query)).ToList();
+        if (matches.Count == 0)
+        {
+            return;
+        }
+
+        var currentIndex = SelectedDiffRow != null ? matches.FindIndex(row => ReferenceEquals(row, SelectedDiffRow)) : -1;
+        var nextIndex = currentIndex >= 0 ? (currentIndex + 1) % matches.Count : 0;
+        var match = matches[nextIndex];
+
+        if (!ReferenceEquals(SelectedDiffRow, match))
+        {
+            SelectedDiffRow = match;
+        }
+    }
+
     public void RereadRefs() => _dispatch?.Invoke(GitKay.Core.App.Msg.RereadRefs);
 
     [RelayCommand]
@@ -638,4 +664,13 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             _suppressDiffSelectionSync = false;
         }
     }
+
+    private static bool RowMatchesFindQuery(IDiffRowProjection row, string query) =>
+        row switch
+        {
+            DiffFileHeaderProjection fileHeader => fileHeader.DisplayPath.Contains(query, StringComparison.OrdinalIgnoreCase),
+            DiffHunkHeaderProjection hunkHeader => hunkHeader.Header.Contains(query, StringComparison.OrdinalIgnoreCase),
+            DiffLineProjection line => line.Content.Contains(query, StringComparison.OrdinalIgnoreCase),
+            _ => false,
+        };
 }

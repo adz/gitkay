@@ -113,6 +113,32 @@ diff --git a/foo.txt b/foo.txt
         test <@ lines.[4].OldLineNo = None && lines.[4].NewLineNo = Some 4 @>
 
     [<Fact>]
+    let ``DiffLineProjection should render plain line numbers`` () =
+        let line : Models.DiffLine =
+            {
+                Type = Models.Context
+                Content = " line"
+                OldLineNo = Some 12
+                NewLineNo = Some 34
+            }
+
+        let projection = DiffLineProjection line
+        test <@ projection.OldLineNoText = "12" @>
+        test <@ projection.NewLineNoText = "34" @>
+
+        let addedLine : Models.DiffLine =
+            {
+                Type = Models.Added
+                Content = "line"
+                OldLineNo = None
+                NewLineNo = Some 9
+            }
+
+        let addedProjection = DiffLineProjection addedLine
+        test <@ addedProjection.OldLineNoText = "" @>
+        test <@ addedProjection.NewLineNoText = "9" @>
+
+    [<Fact>]
     let ``parseBlamePorcelain should map blame metadata by line`` () =
         let blame =
             """

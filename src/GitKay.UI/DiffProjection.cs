@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Avalonia.Media;
+using Microsoft.FSharp.Core;
 using DiffLineType = GitKay.Core.Models.LineType;
 
 namespace GitKay.UI;
@@ -174,8 +175,8 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
 {
     public DiffLineProjection(GitKay.Core.Models.DiffLine line)
     {
-        OldLineNoText = line.OldLineNo?.ToString() ?? "";
-        NewLineNoText = line.NewLineNo?.ToString() ?? "";
+        OldLineNoText = FormatLineNumber(line.OldLineNo);
+        NewLineNoText = FormatLineNumber(line.NewLineNo);
         Prefix = line.Type.Equals(DiffLineType.Added)
             ? "+"
             : line.Type.Equals(DiffLineType.Removed)
@@ -189,6 +190,7 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
                 : line.Type.Equals(DiffLineType.Context)
                     ? Brushes.Gainsboro
                     : Brushes.LightSkyBlue;
+        MatchForeground = Brushes.White;
     }
 
     public string OldLineNoText { get; }
@@ -198,6 +200,14 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
     public IBrush Foreground { get; }
     [ObservableProperty] private bool _isSearchMatch;
     [ObservableProperty] private IBrush _rowBackground = Brushes.Transparent;
+    [ObservableProperty] private string _matchPrefix = "";
+    [ObservableProperty] private string _matchText = "";
+    [ObservableProperty] private string _matchSuffix = "";
+    [ObservableProperty] private IBrush _matchForeground = Brushes.White;
+    [ObservableProperty] private FontWeight _matchFontWeight = FontWeight.Normal;
+
+    private static string FormatLineNumber(FSharpOption<int> lineNumber) =>
+        lineNumber is null ? "" : lineNumber.Value.ToString();
 
     public bool ApplySearchState(string query, bool searchTextEnabled)
     {
@@ -208,8 +218,26 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
 
         IsSearchMatch = isSearchMatch;
         RowBackground = isSearchMatch
-            ? new SolidColorBrush(Color.FromArgb(48, 78, 201, 176))
+            ? new SolidColorBrush(Color.FromArgb(20, 78, 201, 176))
             : Brushes.Transparent;
+
+        if (isSearchMatch)
+        {
+            var index = Content.IndexOf(query, StringComparison.OrdinalIgnoreCase);
+            MatchPrefix = index > 0 ? Content[..index] : "";
+            MatchText = index >= 0 ? Content.Substring(index, query.Length) : "";
+            MatchSuffix = index >= 0 ? Content[(index + query.Length)..] : Content;
+            MatchForeground = Brushes.White;
+            MatchFontWeight = FontWeight.SemiBold;
+        }
+        else
+        {
+            MatchPrefix = Content;
+            MatchText = "";
+            MatchSuffix = "";
+            MatchForeground = Brushes.White;
+            MatchFontWeight = FontWeight.Normal;
+        }
 
         return isSearchMatch;
     }
