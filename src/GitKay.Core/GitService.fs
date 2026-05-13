@@ -45,6 +45,7 @@ module GitService =
             SearchQuery: string
             SearchScopeKey: string
             SelectedCommitHash: string option
+            LogFile: string option
             HelpRequested: bool
             VersionRequested: bool
         }
@@ -59,6 +60,7 @@ module GitService =
             SearchQuery = ""
             SearchScopeKey = "all"
             SelectedCommitHash = None
+            LogFile = None
             HelpRequested = false
             VersionRequested = false
         }
@@ -115,7 +117,8 @@ module GitService =
         "  --show-stashes           Show stashes in the history list\n" +
         "  --hide-stashes           Hide stashes in the history list\n" +
         "  --diff-context <n>       Number of context lines to show in diffs\n" +
-        "  --diff-presentation <m>  Diff presentation mode (diff, side-by-side, new, old)\n\n" +
+        "  --diff-presentation <m>  Diff presentation mode (diff, side-by-side, new, old)\n" +
+        "  --log <file>             Write logs to the specified file\n\n" +
         "Arguments:\n" +
         "  [revision]               Optional branch, tag, or commit hash to use as the history tip\n"
 
@@ -130,6 +133,7 @@ module GitService =
         let mutable searchQuery = defaultStartupOptions.SearchQuery
         let mutable searchScopeKey = defaultStartupOptions.SearchScopeKey
         let mutable selectedCommitHash = defaultStartupOptions.SelectedCommitHash
+        let mutable logFile = defaultStartupOptions.LogFile
         let mutable helpRequested = false
         let mutable versionRequested = false
         let mutable positionalTargetSeen = false
@@ -152,6 +156,7 @@ module GitService =
                         SearchQuery = searchQuery
                         SearchScopeKey = searchScopeKey
                         SelectedCommitHash = selectedCommitHash
+                        LogFile = logFile
                         HelpRequested = helpRequested
                         VersionRequested = versionRequested
                     }
@@ -269,6 +274,17 @@ module GitService =
                 | arg when arg.StartsWith("--select=") ->
                     let value = arg.Substring("--select=".Length)
                     selectedCommitHash <- Some value
+                    index <- index + 1
+                    loop ()
+                | "--log" ->
+                    match tryConsumeValue args index "--log" "log file" false with
+                    | Error err -> Error err
+                    | Ok (value, nextIndex) ->
+                        logFile <- Some value
+                        index <- nextIndex
+                        loop ()
+                | arg when arg.StartsWith("--log=") ->
+                    logFile <- Some (arg.Substring("--log=".Length))
                     index <- index + 1
                     loop ()
                 | "--branch" ->
@@ -989,7 +1005,7 @@ module GitService =
                 (Ok [])
             |> Result.map box
 
-    let fetchHistory (includeStashes: bool) (targets: StartupTarget list) =
+    let fetchHistory (limit: int option) (includeStashes: bool) (targets: StartupTarget list) =
         withRepository (fun repo ->
             match resolveStartupTargets includeStashes repo targets with
             | Error err -> Error err
@@ -999,8 +1015,14 @@ module GitService =
                 filter.IncludeReachableFrom <- roots
                 filter.SortBy <- CommitSortStrategies.Topological ||| CommitSortStrategies.Time
 
-                repo.Commits.QueryBy(filter)
-                |> Seq.distinctBy (fun commit -> commit.Sha)
+                let query = repo.Commits.QueryBy(filter)
+                let distinctQuery = query |> Seq.distinctBy (fun commit -> commit.Sha)
+                let limitedQuery =
+                    match limit with
+                    | Some n -> distinctQuery |> Seq.truncate n
+                    | None -> distinctQuery
+
+                limitedQuery
                 |> Seq.map (fun commit ->
                     let refs =
                         match refsByCommit.TryFind commit.Sha with

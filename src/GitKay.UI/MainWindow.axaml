@@ -80,19 +80,6 @@
                             <Button Grid.Column="3"
                                     Content="_Clear"
                                     Command="{Binding ClearSearchCommand}" />
-                            <StackPanel Grid.Column="4"
-                                        Orientation="Horizontal"
-                                        Spacing="4"
-                                        VerticalAlignment="Center">
-                                <TextBlock Text="Debounce"
-                                           Foreground="#aaa"
-                                           FontSize="11"
-                                           VerticalAlignment="Center" />
-                                <TextBox Width="56"
-                                         HorizontalAlignment="Left"
-                                         Text="{Binding SearchDebounceSeconds, Mode=TwoWay}"
-                                         ToolTip.Tip="Search debounce in seconds" />
-                            </StackPanel>
                         </Grid>
                     </Border>
 
@@ -205,7 +192,7 @@
 
                                             <Grid Grid.Column="1"
                                                   Margin="0,0,2,0"
-                                                  ColumnDefinitions="Auto,*"
+                                                  ColumnDefinitions="Auto,*,Auto"
                                                   ColumnSpacing="2"
                                                   VerticalAlignment="Center">
                                                 <ItemsControl ItemsSource="{Binding RefBadges}"
@@ -266,6 +253,17 @@
                                                         </DataTemplate>
                                                     </ItemsControl.ItemTemplate>
                                                 </ItemsControl>
+                                                <Border IsVisible="{Binding HasRefMatch}"
+                                                        Background="#ccc"
+                                                        CornerRadius="2"
+                                                        Padding="3,0"
+                                                        Margin="0,0,4,0"
+                                                        VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding RefMatchCount}"
+                                                               Foreground="#333"
+                                                               FontSize="10"
+                                                               FontWeight="Bold" />
+                                                </Border>
                                                 <TextBlock Grid.Column="1"
                                                            Text="{Binding Subject}"
                                                            FontWeight="SemiBold"
@@ -273,24 +271,71 @@
                                                            FontFamily="{Binding DataContext.CommitRowFontFamily, ElementName=RootWindow}"
                                                            TextTrimming="CharacterEllipsis"
                                                            VerticalAlignment="Center" />
+                                                <Border Grid.Column="2"
+                                                        Background="#ccc"
+                                                        CornerRadius="2"
+                                                        Padding="3,0"
+                                                        VerticalAlignment="Center"
+                                                        IsVisible="{Binding HasSubjectMatch}">
+                                                    <TextBlock Text="match"
+                                                               Foreground="#333"
+                                                               FontSize="10"
+                                                               FontWeight="Bold" />
+                                                </Border>
                                             </Grid>
 
-                                            <TextBlock Grid.Column="2"
-                                                       Text="{Binding Hash}"
-                                                       Foreground="#888"
-                                                       FontSize="{Binding DataContext.CommitRowTextFontSize, ElementName=RootWindow}"
-                                                       Margin="2,0,0,0"
-                                                       VerticalAlignment="Center"
-                                                       FontFamily="{Binding DataContext.CommitRowMonoFontFamily, ElementName=RootWindow}" />
+                                            <StackPanel Grid.Column="2"
+                                                        Orientation="Horizontal"
+                                                        Spacing="2"
+                                                        VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Hash}"
+                                                           Foreground="#888"
+                                                           FontSize="{Binding DataContext.CommitRowTextFontSize, ElementName=RootWindow}"
+                                                           VerticalAlignment="Center"
+                                                           FontFamily="{Binding DataContext.CommitRowMonoFontFamily, ElementName=RootWindow}" />
+                                                <Border Background="#ccc"
+                                                        CornerRadius="2"
+                                                        Padding="3,0"
+                                                        VerticalAlignment="Center"
+                                                        IsVisible="{Binding HasHashMatch}">
+                                                    <TextBlock Text="match"
+                                                               Foreground="#333"
+                                                               FontSize="10"
+                                                               FontWeight="Bold" />
+                                                </Border>
+                                                <Border Background="#ccc"
+                                                        CornerRadius="2"
+                                                        Padding="3,0"
+                                                        VerticalAlignment="Center"
+                                                        IsVisible="{Binding HasDiffMatch}">
+                                                    <TextBlock Text="{Binding PathMatchCount}"
+                                                               Foreground="#333"
+                                                               FontSize="10"
+                                                               FontWeight="Bold" />
+                                                </Border>
+                                            </StackPanel>
 
-                                            <TextBlock Grid.Column="3"
-                                                       Text="{Binding Author}"
-                                                       Foreground="#aaa"
-                                                       FontSize="{Binding DataContext.CommitRowMetaFontSize, ElementName=RootWindow}"
-                                                       Margin="2,0"
-                                                       VerticalAlignment="Center"
-                                                       TextTrimming="CharacterEllipsis"
-                                                       FontFamily="{Binding DataContext.CommitRowFontFamily, ElementName=RootWindow}" />
+                                            <StackPanel Grid.Column="3"
+                                                        Orientation="Horizontal"
+                                                        Spacing="2"
+                                                        VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Author}"
+                                                           Foreground="#aaa"
+                                                           FontSize="{Binding DataContext.CommitRowMetaFontSize, ElementName=RootWindow}"
+                                                           VerticalAlignment="Center"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           FontFamily="{Binding DataContext.CommitRowFontFamily, ElementName=RootWindow}" />
+                                                <Border Background="#ccc"
+                                                        CornerRadius="2"
+                                                        Padding="3,0"
+                                                        VerticalAlignment="Center"
+                                                        IsVisible="{Binding HasAuthorMatch}">
+                                                    <TextBlock Text="match"
+                                                               Foreground="#333"
+                                                               FontSize="10"
+                                                               FontWeight="Bold" />
+                                                </Border>
+                                            </StackPanel>
 
                                             <TextBlock Grid.Column="4"
                                                        Text="{Binding Date}"
@@ -301,16 +346,6 @@
                                                        VerticalAlignment="Center"
                                                        FontFamily="{Binding DataContext.CommitRowFontFamily, ElementName=RootWindow}" />
                                         </Grid>
-
-                                        <TextBlock Grid.Row="1"
-                                                   Grid.ColumnSpan="5"
-                                                   Margin="58,0,10,4"
-                                                   Text="{Binding SecondarySummary}"
-                                                   IsVisible="{Binding HasSecondarySummary}"
-                                                   Foreground="#d7ba7d"
-                                                   FontSize="{Binding DataContext.CommitRowMetaFontSize, ElementName=RootWindow}"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   TextWrapping="NoWrap" />
                                     </Grid>
                                 </Border>
                             </DataTemplate>
@@ -429,7 +464,8 @@
                                        Foreground="#aaa"
                                        FontSize="11"
                                        VerticalAlignment="Center" />
-                            <TextBox Width="260"
+                            <TextBox x:Name="CommitFindBox"
+                                     Width="260"
                                      Text="{Binding CommitFindQuery, Mode=TwoWay}"
                                      PlaceholderText="Search within the selected commit">
                                 <TextBox.KeyBindings>

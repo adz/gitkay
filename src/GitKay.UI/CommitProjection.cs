@@ -32,14 +32,15 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     [ObservableProperty] private bool _hasRefs;
     [ObservableProperty] private bool _hasSearchMatch;
     [ObservableProperty] private string _searchMatchSummary = "";
-    [ObservableProperty] private bool _hasMatchedFields;
-    [ObservableProperty] private string _matchedFieldsLabel = "";
-    [ObservableProperty] private bool _hasMatchedPaths;
-    [ObservableProperty] private string _matchedPathsLabel = "";
-    [ObservableProperty] private bool _hasMatchedRefs;
-    [ObservableProperty] private string _matchedRefsLabel = "";
     [ObservableProperty] private IBrush _rowBackground = Brushes.Transparent;
     [ObservableProperty] private bool _hasRefBadges;
+    [ObservableProperty] private bool _hasHashMatch;
+    [ObservableProperty] private bool _hasSubjectMatch;
+    [ObservableProperty] private bool _hasAuthorMatch;
+    [ObservableProperty] private bool _hasRefMatch;
+    [ObservableProperty] private int _refMatchCount;
+    [ObservableProperty] private bool _hasDiffMatch;
+    [ObservableProperty] private int _pathMatchCount;
     [ObservableProperty] private bool _hasSecondarySummary;
     [ObservableProperty] private string _secondarySummary = "";
     [ObservableProperty] private int _lane = 0;
@@ -64,7 +65,6 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         RefsSummary = HasRefs ? FormatRefsSummary(_refs) : "";
         UpdateRefBadges();
         Lane = info.Lane;
-        UpdateSecondarySummary();
 
         Segments.SyncWith(
             info.Segments,
@@ -86,108 +86,30 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
 
         if (result != null)
         {
-            UpdateMatchContext(result.MatchKinds, result.MatchedPaths, result.MatchedRefs);
+            var kinds = new HashSet<string>(result.MatchKinds, StringComparer.OrdinalIgnoreCase);
+            HasHashMatch = kinds.Contains("hash");
+            HasSubjectMatch = kinds.Contains("message");
+            HasAuthorMatch = kinds.Contains("author");
+            HasRefMatch = kinds.Contains("ref");
+            RefMatchCount = result.MatchedRefs.Length;
+            HasDiffMatch = kinds.Contains("path") || kinds.Contains("text");
+            PathMatchCount = result.MatchedPaths.Length;
         }
         else
         {
-            ClearMatchContext();
+            HasHashMatch = false;
+            HasSubjectMatch = false;
+            HasAuthorMatch = false;
+            HasRefMatch = false;
+            RefMatchCount = 0;
+            HasDiffMatch = false;
+            PathMatchCount = 0;
         }
 
         RowBackground =
             result != null
                 ? new SolidColorBrush(Color.FromArgb(28, 78, 201, 176))
                 : Brushes.Transparent;
-        UpdateSecondarySummary();
-    }
-
-    private void UpdateSecondarySummary()
-    {
-        var parts = new System.Collections.Generic.List<string>();
-
-        if (HasMatchedFields)
-        {
-            parts.Add(MatchedFieldsLabel);
-        }
-
-        if (HasMatchedPaths)
-        {
-            parts.Add(MatchedPathsLabel);
-        }
-
-        if (HasMatchedRefs)
-        {
-            parts.Add(MatchedRefsLabel);
-        }
-
-        if (parts.Count == 0 && !string.IsNullOrWhiteSpace(SearchMatchSummary))
-        {
-            parts.Add(SearchMatchSummary);
-        }
-
-        SecondarySummary = string.Join(" · ", parts);
-        HasSecondarySummary = !string.IsNullOrWhiteSpace(SecondarySummary);
-    }
-
-    private void UpdateMatchContext(
-        System.Collections.Generic.IEnumerable<string> matchKinds,
-        System.Collections.Generic.IEnumerable<string> matchedPaths,
-        System.Collections.Generic.IEnumerable<string> matchedRefs)
-    {
-        var fieldLabels = matchKinds
-            .Select(FormatMatchKind)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        HasMatchedFields = fieldLabels.Length > 0;
-        MatchedFieldsLabel = HasMatchedFields ? FormatMatchLabel("Field", fieldLabels) : "";
-
-        var pathLabels = matchedPaths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        HasMatchedPaths = pathLabels.Length > 0;
-        MatchedPathsLabel = HasMatchedPaths ? FormatMatchLabel("File", pathLabels) : "";
-
-        var refLabels = matchedRefs.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        HasMatchedRefs = refLabels.Length > 0;
-        MatchedRefsLabel = HasMatchedRefs ? FormatMatchLabel("Ref", refLabels) : "";
-    }
-
-    private void ClearMatchContext()
-    {
-        HasMatchedFields = false;
-        MatchedFieldsLabel = "";
-        HasMatchedPaths = false;
-        MatchedPathsLabel = "";
-        HasMatchedRefs = false;
-        MatchedRefsLabel = "";
-        SecondarySummary = "";
-        HasSecondarySummary = false;
-    }
-
-    private static string FormatMatchLabel(string singularLabel, IReadOnlyList<string> values)
-    {
-        var countLabel = values.Count == 1 ? singularLabel : singularLabel + "s";
-        var visibleValues = values.Take(3).ToArray();
-        var label = $"{countLabel} ({values.Count}): {string.Join(", ", visibleValues)}";
-
-        if (values.Count > visibleValues.Length)
-        {
-            label += $" +{values.Count - visibleValues.Length} more";
-        }
-
-        return label;
-    }
-
-    private static string FormatMatchKind(string kind)
-    {
-        return kind.ToLowerInvariant() switch
-        {
-            "hash" => "Commit hash",
-            "message" => "Message / subject",
-            "author" => "Author",
-            "path" => "File / path",
-            "text" => "Diff text",
-            "ref" => "Ref / tag / branch",
-            _ => kind,
-        };
     }
 
     partial void OnShowBranchRefsChanged(bool value) => UpdateRefBadges();

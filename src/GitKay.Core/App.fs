@@ -31,6 +31,7 @@ module App =
             SearchScopeKey: string
             SearchResults: GitService.SearchResult list option
             Commits: Graph.CommitGraphInfo list
+            HasFullHistory: bool
             SelectedCommitHash: string option
             SelectedDiffHash: string option
             SelectedDiffFiles: GitService.DiffFileSummary list option
@@ -47,7 +48,7 @@ module App =
         | SetShowStashes of bool
         | SetDiffContextLines of int
         | SetDiffPresentationMode of string
-        | HistoryLoaded of Result<Models.Commit list, string>
+        | HistoryLoaded of isFull:bool * Result<Models.Commit list, string>
         | SelectCommit of hash:string * startedAtTicks:int64
         | DiffFilesLoaded of hash:string * startedAtTicks:int64 * Result<GitService.DiffFileSummary list, string>
         | DiffLoaded of hash:string * startedAtTicks:int64 * Result<Models.FileDiff list, string>
@@ -64,8 +65,11 @@ module App =
         | OperationResult of Result<string, string>
         | NoOp
 
-    let private loadHistory (includeStashes: bool) (targets: GitService.StartupTarget list) =
-        Cmd.OfFunc.either (GitService.fetchHistory includeStashes) targets HistoryLoaded (fun ex -> HistoryLoaded (Error ex.Message))
+    let private loadHistory (limit: int option) (includeStashes: bool) (targets: GitService.StartupTarget list) =
+        let isFull = limit.IsNone
+        Cmd.OfFunc.either (GitService.fetchHistory limit includeStashes) targets (fun r -> HistoryLoaded(isFull, r)) (fun ex -> HistoryLoaded (isFull, Error ex.Message))
+
+    let private historyLimit = 1000
 
     let private clearCurrentSelectionJob requestId =
         match currentSelectionJob with
@@ -104,10 +108,6 @@ module App =
     let private logTiming (message: string) =
         let line = sprintf "[timing] %s" message
         Trace.WriteLine line
-        try
-            Console.Error.WriteLine line
-        with _ ->
-            ()
 
     let private loadDiffFilesFlow (hash: string) =
         flow {
@@ -304,6 +304,7 @@ module App =
                 SearchScopeKey = "all"
                 SearchResults = None
                 Commits = []
+                HasFullHistory = false
                 SelectedCommitHash = None
                 SelectedDiffHash = None
                 SelectedDiffFiles = None
@@ -328,6 +329,7 @@ module App =
                     SelectedCommitHash = startupOptions.SelectedCommitHash
                     SearchResults = None
                     Commits = []
+                    HasFullHistory = false
                     SelectedDiffHash = None
                     SelectedDiffFiles = None
                     SelectedDiff = None
@@ -337,14 +339,14 @@ module App =
                     SearchStartedAtTicks = None
                 }
 
-            model, loadHistory startupOptions.ShowStashes startupOptions.StartupTargets
+            model, loadHistory (Some historyLimit) startupOptions.ShowStashes startupOptions.StartupTargets
 
     let update msg model : Model * Cmd<Msg> =
         match msg with
         | RereadRefs ->
             cancelCurrentSearchJob ()
-            let nextModel = { model with Status = "Refreshing..." }
-            nextModel, loadHistory model.ShowStashes model.StartupTargets
+            let nextModel = { model with Status = "Refreshing..."; HasFullHistory = false }
+            nextModel, loadHistory (Some historyLimit) model.ShowStashes model.StartupTargets
         | SetShowBranchRefs showBranchRefs ->
             { model with ShowBranchRefs = showBranchRefs }, Cmd.none
         | SetShowStashes showStashes ->
@@ -354,9 +356,10 @@ module App =
                     model with
                         ShowStashes = showStashes
                         Status = "Refreshing..."
+                        HasFullHistory = false
                 }
 
-            nextModel, loadHistory showStashes model.StartupTargets
+            nextModel, loadHistory (Some historyLimit) showStashes model.StartupTargets
         | SetDiffContextLines diffContextLines ->
             let normalizedContextLines = max 0 diffContextLines
 
@@ -380,25 +383,48 @@ module App =
                     nextModel, Cmd.none
         | SetDiffPresentationMode diffPresentationModeKey ->
             { model with DiffPresentationModeKey = diffPresentationModeKey }, Cmd.none
-        | HistoryLoaded (Ok commits) ->
-            cancelCurrentSearchJob ()
-            let graphInfo = Graph.calculateLanes commits
-            let nextModel, historyCmd = historyLoadSelection model graphInfo
-            let searchQuery = nextModel.SearchQuery.Trim()
+        | HistoryLoaded (isFull, Ok commits) ->
+            if isFull || commits.Length < historyLimit then
+                cancelCurrentSearchJob ()
+                let graphInfo = Graph.calculateLanes commits
+                let nextModel, historyCmd = historyLoadSelection model graphInfo
+                let nextModel = { nextModel with HasFullHistory = true }
+                let searchQuery = nextModel.SearchQuery.Trim()
 
-            if String.IsNullOrWhiteSpace searchQuery then
-                nextModel, historyCmd
+                if String.IsNullOrWhiteSpace searchQuery then
+                    nextModel, historyCmd
+                else
+                    let startedAtTicks = Stopwatch.GetTimestamp()
+                    let searchModel =
+                        {
+                            nextModel with
+                                SearchStartedAtTicks = Some startedAtTicks
+                                Status = sprintf "Searching %s..." nextModel.SearchQuery
+                        }
+
+                    searchModel, Cmd.batch [ historyCmd; startSearchLoad searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey startedAtTicks ]
             else
-                let startedAtTicks = Stopwatch.GetTimestamp()
-                let searchModel =
-                    {
-                        nextModel with
-                            SearchStartedAtTicks = Some startedAtTicks
-                            Status = sprintf "Searching %s..." nextModel.SearchQuery
-                    }
+                // Partial history loaded
+                let graphInfo = Graph.calculateLanes commits
+                let nextModel, historyCmd = historyLoadSelection model graphInfo
+                let nextModel = { nextModel with Status = sprintf "Loaded %d commits (loading more...)" commits.Length }
+                
+                let loadFullCmd = loadHistory None model.ShowStashes model.StartupTargets
+                
+                let searchQuery = nextModel.SearchQuery.Trim()
+                if String.IsNullOrWhiteSpace searchQuery then
+                    nextModel, Cmd.batch [ historyCmd; loadFullCmd ]
+                else
+                    let startedAtTicks = Stopwatch.GetTimestamp()
+                    let searchModel =
+                        {
+                            nextModel with
+                                SearchStartedAtTicks = Some startedAtTicks
+                                Status = sprintf "Searching %s..." nextModel.SearchQuery
+                        }
 
-                searchModel, Cmd.batch [ historyCmd; startSearchLoad searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey startedAtTicks ]
-        | HistoryLoaded (Error err) ->
+                    searchModel, Cmd.batch [ historyCmd; loadFullCmd; startSearchLoad searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey startedAtTicks ]
+        | HistoryLoaded (_, Error err) ->
             cancelCurrentSearchJob ()
             { model with Status = sprintf "Error: %s" err; SearchResults = None; SearchStartedAtTicks = None }, Cmd.none
         | SelectCommit (hash, startedAtTicks) ->

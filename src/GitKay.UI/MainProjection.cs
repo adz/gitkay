@@ -82,7 +82,6 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private long _pendingDiffSearchReadyAtTicks;
     private CancellationTokenSource? _searchDebounceCancellation;
     private CancellationTokenSource? _diffSearchDebounceCancellation;
-    private bool _searchPanelAutoOpened;
 
     public ObservableCollection<DiffPresentationModeProjection> DiffPresentationModes { get; } = new()
     {
@@ -212,13 +211,6 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     {
         var line = $"[timing] {message}";
         Trace.WriteLine(line);
-        try
-        {
-            Console.Error.WriteLine(line);
-        }
-        catch
-        {
-        }
     }
 
     public void Update(GitKay.Core.App.Model model)
@@ -300,12 +292,6 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         if (shouldAutoOpenSearchPanel)
         {
             IsSearchPanelExpanded = true;
-            _searchPanelAutoOpened = true;
-        }
-        else if (_searchPanelAutoOpened)
-        {
-            IsSearchPanelExpanded = false;
-            _searchPanelAutoOpened = false;
         }
 
         var searchResultsChanged = !ReferenceEquals(_searchResultsSource, searchResultsSource);

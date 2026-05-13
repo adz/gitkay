@@ -421,7 +421,7 @@ summary Another line
             | stash ->
                 let stashHash = stash.WorkTree.Sha
 
-                match GitService.fetchHistory false [ GitService.StartupTarget.All ] with
+                match GitService.fetchHistory None false [ GitService.StartupTarget.All ] with
                 | Error err -> failwith err
                 | Ok commits ->
                     test <@ commits |> List.exists (fun commit -> commit.Hash = stashHash) |> not @>
@@ -440,7 +440,7 @@ summary Another line
             | stash ->
                 let stashHash = stash.WorkTree.Sha
 
-                match GitService.fetchHistory true [ GitService.StartupTarget.All ] with
+                match GitService.fetchHistory None true [ GitService.StartupTarget.All ] with
                 | Error err -> failwith err
                 | Ok commits ->
                     test <@ commits |> List.exists (fun commit -> commit.Hash = stashHash) @>
@@ -876,6 +876,7 @@ module AppTests =
             SearchScopeKey = "all"
             SearchResults = None
             Commits = []
+            HasFullHistory = false
             SelectedCommitHash = None
             SelectedDiffHash = None
             SelectedDiffFiles = None
@@ -927,7 +928,7 @@ module AppTests =
                 sampleCommit "second" "Second"
             ]
 
-        let next, _ = App.update (App.Msg.HistoryLoaded (Ok commits)) emptyModel
+        let next, _ = App.update (App.Msg.HistoryLoaded (true, Ok commits)) emptyModel
 
         test <@ next.Status = "Loaded 2 commits" @>
         test <@ next.Commits.Length = 2 @>
@@ -949,13 +950,12 @@ module AppTests =
 
         let next, _ =
             App.update
-                (App.Msg.HistoryLoaded (Ok commits))
+                (App.Msg.HistoryLoaded (true, Ok commits))
                 {
                     emptyModel with
                         SearchQuery = "needle"
                         SearchScopeKey = "message"
                 }
-
         test <@ next.Status = "Searching needle..." @>
         test <@ next.SearchResults = None @>
         test <@ next.SearchStartedAtTicks.IsSome @>
@@ -1040,7 +1040,7 @@ module AppTests =
                     SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" }
             }
 
-        let next, _ = App.update (App.Msg.HistoryLoaded (Ok commits)) initial
+        let next, _ = App.update (App.Msg.HistoryLoaded (true, Ok commits)) initial
 
         test <@ next.SelectedCommitHash = Some "second" @>
         test <@ next.SelectedDiffHash = Some "second" @>
@@ -1083,7 +1083,7 @@ module AppTests =
                     SelectedDiffStartedAtTicks = Some 2L
             }
 
-        let next, _ = App.update (App.Msg.HistoryLoaded (Ok commits)) initial
+        let next, _ = App.update (App.Msg.HistoryLoaded (true, Ok commits)) initial
 
         test <@ next.Status = "Loaded 2 commits" @>
         test <@ next.SelectedCommitHash = Some "first" @>
@@ -1474,14 +1474,10 @@ module AppTests =
         let otherVm = projection.Commits |> Seq.find (fun item -> item.FullHash = otherCommit.Hash)
 
         test <@ matchingVm.HasSearchMatch @>
-        test <@ matchingVm.HasMatchedFields @>
-        test <@ matchingVm.MatchedFieldsLabel = "Fields (2): Message / subject, File / path" @>
-        test <@ matchingVm.HasMatchedPaths @>
-        test <@ matchingVm.MatchedPathsLabel = "File (1): src/needle.txt" @>
-        test <@ matchingVm.HasSecondarySummary @>
-        test <@ matchingVm.SecondarySummary = "Fields (2): Message / subject, File / path · File (1): src/needle.txt" @>
+        test <@ matchingVm.HasSubjectMatch @>
+        test <@ matchingVm.HasDiffMatch @>
+        test <@ matchingVm.PathMatchCount = 1 @>
         test <@ not otherVm.HasSearchMatch @>
-        test <@ not otherVm.HasSecondarySummary @>
 
     [<Fact>]
     let ``MainProjection should sync and dispatch the stash visibility toggle`` () =

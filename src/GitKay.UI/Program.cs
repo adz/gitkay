@@ -26,6 +26,21 @@ class Program
                 Console.WriteLine($"gitkay version {version}");
                 return;
             }
+
+            if (options.LogFile != null && Microsoft.FSharp.Core.FSharpOption<string>.get_IsSome(options.LogFile))
+            {
+                var logPath = options.LogFile.Value;
+                try
+                {
+                    var writer = new System.IO.StreamWriter(logPath, true) { AutoFlush = true };
+                    System.Diagnostics.Trace.Listeners.Add(new System.Diagnostics.TextWriterTraceListener(writer));
+                    System.Diagnostics.Trace.WriteLine($"--- Log started at {DateTime.Now} ---");
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Failed to open log file: {ex.Message}");
+                }
+            }
         }
 
         App.StartupArgs = args;

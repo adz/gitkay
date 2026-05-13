@@ -142,6 +142,29 @@ public partial class MainWindow : Window
             return;
         }
 
+        if ((e.Key == Key.F && e.KeyModifiers == KeyModifiers.Control) || (e.Key == Key.Oem2 && e.KeyModifiers == KeyModifiers.None))
+        {
+            if (ReferenceEquals(listBox, CommitListBox))
+            {
+                if (_projection != null)
+                {
+                    _projection.IsSearchPanelExpanded = true;
+                }
+                SearchBox.Focus();
+                SearchBox.SelectAll();
+                e.Handled = true;
+                return;
+            }
+
+            if (ReferenceEquals(listBox, DiffRowsListBox) || ReferenceEquals(listBox, DiffFilesListBox))
+            {
+                CommitFindBox.Focus();
+                CommitFindBox.SelectAll();
+                e.Handled = true;
+                return;
+            }
+        }
+
         if (ReferenceEquals(listBox, CommitListBox)
             && e.Key == Key.Right
             && e.KeyModifiers == KeyModifiers.None)
