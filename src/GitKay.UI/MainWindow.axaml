@@ -36,7 +36,7 @@
             <TextBlock Text="{Binding Status}" Foreground="White" FontSize="12" />
         </Border>
 
-        <Grid RowDefinitions="2*,6,3*"
+        <Grid RowDefinitions="*,6,*"
               MinHeight="0">
             <Border Grid.Row="0"
                     Background="#1e1e1e"
@@ -479,7 +479,7 @@
                 </Border>
 
                 <Grid Grid.Row="1"
-                      ColumnDefinitions="*,4,280"
+                      ColumnDefinitions="*,4,*"
                       Background="#1e1e1e">
                     <Border Grid.Column="0" Background="#1e1e1e" BorderBrush="#333" BorderThickness="0,1,0,0">
                         <DockPanel>

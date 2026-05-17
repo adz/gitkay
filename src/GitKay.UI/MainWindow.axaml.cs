@@ -115,7 +115,7 @@ public partial class MainWindow : Window
             {
                 DiffRowsListBox.Focus();
             }
-        });
+        }, DispatcherPriority.Loaded);
     }
 
     private void OnDiffRowsListBoxGotFocus(object? sender, FocusChangedEventArgs e)

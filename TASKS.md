@@ -43,8 +43,8 @@
 21. [x] Remember the last open position per repo and restore the window size on startup.
 22. [x] Stop logging to the console and write logs to a local file only when a command-line option enables it.
 23. [x] Reduce startup time so the app becomes interactive sooner.
-24. [ ] Split on diff view should be 50/50.
-25. [ ] Scroll to selected commit in top panel.
+24. [x] Split on diff view should be 50/50.
+25. [x] Scroll to selected commit in top panel.
 26. [x] Select current commit on startup instead of remembered old commit.
 27. [ ] Fix commits columns resizing to fit while scrolling.
 28. [ ] Fix diff columns resizing to fit while scrolling.
