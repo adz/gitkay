@@ -9,6 +9,7 @@ open Swensen.Unquote
 open Avalonia.Media
 open Avalonia.Input
 open LibGit2Sharp
+open FsFlow
 open GitKay.Core
 open GitKay.UI
 
@@ -27,6 +28,10 @@ module private RefHelpers =
     let stashRef name = commitRef Models.CommitRefKind.Stash name None
 
 module GitServiceTests =
+
+    let private runFlow root flow =
+        (Flow.run { GitService.GitEnv.RepoPath = root } flow).AsTask().GetAwaiter().GetResult()
+        |> Exit.toResult
 
     let private sampleFile oldPath newPath lines : Models.FileDiff =
         {
@@ -340,12 +345,12 @@ summary Another line
             let firstCommit = commitFile repo root "foo.txt" "one" "first commit"
             let secondCommit = commitFile repo root "foo.txt" "two" "second commit"
 
-            match GitService.fetchDiffFileContent 3 firstCommit.Sha "foo.txt" "foo.txt" with
+            match runFlow root (GitService.fetchDiffFileContent 3 firstCommit.Sha "foo.txt" "foo.txt") with
             | Error err -> failwith err
             | Ok firstFile ->
                 test <@ firstFile.Hunks.Head.Lines |> List.exists (fun line -> line.Type = Models.Added && line.Content = "one") @>
 
-            match GitService.fetchDiffFileContent 3 secondCommit.Sha "foo.txt" "foo.txt" with
+            match runFlow root (GitService.fetchDiffFileContent 3 secondCommit.Sha "foo.txt" "foo.txt") with
             | Error err -> failwith err
             | Ok secondFile ->
                 test <@ secondFile.Hunks.Head.Lines |> List.exists (fun line -> line.Type = Models.Added && line.Content = "two") @>)
@@ -356,17 +361,17 @@ summary Another line
             let _ = commitFile repo root "foo.txt" "line1\nline2\nline3\nline4\nline5\n" "base commit"
             let updatedCommit = commitFile repo root "foo.txt" "line1\nline2\nline3 changed\nline4\nline5\n" "updated commit"
 
-            match GitService.fetchDiffFileList updatedCommit.Sha with
+            match runFlow root (GitService.fetchDiffFileList updatedCommit.Sha) with
             | Error err -> failwith err
             | Ok files ->
                 let file = files.Head
 
-                match GitService.fetchDiffFileContent 0 updatedCommit.Sha file.OldPath file.NewPath with
+                match runFlow root (GitService.fetchDiffFileContent 0 updatedCommit.Sha file.OldPath file.NewPath) with
                 | Error err -> failwith err
                 | Ok noContext ->
                     test <@ noContext.Hunks.Head.Lines |> List.forall (fun line -> line.Type <> Models.Context) @>
 
-                    match GitService.fetchDiffFileContent 3 updatedCommit.Sha file.OldPath file.NewPath with
+                    match runFlow root (GitService.fetchDiffFileContent 3 updatedCommit.Sha file.OldPath file.NewPath) with
                     | Error err -> failwith err
                     | Ok withContext ->
                         test <@ withContext.Hunks.Head.Lines |> List.exists (fun line -> line.Type = Models.Context) @>
@@ -377,14 +382,14 @@ summary Another line
         withTempRepository (fun root repo ->
             let firstCommit = commitFile repo root "foo.txt" "one" "first commit"
 
-            match GitService.fetchDiffFileList firstCommit.Sha with
+            match runFlow root (GitService.fetchDiffFileList firstCommit.Sha) with
             | Error err -> failwith err
             | Ok files ->
                 test <@ files.Length = 1 @>
                 test <@ files.Head.OldPath = "/dev/null" @>
                 test <@ files.Head.NewPath = "foo.txt" @>
 
-                match GitService.fetchDiffFileContent 3 firstCommit.Sha files.Head.OldPath files.Head.NewPath with
+                match runFlow root (GitService.fetchDiffFileContent 3 firstCommit.Sha files.Head.OldPath files.Head.NewPath) with
                 | Error err -> failwith err
                 | Ok file ->
                     test <@ file.OldPath = "/dev/null" @>
@@ -396,11 +401,11 @@ summary Another line
         withTempRepository (fun root repo ->
             let commit = commitFile repo root "base.txt" "base" "base commit"
 
-            match GitService.createTag commit.Sha "v1.0.0" with
+            match runFlow root (GitService.createTag commit.Sha "v1.0.0") with
             | Ok _ -> ()
             | Error err -> failwith err
 
-            match GitService.createBranch commit.Sha "topic" with
+            match runFlow root (GitService.createBranch commit.Sha "topic") with
             | Ok _ -> ()
             | Error err -> failwith err
 
@@ -421,7 +426,7 @@ summary Another line
             | stash ->
                 let stashHash = stash.WorkTree.Sha
 
-                match GitService.fetchHistory None false [ GitService.StartupTarget.All ] with
+                match runFlow root (GitService.fetchHistory None false [ GitService.StartupTarget.All ]) with
                 | Error err -> failwith err
                 | Ok commits ->
                     test <@ commits |> List.exists (fun commit -> commit.Hash = stashHash) |> not @>
@@ -440,7 +445,7 @@ summary Another line
             | stash ->
                 let stashHash = stash.WorkTree.Sha
 
-                match GitService.fetchHistory None true [ GitService.StartupTarget.All ] with
+                match runFlow root (GitService.fetchHistory None true [ GitService.StartupTarget.All ]) with
                 | Error err -> failwith err
                 | Ok commits ->
                     test <@ commits |> List.exists (fun commit -> commit.Hash = stashHash) @>
@@ -456,7 +461,7 @@ summary Another line
 
             let updatedCommit = commitFile repo root "app.txt" "updated" "updated commit"
 
-            match GitService.resetTo baseCommit.Sha true with
+            match runFlow root (GitService.resetTo baseCommit.Sha true) with
             | Ok _ -> ()
             | Error err -> failwith err
 
@@ -474,7 +479,7 @@ summary Another line
 
             let updatedCommit = commitFile repo root "app.txt" "updated" "updated commit"
 
-            match GitService.resetTo baseCommit.Sha false with
+            match runFlow root (GitService.resetTo baseCommit.Sha false) with
             | Ok _ -> ()
             | Error err -> failwith err
 
@@ -493,7 +498,7 @@ summary Another line
             let featureCommit = commitFile repo root "app.txt" "feature" "feature commit"
             repo.Reset(ResetMode.Hard, baseCommit)
 
-            match GitService.cherryPick featureCommit.Sha with
+            match runFlow root (GitService.cherryPick featureCommit.Sha) with
             | Ok _ -> ()
             | Error err -> failwith err
 
@@ -503,7 +508,7 @@ summary Another line
 
             let pickedCommit = pickedRepo.Head.Tip
 
-            match GitService.revert pickedCommit.Sha with
+            match runFlow root (GitService.revert pickedCommit.Sha) with
             | Ok _ -> ()
             | Error err -> failwith err
 
@@ -541,7 +546,7 @@ summary Another line
         let diffLoader hash =
             match hash with
             | "abc12345abc12345abc12345abc12345abc12345" ->
-                Ok
+                Flow.ok
                     [
                         sampleFile
                             "src/needle.txt"
@@ -555,9 +560,9 @@ summary Another line
                                 }
                             ]
                     ]
-            | _ -> Ok []
+            | _ -> Flow.ok []
 
-        match GitService.searchCommitsWithDiffLoader commits "needle" GitService.SearchScope.All diffLoader with
+        match runFlow "" (GitService.searchCommitsWithDiffLoader commits "needle" GitService.SearchScope.All diffLoader) with
         | Error err -> failwith err
         | Ok results ->
             test <@ results.Length = 1 @>
@@ -568,7 +573,7 @@ summary Another line
             test <@ hit.MatchKinds |> List.contains "text" @>
             test <@ hit.MatchSummary.Contains "paths: src/needle.txt" @>
 
-        match GitService.searchCommitsWithDiffLoader commits "release" GitService.SearchScope.Ref diffLoader with
+        match runFlow "" (GitService.searchCommitsWithDiffLoader commits "release" GitService.SearchScope.Ref diffLoader) with
         | Error err -> failwith err
         | Ok results ->
             test <@ results.Length = 1 @>
@@ -594,7 +599,7 @@ summary Another line
         let diffLoader hash =
             match hash with
             | "feedfacefeedfacefeedfacefeedfacefeedface" ->
-                Ok
+                Flow.ok
                     [
                         sampleFile
                             "src/other.txt"
@@ -608,9 +613,9 @@ summary Another line
                                 }
                             ]
                     ]
-            | _ -> Ok []
+            | _ -> Flow.ok []
 
-        match GitService.searchCommitsWithDiffLoader [ commit ] "needle" GitService.SearchScope.All diffLoader with
+        match runFlow "" (GitService.searchCommitsWithDiffLoader [ commit ] "needle" GitService.SearchScope.All diffLoader) with
         | Error err -> failwith err
         | Ok results ->
             test <@ results.Length = 1 @>
@@ -866,6 +871,7 @@ module AppTests =
 
     let private emptyModel : App.Model =
         {
+            GitEnv = { GitService.RepoPath = "" }
             Status = ""
             StartupTargets = []
             ShowBranchRefs = false

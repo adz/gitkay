@@ -5,6 +5,7 @@ open System.Diagnostics
 open System.IO
 open System.Collections.Concurrent
 open System.Text.RegularExpressions
+open FsFlow
 open GitKay.Core.Models
 open LibGit2Sharp
 
@@ -371,6 +372,8 @@ module GitService =
 
         loop ()
 
+    type GitEnv = { RepoPath: string }
+
     let parseStartupTargets (args: string array) =
         parseStartupOptions args |> Result.map (fun options -> options.StartupTargets)
 
@@ -383,14 +386,6 @@ module GitService =
         | Some "text" -> SearchScope.Text
         | Some "ref" -> SearchScope.Ref
         | _ -> SearchScope.All
-
-    let private logTiming (message: string) =
-        let line = sprintf "[timing] %s" message
-        Trace.WriteLine line
-        try
-            Console.Error.WriteLine line
-        with _ ->
-            ()
 
     let private discoverRepositoryPath () =
         let candidateRoots =
@@ -432,51 +427,55 @@ module GitService =
 
         tryDiscover candidateRoots []
 
-    let private withRepository (action: Repository -> Result<'T, string>) =
-        try
-            match discoverRepositoryPath () with
-            | Error err -> Error err
-            | Ok repoPath ->
-                use repo = new Repository(repoPath)
-                action repo
-        with ex ->
-            Error ex.Message
-
     let tryDiscoverRepositoryPath () =
         match discoverRepositoryPath () with
         | Ok repoPath -> Path.TrimEndingDirectorySeparator(Path.GetFullPath(repoPath))
         | Error _ -> null
 
+    let private withRepositoryFlow (action: Repository -> 'T) : Flow<GitEnv, 'e, 'T> =
+        flow {
+            let! env = Flow.env
+            use repo = new Repository(env.RepoPath)
+            return action repo
+        }
+
     let private quoteArg (value: string) =
         "\"" + value.Replace("\"", "\\\"") + "\""
 
-    let executeGitCommand (args: string) =
-        let startInfo = ProcessStartInfo("git", args)
-        startInfo.RedirectStandardOutput <- true
-        startInfo.RedirectStandardError <- true
-        startInfo.UseShellExecute <- false
-        startInfo.CreateNoWindow <- true
-        
-        use process' = new Process()
-        process'.StartInfo <- startInfo
-        process'.Start() |> ignore
-        
-        let output = process'.StandardOutput.ReadToEnd()
-        let error = process'.StandardError.ReadToEnd()
-        process'.WaitForExit()
-        
-        if process'.ExitCode <> 0 then
-            Error error
-        else
-            Ok output
+    let executeGitCommand (args: string) : Flow<GitEnv, string, string> =
+        flow {
+            let! env = Flow.env
+            let! ct = Flow.Runtime.cancellationToken
+            
+            let startInfo = ProcessStartInfo("git", args)
+            startInfo.WorkingDirectory <- env.RepoPath
+            startInfo.RedirectStandardOutput <- true
+            startInfo.RedirectStandardError <- true
+            startInfo.UseShellExecute <- false
+            startInfo.CreateNoWindow <- true
+            
+            use process' = new Process()
+            process'.StartInfo <- startInfo
+            process'.Start() |> ignore
+            
+            do! process'.WaitForExitAsync(ct)
+            
+            let output = process'.StandardOutput.ReadToEnd()
+            let error = process'.StandardError.ReadToEnd()
+            
+            if process'.ExitCode <> 0 then
+                return! Error error
+            else
+                return output
+        }
 
     let private getFirstParent (hash: string) =
-        match executeGitCommand (sprintf "rev-list --parents -n 1 %s" hash) with
-        | Ok output ->
-            output.Trim().Split(' ', System.StringSplitOptions.RemoveEmptyEntries)
-            |> Array.tryItem 1
-        | Error _ ->
-            None
+        flow {
+            let! output = executeGitCommand (sprintf "rev-list --parents -n 1 %s" hash)
+            return
+                output.Trim().Split(' ', System.StringSplitOptions.RemoveEmptyEntries)
+                |> Array.tryItem 1
+        }
 
     let parseCommitLine (line: string) : Models.Commit option =
         let parts = line.TrimEnd('\r').Split('|')
@@ -885,71 +884,66 @@ module GitService =
     let private containsIgnoreCase (haystack: string) (needle: string) =
         haystack.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0
 
-    let private loadDiffCacheEntry (hash: string) =
-        withRepository (fun repo ->
-            let commit = repo.Lookup<LibGit2Sharp.Commit>(hash)
+    let private loadDiffCacheEntry (hash: string) : Flow<GitEnv, string, DiffCacheEntry> =
+        flow {
+            let! env = Flow.env
+            use repo = new Repository(env.RepoPath)
+            let! (commit: LibGit2Sharp.Commit) = 
+                Guard.Of(sprintf "Commit not found: %s" hash, repo.Lookup<LibGit2Sharp.Commit>(hash) |> Check.okIfNotNull)
 
-            if isNull commit then
-                Error (sprintf "Commit not found: %s" hash)
-            else
-                let isRootCommit = commit.Parents |> Seq.isEmpty
-                use patch =
-                    match commit.Parents |> Seq.tryHead with
-                    | Some parent -> repo.Diff.Compare<Patch>(parent.Tree, commit.Tree)
-                    | None -> repo.Diff.Compare<Patch>(null, commit.Tree)
+            let isRootCommit = commit.Parents |> Seq.isEmpty
+            use patch =
+                match commit.Parents |> Seq.tryHead with
+                | Some parent -> repo.Diff.Compare<Patch>(parent.Tree, commit.Tree)
+                | None -> repo.Diff.Compare<Patch>(null, commit.Tree)
 
-                Ok (buildDiffCacheEntryFromPatch hash isRootCommit patch)
-        )
+            return buildDiffCacheEntryFromPatch hash isRootCommit patch
+        }
 
-    let private getDiffCacheEntry (hash: string) =
-        match diffCache.TryGetValue hash with
-        | true, entry ->
-            Ok (entry, true)
-        | false, _ ->
-            match loadDiffCacheEntry hash with
-            | Error err -> Error err
-            | Ok entry ->
+    let private getDiffCacheEntry (hash: string) : Flow<GitEnv, string, DiffCacheEntry * bool> =
+        flow {
+            match diffCache.TryGetValue hash with
+            | true, entry -> return (entry, true)
+            | false, _ ->
+                let! entry = loadDiffCacheEntry hash
                 diffCache.TryAdd(hash, entry) |> ignore
-                Ok (entry, false)
+                return (entry, false)
+        }
 
-    let private loadDiffFileContent (contextLines: int) (hash: string) (oldPath: string) (newPath: string) =
-        let candidatePaths =
-            if oldPath = "/dev/null" then
-                [ newPath ]
-            elif newPath = "/dev/null" then
-                [ oldPath ]
-            elif oldPath = newPath then
-                [ oldPath ]
-            else
-                [ oldPath; newPath ]
+    let private loadDiffFileContent (contextLines: int) (hash: string) (oldPath: string) (newPath: string) : Flow<GitEnv, string, FileDiff> =
+        flow {
+            let! env = Flow.env
+            let candidatePaths =
+                if oldPath = "/dev/null" then
+                    [ newPath ]
+                elif newPath = "/dev/null" then
+                    [ oldPath ]
+                elif oldPath = newPath then
+                    [ oldPath ]
+                else
+                    [ oldPath; newPath ]
 
-        withRepository (fun repo ->
-            let commit = repo.Lookup<LibGit2Sharp.Commit>(hash)
+            use repo = new Repository(env.RepoPath)
+            let! (commit: LibGit2Sharp.Commit) =
+                Guard.Of(sprintf "Commit not found: %s" hash, repo.Lookup<LibGit2Sharp.Commit>(hash) |> Check.okIfNotNull)
 
-            if isNull commit then
-                Error (sprintf "Commit not found: %s" hash)
-            else
-                let compareOptions = buildCompareOptions contextLines
-                use patch =
-                    match commit.Parents |> Seq.tryHead with
-                    | Some parent -> repo.Diff.Compare<Patch>(parent.Tree, commit.Tree, candidatePaths, ExplicitPathsOptions(), compareOptions)
-                    | None -> repo.Diff.Compare<Patch>(null, commit.Tree, candidatePaths, ExplicitPathsOptions(), compareOptions)
+            let compareOptions = buildCompareOptions contextLines
+            use patch =
+                match commit.Parents |> Seq.tryHead with
+                | Some (parent: LibGit2Sharp.Commit) -> repo.Diff.Compare<Patch>(parent.Tree, commit.Tree, candidatePaths, ExplicitPathsOptions(), compareOptions)
+                | None -> repo.Diff.Compare<Patch>(null, commit.Tree, candidatePaths, ExplicitPathsOptions(), compareOptions)
 
-                match parseDiff patch.Content with
-                | [ file ] -> Ok file
-                | [] -> Error (sprintf "File not found in commit %s: %s -> %s" hash oldPath newPath)
-                | _ -> Error (sprintf "Multiple files matched in commit %s: %s -> %s" hash oldPath newPath)
-        )
+            match parseDiff patch.Content with
+            | [ file ] -> return file
+            | [] -> return! Error (sprintf "File not found in commit %s: %s -> %s" hash oldPath newPath)
+            | _ -> return! Error (sprintf "Multiple files matched in commit %s: %s -> %s" hash oldPath newPath)
+        }
 
     let private loadCommit (repo: Repository) (hash: string) =
-        match repo.Lookup<LibGit2Sharp.Commit>(hash) with
-        | null -> Error (sprintf "Commit not found: %s" hash)
-        | commit -> Ok commit
+        Guard.Of(sprintf "Commit not found: %s" hash, repo.Lookup<LibGit2Sharp.Commit>(hash) |> Check.okIfNotNull)
 
     let private buildCommitterSignature (repo: Repository) =
-        match repo.Config.BuildSignature(DateTimeOffset.UtcNow) with
-        | null -> Error "Could not determine the git user identity. Configure user.name and user.email."
-        | signature -> Ok signature
+        Guard.Of("Could not determine the git user identity. Configure user.name and user.email.", repo.Config.BuildSignature(DateTimeOffset.UtcNow) |> Check.okIfNotNull)
 
     let private resolveStartupTargets (includeStashes: bool) (repo: Repository) (targets: StartupTarget list) =
         let hasAll = targets |> List.exists ((=) StartupTarget.All)
@@ -962,66 +956,64 @@ module GitService =
                 | StartupTarget.All ->
                     Ok []
                 | StartupTarget.Branch name ->
-                    match repo.Branches.[name] with
-                    | null -> Error (sprintf "Branch not found: %s" name)
-                    | branch -> Ok [ box branch.Reference ]
+                    Guard.Of(sprintf "Branch not found: %s" name, repo.Branches.[name] |> Check.okIfNotNull)
+                    |> Result.map (fun branch -> [ box branch.Reference ])
                 | StartupTarget.Sha hash ->
-                    match repo.Lookup<LibGit2Sharp.Commit>(hash) with
-                    | null -> Error (sprintf "Commit not found: %s" hash)
-                    | commit -> Ok [ box commit ]
+                    Guard.Of(sprintf "Commit not found: %s" hash, repo.Lookup<LibGit2Sharp.Commit>(hash) |> Check.okIfNotNull)
+                    |> Result.map (fun (commit: LibGit2Sharp.Commit) -> [ box commit ])
                 | StartupTarget.Tag name ->
-                    match repo.Tags.[name] with
-                    | null -> Error (sprintf "Tag not found: %s" name)
-                    | tag -> Ok [ box tag ]
+                    Guard.Of(sprintf "Tag not found: %s" name, repo.Tags.[name] |> Check.okIfNotNull)
+                    |> Result.map (fun tag -> [ box tag ])
                 | StartupTarget.Revision name ->
-                    match repo.Branches.[name] with
-                    | branch when not (isNull branch) ->
-                        Ok [ box branch.Reference ]
-                    | _ ->
-                        try
-                            let obj = repo.Lookup(name)
-                            if isNull obj then
-                                Error (sprintf "Revision not found: %s" name)
-                            else
+                    match repo.Branches.[name] |> Option.ofObj with
+                    | Some branch -> Ok [ box branch.Reference ]
+                    | None ->
+                        result {
+                            try
+                                let! obj =
+                                    Guard.Of(sprintf "Revision not found: %s" name, repo.Lookup(name) |> Check.okIfNotNull)
+
                                 match obj with
-                                | :? Commit as c -> Ok [ box c ]
+                                | :? LibGit2Sharp.Commit as c -> return [ box c ]
                                 | :? TagAnnotation as t -> 
                                     match t.Target with
-                                    | :? Commit as c -> Ok [ box c ]
-                                    | _ -> Error (sprintf "Tag does not point to a commit: %s" name)
-                                | _ -> Ok [ box obj ]
-                        with _ ->
-                            Error (sprintf "Invalid revision: %s" name)
+                                    | :? LibGit2Sharp.Commit as c -> return [ box c ]
+                                    | _ -> return! Error (sprintf "Tag does not point to a commit: %s" name)
+                                | _ -> return [ box obj ]
+                            with _ ->
+                                return! Error (sprintf "Invalid revision: %s" name)
+                        }
 
             targets
             |> List.fold
                 (fun state target ->
-                    match state with
-                    | Error _ as err -> err
-                    | Ok resolved ->
-                        match resolveTarget target with
-                        | Ok additions -> Ok (resolved @ additions)
-                        | Error err -> Error err)
+                    result {
+                        let! resolved = state
+                        let! additions = resolveTarget target
+                        return resolved @ additions
+                    })
                 (Ok [])
             |> Result.map box
 
-    let fetchHistory (limit: int option) (includeStashes: bool) (targets: StartupTarget list) =
-        withRepository (fun repo ->
-            match resolveStartupTargets includeStashes repo targets with
-            | Error err -> Error err
-            | Ok roots ->
-                let refsByCommit = buildCommitRefs includeStashes repo
-                let filter = CommitFilter()
-                filter.IncludeReachableFrom <- roots
-                filter.SortBy <- CommitSortStrategies.Topological ||| CommitSortStrategies.Time
+    let fetchHistory (limit: int option) (includeStashes: bool) (targets: StartupTarget list) : Flow<GitEnv, string, Models.Commit list> =
+        flow {
+            let! env = Flow.env
+            use repo = new Repository(env.RepoPath)
+            let! roots = resolveStartupTargets includeStashes repo targets
+            
+            let refsByCommit = buildCommitRefs includeStashes repo
+            let filter = CommitFilter()
+            filter.IncludeReachableFrom <- roots
+            filter.SortBy <- CommitSortStrategies.Topological ||| CommitSortStrategies.Time
 
-                let query = repo.Commits.QueryBy(filter)
-                let distinctQuery = query |> Seq.distinctBy (fun commit -> commit.Sha)
-                let limitedQuery =
-                    match limit with
-                    | Some n -> distinctQuery |> Seq.truncate n
-                    | None -> distinctQuery
+            let query = repo.Commits.QueryBy(filter)
+            let distinctQuery = query |> Seq.distinctBy (fun commit -> commit.Sha)
+            let limitedQuery =
+                match limit with
+                | Some n -> distinctQuery |> Seq.truncate n
+                | None -> distinctQuery
 
+            return
                 limitedQuery
                 |> Seq.map (fun commit ->
                     let refs =
@@ -1031,79 +1023,45 @@ module GitService =
 
                     toCommitModel commit refs)
                 |> Seq.toList
-                |> Ok)
+        }
 
-    let fetchDiff (contextLines: int) (hash: string) =
-        let startedAtTicks = Stopwatch.GetTimestamp()
+    let fetchDiff (contextLines: int) (hash: string) : Flow<GitEnv, string, FileDiff list> =
+        flow {
+            let! entry, _ = getDiffCacheEntry hash
+            return!
+                entry.FileList
+                |> Flow.traverse (fun file -> loadDiffFileContent contextLines hash file.OldPath file.NewPath)
+        }
 
-        match getDiffCacheEntry hash with
-        | Error err ->
-            let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
-            logTiming (sprintf "diff load hash=%s elapsed=%.1fms error=%s" hash elapsed.TotalMilliseconds err)
-            Error err
-        | Ok (entry, wasCached) ->
-            let rec loadFiles remainingFiles accumulated =
-                match remainingFiles with
-                | [] -> Ok (List.rev accumulated)
-                | file :: rest ->
-                    match loadDiffFileContent contextLines hash file.OldPath file.NewPath with
-                    | Ok content -> loadFiles rest (content :: accumulated)
-                    | Error err -> Error err
+    let fetchDiffSummary (hash: string) : Flow<GitEnv, string, DiffSummary> =
+        flow {
+            let! entry, _ = getDiffCacheEntry hash
+            return entry.Summary
+        }
 
-            let files = loadFiles entry.FileList []
-            match files with
-            | Error err ->
-                let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
-                logTiming (sprintf "diff load hash=%s elapsed=%.1fms error=%s" hash elapsed.TotalMilliseconds err)
-                Error err
-            | Ok files ->
-                let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
+    let fetchDiffFileList (hash: string) : Flow<GitEnv, string, DiffFileSummary list> =
+        flow {
+            let! entry, _ = getDiffCacheEntry hash
+            return entry.FileList
+        }
 
-                if wasCached then
-                    logTiming (sprintf "diff cache hit hash=%s elapsed=%.1fms files=%d" hash elapsed.TotalMilliseconds files.Length)
-                else
-                    logTiming (sprintf "diff load hash=%s elapsed=%.1fms files=%d" hash elapsed.TotalMilliseconds files.Length)
+    let fetchDiffFileContent (contextLines: int) (hash: string) (oldPath: string) (newPath: string) : Flow<GitEnv, string, FileDiff> =
+        flow {
+            let key =
+                {
+                    Hash = hash
+                    OldPath = oldPath
+                    NewPath = newPath
+                    ContextLines = normalizeContextLines contextLines
+                }
 
-                Ok files
-
-    let fetchDiffSummary (hash: string) =
-        match getDiffCacheEntry hash with
-        | Error err -> Error err
-        | Ok (entry, _) -> Ok entry.Summary
-
-    let fetchDiffFileList (hash: string) =
-        match getDiffCacheEntry hash with
-        | Error err -> Error err
-        | Ok (entry, _) -> Ok entry.FileList
-
-    let fetchDiffFileContent (contextLines: int) (hash: string) (oldPath: string) (newPath: string) =
-        let startedAtTicks = Stopwatch.GetTimestamp()
-        let key =
-            {
-                Hash = hash
-                OldPath = oldPath
-                NewPath = newPath
-                ContextLines = normalizeContextLines contextLines
-            }
-
-        match diffFileContentCache.TryGetValue key with
-        | true, file ->
-            let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
-            logTiming (sprintf "file diff cache hit hash=%s path=%s -> %s elapsed=%.1fms" hash oldPath newPath elapsed.TotalMilliseconds)
-            Ok file
-        | false, _ ->
-            let result = loadDiffFileContent contextLines hash oldPath newPath
-
-            match result with
-            | Error err ->
-                let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
-                logTiming (sprintf "file diff load hash=%s path=%s -> %s elapsed=%.1fms error=%s" hash oldPath newPath elapsed.TotalMilliseconds err)
-                Error err
-            | Ok file ->
+            match diffFileContentCache.TryGetValue key with
+            | true, file -> return file
+            | false, _ ->
+                let! file = loadDiffFileContent contextLines hash oldPath newPath
                 diffFileContentCache.TryAdd(key, file) |> ignore
-                let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
-                logTiming (sprintf "file diff load hash=%s path=%s -> %s elapsed=%.1fms" hash oldPath newPath elapsed.TotalMilliseconds)
-                Ok file
+                return file
+        }
 
     let private buildSearchSummary (matchKinds: string list) (paths: string list) (refs: string list) =
         let details = System.Collections.Generic.List<string>()
@@ -1125,51 +1083,49 @@ module GitService =
 
     let private searchCommitDiff
         (query: string)
-        (loadDiff: string -> Result<FileDiff list, string>)
+        (files: FileDiff list)
         (searchPaths: bool)
-        (searchText: bool)
-        (commit: Models.Commit) =
-        match loadDiff commit.Hash with
-        | Error _ -> None
-        | Ok files ->
-            let matchedPaths = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            let mutable textMatched = false
+        (searchText: bool) =
+        let matchedPaths = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        let mutable textMatched = false
 
-            for file in files do
-                if searchPaths && (containsIgnoreCase file.OldPath query || containsIgnoreCase file.NewPath query || containsIgnoreCase (buildDisplayPath file.OldPath file.NewPath) query) then
-                    matchedPaths.Add (buildDisplayPath file.OldPath file.NewPath) |> ignore
+        for file in files do
+            if searchPaths && (containsIgnoreCase file.OldPath query || containsIgnoreCase file.NewPath query || containsIgnoreCase (buildDisplayPath file.OldPath file.NewPath) query) then
+                matchedPaths.Add (buildDisplayPath file.OldPath file.NewPath) |> ignore
 
-                if searchText && not textMatched then
-                    let fileTextMatched =
-                        file.Hunks
-                        |> List.exists (fun hunk ->
-                            hunk.Lines
-                            |> List.exists (fun line -> containsIgnoreCase line.Content query))
+            if searchText && not textMatched then
+                let fileTextMatched =
+                    file.Hunks
+                    |> List.exists (fun hunk ->
+                        hunk.Lines
+                        |> List.exists (fun line -> containsIgnoreCase line.Content query))
 
-                    if fileTextMatched then
-                        textMatched <- true
+                if fileTextMatched then
+                    textMatched <- true
 
-            let pathMatches = matchedPaths |> Seq.toList
+        let pathMatches = matchedPaths |> Seq.toList
 
-            if (searchPaths && pathMatches.Length > 0) || (searchText && textMatched) then
-                Some(pathMatches, textMatched)
-            else
-                None
+        if (searchPaths && pathMatches.Length > 0) || (searchText && textMatched) then
+            Some(pathMatches, textMatched)
+        else
+            None
 
     let searchCommitsWithDiffLoader
         (commits: Models.Commit list)
         (query: string)
         (scope: SearchScope)
-        (loadDiff: string -> Result<FileDiff list, string>)
-        =
-        let normalizedQuery = query.Trim()
+        (loadDiff: string -> Flow<GitEnv, string, FileDiff list>) : Flow<GitEnv, string, SearchResult list> =
+        flow {
+            let normalizedQuery = query.Trim()
 
-        if String.IsNullOrWhiteSpace normalizedQuery then
-            Error "Search query must not be empty."
-        else
-            let results =
-                commits
-                |> List.choose (fun commit ->
+            if String.IsNullOrWhiteSpace normalizedQuery then
+                return! Error "Search query must not be empty."
+            else
+                let results = ResizeArray<SearchResult>()
+                
+                for commit in commits do
+                    do! Flow.Runtime.ensureNotCanceled "Search canceled."
+                    
                     let matchKinds = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
                     let matchedPaths = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
                     let matchedRefs = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -1227,13 +1183,14 @@ module GitService =
                             | SearchScope.All -> true, true
                             | _ -> false, false
 
-                        match searchCommitDiff normalizedQuery loadDiff searchPaths searchText commit with
-                        | Some(pathMatches, textMatch) ->
+                        let! diffResult = loadDiff commit.Hash
+                        match searchCommitDiff normalizedQuery diffResult searchPaths searchText with
+                        | Some(pathMatches, textMatched) ->
                             if pathMatches.Length > 0 then
                                 matchKinds.Add "path" |> ignore
                                 pathMatches |> List.iter (fun path -> matchedPaths.Add path |> ignore)
 
-                            if textMatch then
+                            if textMatched then
                                 matchKinds.Add "text" |> ignore
                         | None ->
                             ()
@@ -1245,7 +1202,7 @@ module GitService =
                         let paths = matchedPaths |> Seq.toList
                         let refs = matchedRefs |> Seq.toList
 
-                        Some
+                        results.Add
                             {
                                 Commit = commit
                                 MatchKinds = kinds
@@ -1253,85 +1210,85 @@ module GitService =
                                 MatchedPaths = paths
                                 MatchedRefs = refs
                             }
-                    else
-                        None)
 
-            Ok results
+                return List.ofSeq results
+        }
 
-    let searchCommits (contextLines: int) (commits: Models.Commit list) (query: string) (scope: SearchScope) =
+    let searchCommits (contextLines: int) (commits: Models.Commit list) (query: string) (scope: SearchScope) : Flow<GitEnv, string, SearchResult list> =
         searchCommitsWithDiffLoader commits query scope (fun hash -> fetchDiff contextLines hash)
 
-    let fetchFileBlame (revision: string) (path: string) =
-        if path = "/dev/null" then
-            Ok Map.empty
-        else
-            let args =
-                sprintf "blame --line-porcelain %s -- %s" revision (quoteArg path)
+    let fetchFileBlame (revision: string) (path: string) : Flow<GitEnv, string, Map<int, BlameInfo>> =
+        flow {
+            if path = "/dev/null" then
+                return Map.empty
+            else
+                let args =
+                    sprintf "blame --line-porcelain %s -- %s" revision (quoteArg path)
 
-            match executeGitCommand args with
-            | Ok output -> Ok (parseBlamePorcelain output)
-            | Error err -> Error err
+                let! output = executeGitCommand args
+                return parseBlamePorcelain output
+        }
 
-    let createTag (hash: string) (name: string) =
-        withRepository (fun repo ->
+    let createTag (hash: string) (name: string) : Flow<GitEnv, string, string> =
+        flow {
+            let! env = Flow.env
+            use repo = new Repository(env.RepoPath)
             match loadCommit repo hash with
-            | Error err -> Error err
+            | Error err -> return! Error err
             | Ok commit ->
-                try
-                    repo.ApplyTag(name, commit.Sha) |> ignore
-                    Ok ""
-                with ex ->
-                    Error ex.Message)
+                repo.ApplyTag(name, commit.Sha) |> ignore
+                return ""
+        }
 
-    let createBranch (hash: string) (name: string) =
-        withRepository (fun repo ->
+    let createBranch (hash: string) (name: string) : Flow<GitEnv, string, string> =
+        flow {
+            let! env = Flow.env
+            use repo = new Repository(env.RepoPath)
             match loadCommit repo hash with
-            | Error err -> Error err
+            | Error err -> return! Error err
             | Ok commit ->
-                try
-                    repo.CreateBranch(name, commit) |> ignore
-                    Ok ""
-                with ex ->
-                    Error ex.Message)
+                repo.CreateBranch(name, commit) |> ignore
+                return ""
+        }
 
-    let cherryPick (hash: string) =
-        withRepository (fun repo ->
+    let cherryPick (hash: string) : Flow<GitEnv, string, string> =
+        flow {
+            let! env = Flow.env
+            use repo = new Repository(env.RepoPath)
             match loadCommit repo hash, buildCommitterSignature repo with
-            | Error err, _ -> Error err
-            | _, Error err -> Error err
+            | Error err, _ -> return! Error err
+            | _, Error err -> return! Error err
             | Ok commit, Ok committer ->
-                try
-                    let result = repo.CherryPick(commit, committer)
+                let result = repo.CherryPick(commit, committer)
 
-                    match result.Status with
-                    | CherryPickStatus.CherryPicked -> Ok ""
-                    | status -> Error (sprintf "Cherry-pick failed: %A" status)
-                with ex ->
-                    Error ex.Message)
+                match result.Status with
+                | CherryPickStatus.CherryPicked -> return ""
+                | status -> return! Error (sprintf "Cherry-pick failed: %A" status)
+        }
 
-    let resetTo (hash: string) (hard: bool) =
-        withRepository (fun repo ->
+    let resetTo (hash: string) (hard: bool) : Flow<GitEnv, string, string> =
+        flow {
+            let! env = Flow.env
+            use repo = new Repository(env.RepoPath)
             match loadCommit repo hash with
-            | Error err -> Error err
+            | Error err -> return! Error err
             | Ok commit ->
-                try
-                    let mode = if hard then ResetMode.Hard else ResetMode.Soft
-                    repo.Reset(mode, commit)
-                    Ok ""
-                with ex ->
-                    Error ex.Message)
+                let mode = if hard then ResetMode.Hard else ResetMode.Soft
+                repo.Reset(mode, commit)
+                return ""
+        }
 
-    let revert (hash: string) =
-        withRepository (fun repo ->
+    let revert (hash: string) : Flow<GitEnv, string, string> =
+        flow {
+            let! env = Flow.env
+            use repo = new Repository(env.RepoPath)
             match loadCommit repo hash, buildCommitterSignature repo with
-            | Error err, _ -> Error err
-            | _, Error err -> Error err
+            | Error err, _ -> return! Error err
+            | _, Error err -> return! Error err
             | Ok commit, Ok committer ->
-                try
-                    let result = repo.Revert(commit, committer)
+                let result = repo.Revert(commit, committer)
 
-                    match result.Status with
-                    | RevertStatus.Reverted -> Ok ""
-                    | status -> Error (sprintf "Revert failed: %A" status)
-                with ex ->
-                    Error ex.Message)
+                match result.Status with
+                | RevertStatus.Reverted -> return ""
+                | status -> return! Error (sprintf "Revert failed: %A" status)
+        }

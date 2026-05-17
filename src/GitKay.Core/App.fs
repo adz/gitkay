@@ -4,8 +4,39 @@ open Elmish
 open System
 open System.Diagnostics
 open System.Threading
+open System.Threading.Tasks
 open FsFlow
 open GitKay.Core.Models
+
+module Cmd =
+    module OfFlow =
+        let either (env: 'env) (flow: Flow<'env, 'err, 'value>) (onSuccess: 'value -> 'msg) (onError: 'err -> 'msg) =
+            Cmd.OfValueTask.perform
+                (fun () ->
+                    task {
+                        let! exit = Flow.run env flow
+                        return Exit.toResult exit
+                    }
+                    |> ValueTask<Result<'value, 'err>>)
+                ()
+                (function
+                 | Ok v -> onSuccess v
+                 | Error e -> onError e)
+
+        let eitherWithCancellation (env: 'env) (cancellationToken: CancellationToken) (flow: Flow<'env, 'err, 'value>) (onSuccess: 'value -> 'msg) (onError: 'err -> 'msg) (onCancel: unit -> 'msg) =
+            Cmd.OfValueTask.perform
+                (fun () ->
+                    task {
+                        let! exit = Flow.runWithToken env cancellationToken flow
+                        return exit
+                    }
+                    |> ValueTask<Exit<'value, 'err>>)
+                ()
+                (function
+                 | Exit.Success v -> onSuccess v
+                 | Exit.Failure (Cause.Fail e) -> onError e
+                 | Exit.Failure (Cause.Die ex) -> onError (unbox ex.Message)
+                 | Exit.Failure Cause.Interrupt -> onCancel ())
 
 module App =
 
@@ -21,6 +52,7 @@ module App =
 
     type Model =
         {
+            GitEnv: GitService.GitEnv
             Status: string
             StartupTargets: GitService.StartupTarget list
             ShowBranchRefs: bool
@@ -65,9 +97,9 @@ module App =
         | OperationResult of Result<string, string>
         | NoOp
 
-    let private loadHistory (limit: int option) (includeStashes: bool) (targets: GitService.StartupTarget list) =
+    let private loadHistory (env: GitService.GitEnv) (limit: int option) (includeStashes: bool) (targets: GitService.StartupTarget list) =
         let isFull = limit.IsNone
-        Cmd.OfFunc.either (GitService.fetchHistory limit includeStashes) targets (fun r -> HistoryLoaded(isFull, r)) (fun ex -> HistoryLoaded (isFull, Error ex.Message))
+        Cmd.OfFlow.either env (GitService.fetchHistory limit includeStashes targets) (fun r -> HistoryLoaded(isFull, Ok r)) (fun ex -> HistoryLoaded (isFull, Error ex))
 
     let private historyLimit = 1000
 
@@ -112,15 +144,13 @@ module App =
     let private loadDiffFilesFlow (hash: string) =
         flow {
             do! Flow.Runtime.ensureNotCanceled "Selection canceled."
-            let! files = GitService.fetchDiffFileList hash |> Flow.fromResult
-            return files
+            return! GitService.fetchDiffFileList hash
         }
 
     let private loadDiffFlow (contextLines: int) (hash: string) =
         flow {
             do! Flow.Runtime.ensureNotCanceled "Selection canceled."
-            let! diff = GitService.fetchDiff contextLines hash |> Flow.fromResult
-            return diff
+            return! GitService.fetchDiff contextLines hash
         }
 
     let private loadSearchResultsFlow (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) =
@@ -128,11 +158,11 @@ module App =
             do! Flow.Runtime.ensureNotCanceled "Search canceled."
             let scope = GitService.parseSearchScope scopeKey
             let commitList = commits |> List.map (fun info -> info.Commit)
-            let! results = GitService.searchCommits contextLines commitList query scope |> Flow.fromResult
-            return results
+            return! GitService.searchCommits contextLines commitList query scope
         }
 
-    let private startDiffFilesLoad (hash: string) (startedAtTicks: int64) =
+
+    let private startDiffFilesLoad (env: GitService.GitEnv) (hash: string) (startedAtTicks: int64) =
         cancelCurrentSelectionJob ()
         let cancellation = new CancellationTokenSource()
         currentSelectionJob <-
@@ -142,20 +172,13 @@ module App =
                     Cancellation = cancellation
                 }
 
-        Cmd.ofEffect (fun dispatch ->
-            async {
-                try
-                    let! result = Flow.toAsyncResult () cancellation.Token (loadDiffFilesFlow hash)
-
-                    if not cancellation.IsCancellationRequested then
-                        dispatch (DiffFilesLoaded(hash, startedAtTicks, result))
-                with
-                | :? OperationCanceledException ->
-                    ()
-                | ex when not cancellation.IsCancellationRequested ->
-                    dispatch (DiffFilesLoaded(hash, startedAtTicks, Error ex.Message))
-            }
-            |> Async.Start)
+        Cmd.OfFlow.eitherWithCancellation
+            env
+            cancellation.Token
+            (loadDiffFilesFlow hash)
+            (fun result -> DiffFilesLoaded(hash, startedAtTicks, Ok result))
+            (fun err -> DiffFilesLoaded(hash, startedAtTicks, Error err))
+            (fun () -> NoOp)
 
     let private clearCurrentDiffJob requestId =
         match currentDiffJob with
@@ -174,7 +197,7 @@ module App =
         | None ->
             ()
 
-    let private startDiffLoad (hash: string) (startedAtTicks: int64) (contextLines: int) =
+    let private startDiffLoad (env: GitService.GitEnv) (hash: string) (startedAtTicks: int64) (contextLines: int) =
         cancelCurrentDiffJob ()
         let cancellation = new CancellationTokenSource()
         currentDiffJob <-
@@ -184,22 +207,15 @@ module App =
                     Cancellation = cancellation
                 }
 
-        Cmd.ofEffect (fun dispatch ->
-            async {
-                try
-                    let! result = Flow.toAsyncResult () cancellation.Token (loadDiffFlow contextLines hash)
+        Cmd.OfFlow.eitherWithCancellation
+            env
+            cancellation.Token
+            (loadDiffFlow contextLines hash)
+            (fun result -> DiffLoaded(hash, startedAtTicks, Ok result))
+            (fun err -> DiffLoaded(hash, startedAtTicks, Error err))
+            (fun () -> NoOp)
 
-                    if not cancellation.IsCancellationRequested then
-                        dispatch (DiffLoaded(hash, startedAtTicks, result))
-                with
-                | :? OperationCanceledException ->
-                    ()
-                | ex when not cancellation.IsCancellationRequested ->
-                    dispatch (DiffLoaded(hash, startedAtTicks, Error ex.Message))
-            }
-            |> Async.Start)
-
-    let private startSearchLoad (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (startedAtTicks: int64) =
+    let private startSearchLoad (env: GitService.GitEnv) (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (startedAtTicks: int64) =
         cancelCurrentSearchJob ()
         let cancellation = new CancellationTokenSource()
         currentSearchJob <-
@@ -209,20 +225,13 @@ module App =
                     Cancellation = cancellation
                 }
 
-        Cmd.ofEffect (fun dispatch ->
-            async {
-                try
-                    let! result = Flow.toAsyncResult () cancellation.Token (loadSearchResultsFlow contextLines commits query scopeKey)
-
-                    if not cancellation.IsCancellationRequested then
-                        dispatch (SearchResultsLoaded(query, scopeKey, startedAtTicks, result))
-                with
-                | :? OperationCanceledException ->
-                    ()
-                | ex when not cancellation.IsCancellationRequested ->
-                    dispatch (SearchResultsLoaded(query, scopeKey, startedAtTicks, Error ex.Message))
-            }
-            |> Async.Start)
+        Cmd.OfFlow.eitherWithCancellation
+            env
+            cancellation.Token
+            (loadSearchResultsFlow contextLines commits query scopeKey)
+            (fun result -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Ok result))
+            (fun err -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Error err))
+            (fun () -> NoOp)
 
     let private diffFileKeyOfSummary (summary: GitService.DiffFileSummary) : GitService.DiffFileKey =
         {
@@ -281,7 +290,7 @@ module App =
         let cmd =
             match selectedHash, nextSelectionStartedAtTicks with
             | Some hash, Some startedAtTicks ->
-                Cmd.batch [ startDiffFilesLoad hash startedAtTicks; startDiffLoad hash startedAtTicks model.DiffContextLines ]
+                Cmd.batch [ startDiffFilesLoad model.GitEnv hash startedAtTicks; startDiffLoad model.GitEnv hash startedAtTicks model.DiffContextLines ]
             | _ ->
                 cancelCurrentSelectionJob ()
                 if not diffReadyForSelection then
@@ -291,9 +300,13 @@ module App =
         nextModel, cmd
 
     let init (startupArgs: string array) : Model * Cmd<Msg> =
+        let repoPath = GitService.tryDiscoverRepositoryPath ()
+        let gitEnv = { GitService.RepoPath = repoPath }
+
         match GitService.parseStartupOptions startupArgs with
         | Error err ->
             {
+                GitEnv = gitEnv
                 Status = sprintf "Error: %s" err
                 StartupTargets = []
                 ShowBranchRefs = false
@@ -318,6 +331,7 @@ module App =
         | Ok startupOptions ->
             let model =
                 {
+                    GitEnv = gitEnv
                     Status = "Loading history..."
                     StartupTargets = startupOptions.StartupTargets
                     ShowBranchRefs = startupOptions.ShowBranchRefs
@@ -339,14 +353,17 @@ module App =
                     SearchStartedAtTicks = None
                 }
 
-            model, loadHistory (Some historyLimit) startupOptions.ShowStashes startupOptions.StartupTargets
+            if String.IsNullOrEmpty gitEnv.RepoPath then
+                { model with Status = "Error: Could not locate a Git repository." }, Cmd.none
+            else
+                model, loadHistory gitEnv (Some historyLimit) startupOptions.ShowStashes startupOptions.StartupTargets
 
     let update msg model : Model * Cmd<Msg> =
         match msg with
         | RereadRefs ->
             cancelCurrentSearchJob ()
             let nextModel = { model with Status = "Refreshing..."; HasFullHistory = false }
-            nextModel, loadHistory (Some historyLimit) model.ShowStashes model.StartupTargets
+            nextModel, loadHistory model.GitEnv (Some historyLimit) model.ShowStashes model.StartupTargets
         | SetShowBranchRefs showBranchRefs ->
             { model with ShowBranchRefs = showBranchRefs }, Cmd.none
         | SetShowStashes showStashes ->
@@ -359,7 +376,7 @@ module App =
                         HasFullHistory = false
                 }
 
-            nextModel, loadHistory (Some historyLimit) showStashes model.StartupTargets
+            nextModel, loadHistory model.GitEnv (Some historyLimit) showStashes model.StartupTargets
         | SetDiffContextLines diffContextLines ->
             let normalizedContextLines = max 0 diffContextLines
 
@@ -377,7 +394,7 @@ module App =
                 match model.SelectedCommitHash with
                 | Some hash ->
                     let startedAtTicks = nextModel.SelectedDiffStartedAtTicks.Value
-                    nextModel, startDiffLoad hash startedAtTicks normalizedContextLines
+                    nextModel, startDiffLoad model.GitEnv hash startedAtTicks normalizedContextLines
                 | None ->
                     cancelCurrentDiffJob ()
                     nextModel, Cmd.none
@@ -402,14 +419,14 @@ module App =
                                 Status = sprintf "Searching %s..." nextModel.SearchQuery
                         }
 
-                    searchModel, Cmd.batch [ historyCmd; startSearchLoad searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey startedAtTicks ]
+                    searchModel, Cmd.batch [ historyCmd; startSearchLoad model.GitEnv searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey startedAtTicks ]
             else
                 // Partial history loaded
                 let graphInfo = Graph.calculateLanes commits
                 let nextModel, historyCmd = historyLoadSelection model graphInfo
                 let nextModel = { nextModel with Status = sprintf "Loaded %d commits (loading more...)" commits.Length }
                 
-                let loadFullCmd = loadHistory None model.ShowStashes model.StartupTargets
+                let loadFullCmd = loadHistory model.GitEnv None model.ShowStashes model.StartupTargets
                 
                 let searchQuery = nextModel.SearchQuery.Trim()
                 if String.IsNullOrWhiteSpace searchQuery then
@@ -423,7 +440,7 @@ module App =
                                 Status = sprintf "Searching %s..." nextModel.SearchQuery
                         }
 
-                    searchModel, Cmd.batch [ historyCmd; loadFullCmd; startSearchLoad searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey startedAtTicks ]
+                    searchModel, Cmd.batch [ historyCmd; loadFullCmd; startSearchLoad model.GitEnv searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey startedAtTicks ]
         | HistoryLoaded (_, Error err) ->
             cancelCurrentSearchJob ()
             { model with Status = sprintf "Error: %s" err; SearchResults = None; SearchStartedAtTicks = None }, Cmd.none
@@ -442,7 +459,7 @@ module App =
                         SelectedDiffStartedAtTicks = Some startedAtTicks
                 }
 
-            let cmd = Cmd.batch [ startDiffFilesLoad hash startedAtTicks; startDiffLoad hash startedAtTicks model.DiffContextLines ]
+            let cmd = Cmd.batch [ startDiffFilesLoad model.GitEnv hash startedAtTicks; startDiffLoad model.GitEnv hash startedAtTicks model.DiffContextLines ]
             nextModel, cmd
         | SetSearchQuery query ->
             let trimmed = query.Trim()
@@ -470,7 +487,7 @@ module App =
                             Status = sprintf "Searching %s..." query
                     }
 
-                let cmd = startSearchLoad model.DiffContextLines model.Commits query scopeKey startedAtTicks
+                let cmd = startSearchLoad model.GitEnv model.DiffContextLines model.Commits query scopeKey startedAtTicks
                 nextModel, cmd
         | SearchResultsLoaded (query, scopeKey, startedAtTicks, Ok results) ->
             match model.SearchQuery, model.SearchScopeKey, model.SearchStartedAtTicks with
@@ -575,15 +592,15 @@ module App =
             else
                 model, Cmd.none
         | CreateTag (hash, name) ->
-            model, Cmd.OfFunc.either (fun () -> GitService.createTag hash name) () OperationResult (fun ex -> OperationResult (Error ex.Message))
+            model, Cmd.OfFlow.either model.GitEnv (GitService.createTag hash name) (fun _ -> OperationResult (Ok "")) (fun err -> OperationResult (Error err))
         | CreateBranch (hash, name) ->
-            model, Cmd.OfFunc.either (fun () -> GitService.createBranch hash name) () OperationResult (fun ex -> OperationResult (Error ex.Message))
+            model, Cmd.OfFlow.either model.GitEnv (GitService.createBranch hash name) (fun _ -> OperationResult (Ok "")) (fun err -> OperationResult (Error err))
         | CherryPick hash ->
-            model, Cmd.OfFunc.either (fun () -> GitService.cherryPick hash) () OperationResult (fun ex -> OperationResult (Error ex.Message))
+            model, Cmd.OfFlow.either model.GitEnv (GitService.cherryPick hash) (fun _ -> OperationResult (Ok "")) (fun err -> OperationResult (Error err))
         | ResetTo (hash, hard) ->
-            model, Cmd.OfFunc.either (fun () -> GitService.resetTo hash hard) () OperationResult (fun ex -> OperationResult (Error ex.Message))
+            model, Cmd.OfFlow.either model.GitEnv (GitService.resetTo hash hard) (fun _ -> OperationResult (Ok "")) (fun err -> OperationResult (Error err))
         | Revert hash ->
-            model, Cmd.OfFunc.either (fun () -> GitService.revert hash) () OperationResult (fun ex -> OperationResult (Error ex.Message))
+            model, Cmd.OfFlow.either model.GitEnv (GitService.revert hash) (fun _ -> OperationResult (Ok "")) (fun err -> OperationResult (Error err))
         | OperationResult (Ok _) ->
             model, Cmd.ofMsg RereadRefs
         | OperationResult (Error err) ->
