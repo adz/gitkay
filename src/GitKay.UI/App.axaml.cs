@@ -51,14 +51,7 @@ public partial class App : Application
 
                 if (!string.IsNullOrWhiteSpace(repoKey))
                 {
-                    var restoredCommitHash = persistedUiState.GetLastSelectedCommitHash(repoKey);
-                    if (!string.IsNullOrWhiteSpace(restoredCommitHash))
-                    {
-                        var mergedSelectArgs = new string[startupArgs.Length + 1];
-                        startupArgs.CopyTo(mergedSelectArgs, 0);
-                        mergedSelectArgs[startupArgs.Length] = $"--select={restoredCommitHash}";
-                        startupArgs = mergedSelectArgs;
-                    }
+                    // No longer restoring SelectedCommitHash from state.
                 }
 
                 if (StartupArgs.Length > 0)
