@@ -17,8 +17,8 @@ public interface IDiffRowProjection
 
 internal static class DiffSearchPresentation
 {
-    public static readonly IBrush MatchBackground = new SolidColorBrush(Color.FromArgb(24, 78, 201, 176));
-    public static readonly IBrush MatchBorderBrush = new SolidColorBrush(Color.FromArgb(96, 78, 201, 176));
+    public static readonly IBrush MatchBackground = new SolidColorBrush(Color.FromArgb(34, 215, 186, 125));
+    public static readonly IBrush MatchBorderBrush = new SolidColorBrush(Color.FromArgb(220, 215, 186, 125));
     public static readonly IBrush MatchForeground = new SolidColorBrush(Color.FromRgb(215, 186, 125));
     public static readonly FontWeight MatchFontWeight = FontWeight.SemiBold;
 
@@ -306,28 +306,76 @@ public sealed class DiffHunkProjection
 
 public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
 {
+    private static readonly IBrush AddedBackground = new SolidColorBrush(Color.FromArgb(72, 31, 108, 56));
+    private static readonly IBrush RemovedBackground = new SolidColorBrush(Color.FromArgb(78, 128, 46, 46));
+    private static readonly IBrush ContextBackground = new SolidColorBrush(Color.FromArgb(18, 255, 255, 255));
+    private static readonly IBrush HunkBackground = new SolidColorBrush(Color.FromArgb(34, 86, 156, 214));
+    private static readonly IBrush AddedAccent = new SolidColorBrush(Color.FromRgb(87, 206, 117));
+    private static readonly IBrush RemovedAccent = new SolidColorBrush(Color.FromRgb(230, 96, 96));
+    private static readonly IBrush ContextAccent = new SolidColorBrush(Color.FromRgb(132, 132, 132));
+    private static readonly IBrush HunkAccent = new SolidColorBrush(Color.FromRgb(86, 156, 214));
+    private static readonly IBrush ContentForegroundBrush = new SolidColorBrush(Color.FromRgb(220, 220, 220));
+    private static readonly IBrush LineNumberForegroundBrush = new SolidColorBrush(Color.FromRgb(150, 150, 150));
+    private static readonly IBrush EmptySideBackground = new SolidColorBrush(Color.FromArgb(18, 255, 255, 255));
+
     public DiffLineProjection(GitKay.Core.Models.DiffLine line)
     {
+        var isAdded = line.Type.Equals(DiffLineType.Added);
+        var isRemoved = line.Type.Equals(DiffLineType.Removed);
+        var isContext = line.Type.Equals(DiffLineType.Context);
+
         OldLineNoText = FormatLineNumber(line.OldLineNo);
         NewLineNoText = FormatLineNumber(line.NewLineNo);
-        OldContent = line.Type.Equals(DiffLineType.Added) ? "" : line.Content;
-        NewContent = line.Type.Equals(DiffLineType.Removed) ? "" : line.Content;
-        Prefix = line.Type.Equals(DiffLineType.Added)
+        OldContent = isAdded ? "" : line.Content;
+        NewContent = isRemoved ? "" : line.Content;
+        Prefix = isAdded
             ? "+"
-            : line.Type.Equals(DiffLineType.Removed)
+            : isRemoved
                 ? "-"
                 : " ";
         Content = line.Content;
-        Foreground = line.Type.Equals(DiffLineType.Added)
-            ? Brushes.LightGreen
-            : line.Type.Equals(DiffLineType.Removed)
-                ? Brushes.IndianRed
-                : line.Type.Equals(DiffLineType.Context)
-                    ? Brushes.Gainsboro
-                    : Brushes.LightSkyBlue;
+        RowBackground = isAdded
+            ? AddedBackground
+            : isRemoved
+                ? RemovedBackground
+                : isContext
+                    ? ContextBackground
+                    : HunkBackground;
+        OldCellBackground = isAdded ? EmptySideBackground : RowBackground;
+        NewCellBackground = isRemoved ? EmptySideBackground : RowBackground;
+        PrefixForeground = isAdded
+            ? AddedAccent
+            : isRemoved
+                ? RemovedAccent
+                : isContext
+                    ? ContextAccent
+                    : HunkAccent;
+        Foreground = ContentForegroundBrush;
+        LineNumberForeground = LineNumberForegroundBrush;
         MatchForeground = DiffSearchPresentation.MatchForeground;
         RefreshInlines("", false);
     }
+
+    private DiffLineProjection(DiffLineProjection removedLine, DiffLineProjection addedLine)
+    {
+        OldLineNoText = removedLine.OldLineNoText;
+        NewLineNoText = addedLine.NewLineNoText;
+        OldContent = removedLine.Content;
+        NewContent = addedLine.Content;
+        Prefix = " ";
+        Content = $"{removedLine.Content}\n{addedLine.Content}";
+        RowBackground = ContextBackground;
+        OldCellBackground = RemovedBackground;
+        NewCellBackground = AddedBackground;
+        PrefixForeground = ContextAccent;
+        Foreground = ContentForegroundBrush;
+        LineNumberForeground = LineNumberForegroundBrush;
+        MatchForeground = DiffSearchPresentation.MatchForeground;
+        RefreshInlines("", false);
+    }
+
+    public static DiffLineProjection CreateSideBySidePair(DiffLineProjection removedLine, DiffLineProjection addedLine) =>
+        new(removedLine, addedLine);
 
     public string OldLineNoText { get; }
     public string NewLineNoText { get; }
@@ -336,6 +384,12 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
     public string Prefix { get; }
     public string Content { get; }
     public IBrush Foreground { get; }
+    public IBrush PrefixForeground { get; }
+    public IBrush LineNumberForeground { get; }
+    public IBrush OldCellBackground { get; }
+    public IBrush NewCellBackground { get; }
+    public bool IsAdded => Prefix == "+";
+    public bool IsRemoved => Prefix == "-";
     [ObservableProperty] private bool _isSearchMatch;
     [ObservableProperty] private IBrush _rowBackground = Brushes.Transparent;
     [ObservableProperty] private IBrush _borderBrush = Brushes.Transparent;
@@ -364,9 +418,6 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
             && Content.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase);
 
         IsSearchMatch = isSearchMatch;
-        RowBackground = isSearchMatch
-            ? DiffSearchPresentation.MatchBackground
-            : Brushes.Transparent;
         BorderBrush = isSearchMatch
             ? DiffSearchPresentation.MatchBorderBrush
             : Brushes.Transparent;

@@ -940,6 +940,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         OnPropertyChanged(nameof(IsSideBySideDiffMode));
         OnPropertyChanged(nameof(IsNewDiffMode));
         OnPropertyChanged(nameof(IsOldDiffMode));
+        RenderSelectedDiffRows();
 
         if (_suppressDiffPresentationDispatch || value == null)
         {
@@ -1218,11 +1219,35 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             {
                 SelectedDiffRows.Add(new DiffHunkHeaderProjection(hunk));
 
+                if (IsSideBySideDiffMode)
+                {
+                    AddSideBySideDiffRows(hunk.Lines);
+                    continue;
+                }
+
                 foreach (var line in hunk.Lines)
                 {
                     SelectedDiffRows.Add(line);
                 }
             }
+        }
+    }
+
+    private void AddSideBySideDiffRows(ObservableCollection<DiffLineProjection> lines)
+    {
+        var index = 0;
+        while (index < lines.Count)
+        {
+            var line = lines[index];
+            if (line.IsRemoved && index + 1 < lines.Count && lines[index + 1].IsAdded)
+            {
+                SelectedDiffRows.Add(DiffLineProjection.CreateSideBySidePair(line, lines[index + 1]));
+                index += 2;
+                continue;
+            }
+
+            SelectedDiffRows.Add(line);
+            index++;
         }
     }
 
