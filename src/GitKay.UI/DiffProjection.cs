@@ -308,7 +308,7 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
 {
     private static readonly IBrush AddedBackground = new SolidColorBrush(Color.FromArgb(72, 31, 108, 56));
     private static readonly IBrush RemovedBackground = new SolidColorBrush(Color.FromArgb(78, 128, 46, 46));
-    private static readonly IBrush ContextBackground = new SolidColorBrush(Color.FromArgb(18, 255, 255, 255));
+    private static readonly IBrush ContextBackground = Brushes.Transparent;
     private static readonly IBrush HunkBackground = new SolidColorBrush(Color.FromArgb(34, 86, 156, 214));
     private static readonly IBrush AddedAccent = new SolidColorBrush(Color.FromRgb(87, 206, 117));
     private static readonly IBrush RemovedAccent = new SolidColorBrush(Color.FromRgb(230, 96, 96));
@@ -316,7 +316,7 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
     private static readonly IBrush HunkAccent = new SolidColorBrush(Color.FromRgb(86, 156, 214));
     private static readonly IBrush ContentForegroundBrush = new SolidColorBrush(Color.FromRgb(220, 220, 220));
     private static readonly IBrush LineNumberForegroundBrush = new SolidColorBrush(Color.FromRgb(150, 150, 150));
-    private static readonly IBrush EmptySideBackground = new SolidColorBrush(Color.FromArgb(18, 255, 255, 255));
+    private static readonly IBrush EmptySideBackground = Brushes.Transparent;
 
     public DiffLineProjection(GitKay.Core.Models.DiffLine line)
     {
