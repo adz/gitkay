@@ -46,7 +46,7 @@
 24. [x] Split on diff view should be 50/50.
 25. [x] Scroll to selected commit in top panel.
 26. [x] Select current commit on startup instead of remembered old commit.
-27. [ ] Fix commits columns resizing to fit while scrolling.
-28. [ ] Fix diff columns resizing to fit while scrolling.
-29. [ ] Optimize diff scroll performance with syntax highlighting.
-30. [ ] Increase font sizes to be more readable.
+27. [x] Fix commits columns resizing to fit while scrolling.
+28. [x] Fix diff columns resizing to fit while scrolling.
+29. [x] Optimize diff scroll performance with syntax highlighting.
+30. [x] Increase font sizes to be more readable.
