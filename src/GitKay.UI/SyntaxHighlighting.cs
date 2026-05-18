@@ -9,6 +9,8 @@ namespace GitKay.UI;
 
 internal static class SyntaxHighlighting
 {
+    private const int MaxTokenizedLineLength = 240;
+
     private static readonly Regex HunkHeaderRegex = new(
         @"^(@@)\s+(-\d+(?:,\d+)?)\s+(\+\d+(?:,\d+)?)\s+(@@)(.*)$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -46,14 +48,14 @@ internal static class SyntaxHighlighting
             var index = text.IndexOf(searchQuery, StringComparison.OrdinalIgnoreCase);
             if (index >= 0)
             {
-                AppendTokenizedSegment(collection, text[..index], baseForeground);
+                AppendSegment(collection, text[..index], baseForeground);
                 AppendSearchMatch(collection, text.Substring(index, searchQuery.Length));
-                AppendTokenizedSegment(collection, text[(index + searchQuery.Length)..], baseForeground);
+                AppendSegment(collection, text[(index + searchQuery.Length)..], baseForeground);
                 return collection;
             }
         }
 
-        AppendTokenizedSegment(collection, text, baseForeground);
+        AppendSegment(collection, text, baseForeground);
         return collection;
     }
 
@@ -112,6 +114,22 @@ internal static class SyntaxHighlighting
         {
             collection.Add(CreateRun(token, baseForeground));
         }
+    }
+
+    private static void AppendSegment(InlineCollection collection, string text, IBrush baseForeground)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        if (text.Length > MaxTokenizedLineLength)
+        {
+            collection.Add(new Run { Text = text, Foreground = baseForeground });
+            return;
+        }
+
+        AppendTokenizedSegment(collection, text, baseForeground);
     }
 
     private static Run CreateRun(HighlightToken token, IBrush baseForeground)
