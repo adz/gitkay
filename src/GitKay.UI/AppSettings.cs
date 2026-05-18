@@ -7,9 +7,9 @@ public sealed record AppSettings
 {
     public const string DefaultCommitRowFontFamily = "Helvetica,Arial,Liberation Sans,Noto Sans,sans-serif";
     public const string DefaultCommitRowMonoFontFamily = "Courier,Courier New,Liberation Mono,Monospace";
-    public const double DefaultCommitRowTextFontSize = 10;
-    public const double DefaultCommitRowMetaFontSize = 10;
-    public const double DefaultCommitRowBadgeFontSize = 10;
+    public const double DefaultCommitRowTextFontSize = 13;
+    public const double DefaultCommitRowMetaFontSize = 12;
+    public const double DefaultCommitRowBadgeFontSize = 11;
     public const int DefaultDiffContextLines = 3;
     public const string DefaultDiffPresentationModeKey = "diff";
     public const double DefaultSearchDebounceSeconds = 0.5;

@@ -87,17 +87,18 @@
                             Background="#1f1f1f"
                             BorderBrush="#3a3d41"
                             BorderThickness="0,0,0,1">
-                        <Grid>
+                        <Grid x:Name="HistoryHeaderGrid"
+                              Width="{Binding #CommitListBox.Bounds.Width}">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="48" SharedSizeGroup="HistoryGraph" />
+                                <ColumnDefinition Width="48" />
                                 <ColumnDefinition Width="4" />
-                                <ColumnDefinition Width="*" SharedSizeGroup="HistorySubject" MinWidth="120" />
+                                <ColumnDefinition Width="*" MinWidth="120" />
                                 <ColumnDefinition Width="4" />
-                                <ColumnDefinition Width="54" SharedSizeGroup="HistoryHash" />
+                                <ColumnDefinition Width="54" />
                                 <ColumnDefinition Width="4" />
-                                <ColumnDefinition Width="110" SharedSizeGroup="HistoryAuthor" />
+                                <ColumnDefinition Width="110" />
                                 <ColumnDefinition Width="4" />
-                                <ColumnDefinition Width="110" SharedSizeGroup="HistoryDate" />
+                                <ColumnDefinition Width="110" />
                             </Grid.ColumnDefinitions>
                             <GridSplitter Grid.Column="1"
                                           HorizontalAlignment="Stretch"
@@ -145,6 +146,7 @@
                                 <Setter Property="Padding" Value="0" />
                                 <Setter Property="Background" Value="Transparent" />
                                 <Setter Property="BorderThickness" Value="0" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                             </Style>
                             <Style Selector="ListBoxItem:selected">
                                 <Setter Property="Background" Value="#333" />
@@ -159,14 +161,16 @@
                                         Padding="0"
                                         Background="{Binding RowBackground}"
                                         CornerRadius="2">
-                                    <Grid RowDefinitions="Auto,Auto" Background="Transparent">
+                                    <Grid RowDefinitions="Auto,Auto"
+                                          Width="{Binding #CommitListBox.Bounds.Width}"
+                                          Background="Transparent">
                                         <Grid Grid.Row="0" MinHeight="16" Background="Transparent">
                                             <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="48" SharedSizeGroup="HistoryGraph" />
-                                                <ColumnDefinition Width="*" SharedSizeGroup="HistorySubject" MinWidth="120" />
-                                                <ColumnDefinition Width="54" SharedSizeGroup="HistoryHash" />
-                                                <ColumnDefinition Width="110" SharedSizeGroup="HistoryAuthor" />
-                                                <ColumnDefinition Width="110" SharedSizeGroup="HistoryDate" />
+                                                <ColumnDefinition Width="{Binding #HistoryHeaderGrid.ColumnDefinitions[0].Width}" />
+                                                <ColumnDefinition Width="{Binding #HistoryHeaderGrid.ColumnDefinitions[2].Width}" MinWidth="120" />
+                                                <ColumnDefinition Width="{Binding #HistoryHeaderGrid.ColumnDefinitions[4].Width}" />
+                                                <ColumnDefinition Width="{Binding #HistoryHeaderGrid.ColumnDefinitions[6].Width}" />
+                                                <ColumnDefinition Width="{Binding #HistoryHeaderGrid.ColumnDefinitions[8].Width}" />
                                             </Grid.ColumnDefinitions>
                                             <Grid.ContextMenu>
                                                 <ContextMenu>
@@ -261,7 +265,7 @@
                                                         VerticalAlignment="Center">
                                                     <TextBlock Text="{Binding RefMatchCount}"
                                                                Foreground="#333"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                FontWeight="Bold" />
                                                 </Border>
                                                 <TextBlock Grid.Column="1"
@@ -279,7 +283,7 @@
                                                         IsVisible="{Binding HasSubjectMatch}">
                                                     <TextBlock Text="match"
                                                                Foreground="#333"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                FontWeight="Bold" />
                                                 </Border>
                                             </Grid>
@@ -300,7 +304,7 @@
                                                         IsVisible="{Binding HasHashMatch}">
                                                     <TextBlock Text="match"
                                                                Foreground="#333"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                FontWeight="Bold" />
                                                 </Border>
                                                 <Border Background="#ccc"
@@ -310,7 +314,7 @@
                                                         IsVisible="{Binding HasDiffMatch}">
                                                     <TextBlock Text="{Binding PathMatchCount}"
                                                                Foreground="#333"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                FontWeight="Bold" />
                                                 </Border>
                                             </StackPanel>
@@ -332,7 +336,7 @@
                                                         IsVisible="{Binding HasAuthorMatch}">
                                                     <TextBlock Text="match"
                                                                Foreground="#333"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                FontWeight="Bold" />
                                                 </Border>
                                             </StackPanel>
@@ -540,7 +544,7 @@
                                      BorderThickness="0"
                                      SelectionMode="Single"
                                      MinHeight="0"
-                                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                      ScrollViewer.VerticalScrollBarVisibility="Auto"
                                      GotFocus="OnDiffRowsListBoxGotFocus">
                                 <ListBox.ItemsPanel>
@@ -613,26 +617,26 @@
                                                     <TextBlock Grid.Column="0"
                                                                Text="{Binding OldLineNoText}"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                Foreground="#666"
                                                                HorizontalAlignment="Right"
                                                                Margin="0,0,6,0"/>
                                                     <TextBlock Grid.Column="1"
                                                                Text="{Binding NewLineNoText}"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                Foreground="#666"
                                                                HorizontalAlignment="Right"
                                                                Margin="0,0,6,0"/>
                                                     <TextBlock Grid.Column="2"
                                                                Text="{Binding Prefix}"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                Foreground="{Binding Foreground}"
                                                                Margin="0,0,4,0"/>
                                                     <TextBlock Grid.Column="3"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                TextWrapping="NoWrap"
                                                                Foreground="{Binding Foreground}"
                                                                Inlines="{Binding ContentInlines}" />
@@ -650,33 +654,33 @@
                                                     <TextBlock Grid.Column="0"
                                                                Text="{Binding OldLineNoText}"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                Foreground="#666"
                                                                HorizontalAlignment="Right"
                                                                Margin="0,0,6,0"/>
                                                     <TextBlock Grid.Column="1"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                TextWrapping="NoWrap"
                                                                Foreground="{Binding Foreground}"
                                                                Inlines="{Binding OldContentInlines}" />
                                                     <TextBlock Grid.Column="2"
                                                                Text="{Binding Prefix}"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                Foreground="{Binding Foreground}"
                                                                HorizontalAlignment="Center"
                                                                Margin="0,0,0,0"/>
                                                     <TextBlock Grid.Column="3"
                                                                Text="{Binding NewLineNoText}"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                Foreground="#666"
                                                                HorizontalAlignment="Right"
                                                                Margin="0,0,6,0"/>
                                                     <TextBlock Grid.Column="4"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                TextWrapping="NoWrap"
                                                                Foreground="{Binding Foreground}"
                                                                Inlines="{Binding NewContentInlines}" />
@@ -694,19 +698,19 @@
                                                     <TextBlock Grid.Column="0"
                                                                Text="{Binding Prefix}"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                Foreground="{Binding Foreground}"
                                                                Margin="0,0,4,0"/>
                                                     <TextBlock Grid.Column="1"
                                                                Text="{Binding NewLineNoText}"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                Foreground="#666"
                                                                HorizontalAlignment="Right"
                                                                Margin="0,0,6,0"/>
                                                     <TextBlock Grid.Column="2"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                Foreground="{Binding Foreground}"
                                                                TextWrapping="NoWrap"
                                                                Inlines="{Binding NewContentInlines}" />
@@ -724,20 +728,20 @@
                                                     <TextBlock Grid.Column="0"
                                                                Text="{Binding OldLineNoText}"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                Foreground="#666"
                                                                HorizontalAlignment="Right"
                                                                Margin="0,0,6,0"/>
                                                     <TextBlock Grid.Column="1"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                Foreground="{Binding Foreground}"
                                                                TextWrapping="NoWrap"
                                                                Inlines="{Binding OldContentInlines}" />
                                                     <TextBlock Grid.Column="2"
                                                                Text="{Binding Prefix}"
                                                                FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="10"
+                                                               FontSize="12"
                                                                Foreground="{Binding Foreground}"
                                                                Margin="0,0,0,0"/>
                                                 </Grid>
