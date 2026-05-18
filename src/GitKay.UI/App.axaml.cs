@@ -76,6 +76,7 @@ public partial class App : Application
                 var projection = new MainProjection();
                 projection.ApplySettings(persistedSettings);
                 mainWindow.DataContext = projection;
+                desktop.MainWindow = mainWindow;
 
                 var persistedPropertyNames = new HashSet<string>(StringComparer.Ordinal)
                 {
@@ -117,7 +118,6 @@ public partial class App : Application
                     dispatch => projection.SetDispatch(dispatch)
                 );
 
-                desktop.MainWindow = mainWindow;
                 desktop.Exit += (s, e) =>
                 {
                     if (!string.IsNullOrWhiteSpace(repoKey) && projection.SelectedCommit != null)
