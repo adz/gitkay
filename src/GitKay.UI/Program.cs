@@ -11,13 +11,13 @@ class Program
     [STAThread]
     public static void Main(string[] args)
     {
-        var optionsResult = GitKay.Core.GitService.parseStartupOptions(args);
+        var optionsResult = GitKay.Core.GitStartup.parseStartupOptions(args);
         if (optionsResult.IsOk)
         {
             var options = optionsResult.ResultValue;
             if (options.HelpRequested)
             {
-                Console.WriteLine(GitKay.Core.GitService.getHelpText());
+                Console.WriteLine(GitKay.Core.GitStartup.getHelpText());
                 return;
             }
             if (options.VersionRequested)

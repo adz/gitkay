@@ -23,7 +23,7 @@
 - Do not turn ordinary Git failures into exception-heavy control flow.
 
 ## Async And Flow Guidance
-- Use `FsFlow` for async orchestration, cancellation, and request ordering.
+- Use `Axial` for async orchestration, cancellation, and request ordering.
 - Keep Elmish messages as UI intents and let flows manage long-running work.
 - A good pattern is:
   - UI message starts a flow.

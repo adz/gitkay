@@ -1,17 +1,11 @@
 using System;
 using System.IO;
-using System.Text.Json;
+using GitKay.Serialization;
 
 namespace GitKay.UI;
 
 public sealed class AppSettingsStore
 {
-    private static readonly JsonSerializerOptions JsonOptions =
-        new()
-        {
-            WriteIndented = true,
-        };
-
     private readonly string _settingsPath;
 
     public AppSettingsStore(string? settingsPath = null)
@@ -31,7 +25,19 @@ public sealed class AppSettingsStore
             }
 
             var json = File.ReadAllText(_settingsPath);
-            return JsonSerializer.Deserialize<AppSettings>(json, JsonOptions)?.Normalize() ?? AppSettings.Default;
+            var document = GitKayJson.DeserializeSettings(json);
+
+            return AppSettings.Create(
+                showBranchRefs: document.ShowBranchRefs,
+                showStashes: document.ShowStashes,
+                diffContextLines: document.DiffContextLines,
+                diffPresentationModeKey: document.DiffPresentationModeKey,
+                commitRowFontFamily: document.CommitRowFontFamily,
+                commitRowMonoFontFamily: document.CommitRowMonoFontFamily,
+                commitRowTextFontSize: document.CommitRowTextFontSize,
+                commitRowMetaFontSize: document.CommitRowMetaFontSize,
+                commitRowBadgeFontSize: document.CommitRowBadgeFontSize,
+                searchDebounceSeconds: document.SearchDebounceSeconds).Normalize();
         }
         catch
         {
@@ -51,7 +57,19 @@ public sealed class AppSettingsStore
                 Directory.CreateDirectory(directory);
             }
 
-            var json = JsonSerializer.Serialize(normalized, JsonOptions);
+            var document = new AppSettingsDocument(
+                normalized.ShowBranchRefs,
+                normalized.ShowStashes,
+                normalized.DiffContextLines,
+                normalized.DiffPresentationModeKey,
+                normalized.CommitRowFontFamily,
+                normalized.CommitRowMonoFontFamily,
+                normalized.CommitRowTextFontSize,
+                normalized.CommitRowMetaFontSize,
+                normalized.CommitRowBadgeFontSize,
+                normalized.SearchDebounceSeconds);
+
+            var json = GitKayJson.SerializeSettings(document);
             File.WriteAllText(_settingsPath, json);
         }
         catch

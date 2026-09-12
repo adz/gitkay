@@ -20,7 +20,7 @@ public sealed class SearchScopeProjection
     public override string ToString() => Label;
 }
 
-public partial class SearchResultProjection : ObservableObject, IProjection<GitKay.Core.GitService.SearchResult>
+public partial class SearchResultProjection : ObservableObject, IProjection<GitKay.Core.GitSearch.Result>
 {
     [ObservableProperty] private string _fullHash = "";
     [ObservableProperty] private string _hash = "";
@@ -35,7 +35,7 @@ public partial class SearchResultProjection : ObservableObject, IProjection<GitK
     [ObservableProperty] private bool _hasMatchedRefs;
     [ObservableProperty] private string _matchedRefsLabel = "";
 
-    public void Update(GitKay.Core.GitService.SearchResult result)
+    public void Update(GitKay.Core.GitSearch.Result result)
     {
         var shortHashLength = System.Math.Min(8, result.Commit.Hash.Length);
         FullHash = result.Commit.Hash;

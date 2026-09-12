@@ -282,14 +282,15 @@ public sealed partial class DiffFileHeaderProjection : ObservableObject, IDiffRo
 
 public sealed class DiffHunkHeaderProjection : IDiffRowProjection
 {
+    private InlineCollection? _headerInlines;
+
     public DiffHunkHeaderProjection(DiffHunkProjection hunk)
     {
         Header = hunk.Header;
-        HeaderInlines = SyntaxHighlighting.BuildHunkHeaderInlines(hunk.Header);
     }
 
     public string Header { get; }
-    public InlineCollection HeaderInlines { get; }
+    public InlineCollection HeaderInlines => _headerInlines ??= SyntaxHighlighting.BuildHunkHeaderInlines(Header);
 }
 
 public sealed class DiffHunkProjection
@@ -353,7 +354,6 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
         Foreground = ContentForegroundBrush;
         LineNumberForeground = LineNumberForegroundBrush;
         MatchForeground = DiffSearchPresentation.MatchForeground;
-        RefreshInlines("", false);
     }
 
     private DiffLineProjection(DiffLineProjection removedLine, DiffLineProjection addedLine)
@@ -371,7 +371,6 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
         Foreground = ContentForegroundBrush;
         LineNumberForeground = LineNumberForegroundBrush;
         MatchForeground = DiffSearchPresentation.MatchForeground;
-        RefreshInlines("", false);
     }
 
     public static DiffLineProjection CreateSideBySidePair(DiffLineProjection removedLine, DiffLineProjection addedLine) =>
@@ -398,9 +397,15 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
     [ObservableProperty] private string _matchSuffix = "";
     [ObservableProperty] private IBrush _matchForeground = DiffSearchPresentation.MatchForeground;
     [ObservableProperty] private FontWeight _matchFontWeight = FontWeight.Normal;
-    [ObservableProperty] private InlineCollection _oldContentInlines = new();
-    [ObservableProperty] private InlineCollection _newContentInlines = new();
-    [ObservableProperty] private InlineCollection _contentInlines = new();
+
+    private InlineCollection? _oldContentInlines;
+    private InlineCollection? _newContentInlines;
+    private InlineCollection? _contentInlines;
+
+    public InlineCollection OldContentInlines => _oldContentInlines ??= SyntaxHighlighting.BuildCodeInlines(OldContent, Foreground, _searchTextEnabled ? _searchQuery : null);
+    public InlineCollection NewContentInlines => _newContentInlines ??= SyntaxHighlighting.BuildCodeInlines(NewContent, Foreground, _searchTextEnabled ? _searchQuery : null);
+    public InlineCollection ContentInlines => _contentInlines ??= SyntaxHighlighting.BuildCodeInlines(Content, Foreground, _searchTextEnabled ? _searchQuery : null);
+
     private string _searchQuery = "";
     private bool _searchTextEnabled;
 
@@ -409,7 +414,13 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
 
     public bool ApplySearchState(string query, bool searchTextEnabled)
     {
-        _searchQuery = query.Trim();
+        var normalizedQuery = query.Trim();
+        if (_searchQuery == normalizedQuery && _searchTextEnabled == searchTextEnabled)
+        {
+            return IsSearchMatch;
+        }
+
+        _searchQuery = normalizedQuery;
         _searchTextEnabled = searchTextEnabled;
 
         var isSearchMatch =
@@ -440,16 +451,14 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
             MatchFontWeight = FontWeight.Normal;
         }
 
-        RefreshInlines(_searchQuery, _searchTextEnabled);
+        _oldContentInlines = null;
+        _newContentInlines = null;
+        _contentInlines = null;
+        OnPropertyChanged(nameof(OldContentInlines));
+        OnPropertyChanged(nameof(NewContentInlines));
+        OnPropertyChanged(nameof(ContentInlines));
 
         return isSearchMatch;
-    }
-
-    private void RefreshInlines(string query, bool searchTextEnabled)
-    {
-        ContentInlines = SyntaxHighlighting.BuildCodeInlines(Content, Foreground, searchTextEnabled ? query : null);
-        OldContentInlines = SyntaxHighlighting.BuildCodeInlines(OldContent, Foreground, searchTextEnabled ? query : null);
-        NewContentInlines = SyntaxHighlighting.BuildCodeInlines(NewContent, Foreground, searchTextEnabled ? query : null);
     }
 }
 

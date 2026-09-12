@@ -7,7 +7,7 @@ PROJECT="$ROOT_DIR/src/GitKay.UI/GitKay.UI.csproj"
 CONFIGURATION="Release"
 RUNTIME_IDS=()
 OUTPUT_DIR="$ROOT_DIR/artifacts/publish/gitkay"
-USE_AOT="false"
+USE_AOT="true"
 HOST_OS="$(uname -s)"
 
 usage() {
@@ -79,7 +79,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "${#RUNTIME_IDS[@]}" -eq 0 ]]; then
-  RUNTIME_IDS=("win-x64" "linux-x64")
+  #RUNTIME_IDS=("win-x64" "linux-x64")
+  RUNTIME_IDS=("linux-x64")
 fi
 
 if [[ "$USE_AOT" == "true" ]]; then

@@ -34,6 +34,14 @@ internal static class SyntaxHighlighting
         "with", "yield"
     };
 
+    public static IBrush GetKeywordBrush() => KeywordBrush;
+    public static IBrush GetStringBrush() => StringBrush;
+    public static IBrush GetNumberBrush() => NumberBrush;
+    public static IBrush GetCommentBrush() => CommentBrush;
+    public static IBrush GetTypeBrush() => TypeBrush;
+    public static IBrush GetHunkMarkerBrush() => HunkMarkerBrush;
+    public static IBrush GetHunkRangeBrush() => HunkRangeBrush;
+
     public static InlineCollection BuildCodeInlines(string text, IBrush baseForeground, string? searchQuery = null)
     {
         var collection = new InlineCollection();
@@ -110,7 +118,15 @@ internal static class SyntaxHighlighting
 
     private static void AppendTokenizedSegment(InlineCollection collection, string text, IBrush baseForeground)
     {
-        foreach (var token in Tokenize(text))
+        var tokens = Tokenize(text);
+        
+        if (tokens.Count == 1 && tokens[0].Kind == HighlightKind.Plain)
+        {
+            collection.Add(new Run { Text = text, Foreground = baseForeground });
+            return;
+        }
+
+        foreach (var token in tokens)
         {
             collection.Add(CreateRun(token, baseForeground));
         }
@@ -149,8 +165,21 @@ internal static class SyntaxHighlighting
         };
     }
 
+    private static readonly Dictionary<string, IReadOnlyList<HighlightToken>> TokenCache = new(StringComparer.Ordinal);
+    private const int MaxCacheSize = 2000;
+
     internal static IReadOnlyList<HighlightToken> Tokenize(string text)
     {
+        if (string.IsNullOrEmpty(text))
+        {
+            return Array.Empty<HighlightToken>();
+        }
+
+        if (TokenCache.TryGetValue(text, out var cached))
+        {
+            return cached;
+        }
+
         var tokens = new List<HighlightToken>();
         var index = 0;
 
@@ -204,11 +233,58 @@ internal static class SyntaxHighlighting
                 continue;
             }
 
-            tokens.Add(new HighlightToken(current.ToString(), HighlightKind.Plain));
-            index++;
+            // Group non-token characters together as Plain
+            var plainStart = index;
+            while (index < text.Length)
+            {
+                var next = text[index];
+                if (char.IsWhiteSpace(next) ||
+                    IsIdentifierStart(next) ||
+                    char.IsDigit(next) ||
+                    (next == '/' && index + 1 < text.Length && (text[index + 1] == '/' || text[index + 1] == '*')) ||
+                    next == '#' ||
+                    next == '"' || next == '\'' || next == '`')
+                {
+                    break;
+                }
+                index++;
+            }
+            tokens.Add(new HighlightToken(text[plainStart..index], HighlightKind.Plain));
         }
 
-        return tokens;
+        // Merge adjacent tokens of the same kind
+        if (tokens.Count > 1)
+        {
+            var merged = new List<HighlightToken>();
+            var currentToken = tokens[0];
+            for (int i = 1; i < tokens.Count; i++)
+            {
+                if (tokens[i].Kind == currentToken.Kind)
+                {
+                    currentToken = new HighlightToken(currentToken.Text + tokens[i].Text, currentToken.Kind);
+                }
+                else
+                {
+                    merged.Add(currentToken);
+                    currentToken = tokens[i];
+                }
+            }
+            merged.Add(currentToken);
+            tokens = merged;
+        }
+
+        var result = tokens.AsReadOnly();
+        if (TokenCache.Count < MaxCacheSize)
+        {
+            TokenCache[text] = result;
+        }
+        else
+        {
+            TokenCache.Clear();
+            TokenCache[text] = result;
+        }
+
+        return result;
     }
 
     private static HighlightKind ClassifyIdentifier(string word)

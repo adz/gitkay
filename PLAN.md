@@ -39,7 +39,7 @@ GitKay is a modern, high-performance Git history visualizer designed as a lean a
 - **UI Framework**: Avalonia v12.0 (C#/AXAML for UI).
 - **Core Logic**: F# with Elmish-style architecture.
 - **State & Flow**: 
-    - `FsFlow`: For managing application flows.
+    - `Axial`: For managing application flows.
     - `ElmishGlue`: For bridging Elmish F# logic with Avalonia UI (located at `~/projects/Elmish.Avalonia.Glue/main`).
 - **Testing**: xUnit + Unquote (F#).
 - **Git Backend**: High-performance Git CLI integration.

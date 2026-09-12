@@ -1,675 +1,32 @@
 namespace GitKay.Core
 
 open System
-open System.Diagnostics
-open System.IO
 open System.Collections.Concurrent
 open System.Text.RegularExpressions
-open FsFlow
+open Axial
+open Axial.Console
+open Axial.FileSystem
+open Axial.PlatformService
+open Axial.Process
+open Reified.Result
+open Reified.ResultDSL
 open GitKay.Core.Models
+open GitKay.Core.GitStartup
+open GitKay.Core.GitParsing
 open LibGit2Sharp
 
 module GitService =
 
-    type StartupTarget =
-        | All
-        | Branch of string
-        | Sha of string
-        | Tag of string
-        | Revision of string
+    let private requireNotNull error value =
+        value
+        |> Result.failIf (box >> isNull)
+        |> Result.orError error
 
-    type SearchScope =
-        | All
-        | Hash
-        | Message
-        | Author
-        | Path
-        | Text
-        | Ref
-
-    type SearchResult =
-        {
-            Commit: Models.Commit
-            MatchKinds: string list
-            MatchSummary: string
-            MatchedPaths: string list
-            MatchedRefs: string list
-        }
-
-    type StartupOptions =
-        {
-            StartupTargets: StartupTarget list
-            ShowBranchRefs: bool
-            ShowStashes: bool
-            DiffContextLines: int
-            DiffPresentationModeKey: string
-            SearchQuery: string
-            SearchScopeKey: string
-            SelectedCommitHash: string option
-            LogFile: string option
-            HelpRequested: bool
-            VersionRequested: bool
-        }
-
-    let defaultStartupOptions =
-        {
-            StartupTargets = []
-            ShowBranchRefs = false
-            ShowStashes = false
-            DiffContextLines = 3
-            DiffPresentationModeKey = "diff"
-            SearchQuery = ""
-            SearchScopeKey = "all"
-            SelectedCommitHash = None
-            LogFile = None
-            HelpRequested = false
-            VersionRequested = false
-        }
-
-    let private tryParseSearchScopeKey (value: string) =
-        match value.Trim().ToLowerInvariant() with
-        | "hash" -> Some "hash"
-        | "message" -> Some "message"
-        | "author" -> Some "author"
-        | "path" -> Some "path"
-        | "text" -> Some "text"
-        | "ref" -> Some "ref"
-        | "all" -> Some "all"
-        | _ -> None
-
-    let private tryParseDiffPresentationModeKey (value: string) =
-        match value.Trim().ToLowerInvariant() with
-        | "diff" -> Some "diff"
-        | "side-by-side" -> Some "side-by-side"
-        | "new" -> Some "new"
-        | "old" -> Some "old"
-        | _ -> None
-
-    let private tryConsumeValue (args: string array) index optionName valueLabel allowEmpty =
-        let inlinePrefix = optionName + "="
-        let arg = args.[index]
-
-        if arg.StartsWith(inlinePrefix) then
-            let value = arg.Substring(inlinePrefix.Length)
-
-            if allowEmpty || not (String.IsNullOrWhiteSpace value) then
-                Ok(value, index + 1)
-            else
-                Error (sprintf "Missing %s after %s." valueLabel optionName)
-        elif index + 1 < args.Length && not (args.[index + 1].StartsWith("--")) then
-            Ok(args.[index + 1], index + 2)
-        else
-            Error (sprintf "Missing %s after %s." valueLabel optionName)
-
-    let getHelpText () =
-        "Usage: gitkay [options] [revision]\n\n" +
-        "Options:\n" +
-        "  --help, -h               Show this help message\n" +
-        "  --version, -v            Show version information\n" +
-        "  --all                    Show commits from all branches and tags\n" +
-        "  --branch <name>          Show commits from the specified branch\n" +
-        "  --sha <hash>             Show commits from the specified commit hash\n" +
-        "  --tag <name>             Show commits from the specified tag\n" +
-        "  --select <hash>          Select the specified commit on startup\n" +
-        "  --search <query>         Filter commits by the specified search query\n" +
-        "  --search-scope <scope>   Set search scope (all, hash, message, author, path, text, ref)\n" +
-        "  --show-branch-refs       Show branch and tag markers in the history list\n" +
-        "  --hide-branch-refs       Hide branch and tag markers in the history list\n" +
-        "  --show-stashes           Show stashes in the history list\n" +
-        "  --hide-stashes           Hide stashes in the history list\n" +
-        "  --diff-context <n>       Number of context lines to show in diffs\n" +
-        "  --diff-presentation <m>  Diff presentation mode (diff, side-by-side, new, old)\n" +
-        "  --log <file>             Write logs to the specified file\n\n" +
-        "Arguments:\n" +
-        "  [revision]               Optional branch, tag, or commit hash to use as the history tip\n"
-
-    let parseStartupOptions (args: string array) =
-        let mutable index = 0
-        let mutable hasAll = false
-        let mutable targets = ResizeArray<StartupTarget>()
-        let mutable showBranchRefs = defaultStartupOptions.ShowBranchRefs
-        let mutable showStashes = defaultStartupOptions.ShowStashes
-        let mutable diffContextLines = defaultStartupOptions.DiffContextLines
-        let mutable diffPresentationModeKey = defaultStartupOptions.DiffPresentationModeKey
-        let mutable searchQuery = defaultStartupOptions.SearchQuery
-        let mutable searchScopeKey = defaultStartupOptions.SearchScopeKey
-        let mutable selectedCommitHash = defaultStartupOptions.SelectedCommitHash
-        let mutable logFile = defaultStartupOptions.LogFile
-        let mutable helpRequested = false
-        let mutable versionRequested = false
-        let mutable positionalTargetSeen = false
-
-        let rec loop () =
-            if index >= args.Length then
-                let startupTargets =
-                    if hasAll then
-                        [ StartupTarget.All ]
-                    else
-                        List.ofSeq targets
-
-                Ok
-                    {
-                        StartupTargets = startupTargets
-                        ShowBranchRefs = showBranchRefs
-                        ShowStashes = showStashes
-                        DiffContextLines = diffContextLines
-                        DiffPresentationModeKey = diffPresentationModeKey
-                        SearchQuery = searchQuery
-                        SearchScopeKey = searchScopeKey
-                        SelectedCommitHash = selectedCommitHash
-                        LogFile = logFile
-                        HelpRequested = helpRequested
-                        VersionRequested = versionRequested
-                    }
-            else
-                match args.[index] with
-                | "--help" | "-h" ->
-                    helpRequested <- true
-                    index <- index + 1
-                    loop ()
-                | "--version" | "-v" ->
-                    versionRequested <- true
-                    index <- index + 1
-                    loop ()
-                | "--all" ->
-                    hasAll <- true
-                    index <- index + 1
-                    loop ()
-                | "--show-branch-refs" ->
-                    showBranchRefs <- true
-                    index <- index + 1
-                    loop ()
-                | "--hide-branch-refs" ->
-                    showBranchRefs <- false
-                    index <- index + 1
-                    loop ()
-                | "--show-stashes" ->
-                    showStashes <- true
-                    index <- index + 1
-                    loop ()
-                | "--hide-stashes" ->
-                    showStashes <- false
-                    index <- index + 1
-                    loop ()
-                | "--diff-context" ->
-                    match tryConsumeValue args index "--diff-context" "diff context line count" false with
-                    | Error err -> Error err
-                    | Ok (value, nextIndex) ->
-                        match Int32.TryParse value with
-                        | true, parsed ->
-                            diffContextLines <- max 0 parsed
-                            index <- nextIndex
-                            loop ()
-                        | false, _ ->
-                            Error (sprintf "Invalid diff context line count: %s" value)
-                | arg when arg.StartsWith("--diff-context=") ->
-                    let value = arg.Substring("--diff-context=".Length)
-
-                    match Int32.TryParse value with
-                    | true, parsed ->
-                        diffContextLines <- max 0 parsed
-                        index <- index + 1
-                        loop ()
-                    | false, _ ->
-                        Error (sprintf "Invalid diff context line count: %s" value)
-                | "--diff-presentation" ->
-                    match tryConsumeValue args index "--diff-presentation" "diff presentation mode" false with
-                    | Error err -> Error err
-                    | Ok (value, nextIndex) ->
-                        match tryParseDiffPresentationModeKey value with
-                        | Some modeKey ->
-                            diffPresentationModeKey <- modeKey
-                            index <- nextIndex
-                            loop ()
-                        | None ->
-                            Error (sprintf "Invalid diff presentation mode: %s" value)
-                | arg when arg.StartsWith("--diff-presentation=") ->
-                    let value = arg.Substring("--diff-presentation=".Length)
-
-                    match tryParseDiffPresentationModeKey value with
-                    | Some modeKey ->
-                        diffPresentationModeKey <- modeKey
-                        index <- index + 1
-                        loop ()
-                    | None ->
-                        Error (sprintf "Invalid diff presentation mode: %s" value)
-                | "--search" ->
-                    match tryConsumeValue args index "--search" "search query" true with
-                    | Error err -> Error err
-                    | Ok (value, nextIndex) ->
-                        searchQuery <- value
-                        index <- nextIndex
-                        loop ()
-                | arg when arg.StartsWith("--search=") ->
-                    searchQuery <- arg.Substring("--search=".Length)
-                    index <- index + 1
-                    loop ()
-                | "--search-scope" ->
-                    match tryConsumeValue args index "--search-scope" "search scope" false with
-                    | Error err -> Error err
-                    | Ok (value, nextIndex) ->
-                        match tryParseSearchScopeKey value with
-                        | Some scopeKey ->
-                            searchScopeKey <- scopeKey
-                            index <- nextIndex
-                            loop ()
-                        | None ->
-                            Error (sprintf "Invalid search scope: %s" value)
-                | arg when arg.StartsWith("--search-scope=") ->
-                    let value = arg.Substring("--search-scope=".Length)
-
-                    match tryParseSearchScopeKey value with
-                    | Some scopeKey ->
-                        searchScopeKey <- scopeKey
-                        index <- index + 1
-                        loop ()
-                    | None ->
-                        Error (sprintf "Invalid search scope: %s" value)
-                | "--select" ->
-                    match tryConsumeValue args index "--select" "commit hash" false with
-                    | Error err -> Error err
-                    | Ok (value, nextIndex) ->
-                        selectedCommitHash <- Some value
-                        index <- nextIndex
-                        loop ()
-                | arg when arg.StartsWith("--select=") ->
-                    let value = arg.Substring("--select=".Length)
-                    selectedCommitHash <- Some value
-                    index <- index + 1
-                    loop ()
-                | "--log" ->
-                    match tryConsumeValue args index "--log" "log file" false with
-                    | Error err -> Error err
-                    | Ok (value, nextIndex) ->
-                        logFile <- Some value
-                        index <- nextIndex
-                        loop ()
-                | arg when arg.StartsWith("--log=") ->
-                    logFile <- Some (arg.Substring("--log=".Length))
-                    index <- index + 1
-                    loop ()
-                | "--branch" ->
-                    if hasAll then
-                        index <-
-                            if index + 1 < args.Length && not (args.[index + 1].StartsWith("--")) then
-                                index + 2
-                            else
-                                index + 1
-
-                        loop ()
-                    else
-                        match tryConsumeValue args index "--branch" "branch name" false with
-                        | Error err -> Error err
-                        | Ok (value, nextIndex) ->
-                            targets.Add(StartupTarget.Branch value)
-                            index <- nextIndex
-                            loop ()
-                | arg when arg.StartsWith("--branch=") ->
-                    let value = arg.Substring("--branch=".Length)
-
-                    if not hasAll then
-                        targets.Add(StartupTarget.Branch value)
-
-                    index <- index + 1
-                    loop ()
-                | "--sha" ->
-                    if hasAll then
-                        index <-
-                            if index + 1 < args.Length && not (args.[index + 1].StartsWith("--")) then
-                                index + 2
-                            else
-                                index + 1
-
-                        loop ()
-                    else
-                        match tryConsumeValue args index "--sha" "commit hash" false with
-                        | Error err -> Error err
-                        | Ok (value, nextIndex) ->
-                            targets.Add(StartupTarget.Sha value)
-                            index <- nextIndex
-                            loop ()
-                | arg when arg.StartsWith("--sha=") ->
-                    let value = arg.Substring("--sha=".Length)
-
-                    if not hasAll then
-                        targets.Add(StartupTarget.Sha value)
-
-                    index <- index + 1
-                    loop ()
-                | "--tag" ->
-                    if hasAll then
-                        index <-
-                            if index + 1 < args.Length && not (args.[index + 1].StartsWith("--")) then
-                                index + 2
-                            else
-                                index + 1
-
-                        loop ()
-                    else
-                        match tryConsumeValue args index "--tag" "tag name" false with
-                        | Error err -> Error err
-                        | Ok (value, nextIndex) ->
-                            targets.Add(StartupTarget.Tag value)
-                            index <- nextIndex
-                            loop ()
-                | arg when arg.StartsWith("--tag=") ->
-                    let value = arg.Substring("--tag=".Length)
-
-                    if not hasAll then
-                        targets.Add(StartupTarget.Tag value)
-
-                    index <- index + 1
-                    loop ()
-                | arg ->
-                    if not (arg.StartsWith("-")) && not positionalTargetSeen then
-                        positionalTargetSeen <- true
-                        if not hasAll then
-                            targets.Add(StartupTarget.Revision arg)
-                        index <- index + 1
-                        loop ()
-                    else
-                        Error (sprintf "Unrecognized startup argument: %s" arg)
-
-        loop ()
-
-    type GitEnv = { RepoPath: string }
-
-    let parseStartupTargets (args: string array) =
-        parseStartupOptions args |> Result.map (fun options -> options.StartupTargets)
-
-    let parseSearchScope (value: string) =
-        match tryParseSearchScopeKey value with
-        | Some "hash" -> SearchScope.Hash
-        | Some "message" -> SearchScope.Message
-        | Some "author" -> SearchScope.Author
-        | Some "path" -> SearchScope.Path
-        | Some "text" -> SearchScope.Text
-        | Some "ref" -> SearchScope.Ref
-        | _ -> SearchScope.All
-
-    let private discoverRepositoryPath () =
-        let candidateRoots =
-            seq {
-                yield Environment.CurrentDirectory
-                yield AppContext.BaseDirectory
-
-                match Environment.ProcessPath with
-                | null -> ()
-                | processPath ->
-                    yield Path.GetDirectoryName(processPath)
-
-                    try
-                        let processFile = FileInfo(processPath)
-                        match processFile.ResolveLinkTarget(true) with
-                        | null -> ()
-                        | resolved -> yield Path.GetDirectoryName(resolved.FullName)
-                    with _ ->
-                        ()
-            }
-            |> Seq.choose (fun value ->
-                if String.IsNullOrWhiteSpace value then None else Some value)
-            |> Seq.distinct
-            |> Seq.toList
-
-        let rec tryDiscover roots errors =
-            match roots with
-            | [] -> Error (sprintf "Could not locate a Git repository. Tried: %s" (String.Join(", ", List.rev errors)))
-            | root :: rest ->
-                try
-                    let repoPath = Repository.Discover(root)
-
-                    if String.IsNullOrWhiteSpace repoPath then
-                        tryDiscover rest (root :: errors)
-                    else
-                        Ok repoPath
-                with _ ->
-                    tryDiscover rest (root :: errors)
-
-        tryDiscover candidateRoots []
-
+    /// Repository discovery is a host-startup seam; failures are intentionally represented as null for the C# host.
     let tryDiscoverRepositoryPath () =
-        match discoverRepositoryPath () with
-        | Ok repoPath -> Path.TrimEndingDirectorySeparator(Path.GetFullPath(repoPath))
+        match RepositoryDiscovery.discover () with
+        | Ok repoPath -> repoPath
         | Error _ -> null
-
-    let private withRepositoryFlow (action: Repository -> 'T) : Flow<GitEnv, 'e, 'T> =
-        flow {
-            let! env = Flow.env
-            use repo = new Repository(env.RepoPath)
-            return action repo
-        }
-
-    let private quoteArg (value: string) =
-        "\"" + value.Replace("\"", "\\\"") + "\""
-
-    let executeGitCommand (args: string) : Flow<GitEnv, string, string> =
-        flow {
-            let! env = Flow.env
-            let! ct = Flow.Runtime.cancellationToken
-            
-            let startInfo = ProcessStartInfo("git", args)
-            startInfo.WorkingDirectory <- env.RepoPath
-            startInfo.RedirectStandardOutput <- true
-            startInfo.RedirectStandardError <- true
-            startInfo.UseShellExecute <- false
-            startInfo.CreateNoWindow <- true
-            
-            use process' = new Process()
-            process'.StartInfo <- startInfo
-            process'.Start() |> ignore
-            
-            do! process'.WaitForExitAsync(ct)
-            
-            let output = process'.StandardOutput.ReadToEnd()
-            let error = process'.StandardError.ReadToEnd()
-            
-            if process'.ExitCode <> 0 then
-                return! Error error
-            else
-                return output
-        }
-
-    let private getFirstParent (hash: string) =
-        flow {
-            let! output = executeGitCommand (sprintf "rev-list --parents -n 1 %s" hash)
-            return
-                output.Trim().Split(' ', System.StringSplitOptions.RemoveEmptyEntries)
-                |> Array.tryItem 1
-        }
-
-    let parseCommitLine (line: string) : Models.Commit option =
-        let parts = line.TrimEnd('\r').Split('|')
-        if parts.Length >= 6 then
-            Some {
-                Hash = parts.[0]
-                Timestamp = int64 parts.[1]
-                AuthorName = parts.[2]
-                AuthorEmail = parts.[3]
-                Parents = parts.[4].Split(' ', System.StringSplitOptions.RemoveEmptyEntries) |> Array.toList
-                Subject = parts.[5]
-                Message = parts.[5]
-                Refs = []
-            }
-        else
-            None
-
-    let private parseDiffHeader (line: string) =
-        if line.StartsWith("diff --git ") then
-            let parts = line.Split(' ', System.StringSplitOptions.RemoveEmptyEntries)
-            if parts.Length >= 4 then
-                Some(parts.[2], parts.[3])
-            else
-                None
-        else
-            None
-
-    let private parseHunkHeader (line: string) =
-        let matchResult = Regex.Match(line, "^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
-        if matchResult.Success then
-            let oldStart = int matchResult.Groups.[1].Value
-            let newStart = int matchResult.Groups.[3].Value
-            Some(oldStart, newStart)
-        else
-            None
-
-    let parseBlamePorcelain (output: string) : Map<int, BlameInfo> =
-        let lines = output.Replace("\r", "").Split('\n', System.StringSplitOptions.RemoveEmptyEntries)
-        let mutable index = 0
-        let mutable results = []
-
-        while index < lines.Length do
-            let headerParts = lines.[index].Split(' ', System.StringSplitOptions.RemoveEmptyEntries)
-            if headerParts.Length >= 3 then
-                let commitHash = headerParts.[0]
-                let finalLineNumber = int headerParts.[2]
-                let mutable authorName = ""
-                let mutable authorEmail = ""
-                let mutable authorTimestamp = 0L
-
-                index <- index + 1
-
-                while index < lines.Length && not (Regex.IsMatch(lines.[index], "^[0-9a-fA-F]{7,40}\\s")) do
-                    let metadata = lines.[index]
-                    if metadata.StartsWith("author ") then
-                        authorName <- metadata.Substring(7)
-                    elif metadata.StartsWith("author-mail ") then
-                        authorEmail <- metadata.Substring(12).Trim().Trim('<', '>')
-                    elif metadata.StartsWith("author-time ") then
-                        authorTimestamp <- int64 (metadata.Substring(12).Trim())
-                    index <- index + 1
-
-                results <- (finalLineNumber, {
-                    Hash = commitHash
-                    AuthorName = authorName
-                    AuthorEmail = authorEmail
-                    Timestamp = authorTimestamp
-                }) :: results
-            else
-                index <- index + 1
-
-        results |> List.rev |> Map.ofList
-
-    let private toCommitModel (commit: LibGit2Sharp.Commit) (refs: Models.CommitRef list) : Models.Commit =
-        {
-            Hash = commit.Sha
-            Timestamp = commit.Author.When.ToUnixTimeSeconds()
-            AuthorName = commit.Author.Name
-            AuthorEmail = commit.Author.Email
-            Parents = commit.Parents |> Seq.map (fun parent -> parent.Sha) |> Seq.toList
-            Subject = commit.MessageShort
-            Message = commit.Message
-            Refs = refs
-        }
-
-    let parseDiff (output: string) : FileDiff list =
-        let lines = output.Replace("\r", "").Split('\n')
-        let mutable files = []
-        let mutable currentFile : FileDiff option = None
-        let mutable currentHunk : DiffHunk option = None
-        let mutable oldLineNumber = 0
-        let mutable newLineNumber = 0
-
-        let flushHunk () =
-            currentHunk
-            |> Option.iter (fun h ->
-                currentFile <- currentFile |> Option.map (fun f -> { f with Hunks = h :: f.Hunks }))
-            currentHunk <- None
-
-        let flushFile () =
-            flushHunk ()
-            currentFile |> Option.iter (fun f -> files <- f :: files)
-            currentFile <- None
-
-        for line in lines do
-            if line.StartsWith("diff --git") then
-                flushFile ()
-                currentFile <-
-                    match parseDiffHeader line with
-                    | Some(oldPath, newPath) -> Some { OldPath = oldPath; NewPath = newPath; Hunks = [] }
-                    | None -> Some { OldPath = ""; NewPath = ""; Hunks = [] }
-                oldLineNumber <- 0
-                newLineNumber <- 0
-            elif line.StartsWith("--- ") then
-                currentFile <-
-                    currentFile
-                    |> Option.map (fun f ->
-                        let oldPath =
-                            if line = "--- /dev/null" then "/dev/null"
-                            elif line.StartsWith("--- a/") then line.Substring(6)
-                            else line.Substring(4)
-
-                        { f with OldPath = oldPath })
-            elif line.StartsWith("+++ ") then
-                currentFile <-
-                    currentFile
-                    |> Option.map (fun f ->
-                        let newPath =
-                            if line = "+++ /dev/null" then "/dev/null"
-                            elif line.StartsWith("+++ b/") then line.Substring(6)
-                            else line.Substring(4)
-
-                        { f with NewPath = newPath })
-            elif line.StartsWith("@@") then
-                flushHunk ()
-                match parseHunkHeader line with
-                | Some(oldStart, newStart) ->
-                    oldLineNumber <- oldStart
-                    newLineNumber <- newStart
-                    currentHunk <- Some { Header = line; Lines = [] }
-                | None ->
-                    currentHunk <- Some { Header = line; Lines = [] }
-            elif line.StartsWith("+") && not (line.StartsWith("+++")) then
-                currentHunk <-
-                    currentHunk
-                    |> Option.map (fun h ->
-                        let diffLine : DiffLine =
-                            {
-                                Type = Added
-                                Content = line.Substring(1)
-                                OldLineNo = None
-                                NewLineNo = Some newLineNumber
-                            }
-
-                        { h with Lines = diffLine :: h.Lines })
-                newLineNumber <- newLineNumber + 1
-            elif line.StartsWith("-") && not (line.StartsWith("---")) then
-                currentHunk <-
-                    currentHunk
-                    |> Option.map (fun h ->
-                        let diffLine : DiffLine =
-                            {
-                                Type = Removed
-                                Content = line.Substring(1)
-                                OldLineNo = Some oldLineNumber
-                                NewLineNo = None
-                            }
-
-                        { h with Lines = diffLine :: h.Lines })
-                oldLineNumber <- oldLineNumber + 1
-            elif line.StartsWith(" ") then
-                currentHunk <-
-                    currentHunk
-                    |> Option.map (fun h ->
-                        let diffLine : DiffLine =
-                            {
-                                Type = Context
-                                Content = line.Substring(1)
-                                OldLineNo = Some oldLineNumber
-                                NewLineNo = Some newLineNumber
-                            }
-
-                        {
-                            h with
-                                Lines = diffLine :: h.Lines
-                        })
-                oldLineNumber <- oldLineNumber + 1
-                newLineNumber <- newLineNumber + 1
-
-        flushFile ()
-
-        files
-        |> List.rev
-        |> List.map (fun f -> { f with Hunks = f.Hunks |> List.rev |> List.map (fun h -> { h with Lines = h.Lines |> List.rev }) })
 
     type DiffFileKey =
         {
@@ -677,7 +34,7 @@ module GitService =
             NewPath: string
         }
 
-    type private DiffFileContentCacheKey =
+    type internal DiffFileContentCacheKey =
         {
             Hash: string
             OldPath: string
@@ -706,8 +63,36 @@ module GitService =
             FileList: DiffFileSummary list
         }
 
-    let private diffCache = ConcurrentDictionary<string, DiffCacheEntry>()
-    let private diffFileContentCache = ConcurrentDictionary<DiffFileContentCacheKey, FileDiff>()
+    type GitCache() =
+        member internal _.Diff = ConcurrentDictionary<string, DiffCacheEntry>()
+        member internal _.FileContent = ConcurrentDictionary<DiffFileContentCacheKey, FileDiff>()
+
+    type GitEnv =
+        { RepoPath: string
+          Runtime: BaseRuntime
+          Processes: IProcess
+          Cache: GitCache }
+        interface IHasClock with member this.Clock = this.Runtime.Clock
+        interface IHasProcess with member this.Process = this.Processes
+
+    let environment repoPath =
+        let runtime = BaseRuntime.liveValue
+        { RepoPath = repoPath
+          Runtime = runtime
+          Processes = Process.live runtime.Clock FileSystem.live Console.live
+          Cache = GitCache() }
+
+    let executeGitCommand (arguments: string list) : Flow<GitEnv, GitError, string> =
+        flow {
+            let! repoPath = Flow.envWith _.RepoPath
+            return!
+                Process.commandArgs "git" arguments
+                |> Process.workingDirectory repoPath
+                |> Process.capture
+                |> Flow.map _.StdOut
+                |> Flow.mapError (fun error -> GitError.GitProcessFailed(arguments, error))
+        }
+
 
     let private normalizeContextLines contextLines = max 0 contextLines
 
@@ -731,12 +116,6 @@ module GitService =
             OldPath = file.OldPath
             NewPath = file.NewPath
             DisplayPath = buildDisplayPath file.OldPath file.NewPath
-        }
-
-    let private toDiffFileKey (file: FileDiff) =
-        {
-            OldPath = file.OldPath
-            NewPath = file.NewPath
         }
 
     let private toDiffFileSummaryFromPatchEntry (entry: PatchEntryChanges) =
@@ -813,83 +192,12 @@ module GitService =
             FileList = fileList
         }
 
-    let private buildCommitRefs (includeStashes: bool) (repo: Repository) =
-        let refsByCommit = System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<Models.CommitRef>>()
-
-        let addRef (hash: string) (kind: Models.CommitRefKind) (name: string) (isCurrentHead: bool) =
-            if not (String.IsNullOrWhiteSpace hash) && not (String.IsNullOrWhiteSpace name) then
-                let bucket =
-                    match refsByCommit.TryGetValue hash with
-                    | true, existing -> existing
-                    | false, _ ->
-                        let created = System.Collections.Generic.HashSet<Models.CommitRef>()
-                        refsByCommit.[hash] <- created
-                        created
-                bucket.Add { Name = name; Kind = kind; IsCurrentHead = isCurrentHead } |> ignore
-
-        for branch in repo.Branches do
-            if not (isNull branch.Tip)
-               && not (
-                   branch.IsRemote
-                   && branch.FriendlyName.EndsWith("/HEAD", StringComparison.OrdinalIgnoreCase)
-               ) then
-                let kind =
-                    if branch.IsRemote then
-                        Models.CommitRefKind.Remote
-                    else
-                        Models.CommitRefKind.Branch
-
-                addRef branch.Tip.Sha kind branch.FriendlyName branch.IsCurrentRepositoryHead
-
-        for tag in repo.Tags do
-            match tag.PeeledTarget with
-            | :? Commit as commit -> addRef commit.Sha Models.CommitRefKind.Tag tag.FriendlyName false
-            | _ -> ()
-
-        if includeStashes then
-            repo.Stashes
-            |> Seq.mapi (fun index stash -> index, stash)
-            |> Seq.iter (fun (index, stash) ->
-                if not (isNull stash.WorkTree) then
-                    addRef stash.WorkTree.Sha Models.CommitRefKind.Stash (sprintf "stash@{%d}" index) false)
-
-        refsByCommit
-        |> Seq.map (fun kvp ->
-            kvp.Key,
-            kvp.Value
-            |> Seq.sortWith (fun left right ->
-                match compare (int left.Kind) (int right.Kind) with
-                | 0 -> StringComparer.OrdinalIgnoreCase.Compare(left.Name, right.Name)
-                | comparison -> comparison)
-            |> Seq.toList)
-        |> Map.ofSeq
-
-    let private buildDefaultHistoryRoots (includeStashes: bool) (repo: Repository) =
-        seq {
-            yield!
-                repo.Refs
-                |> Seq.filter (fun reference ->
-                    not (String.Equals(reference.CanonicalName, "refs/stash", StringComparison.Ordinal)))
-                |> Seq.map box
-            if includeStashes then
-                yield!
-                    repo.Stashes
-                    |> Seq.choose (fun stash ->
-                        if isNull stash.WorkTree then
-                            None
-                        else
-                            Some (box stash.WorkTree))
-        }
-
-    let private containsIgnoreCase (haystack: string) (needle: string) =
-        haystack.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0
-
-    let private loadDiffCacheEntry (hash: string) : Flow<GitEnv, string, DiffCacheEntry> =
+    let private loadDiffCacheEntry (hash: string) : Flow<GitEnv, GitError, DiffCacheEntry> =
         flow {
             let! env = Flow.env
             use repo = new Repository(env.RepoPath)
             let! (commit: LibGit2Sharp.Commit) = 
-                Guard.Of(sprintf "Commit not found: %s" hash, repo.Lookup<LibGit2Sharp.Commit>(hash) |> Check.okIfNotNull)
+                repo.Lookup<LibGit2Sharp.Commit>(hash) |> requireNotNull (GitError.CommitNotFound hash)
 
             let isRootCommit = commit.Parents |> Seq.isEmpty
             use patch =
@@ -900,17 +208,18 @@ module GitService =
             return buildDiffCacheEntryFromPatch hash isRootCommit patch
         }
 
-    let private getDiffCacheEntry (hash: string) : Flow<GitEnv, string, DiffCacheEntry * bool> =
+    let private getDiffCacheEntry (hash: string) : Flow<GitEnv, GitError, DiffCacheEntry * bool> =
         flow {
-            match diffCache.TryGetValue hash with
+            let! cache = Flow.envWith _.Cache
+            match cache.Diff.TryGetValue hash with
             | true, entry -> return (entry, true)
             | false, _ ->
                 let! entry = loadDiffCacheEntry hash
-                diffCache.TryAdd(hash, entry) |> ignore
+                cache.Diff.TryAdd(hash, entry) |> ignore
                 return (entry, false)
         }
 
-    let private loadDiffFileContent (contextLines: int) (hash: string) (oldPath: string) (newPath: string) : Flow<GitEnv, string, FileDiff> =
+    let private loadDiffFileContent (contextLines: int) (hash: string) (oldPath: string) (newPath: string) : Flow<GitEnv, GitError, FileDiff> =
         flow {
             let! env = Flow.env
             let candidatePaths =
@@ -925,7 +234,7 @@ module GitService =
 
             use repo = new Repository(env.RepoPath)
             let! (commit: LibGit2Sharp.Commit) =
-                Guard.Of(sprintf "Commit not found: %s" hash, repo.Lookup<LibGit2Sharp.Commit>(hash) |> Check.okIfNotNull)
+                repo.Lookup<LibGit2Sharp.Commit>(hash) |> requireNotNull (GitError.CommitNotFound hash)
 
             let compareOptions = buildCompareOptions contextLines
             use patch =
@@ -935,34 +244,39 @@ module GitService =
 
             match parseDiff patch.Content with
             | [ file ] -> return file
-            | [] -> return! Error (sprintf "File not found in commit %s: %s -> %s" hash oldPath newPath)
-            | _ -> return! Error (sprintf "Multiple files matched in commit %s: %s -> %s" hash oldPath newPath)
+            | [] -> return! Error (GitError.DiffFileNotFound(hash, oldPath, newPath))
+            | _ -> return! Error (GitError.MultipleDiffFilesMatched(hash, oldPath, newPath))
         }
 
     let private loadCommit (repo: Repository) (hash: string) =
-        Guard.Of(sprintf "Commit not found: %s" hash, repo.Lookup<LibGit2Sharp.Commit>(hash) |> Check.okIfNotNull)
+        repo.Lookup<LibGit2Sharp.Commit>(hash) |> requireNotNull (GitError.CommitNotFound hash)
 
-    let private buildCommitterSignature (repo: Repository) =
-        Guard.Of("Could not determine the git user identity. Configure user.name and user.email.", repo.Config.BuildSignature(DateTimeOffset.UtcNow) |> Check.okIfNotNull)
+    let private loadCommitterSignature (repo: Repository) : Flow<GitEnv, GitError, Signature> =
+        flow {
+            let! now = Clock.now
+            return!
+                repo.Config.BuildSignature(now)
+                |> requireNotNull GitError.CommitterIdentityMissing
+        }
 
     let private resolveStartupTargets (includeStashes: bool) (repo: Repository) (targets: StartupTarget list) =
         let hasAll = targets |> List.exists ((=) StartupTarget.All)
 
         if hasAll || List.isEmpty targets then
-            Ok (box (buildDefaultHistoryRoots includeStashes repo))
+            Ok (box (History.defaultRoots includeStashes repo))
         else
             let resolveTarget target =
                 match target with
                 | StartupTarget.All ->
                     Ok []
                 | StartupTarget.Branch name ->
-                    Guard.Of(sprintf "Branch not found: %s" name, repo.Branches.[name] |> Check.okIfNotNull)
+                    repo.Branches.[name] |> requireNotNull (GitError.BranchNotFound name)
                     |> Result.map (fun branch -> [ box branch.Reference ])
                 | StartupTarget.Sha hash ->
-                    Guard.Of(sprintf "Commit not found: %s" hash, repo.Lookup<LibGit2Sharp.Commit>(hash) |> Check.okIfNotNull)
+                    repo.Lookup<LibGit2Sharp.Commit>(hash) |> requireNotNull (GitError.CommitNotFound hash)
                     |> Result.map (fun (commit: LibGit2Sharp.Commit) -> [ box commit ])
                 | StartupTarget.Tag name ->
-                    Guard.Of(sprintf "Tag not found: %s" name, repo.Tags.[name] |> Check.okIfNotNull)
+                    repo.Tags.[name] |> requireNotNull (GitError.TagNotFound name)
                     |> Result.map (fun tag -> [ box tag ])
                 | StartupTarget.Revision name ->
                     match repo.Branches.[name] |> Option.ofObj with
@@ -971,37 +285,30 @@ module GitService =
                         result {
                             try
                                 let! obj =
-                                    Guard.Of(sprintf "Revision not found: %s" name, repo.Lookup(name) |> Check.okIfNotNull)
+                                    repo.Lookup(name) |> requireNotNull (GitError.RevisionNotFound name)
 
                                 match obj with
                                 | :? LibGit2Sharp.Commit as c -> return [ box c ]
                                 | :? TagAnnotation as t -> 
                                     match t.Target with
                                     | :? LibGit2Sharp.Commit as c -> return [ box c ]
-                                    | _ -> return! Error (sprintf "Tag does not point to a commit: %s" name)
+                                    | _ -> return! Error (GitError.TagDoesNotPointToCommit name)
                                 | _ -> return [ box obj ]
                             with _ ->
-                                return! Error (sprintf "Invalid revision: %s" name)
+                                return! Error (GitError.InvalidRevision name)
                         }
 
             targets
-            |> List.fold
-                (fun state target ->
-                    result {
-                        let! resolved = state
-                        let! additions = resolveTarget target
-                        return resolved @ additions
-                    })
-                (Ok [])
-            |> Result.map box
+            |> Result.traverse resolveTarget
+            |> Result.map (List.concat >> box)
 
-    let fetchHistory (limit: int option) (includeStashes: bool) (targets: StartupTarget list) : Flow<GitEnv, string, Models.Commit list> =
+    let fetchHistory (limit: int option) (includeStashes: bool) (targets: StartupTarget list) : Flow<GitEnv, GitError, Models.Commit list> =
         flow {
             let! env = Flow.env
             use repo = new Repository(env.RepoPath)
             let! roots = resolveStartupTargets includeStashes repo targets
             
-            let refsByCommit = buildCommitRefs includeStashes repo
+            let refsByCommit = History.commitRefs includeStashes repo
             let filter = CommitFilter()
             filter.IncludeReachableFrom <- roots
             filter.SortBy <- CommitSortStrategies.Topological ||| CommitSortStrategies.Time
@@ -1025,7 +332,7 @@ module GitService =
                 |> Seq.toList
         }
 
-    let fetchDiff (contextLines: int) (hash: string) : Flow<GitEnv, string, FileDiff list> =
+    let fetchDiff (contextLines: int) (hash: string) : Flow<GitEnv, GitError, FileDiff list> =
         flow {
             let! entry, _ = getDiffCacheEntry hash
             return!
@@ -1033,20 +340,21 @@ module GitService =
                 |> Flow.traverse (fun file -> loadDiffFileContent contextLines hash file.OldPath file.NewPath)
         }
 
-    let fetchDiffSummary (hash: string) : Flow<GitEnv, string, DiffSummary> =
+    let fetchDiffSummary (hash: string) : Flow<GitEnv, GitError, DiffSummary> =
         flow {
             let! entry, _ = getDiffCacheEntry hash
             return entry.Summary
         }
 
-    let fetchDiffFileList (hash: string) : Flow<GitEnv, string, DiffFileSummary list> =
+    let fetchDiffFileList (hash: string) : Flow<GitEnv, GitError, DiffFileSummary list> =
         flow {
             let! entry, _ = getDiffCacheEntry hash
             return entry.FileList
         }
 
-    let fetchDiffFileContent (contextLines: int) (hash: string) (oldPath: string) (newPath: string) : Flow<GitEnv, string, FileDiff> =
+    let fetchDiffFileContent (contextLines: int) (hash: string) (oldPath: string) (newPath: string) : Flow<GitEnv, GitError, FileDiff> =
         flow {
+            let! env = Flow.env
             let key =
                 {
                     Hash = hash
@@ -1055,240 +363,74 @@ module GitService =
                     ContextLines = normalizeContextLines contextLines
                 }
 
-            match diffFileContentCache.TryGetValue key with
+            match env.Cache.FileContent.TryGetValue key with
             | true, file -> return file
             | false, _ ->
                 let! file = loadDiffFileContent contextLines hash oldPath newPath
-                diffFileContentCache.TryAdd(key, file) |> ignore
+                env.Cache.FileContent.TryAdd(key, file) |> ignore
                 return file
         }
 
-    let private buildSearchSummary (matchKinds: string list) (paths: string list) (refs: string list) =
-        let details = System.Collections.Generic.List<string>()
+    let searchCommits (contextLines: int) (commits: Models.Commit list) (query: string) (scope: GitSearch.Scope) : Flow<GitEnv, GitError, GitSearch.Result list> =
+        GitSearch.searchCommitsWithDiffLoader commits query scope (fun hash -> fetchDiff contextLines hash)
 
-        if matchKinds |> List.contains "hash" then details.Add "hash"
-        if matchKinds |> List.contains "message" then details.Add "message"
-        if matchKinds |> List.contains "author" then details.Add "author"
-        if matchKinds |> List.contains "path" then details.Add "path"
-        if matchKinds |> List.contains "text" then details.Add "text"
-        if matchKinds |> List.contains "ref" then details.Add "ref"
-
-        if paths.Length > 0 then
-            details.Add (sprintf "paths: %s" (String.Join(", ", paths)))
-
-        if refs.Length > 0 then
-            details.Add (sprintf "refs: %s" (String.Join(", ", refs)))
-
-        String.Join("; ", details)
-
-    let private searchCommitDiff
-        (query: string)
-        (files: FileDiff list)
-        (searchPaths: bool)
-        (searchText: bool) =
-        let matchedPaths = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        let mutable textMatched = false
-
-        for file in files do
-            if searchPaths && (containsIgnoreCase file.OldPath query || containsIgnoreCase file.NewPath query || containsIgnoreCase (buildDisplayPath file.OldPath file.NewPath) query) then
-                matchedPaths.Add (buildDisplayPath file.OldPath file.NewPath) |> ignore
-
-            if searchText && not textMatched then
-                let fileTextMatched =
-                    file.Hunks
-                    |> List.exists (fun hunk ->
-                        hunk.Lines
-                        |> List.exists (fun line -> containsIgnoreCase line.Content query))
-
-                if fileTextMatched then
-                    textMatched <- true
-
-        let pathMatches = matchedPaths |> Seq.toList
-
-        if (searchPaths && pathMatches.Length > 0) || (searchText && textMatched) then
-            Some(pathMatches, textMatched)
-        else
-            None
-
-    let searchCommitsWithDiffLoader
-        (commits: Models.Commit list)
-        (query: string)
-        (scope: SearchScope)
-        (loadDiff: string -> Flow<GitEnv, string, FileDiff list>) : Flow<GitEnv, string, SearchResult list> =
-        flow {
-            let normalizedQuery = query.Trim()
-
-            if String.IsNullOrWhiteSpace normalizedQuery then
-                return! Error "Search query must not be empty."
-            else
-                let results = ResizeArray<SearchResult>()
-                
-                for commit in commits do
-                    do! Flow.Runtime.ensureNotCanceled "Search canceled."
-                    
-                    let matchKinds = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                    let matchedPaths = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                    let matchedRefs = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
-
-                    let addMetadataMatches () =
-                        match scope with
-                        | SearchScope.Hash ->
-                            if containsIgnoreCase commit.Hash normalizedQuery then
-                                matchKinds.Add "hash" |> ignore
-                        | SearchScope.Message ->
-                            if containsIgnoreCase commit.Subject normalizedQuery || containsIgnoreCase commit.Message normalizedQuery then
-                                matchKinds.Add "message" |> ignore
-                        | SearchScope.Author ->
-                            if containsIgnoreCase commit.AuthorName normalizedQuery || containsIgnoreCase commit.AuthorEmail normalizedQuery then
-                                matchKinds.Add "author" |> ignore
-                        | SearchScope.Ref ->
-                            let refMatches =
-                                commit.Refs
-                                |> List.filter (fun reference -> containsIgnoreCase reference.Name normalizedQuery)
-
-                            if refMatches.Length > 0 then
-                                matchKinds.Add "ref" |> ignore
-                                refMatches |> List.iter (fun reference -> matchedRefs.Add reference.Name |> ignore)
-                        | SearchScope.Path
-                        | SearchScope.Text ->
-                            ()
-                        | SearchScope.All ->
-                            if containsIgnoreCase commit.Hash normalizedQuery then
-                                matchKinds.Add "hash" |> ignore
-
-                            if containsIgnoreCase commit.Subject normalizedQuery || containsIgnoreCase commit.Message normalizedQuery then
-                                matchKinds.Add "message" |> ignore
-
-                            if containsIgnoreCase commit.AuthorName normalizedQuery || containsIgnoreCase commit.AuthorEmail normalizedQuery then
-                                matchKinds.Add "author" |> ignore
-
-                            let refMatches =
-                                commit.Refs
-                                |> List.filter (fun reference -> containsIgnoreCase reference.Name normalizedQuery)
-
-                            if refMatches.Length > 0 then
-                                matchKinds.Add "ref" |> ignore
-                                refMatches |> List.iter (fun reference -> matchedRefs.Add reference.Name |> ignore)
-
-                    addMetadataMatches ()
-
-                    match scope with
-                    | SearchScope.Path
-                    | SearchScope.Text
-                    | SearchScope.All ->
-                        let searchPaths, searchText =
-                            match scope with
-                            | SearchScope.Path -> true, false
-                            | SearchScope.Text -> false, true
-                            | SearchScope.All -> true, true
-                            | _ -> false, false
-
-                        let! diffResult = loadDiff commit.Hash
-                        match searchCommitDiff normalizedQuery diffResult searchPaths searchText with
-                        | Some(pathMatches, textMatched) ->
-                            if pathMatches.Length > 0 then
-                                matchKinds.Add "path" |> ignore
-                                pathMatches |> List.iter (fun path -> matchedPaths.Add path |> ignore)
-
-                            if textMatched then
-                                matchKinds.Add "text" |> ignore
-                        | None ->
-                            ()
-                    | _ ->
-                        ()
-
-                    if matchKinds.Count > 0 then
-                        let kinds = matchKinds |> Seq.toList
-                        let paths = matchedPaths |> Seq.toList
-                        let refs = matchedRefs |> Seq.toList
-
-                        results.Add
-                            {
-                                Commit = commit
-                                MatchKinds = kinds
-                                MatchSummary = buildSearchSummary kinds paths refs
-                                MatchedPaths = paths
-                                MatchedRefs = refs
-                            }
-
-                return List.ofSeq results
-        }
-
-    let searchCommits (contextLines: int) (commits: Models.Commit list) (query: string) (scope: SearchScope) : Flow<GitEnv, string, SearchResult list> =
-        searchCommitsWithDiffLoader commits query scope (fun hash -> fetchDiff contextLines hash)
-
-    let fetchFileBlame (revision: string) (path: string) : Flow<GitEnv, string, Map<int, BlameInfo>> =
+    let fetchFileBlame (revision: string) (path: string) : Flow<GitEnv, GitError, Map<int, BlameInfo>> =
         flow {
             if path = "/dev/null" then
                 return Map.empty
             else
-                let args =
-                    sprintf "blame --line-porcelain %s -- %s" revision (quoteArg path)
-
-                let! output = executeGitCommand args
+                let! output =
+                    executeGitCommand [ "blame"; "--line-porcelain"; revision; "--"; path ]
                 return parseBlamePorcelain output
         }
 
-    let createTag (hash: string) (name: string) : Flow<GitEnv, string, string> =
+    let createTag (hash: string) (name: string) : Flow<GitEnv, GitError, unit> =
         flow {
             let! env = Flow.env
             use repo = new Repository(env.RepoPath)
-            match loadCommit repo hash with
-            | Error err -> return! Error err
-            | Ok commit ->
-                repo.ApplyTag(name, commit.Sha) |> ignore
-                return ""
+            let! commit = loadCommit repo hash
+            repo.ApplyTag(name, commit.Sha) |> ignore
         }
 
-    let createBranch (hash: string) (name: string) : Flow<GitEnv, string, string> =
+    let createBranch (hash: string) (name: string) : Flow<GitEnv, GitError, unit> =
         flow {
             let! env = Flow.env
             use repo = new Repository(env.RepoPath)
-            match loadCommit repo hash with
-            | Error err -> return! Error err
-            | Ok commit ->
-                repo.CreateBranch(name, commit) |> ignore
-                return ""
+            let! commit = loadCommit repo hash
+            repo.CreateBranch(name, commit) |> ignore
         }
 
-    let cherryPick (hash: string) : Flow<GitEnv, string, string> =
+    let cherryPick (hash: string) : Flow<GitEnv, GitError, unit> =
         flow {
             let! env = Flow.env
             use repo = new Repository(env.RepoPath)
-            match loadCommit repo hash, buildCommitterSignature repo with
-            | Error err, _ -> return! Error err
-            | _, Error err -> return! Error err
-            | Ok commit, Ok committer ->
-                let result = repo.CherryPick(commit, committer)
+            let! commit = loadCommit repo hash
+            let! committer = loadCommitterSignature repo
+            let result = repo.CherryPick(commit, committer)
 
-                match result.Status with
-                | CherryPickStatus.CherryPicked -> return ""
-                | status -> return! Error (sprintf "Cherry-pick failed: %A" status)
+            match result.Status with
+            | CherryPickStatus.CherryPicked -> return ()
+            | status -> return! Error (GitError.OperationFailed("Cherry-pick", string status))
         }
 
-    let resetTo (hash: string) (hard: bool) : Flow<GitEnv, string, string> =
+    let resetTo (hash: string) (hard: bool) : Flow<GitEnv, GitError, unit> =
         flow {
             let! env = Flow.env
             use repo = new Repository(env.RepoPath)
-            match loadCommit repo hash with
-            | Error err -> return! Error err
-            | Ok commit ->
-                let mode = if hard then ResetMode.Hard else ResetMode.Soft
-                repo.Reset(mode, commit)
-                return ""
+            let! commit = loadCommit repo hash
+            let mode = if hard then ResetMode.Hard else ResetMode.Soft
+            repo.Reset(mode, commit)
         }
 
-    let revert (hash: string) : Flow<GitEnv, string, string> =
+    let revert (hash: string) : Flow<GitEnv, GitError, unit> =
         flow {
             let! env = Flow.env
             use repo = new Repository(env.RepoPath)
-            match loadCommit repo hash, buildCommitterSignature repo with
-            | Error err, _ -> return! Error err
-            | _, Error err -> return! Error err
-            | Ok commit, Ok committer ->
-                let result = repo.Revert(commit, committer)
+            let! commit = loadCommit repo hash
+            let! committer = loadCommitterSignature repo
+            let result = repo.Revert(commit, committer)
 
-                match result.Status with
-                | RevertStatus.Reverted -> return ""
-                | status -> return! Error (sprintf "Revert failed: %A" status)
+            match result.Status with
+            | RevertStatus.Reverted -> return ()
+            | status -> return! Error (GitError.OperationFailed("Revert", string status))
         }

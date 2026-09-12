@@ -54,6 +54,15 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     public void Update(Graph.CommitGraphInfo info)
     {
         var commit = info.Commit;
+
+        if (FullHash == commit.Hash
+            && Lane == info.Lane
+            && _refs.Length == commit.Refs.Length
+            && _refs.SequenceEqual(commit.Refs))
+        {
+            return;
+        }
+
         var shortHashLength = System.Math.Min(8, commit.Hash.Length);
         FullHash = commit.Hash;
         Hash = commit.Hash.Substring(0, shortHashLength);
@@ -79,7 +88,7 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         );
     }
 
-    public void ApplySearchMatch(GitKay.Core.GitService.SearchResult? result)
+    public void ApplySearchMatch(GitKay.Core.GitSearch.Result? result)
     {
         HasSearchMatch = result != null;
         SearchMatchSummary = result?.MatchSummary ?? "";
@@ -117,15 +126,35 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
 
     private void UpdateRefBadges()
     {
+        var visibleRefs = _refs
+            .Where(ShouldDisplayRef)
+            .OrderBy(refItem => refItem.Kind == GitKay.Core.Models.CommitRefKind.Tag ? 0 : 1)
+            .ThenBy(refItem => refItem.IsCurrentHead ? 0 : 1)
+            .ThenBy(refItem => (int)refItem.Kind)
+            .ThenBy(refItem => refItem.Name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (RefBadges.Count == visibleRefs.Length)
+        {
+            var isSame = true;
+            for (int i = 0; i < visibleRefs.Length; i++)
+            {
+                if (RefBadges[i].Text != visibleRefs[i].Name || (int)RefBadges[i].Kind != (int)visibleRefs[i].Kind)
+                {
+                    isSame = false;
+                    break;
+                }
+            }
+
+            if (isSame)
+            {
+                return;
+            }
+        }
+
         RefBadges.Clear();
 
-        foreach (var badge in _refs
-                     .Where(ShouldDisplayRef)
-                     .OrderBy(refItem => refItem.Kind == GitKay.Core.Models.CommitRefKind.Tag ? 0 : 1)
-                     .ThenBy(refItem => refItem.IsCurrentHead ? 0 : 1)
-                     .ThenBy(refItem => (int)refItem.Kind)
-                     .ThenBy(refItem => refItem.Name, StringComparer.OrdinalIgnoreCase)
-                     .Select(CreateRefBadge))
+        foreach (var badge in visibleRefs.Select(CreateRefBadge))
         {
             RefBadges.Add(badge);
         }

@@ -1,5 +1,7 @@
 <Project>
   <PropertyGroup>
     <ArtifactsPath>$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
+    <FSharpCoreImplicitPackageVersion>10.1.401</FSharpCoreImplicitPackageVersion>
+    <AxialGuardrailsSeverity>error</AxialGuardrailsSeverity>
   </PropertyGroup>
 </Project>

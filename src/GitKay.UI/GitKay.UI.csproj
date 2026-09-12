@@ -22,15 +22,13 @@
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.2" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="12.0.2" />
     <!--Condition below is needed to remove Avalonia.Diagnostics package from build output in Release configuration.-->
-    <PackageReference Include="Avalonia.Diagnostics" Version="11.2.1">
-      <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
-      <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
-    </PackageReference>
+    <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.1"/>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\GitKay.Core\GitKay.Core.fsproj" />
+    <ProjectReference Include="..\GitKay.Serialization\GitKay.Serialization.fsproj" />
     <ProjectReference Include="..\..\..\..\Elmish.Avalonia.Glue\main\src\Elmish.Avalonia.Glue\Elmish.Avalonia.Glue.fsproj" />
     <ProjectReference Include="..\..\..\..\Elmish.Avalonia.Glue\main\src\Elmish.Glue.Core\Elmish.Glue.Core.fsproj" />
   </ItemGroup>

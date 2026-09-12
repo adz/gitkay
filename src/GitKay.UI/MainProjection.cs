@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Collections;
 using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -68,7 +69,6 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private bool _suppressDiffPresentationDispatch;
     private object? _commitsSource;
     private object? _commitSearchResultsSource;
-    private object? _visibleCommitsSource;
     private string? _selectedDiffHash;
     private object? _selectedDiffFilesSource;
     private DiffFileKey? _selectedDiffFileKey;
@@ -138,15 +138,17 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private string _selectedDiffPresentationModeLabel = "Diff";
 
     public ObservableCollection<CommitProjection> Commits { get; } = new();
-    public ObservableCollection<CommitProjection> VisibleCommits { get; } = new();
     public ObservableCollection<SearchResultProjection> SearchResults { get; } = new();
     public ObservableCollection<DiffFileProjection> SelectedDiffFiles { get; } = new();
-    public ObservableCollection<IDiffRowProjection> SelectedDiffRows { get; } = new();
+    public AvaloniaList<IDiffRowProjection> SelectedDiffRows { get; } = new();
 
     [ObservableProperty] private CommitProjection? _selectedCommit;
     [ObservableProperty] private SearchResultProjection? _selectedSearchResult;
     [ObservableProperty] private DiffFileProjection? _selectedDiffFile;
     [ObservableProperty] private IDiffRowProjection? _selectedDiffRow;
+
+    public FontFamily CommitRowFont => new(CommitRowFontFamily);
+    public FontFamily CommitRowMonoFont => new(CommitRowMonoFontFamily);
 
     public MainProjection()
     {
@@ -211,6 +213,16 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     {
         var line = $"[timing] {message}";
         Trace.WriteLine(line);
+    }
+
+    partial void OnCommitRowFontFamilyChanged(string value)
+    {
+        OnPropertyChanged(nameof(CommitRowFont));
+    }
+
+    partial void OnCommitRowMonoFontFamilyChanged(string value)
+    {
+        OnPropertyChanged(nameof(CommitRowMonoFont));
     }
 
     public void Update(GitKay.Core.App.Model model)
@@ -731,14 +743,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                 _dispatch!);
 
             _commitsSource = model.Commits;
+            ApplyRefVisibility();
         }
-
-        ApplyRefVisibility();
 
         if (commitsChanged || searchResultsChanged)
         {
             ApplyCommitSearchMatches(model.SearchResults?.Value);
-            UpdateVisibleCommits(model, commitsChanged, searchResultsChanged);
             _commitSearchResultsSource = searchResultsSource;
         }
     }
@@ -750,25 +760,6 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             commit.ShowBranchRefs = ShowBranchRefs;
             commit.ShowStashes = ShowStashes;
         }
-    }
-
-    private void UpdateVisibleCommits(GitKay.Core.App.Model model, bool commitsChanged, bool searchResultsChanged)
-    {
-        var visibleCommitsSource = model.Commits;
-
-        if (!commitsChanged && ReferenceEquals(_visibleCommitsSource, visibleCommitsSource))
-        {
-            return;
-        }
-
-        VisibleCommits.Clear();
-
-        foreach (var commit in Commits)
-        {
-            VisibleCommits.Add(commit);
-        }
-
-        _visibleCommitsSource = visibleCommitsSource;
     }
 
     private void UpdateSelectedCommit(GitKay.Core.App.Model model)
@@ -875,6 +866,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     partial void OnShowStashesChanged(bool value)
     {
+        ApplyRefVisibility();
         if (_suppressShowStashesDispatch)
         {
             return;
@@ -885,6 +877,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     partial void OnShowBranchRefsChanged(bool value)
     {
+        ApplyRefVisibility();
         if (_suppressShowBranchRefsDispatch)
         {
             return;
@@ -1172,7 +1165,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
     }
 
-    private void ApplyCommitSearchMatches(IEnumerable<GitKay.Core.GitService.SearchResult>? results)
+    private void ApplyCommitSearchMatches(IEnumerable<GitKay.Core.GitSearch.Result>? results)
     {
         var resultsByHash = results?.ToDictionary(result => result.Commit.Hash);
 
@@ -1204,11 +1197,11 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     private void RenderSelectedDiffRows()
     {
-        SelectedDiffRows.Clear();
+        var rows = new List<IDiffRowProjection>();
 
         foreach (var file in SelectedDiffFiles)
         {
-            SelectedDiffRows.Add(file.Header);
+            rows.Add(file.Header);
 
             if (!file.IsLoaded)
             {
@@ -1217,23 +1210,26 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
             foreach (var hunk in file.Hunks)
             {
-                SelectedDiffRows.Add(new DiffHunkHeaderProjection(hunk));
+                rows.Add(new DiffHunkHeaderProjection(hunk));
 
                 if (IsSideBySideDiffMode)
                 {
-                    AddSideBySideDiffRows(hunk.Lines);
+                    AddSideBySideDiffRowsToList(rows, hunk.Lines);
                     continue;
                 }
 
                 foreach (var line in hunk.Lines)
                 {
-                    SelectedDiffRows.Add(line);
+                    rows.Add(line);
                 }
             }
         }
+
+        SelectedDiffRows.Clear();
+        SelectedDiffRows.AddRange(rows);
     }
 
-    private void AddSideBySideDiffRows(ObservableCollection<DiffLineProjection> lines)
+    private void AddSideBySideDiffRowsToList(List<IDiffRowProjection> target, ObservableCollection<DiffLineProjection> lines)
     {
         var index = 0;
         while (index < lines.Count)
@@ -1241,12 +1237,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             var line = lines[index];
             if (line.IsRemoved && index + 1 < lines.Count && lines[index + 1].IsAdded)
             {
-                SelectedDiffRows.Add(DiffLineProjection.CreateSideBySidePair(line, lines[index + 1]));
+                target.Add(DiffLineProjection.CreateSideBySidePair(line, lines[index + 1]));
                 index += 2;
                 continue;
             }
 
-            SelectedDiffRows.Add(line);
+            target.Add(line);
             index++;
         }
     }

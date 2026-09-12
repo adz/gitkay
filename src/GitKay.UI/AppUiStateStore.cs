@@ -1,17 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
-using System.Text.Json;
+using GitKay.Serialization;
 
 namespace GitKay.UI;
 
 public sealed class AppUiStateStore
 {
-    private static readonly JsonSerializerOptions JsonOptions =
-        new()
-        {
-            WriteIndented = true,
-        };
-
     private readonly string _statePath;
 
     public AppUiStateStore(string? statePath = null)
@@ -31,7 +26,15 @@ public sealed class AppUiStateStore
             }
 
             var json = File.ReadAllText(_statePath);
-            return JsonSerializer.Deserialize<AppUiState>(json, JsonOptions)?.Normalize() ?? AppUiState.Default;
+            var document = GitKayJson.DeserializeUiState(json);
+            var state = AppUiState.Default.WithWindowSize(document.WindowWidth, document.WindowHeight);
+
+            foreach (var repoSelection in document.RepoSelections)
+            {
+                state = state.WithRepoSelection(repoSelection.Key, repoSelection.Value);
+            }
+
+            return state.Normalize();
         }
         catch
         {
@@ -51,7 +54,23 @@ public sealed class AppUiStateStore
                 Directory.CreateDirectory(directory);
             }
 
-            var json = JsonSerializer.Serialize(normalized, JsonOptions);
+            var repoSelections = new List<KeyValuePair<string, string>>();
+
+            foreach (var repoState in normalized.RepoStates)
+            {
+                var selectedCommitHash = RepoUiState.NormalizeHash(repoState.Value.LastSelectedCommitHash);
+
+                if (selectedCommitHash != null)
+                {
+                    repoSelections.Add(new KeyValuePair<string, string>(repoState.Key, selectedCommitHash));
+                }
+            }
+
+            var json = GitKayJson.SerializeUiState(
+                normalized.WindowWidth,
+                normalized.WindowHeight,
+                repoSelections);
+
             File.WriteAllText(_statePath, json);
         }
         catch

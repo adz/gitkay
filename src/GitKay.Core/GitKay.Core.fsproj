@@ -8,12 +8,26 @@
   <ItemGroup>
     <Compile Include="Models.fs" />
     <Compile Include="Graph.fs" />
+    <Compile Include="Git\Error.fs" />
+    <Compile Include="Git\Internal\RepositoryDiscovery.fs" />
+    <Compile Include="Git\Search.fs" />
+    <Compile Include="Git\Startup.fs" />
+    <Compile Include="Git\Parsing.fs" />
+    <Compile Include="Git\Internal\History.fs" />
     <Compile Include="GitService.fs" />
+    <Compile Include="App\LatestJob.fs" />
+    <Compile Include="App\FlowCommand.fs" />
     <Compile Include="App.fs" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="FsFlow" Version="0.6.0" />
+    <PackageReference Include="Axial" Version="0.9.1" />
+    <PackageReference Include="Axial.Console" Version="0.9.1" />
+    <PackageReference Include="Axial.FileSystem" Version="0.9.1" />
+    <PackageReference Include="Axial.PlatformService" Version="0.9.1" />
+    <PackageReference Include="Axial.Process" Version="0.9.1" />
+    <PackageReference Include="Reified" Version="0.8.0" />
+    <PackageReference Include="Axial.Guardrails" Version="0.9.1" PrivateAssets="all" />
     <PackageReference Include="LibGit2Sharp" Version="0.31.0" />
   </ItemGroup>
 

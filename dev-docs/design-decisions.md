@@ -1,5 +1,20 @@
 # Design Decisions
 
+## 2026-09-01 - Make operational effects explicit with Axial
+Core workflows use Axial `Flow` as their orchestration seam and declare process and clock capabilities in `GitEnv`. Native process execution goes through `Axial.Process`; write signatures use `IClock`; direct ambient effects are rejected by `Axial.Guardrails`. The repository-discovery entry point is the sole intentional environment boundary.
+
+## 2026-09-01 - Keep application entry modules shallow and infrastructure deep
+`App` remains the reviewable Elmish model/update entry module. Flow-to-Elmish adaptation and latest-wins cancellation ownership live under `App/`, behind small interfaces. New orchestration mechanics should deepen those modules rather than enlarge the reducer or duplicate lifecycle code.
+
+## 2026-09-01 - Keep Elmish as the application lifecycle root
+`Axial.App` owns the lifetime of a root `Flow`, but GitKay's long-lived root is the Avalonia/Elmish program. Individual Git operations remain cancellable Axial flows adapted at the Elmish command seam. Do not wrap each operation in `Axial.App`; adopt it only if application startup and shutdown become one root workflow with resources requiring coordinated finalization.
+
+## 2026-09-01 - Keep typed Git failures through the application seam
+Expected repository, revision, diff, identity, process, cancellation, and write failures use `GitError`. Elmish messages retain that structure, and only status/log rendering calls `GitError.describe`. Axial defects remain defects and reach the top-level crash path rather than being unsafely cast into the typed error channel.
+
+## 2026-09-01 - Define persisted data with Reified schemas
+Persisted settings and UI state use explicit Reified schemas as the source of JSON field shape, defaults, and codecs. Do not add serializer-specific DTO reflection or parallel handwritten codec definitions.
+
 ## 2026-04-30 - Split selection from diff loading (`3385e0b`)
 The UI now tracks selected commit, selected diff, and selected diff-file state separately. Commit clicks can update immediately while diff and file hydration continue in the background, which keeps focus and scroll position stable even when content is still loading.
 

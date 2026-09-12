@@ -142,6 +142,8 @@ public class GraphRowControl : Control
         Brushes.Cyan, Brushes.Magenta, Brushes.Yellow, Brushes.LightGreen, Brushes.LightBlue
     };
 
+    private static readonly IPen[] LanePens = LaneBrushes.Select(b => new Pen(b, 1.5).ToImmutable()).ToArray();
+
     internal static double GetCommitMarkerCenterY(double rowHeight)
         => Math.Round(rowHeight / 2.0 + CommitMarkerBaselineOffset);
 
@@ -168,6 +170,11 @@ public class GraphRowControl : Control
                 ? LaneBrushes[firstCommitSegment.Color % LaneBrushes.Length]
                 : LaneBrushes[CommitLane % LaneBrushes.Length];
 
+        var commitPen =
+            firstCommitSegment != null
+                ? LanePens[firstCommitSegment.Color % LanePens.Length]
+                : LanePens[CommitLane % LanePens.Length];
+
         for (int i = 0; i < segments.Length; i++)
         {
             var segment = segments[i];
@@ -177,8 +184,7 @@ public class GraphRowControl : Control
                 continue;
             }
 
-            var brush = LaneBrushes[segment.Color % LaneBrushes.Length];
-            var pen = new Pen(brush, 1.5);
+            var pen = LanePens[segment.Color % LanePens.Length];
             double x = (segment.Lane + 1) * laneWidth;
             context.DrawLine(pen, new Point(x, 0), new Point(x, rowHeight));
         }
@@ -186,9 +192,8 @@ public class GraphRowControl : Control
         if (firstCommitSegment != null)
         {
             var commitLaneX = (firstCommitSegment.Lane + 1) * laneWidth;
-            var pen = new Pen(commitBrush, 1.5);
 
-            context.DrawLine(pen, new Point(commitLaneX, 0), new Point(commitLaneX, commitMarkerCenterY));
+            context.DrawLine(commitPen, new Point(commitLaneX, 0), new Point(commitLaneX, commitMarkerCenterY));
 
             for (int i = 0; i < segments.Length; i++)
             {
@@ -200,7 +205,7 @@ public class GraphRowControl : Control
                 }
 
                 double targetX = (segment.TargetLane + 1) * laneWidth;
-                context.DrawLine(pen, new Point(commitLaneX, commitMarkerCenterY), new Point(targetX, rowHeight));
+                context.DrawLine(commitPen, new Point(commitLaneX, commitMarkerCenterY), new Point(targetX, rowHeight));
             }
 
             if (ShowConnectorLine)
@@ -211,7 +216,7 @@ public class GraphRowControl : Control
                 if (connectorEndX > connectorStartX)
                 {
                     context.DrawLine(
-                        pen,
+                        commitPen,
                         new Point(connectorStartX, commitMarkerCenterY),
                         new Point(connectorEndX, commitMarkerCenterY));
                 }

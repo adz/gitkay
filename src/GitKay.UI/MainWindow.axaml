@@ -110,31 +110,39 @@
                                           Background="#4c4c4c"
                                           ResizeDirection="Columns"
                                           ResizeBehavior="CurrentAndNext" />
-                            <GridSplitter Grid.Column="2"
-                                          Width="4"
-                                          HorizontalAlignment="Right"
-                                          VerticalAlignment="Stretch"
-                                          Background="#4c4c4c"
-                                          ResizeDirection="Columns"
-                                          ResizeBehavior="CurrentAndNext" />
-                            <GridSplitter Grid.Column="3"
-                                          Width="4"
-                                          HorizontalAlignment="Right"
-                                          VerticalAlignment="Stretch"
-                                          Background="#4c4c4c"
-                                          ResizeDirection="Columns"
-                                          ResizeBehavior="CurrentAndNext" />
+                            <Border Grid.Column="2"
+                                    Width="4"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Stretch"
+                                    Background="#4c4c4c"
+                                    Cursor="SizeWestEast"
+                                    Tag="2"
+                                    PointerPressed="OnHistoryColumnResizePointerPressed"
+                                    PointerMoved="OnHistoryColumnResizePointerMoved"
+                                    PointerReleased="OnHistoryColumnResizePointerReleased"
+                                    PointerCaptureLost="OnHistoryColumnResizePointerCaptureLost" />
+                            <Border Grid.Column="3"
+                                    Width="4"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Stretch"
+                                    Background="#4c4c4c"
+                                    Cursor="SizeWestEast"
+                                    Tag="3"
+                                    PointerPressed="OnHistoryColumnResizePointerPressed"
+                                    PointerMoved="OnHistoryColumnResizePointerMoved"
+                                    PointerReleased="OnHistoryColumnResizePointerReleased"
+                                    PointerCaptureLost="OnHistoryColumnResizePointerCaptureLost" />
                         </Grid>
                     </Border>
 
                     <ListBox x:Name="CommitListBox"
                              Grid.Row="2"
-                             ItemsSource="{Binding VisibleCommits}"
+                             ItemsSource="{Binding Commits}"
                              SelectedItem="{Binding SelectedCommit}"
                              Background="Transparent"
                              BorderThickness="0"
                              MinHeight="0"
-                             FontFamily="{Binding CommitRowFontFamily}"
+                             FontFamily="{Binding CommitRowFont}"
                              FontSize="{Binding CommitRowTextFontSize}"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              ScrollViewer.VerticalScrollBarVisibility="Auto">
@@ -201,64 +209,9 @@
                                                   ColumnDefinitions="Auto,*,Auto"
                                                   ColumnSpacing="2"
                                                   VerticalAlignment="Center">
-                                                <ItemsControl ItemsSource="{Binding RefBadges}"
-                                                              IsVisible="{Binding HasRefBadges}"
-                                                              HorizontalAlignment="Left"
-                                                              VerticalAlignment="Center">
-                                                    <ItemsControl.ItemsPanel>
-                                                        <ItemsPanelTemplate>
-                                                            <WrapPanel />
-                                                        </ItemsPanelTemplate>
-                                                    </ItemsControl.ItemsPanel>
-                                                    <ItemsControl.ItemTemplate>
-                                                        <DataTemplate x:DataType="local:CommitRefProjection">
-                                                            <Grid Margin="0,0,2,0"
-                                                                  VerticalAlignment="Center"
-                                                                  HorizontalAlignment="Left"
-                                                                  ClipToBounds="False">
-                                                                <Border IsVisible="{Binding IsNotTag}"
-                                                                        Background="{Binding Background}"
-                                                                        BorderBrush="{Binding BorderBrush}"
-                                                                        BorderThickness="1"
-                                                                        CornerRadius="0"
-                                                                        Padding="3,0,3,0"
-                                                                        MinHeight="14">
-                                                                    <TextBlock Text="{Binding Text}"
-                                                                               Foreground="{Binding Foreground}"
-                                                                               FontSize="{Binding DataContext.CommitRowBadgeFontSize, ElementName=RootWindow}"
-                                                                               FontWeight="SemiBold"
-                                                                               TextTrimming="CharacterEllipsis"
-                                                                               VerticalAlignment="Center" />
-                                                                </Border>
-                                                                <Grid IsVisible="{Binding IsTag}"
-                                                                      ColumnDefinitions="7,Auto"
-                                                                      MinHeight="14">
-                                                                    <Path Grid.Column="0"
-                                                                          Data="M 7,0 L 7,14 L 0,7 Z"
-                                                                          Fill="{Binding Background}"
-                                                                          Stroke="{Binding BorderBrush}"
-                                                                          StrokeThickness="1"
-                                                                          Stretch="Fill"
-                                                                          VerticalAlignment="Stretch"
-                                                                          HorizontalAlignment="Stretch" />
-                                                                    <Border Grid.Column="1"
-                                                                            Background="{Binding Background}"
-                                                                            BorderBrush="{Binding BorderBrush}"
-                                                                            BorderThickness="1"
-                                                                            Margin="-1,0,0,0"
-                                                                            Padding="4,0,4,0">
-                                                                        <TextBlock Text="{Binding Text}"
-                                                                                   Foreground="{Binding Foreground}"
-                                                                                   FontSize="{Binding DataContext.CommitRowBadgeFontSize, ElementName=RootWindow}"
-                                                                                   FontWeight="SemiBold"
-                                                                                   TextTrimming="CharacterEllipsis"
-                                                                                   VerticalAlignment="Center" />
-                                                                    </Border>
-                                                                </Grid>
-                                                            </Grid>
-                                                        </DataTemplate>
-                                                    </ItemsControl.ItemTemplate>
-                                                </ItemsControl>
+                                                <local:RefBadgesControl Badges="{Binding RefBadges}"
+                                                                        IsVisible="{Binding HasRefBadges}"
+                                                                        VerticalAlignment="Center" />
                                                 <Border IsVisible="{Binding HasRefMatch}"
                                                         Background="#ccc"
                                                         CornerRadius="2"
@@ -294,7 +247,7 @@
                                                 <TextBlock Text="{Binding Hash}"
                                                            Foreground="#888"
                                                            VerticalAlignment="Center"
-                                                           FontFamily="{Binding DataContext.CommitRowMonoFontFamily, ElementName=RootWindow}" />
+                                                           FontFamily="{Binding DataContext.CommitRowMonoFont, ElementName=RootWindow}" />
                                                 <Border Background="#ccc"
                                                         CornerRadius="2"
                                                         Padding="3,0"
@@ -326,7 +279,7 @@
                                                            FontSize="{Binding DataContext.CommitRowMetaFontSize, ElementName=RootWindow}"
                                                            VerticalAlignment="Center"
                                                            TextTrimming="CharacterEllipsis"
-                                                           FontFamily="{Binding #CommitListBox.FontFamily}" />
+                                                           FontFamily="{Binding DataContext.CommitRowFont, ElementName=RootWindow}" />
                                                 <Border Background="#ccc"
                                                         CornerRadius="2"
                                                         Padding="3,0"
@@ -346,7 +299,7 @@
                                                        Margin="2,0"
                                                        HorizontalAlignment="Right"
                                                        VerticalAlignment="Center"
-                                                       FontFamily="{Binding #CommitListBox.FontFamily}" />
+                                                       FontFamily="{Binding DataContext.CommitRowFont, ElementName=RootWindow}" />
                                         </Grid>
                                     </Grid>
                                 </Border>
@@ -596,158 +549,7 @@
                                                    Foreground="#888"/>
                                     </DataTemplate>
                                     <DataTemplate DataType="{x:Type local:DiffLineProjection}" x:DataType="local:DiffLineProjection">
-                                        <Grid Margin="20,0,10,1">
-                                            <Border Margin="0"
-                                                    Padding="0"
-                                                    Background="{Binding RowBackground}"
-                                                    BorderBrush="{Binding BorderBrush}"
-                                                    BorderThickness="1"
-                                                    CornerRadius="2"
-                                                    IsVisible="{Binding DataContext.IsUnifiedDiffMode, ElementName=RootWindow}">
-                                                <Grid ColumnDefinitions="40,40,16,*">
-                                                    <TextBlock Grid.Column="0"
-                                                               Text="{Binding OldLineNoText}"
-                                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="12"
-                                                               Foreground="{Binding LineNumberForeground}"
-                                                               HorizontalAlignment="Right"
-                                                               Margin="0,0,6,0"/>
-                                                    <TextBlock Grid.Column="1"
-                                                               Text="{Binding NewLineNoText}"
-                                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="12"
-                                                               Foreground="{Binding LineNumberForeground}"
-                                                               HorizontalAlignment="Right"
-                                                               Margin="0,0,6,0"/>
-                                                    <TextBlock Grid.Column="2"
-                                                               Text="{Binding Prefix}"
-                                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="12"
-                                                               Foreground="{Binding PrefixForeground}"
-                                                               FontWeight="Bold"
-                                                               Margin="0,0,4,0"/>
-                                                    <TextBlock Grid.Column="3"
-                                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="12"
-                                                               TextWrapping="NoWrap"
-                                                               Foreground="{Binding Foreground}"
-                                                               Inlines="{Binding ContentInlines}" />
-                                                </Grid>
-                                            </Border>
-
-                                            <Border Margin="0"
-                                                    Padding="0"
-                                                    Background="{Binding RowBackground}"
-                                                    BorderBrush="{Binding BorderBrush}"
-                                                    BorderThickness="1"
-                                                    CornerRadius="2"
-                                                    IsVisible="{Binding DataContext.IsSideBySideDiffMode, ElementName=RootWindow}">
-                                                <Grid ColumnDefinitions="40,*,16,40,*">
-                                                    <Border Grid.Column="0"
-                                                            Grid.ColumnSpan="2"
-                                                            Background="{Binding OldCellBackground}" />
-                                                    <Border Grid.Column="3"
-                                                            Grid.ColumnSpan="2"
-                                                            Background="{Binding NewCellBackground}" />
-                                                    <TextBlock Grid.Column="0"
-                                                               Text="{Binding OldLineNoText}"
-                                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="12"
-                                                               Foreground="{Binding LineNumberForeground}"
-                                                               HorizontalAlignment="Right"
-                                                               Margin="0,0,6,0"/>
-                                                    <TextBlock Grid.Column="1"
-                                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="12"
-                                                               TextWrapping="NoWrap"
-                                                               Foreground="{Binding Foreground}"
-                                                               Inlines="{Binding OldContentInlines}" />
-                                                    <TextBlock Grid.Column="2"
-                                                               Text="{Binding Prefix}"
-                                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="12"
-                                                               Foreground="{Binding PrefixForeground}"
-                                                               FontWeight="Bold"
-                                                               HorizontalAlignment="Center"
-                                                               Margin="0,0,0,0"/>
-                                                    <TextBlock Grid.Column="3"
-                                                               Text="{Binding NewLineNoText}"
-                                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="12"
-                                                               Foreground="{Binding LineNumberForeground}"
-                                                               HorizontalAlignment="Right"
-                                                               Margin="0,0,6,0"/>
-                                                    <TextBlock Grid.Column="4"
-                                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="12"
-                                                               TextWrapping="NoWrap"
-                                                               Foreground="{Binding Foreground}"
-                                                               Inlines="{Binding NewContentInlines}" />
-                                                </Grid>
-                                            </Border>
-
-                                            <Border Margin="0"
-                                                    Padding="0"
-                                                    Background="{Binding RowBackground}"
-                                                    BorderBrush="{Binding BorderBrush}"
-                                                    BorderThickness="1"
-                                                    CornerRadius="2"
-                                                    IsVisible="{Binding DataContext.IsNewDiffMode, ElementName=RootWindow}">
-                                                <Grid ColumnDefinitions="16,40,*">
-                                                    <TextBlock Grid.Column="0"
-                                                               Text="{Binding Prefix}"
-                                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="12"
-                                                               Foreground="{Binding PrefixForeground}"
-                                                               FontWeight="Bold"
-                                                               Margin="0,0,4,0"/>
-                                                    <TextBlock Grid.Column="1"
-                                                               Text="{Binding NewLineNoText}"
-                                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="12"
-                                                               Foreground="{Binding LineNumberForeground}"
-                                                               HorizontalAlignment="Right"
-                                                               Margin="0,0,6,0"/>
-                                                    <TextBlock Grid.Column="2"
-                                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="12"
-                                                               Foreground="{Binding Foreground}"
-                                                               TextWrapping="NoWrap"
-                                                               Inlines="{Binding NewContentInlines}" />
-                                                </Grid>
-                                            </Border>
-
-                                            <Border Margin="0"
-                                                    Padding="0"
-                                                    Background="{Binding RowBackground}"
-                                                    BorderBrush="{Binding BorderBrush}"
-                                                    BorderThickness="1"
-                                                    CornerRadius="2"
-                                                    IsVisible="{Binding DataContext.IsOldDiffMode, ElementName=RootWindow}">
-                                                <Grid ColumnDefinitions="40,*,16">
-                                                    <TextBlock Grid.Column="0"
-                                                               Text="{Binding OldLineNoText}"
-                                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="12"
-                                                               Foreground="{Binding LineNumberForeground}"
-                                                               HorizontalAlignment="Right"
-                                                               Margin="0,0,6,0"/>
-                                                    <TextBlock Grid.Column="1"
-                                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="12"
-                                                               Foreground="{Binding Foreground}"
-                                                               TextWrapping="NoWrap"
-                                                               Inlines="{Binding OldContentInlines}" />
-                                                    <TextBlock Grid.Column="2"
-                                                               Text="{Binding Prefix}"
-                                                               FontFamily="Cascadia Code,Consolas,Monospace"
-                                                               FontSize="12"
-                                                               Foreground="{Binding PrefixForeground}"
-                                                               FontWeight="Bold"
-                                                               Margin="0,0,0,0"/>
-                                                </Grid>
-                                            </Border>
-                                        </Grid>
+                                        <local:DiffLineControl Row="{Binding}" Mode="{Binding DataContext.SelectedDiffPresentationMode.Key, ElementName=RootWindow}" Margin="20,0,10,1" />
                                     </DataTemplate>
                                 </ListBox.DataTemplates>
                             </ListBox>

@@ -12,6 +12,10 @@ public partial class MainWindow : Window
 {
     private MainProjection? _projection;
     private Control? _lastDiffPaneFocus;
+    private Control? _activeHistoryColumnResizeHandle;
+    private int _activeHistoryColumnResizeIndex = -1;
+    private double _activeHistoryColumnResizeStartX;
+    private double _activeHistoryColumnResizeStartWidth;
 
     public MainWindow()
     {
@@ -73,7 +77,6 @@ public partial class MainWindow : Window
 
         if (e.PropertyName != nameof(MainProjection.SelectedCommit)
             && e.PropertyName != nameof(MainProjection.Commits)
-            && e.PropertyName != nameof(MainProjection.VisibleCommits)
             && e.PropertyName != nameof(MainProjection.SelectedDiffFile)
             && e.PropertyName != nameof(MainProjection.SelectedDiffRow)
             && e.PropertyName != nameof(MainProjection.SelectedDiffFiles)
@@ -193,6 +196,81 @@ public partial class MainWindow : Window
         }
 
         target.Focus();
+    }
+
+    private void OnHistoryColumnResizePointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is not Control handle
+            || handle.Tag is not string tag
+            || !int.TryParse(tag, out var columnIndex)
+            || columnIndex < 0
+            || columnIndex >= HistoryHeaderGrid.ColumnDefinitions.Count)
+        {
+            return;
+        }
+
+        var column = HistoryHeaderGrid.ColumnDefinitions[columnIndex];
+        _activeHistoryColumnResizeHandle = handle;
+        _activeHistoryColumnResizeIndex = columnIndex;
+        _activeHistoryColumnResizeStartX = e.GetPosition(HistoryHeaderGrid).X;
+        _activeHistoryColumnResizeStartWidth = GetEffectiveColumnWidth(columnIndex, column);
+
+        e.Pointer.Capture(handle);
+        e.Handled = true;
+    }
+
+    private void OnHistoryColumnResizePointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (_activeHistoryColumnResizeHandle == null
+            || !ReferenceEquals(sender, _activeHistoryColumnResizeHandle)
+            || _activeHistoryColumnResizeIndex < 0
+            || _activeHistoryColumnResizeIndex >= HistoryHeaderGrid.ColumnDefinitions.Count)
+        {
+            return;
+        }
+
+        var column = HistoryHeaderGrid.ColumnDefinitions[_activeHistoryColumnResizeIndex];
+        var delta = e.GetPosition(HistoryHeaderGrid).X - _activeHistoryColumnResizeStartX;
+        var minWidth = Math.Max(0d, column.MinWidth);
+        var nextWidth = Math.Max(minWidth, _activeHistoryColumnResizeStartWidth + delta);
+        column.Width = new GridLength(nextWidth, GridUnitType.Pixel);
+        e.Handled = true;
+    }
+
+    private void OnHistoryColumnResizePointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (ReferenceEquals(sender, _activeHistoryColumnResizeHandle))
+        {
+            e.Pointer.Capture(null);
+            ClearHistoryColumnResize();
+            e.Handled = true;
+        }
+    }
+
+    private void OnHistoryColumnResizePointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
+    {
+        if (ReferenceEquals(sender, _activeHistoryColumnResizeHandle))
+        {
+            ClearHistoryColumnResize();
+        }
+    }
+
+    private double GetEffectiveColumnWidth(int columnIndex, ColumnDefinition column)
+    {
+        if (column.ActualWidth > 0d)
+        {
+            return column.ActualWidth;
+        }
+
+        return column.Width.IsAbsolute ? column.Width.Value : HistoryHeaderGrid.Bounds.Width / HistoryHeaderGrid.ColumnDefinitions.Count;
+    }
+
+    private void ClearHistoryColumnResize()
+    {
+        _activeHistoryColumnResizeHandle = null;
+        _activeHistoryColumnResizeIndex = -1;
+        _activeHistoryColumnResizeStartX = 0d;
+        _activeHistoryColumnResizeStartWidth = 0d;
     }
 
     public override void Render(DrawingContext context)
