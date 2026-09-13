@@ -16,9 +16,11 @@
     <Compile Include="Git\Parsing.fs" />
     <Compile Include="Git\Internal\History.fs" />
     <Compile Include="GitService.fs" />
-    <Compile Include="App\AxialRuntime.fs" />
-    <Compile Include="App\FlowCommand.fs" />
     <Compile Include="App.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Axial.Elmish\Axial.Elmish.fsproj" />
   </ItemGroup>
 
   <ItemGroup>

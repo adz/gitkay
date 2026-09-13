@@ -4,7 +4,7 @@ open Elmish
 open System
 open System.Diagnostics
 open Axial
-open GitKay.Core.AppInfrastructure
+open Axial.Elmish
 open GitKay.Core.Models
 
 module App =
@@ -16,12 +16,7 @@ module App =
     let private selectionJob = AxialLatestSlot(runtime)
     let private diffJob = AxialLatestSlot(runtime)
     let private searchJob = AxialLatestSlot(runtime)
-    let private contextJobs = Collections.Concurrent.ConcurrentDictionary<GitService.DiffFileKey, AxialLatestSlot>()
-
-    let private cancelContextJobs () =
-        for job in contextJobs.Values do
-            job.Cancel()
-        contextJobs.Clear()
+    let private contextJobs = AxialLatestSlotRegistry<GitService.DiffFileKey>(runtime)
 
     /// Presentation-only expansion state for one file of the selected diff.
     type FileExpansion =
@@ -104,7 +99,7 @@ module App =
 
     let private loadHistory (env: GitService.GitEnv) (limit: int option) (includeStashes: bool) (targets: GitStartup.StartupTarget list) =
         let isFull = limit.IsNone
-        Cmd.OfFlow.viaRuntime runtime env (GitService.fetchHistory limit includeStashes targets) (fun r -> HistoryLoaded(isFull, Ok r)) (fun ex -> HistoryLoaded (isFull, Error ex))
+        Cmd.OfFlow.ofFlow runtime env (GitService.fetchHistory limit includeStashes targets) (fun r -> HistoryLoaded(isFull, Ok r)) (fun ex -> HistoryLoaded (isFull, Error ex))
 
     let private historyLimit = 1000
 
@@ -133,48 +128,42 @@ module App =
 
 
     let private startDiffFilesLoad (env: GitService.GitEnv) (hash: string) (startedAtTicks: int64) =
-        Cmd.OfFlow.latest
+        Cmd.OfFlow.ofFlowLatest
             selectionJob
             env
             (loadDiffFilesFlow hash)
             (fun result -> DiffFilesLoaded(hash, startedAtTicks, Ok result))
             (fun err -> DiffFilesLoaded(hash, startedAtTicks, Error err))
-            (fun () -> NoOp)
 
     let private startDiffLoad (env: GitService.GitEnv) (hash: string) (startedAtTicks: int64) (contextLines: int) =
-        Cmd.OfFlow.latest
+        Cmd.OfFlow.ofFlowLatest
             diffJob
             env
             (loadDiffFlow contextLines hash)
             (fun result -> DiffLoaded(hash, startedAtTicks, Ok result))
             (fun err -> DiffLoaded(hash, startedAtTicks, Error err))
-            (fun () -> NoOp)
 
     let private startSearchLoad (env: GitService.GitEnv) (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (useRegex: bool) (startedAtTicks: int64) =
-        Cmd.OfFlow.latest
+        Cmd.OfFlow.ofFlowLatest
             searchJob
             env
             (loadSearchResultsFlow contextLines commits query scopeKey useRegex)
             (fun result -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Ok result))
             (fun err -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Error err))
-            (fun () -> NoOp)
 
     let private startDiffFileContextLoad (env: GitService.GitEnv) (hash: string) (key: GitService.DiffFileKey) (requestId: int64) =
-        let job = contextJobs.GetOrAdd(key, fun _ -> AxialLatestSlot(runtime))
-
         let workflow =
             flow {
                 do! Flow.Runtime.ensureNotCanceled (GitError.OperationCanceled "Context expansion")
                 return! GitService.fetchDiffFileFullContext hash key.OldPath key.NewPath
             }
 
-        Cmd.OfFlow.latest
-            job
+        Cmd.OfFlow.ofFlowLatest
+            contextJobs.[key]
             env
             workflow
             (fun result -> DiffFileContextLoaded(hash, key, requestId, Ok result))
             (fun err -> DiffFileContextLoaded(hash, key, requestId, Error err))
-            (fun () -> NoOp)
 
     let private diffFileKeyOfSummary (summary: GitService.DiffFileSummary) : GitService.DiffFileKey =
         {
@@ -245,7 +234,7 @@ module App =
                 selectionJob.Cancel()
                 if not diffReadyForSelection then
                     diffJob.Cancel()
-                    cancelContextJobs ()
+                    contextJobs.CancelAll()
                 Cmd.none
 
         nextModel, cmd
@@ -356,7 +345,7 @@ module App =
                 let resolveSelection =
                     match startupOptions.SelectedCommitHash with
                     | Some revision ->
-                        Cmd.OfFlow.viaRuntime runtime gitEnv (GitService.resolveCommit revision)
+                        Cmd.OfFlow.ofFlow runtime gitEnv (GitService.resolveCommit revision)
                             (fun hash -> SelectionRevisionResolved(revision, Ok hash))
                             (fun err -> SelectionRevisionResolved(revision, Error err))
                     | None -> Cmd.none
@@ -474,7 +463,7 @@ module App =
         | SelectCommit (hash, startedAtTicks) ->
             selectionJob.Cancel()
             diffJob.Cancel()
-            cancelContextJobs ()
+            contextJobs.CancelAll()
             let nextModel =
                 {
                     model with
@@ -576,7 +565,7 @@ module App =
                 ()
 
             if model.SelectedCommitHash = Some hash && model.SelectionStartedAtTicks = Some startedAtTicks then
-                cancelContextJobs ()
+                contextJobs.CancelAll()
                 { model with Status = "Diff Error: " + GitError.describe err; SelectedDiffHash = None; SelectedDiffFiles = None; SelectedDiff = None; SelectedDiffFileKey = None; DiffExpansions = Map.empty; SelectionStartedAtTicks = None; SelectedDiffStartedAtTicks = None }, Cmd.none
             else
                 model, Cmd.none
@@ -643,15 +632,15 @@ module App =
             | _ ->
                 model, Cmd.none
         | CreateTag (hash, name) ->
-            model, Cmd.OfFlow.viaRuntime runtime model.GitEnv (GitService.createTag hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, Cmd.OfFlow.ofFlow runtime model.GitEnv (GitService.createTag hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | CreateBranch (hash, name) ->
-            model, Cmd.OfFlow.viaRuntime runtime model.GitEnv (GitService.createBranch hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, Cmd.OfFlow.ofFlow runtime model.GitEnv (GitService.createBranch hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | CherryPick hash ->
-            model, Cmd.OfFlow.viaRuntime runtime model.GitEnv (GitService.cherryPick hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, Cmd.OfFlow.ofFlow runtime model.GitEnv (GitService.cherryPick hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | ResetTo (hash, hard) ->
-            model, Cmd.OfFlow.viaRuntime runtime model.GitEnv (GitService.resetTo hash hard) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, Cmd.OfFlow.ofFlow runtime model.GitEnv (GitService.resetTo hash hard) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | Revert hash ->
-            model, Cmd.OfFlow.viaRuntime runtime model.GitEnv (GitService.revert hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, Cmd.OfFlow.ofFlow runtime model.GitEnv (GitService.revert hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | OperationResult (Ok _) ->
             model, Cmd.ofMsg RereadRefs
         | OperationResult (Error err) ->
