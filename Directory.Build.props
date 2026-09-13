@@ -3,5 +3,20 @@
     <ArtifactsPath>$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
     <FSharpCoreImplicitPackageVersion>10.1.401</FSharpCoreImplicitPackageVersion>
     <AxialGuardrailsSeverity>error</AxialGuardrailsSeverity>
+
+    <!-- Local/dev default only; the release workflow stamps the real version via -p:Version from the release tag. -->
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <Authors>Adam Davies</Authors>
+    <Product>GitKay</Product>
+    <RepositoryUrl>https://github.com/adz/gitkay</RepositoryUrl>
+
+    <!--
+      Elmish.Avalonia.Glue comes from NuGet. When a checkout of it sits next to this repo (and we're not in CI),
+      build against that source instead so changes to both can be made together. Force either way with
+      -p:UseLocalGlue=true|false, or point GlueSourceRoot at another checkout.
+    -->
+    <ElmishGlueVersion>0.1.0</ElmishGlueVersion>
+    <GlueSourceRoot Condition="'$(GlueSourceRoot)' == ''">$(MSBuildThisFileDirectory)..\..\..\Elmish.Avalonia.Glue\main\</GlueSourceRoot>
+    <UseLocalGlue Condition="'$(UseLocalGlue)' == '' and '$(CI)' != 'true' and Exists('$(GlueSourceRoot)src')">true</UseLocalGlue>
   </PropertyGroup>
 </Project>

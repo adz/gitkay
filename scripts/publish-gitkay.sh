@@ -9,6 +9,7 @@ RUNTIME_IDS=()
 OUTPUT_DIR="$ROOT_DIR/artifacts/publish/gitkay"
 USE_AOT="true"
 HOST_OS="$(uname -s)"
+EXTRA_ARGS=()
 
 usage() {
   cat <<EOF
@@ -22,6 +23,7 @@ Options:
   --output <dir>          Output directory base (default: artifacts/publish/gitkay)
   --configuration <name>  Build configuration (default: Release)
   --aot                   Try NativeAOT publishing instead of single-file bundling
+  -p:<Name>=<value>       Extra MSBuild property passed to dotnet publish (repeatable)
   -h, --help              Show this help
 
 Examples:
@@ -64,6 +66,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --aot)
       USE_AOT="true"
+      shift
+      ;;
+    -p:*)
+      EXTRA_ARGS+=("$1")
       shift
       ;;
     -h|--help)
@@ -124,6 +130,8 @@ publish_one() {
       -p:EnableCompressionInSingleFile=true
     )
   fi
+
+  publish_args+=("${EXTRA_ARGS[@]}")
 
   mkdir -p "$output_dir"
   echo "Publishing GitKay for $rid to $output_dir"

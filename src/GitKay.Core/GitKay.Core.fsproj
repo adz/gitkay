@@ -32,8 +32,11 @@
     <PackageReference Include="LibGit2Sharp" Version="0.31.0" />
   </ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\..\..\..\Elmish.Avalonia.Glue\main\src\Elmish.Glue.Core\Elmish.Glue.Core.fsproj" />
+  <ItemGroup Condition="'$(UseLocalGlue)' == 'true'">
+    <ProjectReference Include="$(GlueSourceRoot)src\Elmish.Glue.Core\Elmish.Glue.Core.fsproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalGlue)' != 'true'">
+    <PackageReference Include="Elmish.Glue.Core" Version="$(ElmishGlueVersion)" />
   </ItemGroup>
 
 </Project>

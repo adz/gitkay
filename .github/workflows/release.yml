@@ -1,0 +1,165 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing release version to resume (e.g. 0.1.0)
+        required: true
+        type: string
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      value: ${{ steps.version.outputs.value }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "Release version must have the form MAJOR.MINOR.PATCH[-suffix]; got $version" >&2
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+  # NativeAOT can't cross-compile, so each platform builds on its own runner.
+  build:
+    needs: version
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - rid: win-x64
+            os: windows-latest
+          - rid: linux-x64
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install NativeAOT prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
+      - name: Test
+        if: runner.os == 'Linux'
+        shell: bash
+        run: dotnet test tests/GitKay.Tests/GitKay.Tests.fsproj --configuration Release --nologo -v minimal -m:1
+
+      - name: Publish
+        shell: bash
+        run: bash scripts/publish-gitkay.sh --rid ${{ matrix.rid }} --output artifacts/publish/${{ matrix.rid }} -p:Version=${{ needs.version.outputs.value }}
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p artifacts/release
+          name="gitkay-${{ needs.version.outputs.value }}-${{ matrix.rid }}"
+          find artifacts/publish/${{ matrix.rid }} -name '*.dbg' -delete
+          tar -czf "artifacts/release/$name.tar.gz" -C artifacts/publish/${{ matrix.rid }} .
+
+      - name: Package (Windows zip and installer)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "${{ needs.version.outputs.value }}"
+          $publish = "artifacts/publish/${{ matrix.rid }}"
+          New-Item -ItemType Directory -Force artifacts/release | Out-Null
+          Get-ChildItem $publish -Filter *.pdb | Remove-Item
+          Compress-Archive -Path "$publish/*" -DestinationPath "artifacts/release/gitkay-$version-${{ matrix.rid }}.zip"
+
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y --no-progress
+            $env:PATH += ";${env:ProgramFiles(x86)}\NSIS"
+          }
+          # NSIS versions are numeric; drop any prerelease suffix for the file version.
+          $numeric = ($version -split '-')[0]
+          makensis /V2 "/DVERSION=$version" "/DNUMERIC_VERSION=$numeric.0" "/DSOURCE_DIR=$((Resolve-Path $publish).Path)" "/DOUTPUT_FILE=$((Get-Location).Path)\artifacts\release\gitkay-$version-setup-x64.exe" installer/gitkay.nsi
+
+      - name: Upload release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.rid }}
+          path: artifacts/release/
+          if-no-files-found: error
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Download release files
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: artifacts/release
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version="${{ needs.version.outputs.value }}"
+          tag="${{ needs.version.outputs.tag }}"
+          cd artifacts/release
+          sha256sum * > SHA256SUMS.txt
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "GitHub release $tag already exists; keeping its assets."
+            exit 0
+          fi
+          notes=(--generate-notes)
+          [ -s "../../dev-docs/releases/$version.md" ] && notes=(--notes-file "../../dev-docs/releases/$version.md")
+          prerelease=()
+          [[ "$version" == *-* ]] && prerelease=(--prerelease)
+          gh release create "$tag" --title "GitKay $tag" "${notes[@]}" "${prerelease[@]}" *
+
+  # Enabled once the first version is accepted into microsoft/winget-pkgs (see dev-docs/ReleaseProcess.md).
+  winget:
+    needs: [version, release]
+    if: vars.WINGET_ENABLED == 'true' && !contains(needs.version.outputs.value, '-')
+    runs-on: windows-latest
+
+    steps:
+      - name: Submit to winget
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: AdamDavies.GitKay
+          version: ${{ needs.version.outputs.value }}
+          release-tag: ${{ needs.version.outputs.tag }}
+          installers-regex: '-setup-x64\.exe$'
+          token: ${{ secrets.WINGET_TOKEN }}
