@@ -34,6 +34,7 @@ public partial class MainWindow : Window {
         DiffRowsScrollViewer.PointerEntered += (_, _) => OnPaneHovered(Pane.Diff);
         DiffFilesListBox.PointerEntered += (_, _) => OnPaneHovered(Pane.Files);
         Deactivated += (_, _) => HideCtrlHints();
+        Loaded += (_, _) => CommitListBox.Focus();
         SearchBox.AddHandler(InputElement.KeyDownEvent, OnSearchBoxKeyDown, RoutingStrategies.Tunnel);
         PaletteBox.AddHandler(InputElement.KeyDownEvent, OnPaletteBoxKeyDown, RoutingStrategies.Tunnel);
         CommitFindBox.AddHandler(InputElement.KeyDownEvent, OnCommitFindBoxKeyDown, RoutingStrategies.Tunnel);
