@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Avalonia.Controls.Documents;
 using Avalonia.Media;
+using Microsoft.FSharp.Collections;
 using Microsoft.FSharp.Core;
 using DiffLineType = GitKay.Core.Models.LineType;
 
@@ -48,12 +50,39 @@ public partial class DiffFileProjection : ObservableObject
     {
         Key = new DiffFileKey(summary.OldPath, summary.NewPath);
         DisplayPath = summary.DisplayPath;
+        ListLabel = summary.DisplayPath;
         Header = new DiffFileHeaderProjection(this);
     }
 
     public DiffFileKey Key { get; }
     [ObservableProperty] private string _displayPath = "";
     [ObservableProperty] private bool _isLoaded;
+    /// <summary>Presentation-only: hides this file's diff rows beneath its header.</summary>
+    [ObservableProperty] private bool _isCollapsed;
+    /// <summary>Label and indent for the changed-files list: full path in patch mode, file name in tree mode.</summary>
+    [ObservableProperty] private string _listLabel = "";
+    /// <summary>The commit search's path term matches this file; shown as a dotted underline.</summary>
+    [ObservableProperty] private bool _isPathSearchMatch;
+    [ObservableProperty] private Avalonia.Thickness _listIndent;
+    [ObservableProperty] private int _addedLines;
+    [ObservableProperty] private int _removedLines;
+    /// <summary>"added", "deleted", "renamed" or "modified", derived from the file identity.</summary>
+    public string ChangeKind => Key.OldPath == "/dev/null" ? "added"
+        : Key.NewPath == "/dev/null" ? "deleted"
+        : Key.OldPath != Key.NewPath ? "renamed"
+        : "modified";
+    public string ChangeGlyph => ChangeKind switch { "added" => "+", "deleted" => "−", "renamed" => "→", _ => "•" };
+    public string ChangeToolTip => IsLoaded
+        ? $"{char.ToUpperInvariant(ChangeKind[0])}{ChangeKind[1..]} · +{AddedLines} −{RemovedLines}"
+        : $"{char.ToUpperInvariant(ChangeKind[0])}{ChangeKind[1..]}";
+    public bool IsAddedFile => ChangeKind == "added";
+    public bool IsDeletedFile => ChangeKind == "deleted";
+    public bool IsModifiedFile => ChangeKind is "modified" or "renamed";
+    /// <summary>True when collapsed context remains that "expand all" can reveal.</summary>
+    public bool HasHiddenContext => _blocks.Any(block => block is DiffGapProjection);
+    /// <summary>True when context beyond the configured diff has been revealed and can be collapsed.</summary>
+    public bool HasRevealedContext => _expansion != null && !_expansion.Revealed.IsEmpty;
+    public bool IsContextLoading => _expansion?.PendingRequestId != null;
     [ObservableProperty] private bool _hasSearchMatch;
     [ObservableProperty] private string _searchMatchSummary = "";
     [ObservableProperty] private IBrush _rowBackground = Brushes.Transparent;
@@ -64,7 +93,13 @@ public partial class DiffFileProjection : ObservableObject
     [ObservableProperty] private IBrush _matchForeground = DiffSearchPresentation.MatchForeground;
     [ObservableProperty] private FontWeight _matchFontWeight = FontWeight.Normal;
     public ObservableCollection<DiffHunkProjection> Hunks { get; } = new();
+    /// <summary>Ordered hunks and collapsed gaps, after applying file-scoped expansion.</summary>
+    public IReadOnlyList<object> Blocks => _blocks;
     public DiffFileHeaderProjection Header { get; }
+
+    private readonly List<object> _blocks = new();
+    private GitKay.Core.Models.FileDiff? _content;
+    private GitKay.Core.App.FileExpansion? _expansion;
 
     public void UpdateSummary(GitKay.Core.GitService.DiffFileSummary summary)
     {
@@ -72,22 +107,73 @@ public partial class DiffFileProjection : ObservableObject
         Header.UpdateDisplayPath(summary.DisplayPath);
     }
 
-    public void ApplyContent(GitKay.Core.Models.FileDiff file)
+    public void ApplyContent(GitKay.Core.Models.FileDiff file, GitKay.Core.App.FileExpansion? expansion = null)
     {
-        Hunks.Clear();
-        foreach (var hunk in file.Hunks.Select(h => new DiffHunkProjection(h)))
+        _content = file;
+        var lines = file.Hunks.SelectMany(hunk => hunk.Lines).ToArray();
+        AddedLines = lines.Count(line => line.Type.IsAdded);
+        RemovedLines = lines.Count(line => line.Type.IsRemoved);
+        _expansion = expansion;
+        Project();
+        IsLoaded = true;
+        OnPropertyChanged(nameof(ChangeToolTip));
+    }
+
+    /// <summary>Re-projects this file for new expansion state. Returns false when nothing changed.</summary>
+    public bool ApplyExpansion(GitKay.Core.App.FileExpansion? expansion)
+    {
+        if (ReferenceEquals(_expansion, expansion) || Equals(_expansion, expansion))
         {
-            Hunks.Add(hunk);
+            return false;
         }
 
-        IsLoaded = true;
+        _expansion = expansion;
+        if (_content != null)
+        {
+            Project();
+        }
+
+        return true;
     }
 
     public void ClearContent()
     {
+        _content = null;
+        _expansion = null;
+        AddedLines = 0;
+        RemovedLines = 0;
+        _blocks.Clear();
         Hunks.Clear();
         IsLoaded = false;
         ClearSearchState();
+    }
+
+    private void Project()
+    {
+        _blocks.Clear();
+        Hunks.Clear();
+        if (_content == null)
+        {
+            return;
+        }
+
+        var fullContext = _expansion?.FullContext;
+        var revealed = _expansion?.Revealed ?? FSharpList<GitKay.Core.DiffExpansion.LineRange>.Empty;
+        var isLoading = _expansion?.PendingRequestId != null;
+        foreach (var block in GitKay.Core.DiffExpansion.project(_content, fullContext, revealed))
+        {
+            switch (block)
+            {
+                case GitKay.Core.DiffExpansion.DiffBlock.HunkBlock hunkBlock:
+                    var hunk = new DiffHunkProjection(hunkBlock.Item);
+                    Hunks.Add(hunk);
+                    _blocks.Add(hunk);
+                    break;
+                case GitKay.Core.DiffExpansion.DiffBlock.GapBlock gapBlock:
+                    _blocks.Add(new DiffGapProjection(gapBlock.Item, isLoading));
+                    break;
+            }
+        }
     }
 
     public void ApplySearchState(string query, string scopeKey)
@@ -132,6 +218,7 @@ public partial class DiffFileProjection : ObservableObject
 
         var hasSearchMatch = pathMatch || textMatch;
         HasSearchMatch = hasSearchMatch;
+        IsPathSearchMatch = pathMatch;
         SearchMatchSummary = hasSearchMatch ? BuildSearchSummary(pathMatch, textMatch) : "";
         UpdateSearchHighlight(normalizedQuery, pathMatch, hasSearchMatch);
         Header.ApplySearchState(normalizedQuery, pathMatch, textMatch, SearchMatchSummary);
@@ -140,6 +227,7 @@ public partial class DiffFileProjection : ObservableObject
     private void ClearSearchState(string scopeKey)
     {
         HasSearchMatch = false;
+        IsPathSearchMatch = false;
         SearchMatchSummary = "";
         RowBackground = Brushes.Transparent;
         BorderBrush = Brushes.Transparent;
@@ -214,6 +302,96 @@ public partial class DiffFileProjection : ObservableObject
     }
 }
 
+/// <summary>A folder row in the changed-files tree; single-child folder chains are merged into one row.</summary>
+public sealed partial class DiffFileFolderRow : ObservableObject
+{
+    public DiffFileFolderRow(string name, string path, int depth, bool isExpanded)
+    {
+        Name = name;
+        Path = path;
+        Indent = new Avalonia.Thickness(depth * DiffFileTree.IndentWidth, 0, 0, 0);
+        _isExpanded = isExpanded;
+    }
+
+    public string Name { get; }
+    public string Path { get; }
+    public Avalonia.Thickness Indent { get; }
+    [ObservableProperty] private bool _isExpanded;
+}
+
+/// <summary>Builds the flattened changed-files rows for patch (flat) and tree (folder) modes.</summary>
+public static class DiffFileTree
+{
+    public const double IndentWidth = 14;
+
+    private sealed class Node
+    {
+        public readonly SortedDictionary<string, Node> Folders = new(StringComparer.OrdinalIgnoreCase);
+        public readonly List<(string Name, DiffFileProjection File)> Files = new();
+    }
+
+    public static List<object> BuildRows(IEnumerable<DiffFileProjection> files, bool treeMode, ISet<string> collapsedFolders)
+    {
+        var rows = new List<object>();
+        if (!treeMode)
+        {
+            foreach (var file in files)
+            {
+                file.ListLabel = file.DisplayPath;
+                file.ListIndent = default;
+                rows.Add(file);
+            }
+            return rows;
+        }
+
+        var root = new Node();
+        foreach (var file in files)
+        {
+            var path = file.Key.NewPath == "/dev/null" ? file.Key.OldPath : file.Key.NewPath;
+            var parts = path.Split('/');
+            var node = root;
+            for (var i = 0; i < parts.Length - 1; i++)
+            {
+                if (!node.Folders.TryGetValue(parts[i], out var child))
+                    node.Folders[parts[i]] = child = new Node();
+                node = child;
+            }
+            node.Files.Add((parts[^1], file));
+        }
+
+        void Emit(Node node, string prefix, int depth)
+        {
+            foreach (var (folderName, folder) in node.Folders)
+            {
+                // Merge chains of folders that contain only one folder, like GitHub ("dev-docs/releases").
+                var name = folderName;
+                var current = folder;
+                while (current.Files.Count == 0 && current.Folders.Count == 1)
+                {
+                    var only = current.Folders.First();
+                    name = $"{name}/{only.Key}";
+                    current = only.Value;
+                }
+
+                var path = prefix.Length == 0 ? name : $"{prefix}/{name}";
+                var expanded = !collapsedFolders.Contains(path);
+                rows.Add(new DiffFileFolderRow(name, path, depth, expanded));
+                if (expanded) Emit(current, path, depth + 1);
+            }
+
+            foreach (var (name, file) in node.Files.OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                file.ListLabel = name;
+                file.ListIndent = new Avalonia.Thickness(depth * IndentWidth, 0, 0, 0);
+                rows.Add(file);
+            }
+        }
+
+        Emit(root, "", 0);
+        return rows;
+    }
+}
+
 public sealed partial class DiffFileHeaderProjection : ObservableObject, IDiffRowProjection
 {
     public DiffFileHeaderProjection(DiffFileProjection file)
@@ -280,10 +458,34 @@ public sealed partial class DiffFileHeaderProjection : ObservableObject, IDiffRo
     }
 }
 
-public sealed class DiffGapProjection(int hiddenLineCount) : IDiffRowProjection
+public readonly record struct DiffGapExpansionRequest(
+    GitKay.Core.DiffExpansion.DiffGap Gap,
+    GitKay.Core.DiffExpansion.ExpandDirection Direction);
+
+public sealed class DiffGapProjection : IDiffRowProjection
 {
-    public int HiddenLineCount { get; } = hiddenLineCount;
-    public string Label => $"⋯  {HiddenLineCount} hidden lines";
+    public DiffGapProjection(GitKay.Core.DiffExpansion.DiffGap gap, bool isLoading = false)
+    {
+        Gap = gap;
+        IsLoading = isLoading;
+        Directions = GitKay.Core.DiffExpansion.availableDirections(gap).ToArray();
+    }
+
+    public GitKay.Core.DiffExpansion.DiffGap Gap { get; }
+    public bool IsLoading { get; }
+    /// <summary>Header of the hunk that follows this gap; the gap row stands in for that header row.</summary>
+    public string? HeaderText { get; set; }
+    public int? HiddenLineCount => Gap.HiddenCount is null ? null : Gap.HiddenCount.Value;
+    public IReadOnlyList<GitKay.Core.DiffExpansion.ExpandDirection> Directions { get; }
+
+    public string Label => HiddenLineCount is { } count ? $"⋯  {count} hidden lines" : "⋯  more lines";
+
+    public string ActionLabel(GitKay.Core.DiffExpansion.ExpandDirection direction)
+    {
+        if (direction.IsDown) return $"↓  Show {GitKay.Core.DiffExpansion.StepLines} lines";
+        if (direction.IsUp) return $"↑  Show {GitKay.Core.DiffExpansion.StepLines} lines";
+        return HiddenLineCount is { } count ? $"↕  Show all {count}" : "↕  Show all";
+    }
 }
 
 public sealed class DiffHunkHeaderProjection : IDiffRowProjection

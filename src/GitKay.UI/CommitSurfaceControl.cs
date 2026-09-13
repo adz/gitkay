@@ -16,12 +16,31 @@ using Avalonia.VisualTree;
 namespace GitKay.UI;
 
 /// <summary>Fixed-row commit history renderer with O(visible rows) scrolling cost.</summary>
-public sealed class CommitSurfaceControl : Control
+public sealed class CommitSurfaceControl : Control, IOverviewSource
 {
+    public IReadOnlyList<OverviewMark> OverviewMarks
+    {
+        get
+        {
+            var marks = new List<OverviewMark>();
+            if (_rows.Length == 0 || _filtered) return marks;
+            for (var i = 0; i < _rows.Length; i++)
+                if (_rows[i].HasSearchMatch)
+                    marks.Add(new OverviewMark((double)i / _rows.Length, 1.0 / _rows.Length, OverviewMarkKind.SearchMatch));
+            return marks;
+        }
+    }
+
+    public ScrollViewer? OverviewScrollViewer => _scrollViewer;
+    public event EventHandler? OverviewChanged;
+
     private const double RowHeight = 20;
     private const double LaneWidth = 9;
-    private static readonly Typeface TextTypeface = new("Helvetica,Arial,Liberation Sans,Noto Sans,sans-serif");
-    private static readonly Typeface MonoTypeface = new("Courier,Courier New,Liberation Mono,Monospace");
+    private static readonly Typeface TextTypeface = new(FontStacks.Resolve(AppSettings.DefaultCommitRowFontFamily));
+    private static readonly Typeface MonoTypeface = new(FontStacks.Resolve(AppSettings.DefaultCommitRowMonoFontFamily));
+    // Search matches are shown in bold, like gitk.
+    private static readonly Typeface BoldTextTypeface = new(TextTypeface.FontFamily, FontStyle.Normal, FontWeight.Bold);
+    private static readonly Typeface BoldMonoTypeface = new(MonoTypeface.FontFamily, FontStyle.Normal, FontWeight.Bold);
     private static readonly IBrush SubjectBrush = new SolidColorBrush(Color.FromRgb(220, 220, 220)).ToImmutable();
     private static readonly IBrush MetaBrush = new SolidColorBrush(Color.FromRgb(170, 170, 170)).ToImmutable();
     private static readonly IBrush MutedBrush = new SolidColorBrush(Color.FromRgb(136, 136, 136)).ToImmutable();
@@ -31,19 +50,30 @@ public sealed class CommitSurfaceControl : Control
         Brushes.Red, Brushes.Green, Brushes.Blue, Brushes.Orange, Brushes.Purple,
         Brushes.Cyan, Brushes.Magenta, Brushes.Yellow, Brushes.LightGreen, Brushes.LightBlue
     ];
-    private static readonly IPen[] LanePens = LaneBrushes.Select(brush => new Pen(brush, 1.5).ToImmutable()).ToArray();
+    private IBrush[] _laneBrushes = LaneBrushes;
+    private IPen[] _lanePens = LaneBrushes.Select(brush => new Pen(brush, 1.5).ToImmutable()).ToArray();
 
     public static readonly StyledProperty<IEnumerable<CommitProjection>?> ItemsSourceProperty =
         AvaloniaProperty.Register<CommitSurfaceControl, IEnumerable<CommitProjection>?>(nameof(ItemsSource));
     public static readonly StyledProperty<CommitProjection?> SelectedItemProperty =
         AvaloniaProperty.Register<CommitSurfaceControl, CommitProjection?>(nameof(SelectedItem), defaultBindingMode: Avalonia.Data.BindingMode.TwoWay);
+    public static readonly StyledProperty<bool> ShowOnlyMatchesProperty =
+        AvaloniaProperty.Register<CommitSurfaceControl, bool>(nameof(ShowOnlyMatches));
+    public static readonly StyledProperty<SearchHighlight?> SearchHighlightProperty =
+        AvaloniaProperty.Register<CommitSurfaceControl, SearchHighlight?>(nameof(SearchHighlight));
+    public static readonly StyledProperty<bool> SearchActiveProperty =
+        AvaloniaProperty.Register<CommitSurfaceControl, bool>(nameof(SearchActive));
     public static readonly StyledProperty<double> GraphWidthProperty = AvaloniaProperty.Register<CommitSurfaceControl, double>(nameof(GraphWidth), 48);
     public static readonly StyledProperty<double> SubjectWidthProperty = AvaloniaProperty.Register<CommitSurfaceControl, double>(nameof(SubjectWidth), 120);
     public static readonly StyledProperty<double> HashWidthProperty = AvaloniaProperty.Register<CommitSurfaceControl, double>(nameof(HashWidth), 54);
     public static readonly StyledProperty<double> AuthorWidthProperty = AvaloniaProperty.Register<CommitSurfaceControl, double>(nameof(AuthorWidth), 110);
     public static readonly StyledProperty<double> DateWidthProperty = AvaloniaProperty.Register<CommitSurfaceControl, double>(nameof(DateWidth), 110);
 
+    private CommitProjection[] _all = Array.Empty<CommitProjection>();
+    /// <summary>Displayed rows: all commits, or only search matches when <see cref="ShowOnlyMatches"/> is on.</summary>
     private CommitProjection[] _rows = Array.Empty<CommitProjection>();
+    private bool _filtered;
+    private Point _lastContextPoint;
     private INotifyCollectionChanged? _collection;
     private ScrollViewer? _scrollViewer;
     private readonly Dictionary<LayoutKey, FormattedText> _layouts = new();
@@ -52,6 +82,14 @@ public sealed class CommitSurfaceControl : Control
 
     public IEnumerable<CommitProjection>? ItemsSource { get => GetValue(ItemsSourceProperty); set => SetValue(ItemsSourceProperty, value); }
     public CommitProjection? SelectedItem { get => GetValue(SelectedItemProperty); set => SetValue(SelectedItemProperty, value); }
+    public bool ShowOnlyMatches { get => GetValue(ShowOnlyMatchesProperty); set => SetValue(ShowOnlyMatchesProperty, value); }
+    /// <summary>Applied search terms; matched text in matching rows gets a dotted underline.</summary>
+    public SearchHighlight? SearchHighlight { get => GetValue(SearchHighlightProperty); set => SetValue(SearchHighlightProperty, value); }
+    public bool SearchActive { get => GetValue(SearchActiveProperty); set => SetValue(SearchActiveProperty, value); }
+
+    /// <summary>Raised by the row context menu: (field, value) where a null value asks the host to prompt for one.</summary>
+    public event Action<string, string?>? FilterRequested;
+
     public double GraphWidth { get => GetValue(GraphWidthProperty); set => SetValue(GraphWidthProperty, value); }
     public double SubjectWidth { get => GetValue(SubjectWidthProperty); set => SetValue(SubjectWidthProperty, value); }
     public double HashWidth { get => GetValue(HashWidthProperty); set => SetValue(HashWidthProperty, value); }
@@ -61,6 +99,9 @@ public sealed class CommitSurfaceControl : Control
     static CommitSurfaceControl()
     {
         ItemsSourceProperty.Changed.AddClassHandler<CommitSurfaceControl>((control, _) => control.Rebuild());
+        ShowOnlyMatchesProperty.Changed.AddClassHandler<CommitSurfaceControl>((control, _) => control.ApplyFilter());
+        SearchActiveProperty.Changed.AddClassHandler<CommitSurfaceControl>((control, _) => control.ApplyFilter());
+        SearchHighlightProperty.Changed.AddClassHandler<CommitSurfaceControl>((control, _) => control.InvalidateVisual());
         SelectedItemProperty.Changed.AddClassHandler<CommitSurfaceControl>((control, _) =>
         {
             control._keyboardSelection = null;
@@ -73,8 +114,10 @@ public sealed class CommitSurfaceControl : Control
     {
         Focusable = true;
         ContextMenu = BuildContextMenu();
+        ContextRequested += OnCommitContextRequested;
         ActualThemeVariantChanged += (_, _) =>
         {
+            RefreshLaneBrushes();
             _layouts.Clear();
             InvalidateVisual();
         };
@@ -83,8 +126,10 @@ public sealed class CommitSurfaceControl : Control
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
+        RefreshLaneBrushes();
         _scrollViewer = this.FindAncestorOfType<ScrollViewer>();
         if (_scrollViewer != null) _scrollViewer.ScrollChanged += OnScrollChanged;
+        OverviewChanged?.Invoke(this, EventArgs.Empty);
         Rebuild();
     }
 
@@ -99,27 +144,53 @@ public sealed class CommitSurfaceControl : Control
     private void Rebuild()
     {
         Detach();
-        _rows = ItemsSource?.ToArray() ?? Array.Empty<CommitProjection>();
+        _all = ItemsSource?.ToArray() ?? Array.Empty<CommitProjection>();
         if (ItemsSource is INotifyCollectionChanged collection)
         {
             _collection = collection;
             _collection.CollectionChanged += OnCollectionChanged;
         }
-        foreach (var row in _rows) row.PropertyChanged += OnRowChanged;
+        foreach (var row in _all) row.PropertyChanged += OnRowChanged;
         _layouts.Clear();
+        ApplyFilter();
+    }
+
+    /// <summary>
+    /// Filters to matching commits while a search is active — an empty list when nothing matches. The graph is
+    /// hidden while filtered because lanes can't be drawn across hidden commits.
+    /// </summary>
+    private void ApplyFilter()
+    {
+        _filtered = ShowOnlyMatches && SearchActive;
+        _rows = _filtered ? _all.Where(row => row.HasSearchMatch).ToArray() : _all;
+        OverviewChanged?.Invoke(this, EventArgs.Empty);
+        _filterPending = false;
         InvalidateMeasure();
         InvalidateVisual();
     }
 
+    private bool _filterPending;
+
     private void Detach()
     {
         if (_collection != null) _collection.CollectionChanged -= OnCollectionChanged;
-        foreach (var row in _rows) row.PropertyChanged -= OnRowChanged;
+        foreach (var row in _all) row.PropertyChanged -= OnRowChanged;
         _collection = null;
     }
 
     private void OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) => Rebuild();
-    private void OnRowChanged(object? sender, PropertyChangedEventArgs e) { _layouts.Clear(); InvalidateVisual(); }
+    private void OnRowChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(CommitProjection.HasSearchMatch) && ShowOnlyMatches && !_filterPending)
+        {
+            // Many rows change together when results arrive; refilter once.
+            _filterPending = true;
+            Dispatcher.UIThread.Post(ApplyFilter, DispatcherPriority.Background);
+        }
+        _layouts.Clear();
+        InvalidateVisual();
+        if (e.PropertyName == nameof(CommitProjection.HasSearchMatch)) OverviewChanged?.Invoke(this, EventArgs.Empty);
+    }
     private void OnScrollChanged(object? sender, ScrollChangedEventArgs e) => InvalidateVisual();
 
     protected override Size MeasureOverride(Size availableSize) =>
@@ -129,9 +200,16 @@ public sealed class CommitSurfaceControl : Control
     {
         var offset = _scrollViewer?.Offset.Y ?? 0;
         var viewport = _scrollViewer?.Viewport.Height ?? Bounds.Height;
+        context.FillRectangle(Brushes.Transparent, new Rect(0, offset, Bounds.Width, viewport));
         var first = Math.Clamp((int)(offset / RowHeight), 0, _rows.Length);
         var last = Math.Min(_rows.Length, first + (int)Math.Ceiling(viewport / RowHeight) + 2);
         for (var index = first; index < last; index++) DrawRow(context, _rows[index], index * RowHeight);
+
+        if (_filtered && _rows.Length == 0)
+        {
+            var message = Layout("No matching commits", 13, ThemeBrush("GitKayMutedTextBrush", MutedBrush), TextTypeface);
+            context.DrawText(message, new Point(Math.Max(12, (Bounds.Width - message.Width) / 2), offset + 16));
+        }
     }
 
     private void DrawRow(DrawingContext context, CommitProjection commit, double y)
@@ -143,12 +221,13 @@ public sealed class CommitSurfaceControl : Control
 
         if (ReferenceEquals(commit, _keyboardSelection ?? SelectedItem))
             context.FillRectangle(selectionBrush, new Rect(0, y, Bounds.Width, RowHeight));
-        else if (commit.RowBackground != Brushes.Transparent)
-            context.FillRectangle(commit.RowBackground, new Rect(0, y, Bounds.Width, RowHeight));
+        var textTypeface = commit.HasSearchMatch ? BoldTextTypeface : TextTypeface;
+        var monoTypeface = commit.HasSearchMatch ? BoldMonoTypeface : MonoTypeface;
 
         var graphWidth = EffectiveWidth(GraphWidth, 48);
-        using (context.PushClip(new Rect(0, y, graphWidth, RowHeight)))
-            DrawGraph(context, commit, y);
+        if (!_filtered)
+            using (context.PushClip(new Rect(0, y, graphWidth, RowHeight)))
+                DrawGraph(context, commit, y);
 
         var subjectWidth = EffectiveWidth(SubjectWidth, 120);
         var hashWidth = EffectiveWidth(HashWidth, 54);
@@ -158,36 +237,80 @@ public sealed class CommitSurfaceControl : Control
         var hashX = subjectX + subjectWidth;
         var authorX = hashX + hashWidth;
         var dateX = authorX + authorWidth;
+        var highlight = commit.HasSearchMatch ? SearchHighlight : null;
+        var underline = ThemeBrush("GitKayAccentBrush", UnderlineFallback);
         var badgeX = subjectX + 5;
         foreach (var badge in commit.RefBadges)
-            badgeX += DrawBadge(context, badge, badgeX, y);
+        {
+            var badgeWidth = DrawBadge(context, badge, badgeX, y);
+            if (highlight != null)
+                Underline(context, badge.Text, highlight.Ref, badgeX + 5, y + RowHeight - 3, 11, TextTypeface, highlight, underline);
+            badgeX += badgeWidth;
+        }
 
         using (context.PushClip(new Rect(badgeX, y, Math.Max(0, hashX - badgeX - 3), RowHeight)))
-            DrawText(context, commit.Subject, badgeX, y + 2, 13, subjectBrush, TextTypeface);
+        {
+            DrawText(context, commit.Subject, badgeX, y + 2, 13, subjectBrush, textTypeface);
+            if (highlight != null) Underline(context, commit.Subject, highlight.Subject, badgeX, y + RowHeight - 2, 13, textTypeface, highlight, underline);
+        }
         using (context.PushClip(new Rect(hashX, y, hashWidth, RowHeight)))
-            DrawText(context, commit.Hash, hashX + 2, y + 3, 12, mutedBrush, MonoTypeface);
+        {
+            DrawText(context, commit.Hash, hashX + 2, y + 3, 12, mutedBrush, monoTypeface);
+            if (highlight != null) Underline(context, commit.Hash, highlight.Hash, hashX + 2, y + RowHeight - 2, 12, monoTypeface, highlight, underline);
+        }
         using (context.PushClip(new Rect(authorX, y, authorWidth, RowHeight)))
-            DrawText(context, commit.Author, authorX + 2, y + 3, 12, metaBrush, TextTypeface);
+        {
+            DrawText(context, commit.Author, authorX + 2, y + 3, 12, metaBrush, textTypeface);
+            if (highlight != null) Underline(context, commit.Author, highlight.Author, authorX + 2, y + RowHeight - 2, 12, textTypeface, highlight, underline);
+        }
 
         using (context.PushClip(new Rect(dateX, y, dateWidth, RowHeight)))
         {
-            var date = Layout(commit.Date, 12, mutedBrush, TextTypeface);
+            var date = Layout(commit.Date, 12, mutedBrush, textTypeface);
             context.DrawText(date, new Point(Math.Max(dateX + 2, dateX + dateWidth - date.Width - 4), y + 3));
         }
     }
 
+    /// <summary>
+    /// Dark keeps the established drawn colours (the fallbacks); other variants resolve the palette for the
+    /// actual theme. Without the variant, lookups never reach the theme dictionaries.
+    /// </summary>
+    private static readonly IBrush UnderlineFallback = new SolidColorBrush(Color.FromRgb(88, 166, 255)).ToImmutable();
+
+    /// <summary>Dotted underline beneath each matched span; the shared search-match marker.</summary>
+    private void Underline(DrawingContext context, string text, IReadOnlyList<string> terms, double x, double baseline, double size, Typeface typeface, SearchHighlight highlight, IBrush brush)
+    {
+        foreach (var (start, length) in highlight.Matches(terms, text))
+        {
+            var left = x + (start == 0 ? 0 : Layout(text[..start], size, Brushes.Transparent, typeface).Width);
+            var width = Layout(text.Substring(start, length), size, Brushes.Transparent, typeface).Width;
+            for (var dot = left; dot < left + width; dot += 3)
+                context.FillRectangle(brush, new Rect(dot, baseline, 1.5, 1.5));
+        }
+    }
+
     private IBrush ThemeBrush(string key, IBrush fallback) =>
-        this.TryFindResource(key, out var value) && value is IBrush brush ? brush : fallback;
+        ActualThemeVariant != Avalonia.Styling.ThemeVariant.Dark
+        && this.TryFindResource(key, ActualThemeVariant, out var value) && value is IBrush brush
+            ? brush
+            : fallback;
 
     private static double EffectiveWidth(double value, double fallback) =>
         double.IsFinite(value) && value > 1 ? value : fallback;
 
-    private static void DrawGraph(DrawingContext context, CommitProjection commit, double y)
+    /// <summary>Lane colours come from the theme so the graph stays legible on light backgrounds.</summary>
+    private void RefreshLaneBrushes()
+    {
+        _laneBrushes = LaneBrushes.Select((fallback, index) => ThemeBrush($"GitKayLane{index}Brush", fallback)).ToArray();
+        _lanePens = _laneBrushes.Select(brush => (IPen)new Pen(brush, 1.5)).ToArray();
+    }
+
+    private void DrawGraph(DrawingContext context, CommitProjection commit, double y)
     {
         var centerY = y + RowHeight / 2;
         foreach (var segment in commit.Segments)
         {
-            var pen = LanePens[Math.Abs(segment.Color) % LanePens.Length];
+            var pen = _lanePens[Math.Abs(segment.Color) % _lanePens.Length];
             var x = (segment.Lane + 1) * LaneWidth;
             if (segment.IsCommit)
             {
@@ -197,7 +320,7 @@ public sealed class CommitSurfaceControl : Control
             else
                 context.DrawLine(pen, new Point(x, y), new Point(x, y + RowHeight));
         }
-        var brush = LaneBrushes[Math.Abs(commit.Lane) % LaneBrushes.Length];
+        var brush = _laneBrushes[Math.Abs(commit.Lane) % _laneBrushes.Length];
         var cx = (commit.Lane + 1) * LaneWidth;
         context.DrawEllipse(brush, null, new Rect(cx - 3, centerY - 3, 6, 6));
     }
@@ -230,7 +353,100 @@ public sealed class CommitSurfaceControl : Control
     {
         base.OnPointerPressed(e);
         Focus();
-        SelectAt(e.GetPosition(this).Y);
+        _lastContextPoint = e.GetPosition(this);
+        SelectAt(_lastContextPoint.Y);
+
+        // Branch badges and author names act as links: a click filters to them.
+        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed && LinkAt(_lastContextPoint) is { } link)
+        {
+            FilterRequested?.Invoke(link.Field, link.Value);
+            e.Handled = true;
+        }
+    }
+
+    protected override void OnPointerMoved(PointerEventArgs e)
+    {
+        base.OnPointerMoved(e);
+        var overLink = LinkAt(e.GetPosition(this)) != null;
+        if (overLink != _overLink)
+        {
+            _overLink = overLink;
+            Cursor = overLink ? new Cursor(StandardCursorType.Hand) : Cursor.Default;
+        }
+    }
+
+    private bool _overLink;
+
+    /// <summary>The ref badge or author name under a point, if any.</summary>
+    private (string Field, string Value)? LinkAt(Point point)
+    {
+        if (_rows.Length == 0 || point.Y < 0) return null;
+        var index = (int)(point.Y / RowHeight);
+        if (index >= _rows.Length) return null;
+        var commit = _rows[index];
+
+        var graphWidth = EffectiveWidth(GraphWidth, 48);
+        var hashX = graphWidth + EffectiveWidth(SubjectWidth, 120);
+        var authorX = hashX + EffectiveWidth(HashWidth, 54);
+        var badgeX = graphWidth + 5;
+        foreach (var badge in commit.RefBadges)
+        {
+            var width = Layout(badge.Text, 11, badge.Foreground, TextTypeface).Width + 10;
+            if (point.X >= badgeX && point.X < badgeX + width) return ("ref", badge.Text);
+            badgeX += width + 3;
+        }
+
+        var authorWidth = Math.Min(EffectiveWidth(AuthorWidth, 110) - 2, Layout(commit.Author, 12, MetaBrush, TextTypeface).Width);
+        if (point.X >= authorX + 2 && point.X < authorX + 2 + authorWidth && !string.IsNullOrEmpty(commit.Author))
+            return ("author", commit.Author);
+
+        return null;
+    }
+
+    private void OnCommitContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        // Rebuilt per request so filter items reflect the clicked column and commit.
+        if (e.TryGetPosition(this, out var point)) _lastContextPoint = point;
+        ContextMenu = BuildContextMenu();
+    }
+
+    /// <summary>Filter actions for the clicked column, above the commit operations.</summary>
+    private IEnumerable<Control> BuildFilterItems(CommitProjection commit)
+    {
+        MenuItem Filter(string header, string field, string? value)
+        {
+            var item = new MenuItem { Header = header };
+            item.Click += (_, _) => FilterRequested?.Invoke(field, value);
+            return item;
+        }
+
+        var graphWidth = EffectiveWidth(GraphWidth, 48);
+        var hashX = graphWidth + EffectiveWidth(SubjectWidth, 120);
+        var authorX = hashX + EffectiveWidth(HashWidth, 54);
+        var dateX = authorX + EffectiveWidth(AuthorWidth, 110);
+        var x = _lastContextPoint.X;
+
+        if (x >= dateX)
+        {
+            var day = commit.Date.Length >= 10 ? commit.Date[..10] : commit.Date;
+            yield return Filter($"Commits on or after {day}", "after", day);
+            yield return Filter($"Commits before {day}", "before", day);
+        }
+        else if (x >= authorX)
+        {
+            yield return Filter($"Only commits by {commit.Author}", "author", commit.Author);
+            yield return Filter("Filter by author…", "author", null);
+        }
+        else if (x >= hashX)
+        {
+            yield return Filter("Filter by hash…", "hash", null);
+        }
+        else
+        {
+            foreach (var badge in commit.RefBadges)
+                yield return Filter($"Only commits on {badge.Text}", "ref", badge.Text);
+            yield return Filter("Filter by message…", "message", null);
+        }
     }
 
     public void SelectAt(double documentY)
@@ -241,6 +457,8 @@ public sealed class CommitSurfaceControl : Control
         _keyboardSelection = null;
         SelectedItem = _rows[index];
     }
+
+    public int ViewportRowCount => _scrollViewer == null ? 20 : Math.Max(1, (int)(_scrollViewer.Viewport.Height / RowHeight));
 
     public void MoveSelection(int delta)
     {
@@ -293,9 +511,13 @@ public sealed class CommitSurfaceControl : Control
             item.Click += (_, _) => { var selected = SelectedItem; if (selected != null) command(selected).Execute(null); };
             return item;
         }
-        return new ContextMenu
+        var menu = new ContextMenu();
+        if (SelectedItem is { } selected)
         {
-            Items =
+            foreach (var filter in BuildFilterItems(selected)) menu.Items.Add(filter);
+            menu.Items.Add(new Separator());
+        }
+        foreach (var item in new Control[]
             {
                 Item("Create Tag here...", row => row.CreateTagCommand),
                 Item("Create Branch here...", row => row.CreateBranchCommand),
@@ -305,8 +527,9 @@ public sealed class CommitSurfaceControl : Control
                 new Separator(),
                 Item("Reset current branch here (soft)", row => row.ResetSoftCommand),
                 Item("Reset current branch here (hard)", row => row.ResetHardCommand)
-            }
-        };
+            })
+            menu.Items.Add(item);
+        return menu;
     }
 
     private readonly record struct LayoutKey(string Text, double Size, IBrush Brush, Typeface Typeface);

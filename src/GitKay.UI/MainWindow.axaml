@@ -11,34 +11,14 @@
         Background="{DynamicResource GitKayWindowBrush}">
 
     <DockPanel>
-        <Menu DockPanel.Dock="Top">
-            <MenuItem Header="_File">
-                <MenuItem Header="_Reread refs" Command="{Binding RereadRefs}" />
-            </MenuItem>
-            <MenuItem Header="_Edit">
-                <MenuItem Header="_Settings..."
-                          Click="OnSettingsMenuItemClick" />
-            </MenuItem>
-            <MenuItem Header="_View">
-                <MenuItem Header="Show _branch refs"
-                          ToggleType="CheckBox"
-                          IsChecked="{Binding ShowBranchRefs, Mode=TwoWay}" />
-                <MenuItem Header="_Show stashes"
-                          ToggleType="CheckBox"
-                          IsChecked="{Binding ShowStashes, Mode=TwoWay}" />
-                <Separator />
-                <MenuItem Header="Show _search panel"
-                          ToggleType="CheckBox"
-                          IsChecked="{Binding IsSearchPanelExpanded, Mode=TwoWay}" />
-            </MenuItem>
-        </Menu>
 
         <Border DockPanel.Dock="Bottom" Background="{DynamicResource GitKayStatusBrush}" BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="0,1,0,0" Padding="6,3">
             <TextBlock Text="{Binding Status}" Foreground="{DynamicResource GitKaySecondaryTextBrush}" FontSize="12" />
         </Border>
 
         <Grid>
-        <Grid RowDefinitions="2*,6,3*"
+        <Grid x:Name="MainSplitGrid"
+              RowDefinitions="3*,6,7*"
               MinHeight="0">
             <Border Grid.Row="0"
                     Background="{DynamicResource GitKayWindowBrush}"
@@ -47,43 +27,173 @@
                 <Grid MinHeight="0"
                       RowDefinitions="Auto,24,*"
                       Grid.IsSharedSizeScope="True">
+                    <!-- Commit search above the history; the hamburger holds the app menu. -->
                     <Border Grid.Row="0"
                             Background="{DynamicResource GitKayRaisedBrush}"
                             BorderBrush="{DynamicResource GitKayBorderBrush}"
                             BorderThickness="0,0,0,1"
-                            Padding="8,6"
-                            IsVisible="{Binding IsSearchPanelExpanded}">
-                        <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto"
-                              ColumnSpacing="8">
-                            <TextBox x:Name="SearchBox"
-                                     MinWidth="320"
-                                     HorizontalAlignment="Stretch"
-                                     Text="{Binding SearchQuery, Mode=TwoWay}"
-                                     PlaceholderText="Search hash, message, author, path, text, ref">
-                                <TextBox.KeyBindings>
-                                    <KeyBinding Gesture="Enter" Command="{Binding SearchCommand}" />
-                                </TextBox.KeyBindings>
-                            </TextBox>
+                            Padding="6,4">
+                        <Grid RowDefinitions="Auto,Auto">
+                        <Grid ColumnSpacing="6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Column="0" HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock Text="⇧P" /></Border>
+                            <Button x:Name="AppMenuButton"
+                                    Width="28" Height="28" Padding="0"
+                                    Background="Transparent" BorderThickness="0"
+                                    ToolTip.Tip="Menu">
+                                <PathIcon Width="14" Height="14"
+                                          Data="M1,3h14v1.6H1z M1,7.2h14v1.6H1z M1,11.4h14v1.6H1z"
+                                          Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
+                                <Button.Flyout>
+                                    <MenuFlyout Placement="BottomEdgeAlignedLeft">
+                                        <MenuItem Header="_Reread refs" Command="{Binding RereadRefs}" />
+                                        <MenuItem Header="_Settings…" Click="OnSettingsMenuItemClick" />
+                                    <MenuItem Header="_Keyboard shortcuts" Command="{Binding ToggleShortcutHelpCommand}" InputGesture="F1" />
+                                        <Separator />
+                                        <MenuItem Header="Show _branch refs" ToggleType="CheckBox" IsChecked="{Binding ShowBranchRefs, Mode=TwoWay}" />
+                                        <MenuItem Header="Show _stashes" ToggleType="CheckBox" IsChecked="{Binding ShowStashes, Mode=TwoWay}" />
+                                    </MenuFlyout>
+                                </Button.Flyout>
+                            </Button>
 
-                            <ComboBox Grid.Column="1"
-                                      Width="160"
-                                      ItemsSource="{Binding SearchScopes}"
-                                      SelectedItem="{Binding SelectedSearchScope}">
-                                <ComboBox.ItemTemplate>
-                                    <DataTemplate x:DataType="local:SearchScopeProjection">
-                                        <TextBlock Text="{Binding Label}" />
-                                    </DataTemplate>
-                                </ComboBox.ItemTemplate>
-                            </ComboBox>
 
-                            <Button Grid.Column="2"
-                                    Content="_Search"
-                                    Command="{Binding SearchCommand}" />
-                            <Button Grid.Column="3"
-                                    Content="_Clear"
-                                    Command="{Binding ClearSearchCommand}" />
+<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Column="2" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="6,0,0,0"><TextBlock Text="F  find" /></Border>
+                            <Panel Grid.Column="2" MinWidth="220">
+                                <TextBox x:Name="SearchBox"
+                                         Height="28"
+                                         Text="{Binding SearchQuery, Mode=TwoWay}"
+                                         PlaceholderText="{Binding SearchPlaceholder}"
+                                         GotFocus="OnSearchBoxGotFocus"
+                                         LostFocus="OnSearchBoxLostFocus"
+                                         TextChanged="OnSearchBoxTextChanged"
+                                         KeyDown="OnSearchBoxKeyDown">
+                                    <TextBox.InnerRightContent>
+                                        <StackPanel Orientation="Horizontal" Spacing="2" Margin="0,0,4,0">
+<StackPanel Orientation="Horizontal" Spacing="2" IsVisible="{Binding HasSearchNavigation}">
+                                            <TextBlock Text="{Binding CommitSearchStatusText}"
+                                                       Foreground="{DynamicResource GitKayMutedTextBrush}"
+                                                       FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0" />
+                                            <Button Classes="inline" Command="{Binding FindPreviousCommitCommand}" ToolTip.Tip="Previous match (Shift+Enter, N)">
+                                                <PathIcon Width="9" Height="9" Data="M2,11 L8,5 L14,11 L12.6,12.4 L8,7.8 L3.4,12.4 Z" Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
+                                            </Button>
+                                            <Button Classes="inline" Command="{Binding FindNextCommitCommand}" ToolTip.Tip="Next match (Enter, n)">
+                                                <PathIcon Width="9" Height="9" Data="M2,5 L8,11 L14,5 L12.6,3.6 L8,8.2 L3.4,3.6 Z" Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
+                                            </Button>
+                                        </StackPanel>
+<ToggleButton Classes="inline" IsChecked="{Binding SearchUseRegex}" ToolTip.Tip="Regular expression">
+    <TextBlock Text=".*" FontSize="11" FontFamily="{x:Static local:FontStacks.Mono}" />
+</ToggleButton>
+<ToggleButton Classes="inline" IsChecked="{Binding ShowOnlySearchMatches}" ToolTip.Tip="Show only matching commits">
+    <PathIcon Width="10" Height="10" Data="M1,2 H15 L9.5,8.5 V14 L6.5,12.5 V8.5 Z" Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
+</ToggleButton>
+</StackPanel>
+                                    </TextBox.InnerRightContent>
+                                </TextBox>
+                                <Popup IsOpen="{Binding IsRecentSearchesOpen}"
+                                       PlacementTarget="{Binding #SearchBox}"
+                                       Placement="BottomEdgeAlignedLeft"
+                                       IsLightDismissEnabled="False">
+                                    <Border Background="{DynamicResource GitKaySurfaceBrush}"
+                                            BorderBrush="{DynamicResource GitKayBorderBrush}"
+                                            BorderThickness="1" CornerRadius="4" Padding="2"
+                                            MinWidth="{Binding #SearchBox.Bounds.Width}"
+                                            BoxShadow="0 4 12 0 #40000000">
+                                        <StackPanel>
+                                            <TextBlock Text="Recent searches" FontSize="10" Margin="8,4"
+                                                       Foreground="{DynamicResource GitKayMutedTextBrush}" />
+                                            <ListBox x:Name="RecentSearchesList"
+                                                     ItemsSource="{Binding RecentSearchMatches}"
+                                                     Background="Transparent" BorderThickness="0"
+                                                     PointerReleased="OnRecentSearchPointerReleased">
+                                                <ListBox.ItemTemplate>
+                                                    <DataTemplate x:DataType="x:String">
+                                                        <TextBlock Text="{Binding}" FontSize="12" Margin="4,1" />
+                                                    </DataTemplate>
+                                                </ListBox.ItemTemplate>
+                                            </ListBox>
+                                        </StackPanel>
+                                    </Border>
+                                </Popup>
+                            </Panel>
+
+                            <Border Grid.Column="3" Classes="segmentGroup" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Spacing="1">
+                                    <Button Classes="segment text" Classes.selected="{Binding IsCommitSearchMode}"
+                                            Command="{Binding SetSearchModeCommand}" CommandParameter="commit"
+                                            ToolTip.Tip="Commit — headline, message, hash and branch names (instant)">
+                                        <TextBlock Text="Commit" FontSize="11" />
+                                    </Button>
+                                    <Button Classes="segment text" Classes.selected="{Binding IsPathSearchMode}"
+                                            Command="{Binding SetSearchModeCommand}" CommandParameter="path"
+                                            ToolTip.Tip="Path — files the commit changed">
+                                        <TextBlock Text="Path" FontSize="11" />
+                                    </Button>
+                                    <Button Classes="segment text" Classes.selected="{Binding IsDiffSearchMode}"
+                                            Command="{Binding SetSearchModeCommand}" CommandParameter="diff"
+                                            ToolTip.Tip="Diff — lines the commit added or removed">
+                                        <TextBlock Text="Diff" FontSize="11" />
+                                    </Button>
+                                </StackPanel>
+                            </Border>
+<ToggleButton Grid.Column="4" Classes="expander" IsChecked="{Binding IsAdvancedSearchExpanded}" ToolTip.Tip="Advanced search — one field per input">
+    <Panel Width="10" Height="10" VerticalAlignment="Center">
+        <PathIcon Width="10" Height="10" Data="M2,5 L8,11 L14,5 L12.6,3.6 L8,8.2 L3.4,3.6 Z" IsVisible="{Binding !IsAdvancedSearchExpanded}" Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
+        <PathIcon Width="10" Height="10" Data="M2,11 L8,5 L14,11 L12.6,12.4 L8,7.8 L3.4,12.4 Z" IsVisible="{Binding IsAdvancedSearchExpanded}" Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
+    </Panel>
+</ToggleButton>
+                        </Grid>
+
+                        <!-- Advanced search: edits the same query as prefixed terms. -->
+                        <Grid Grid.Row="1" IsVisible="{Binding IsAdvancedSearchExpanded}"
+                              Margin="40,8,6,4"
+                              ColumnDefinitions="Auto,*,Auto,*,Auto,*,Auto"
+                              RowDefinitions="Auto,Auto,Auto"
+                              ColumnSpacing="8" RowSpacing="6">
+                            <Grid.Styles>
+                                <Style Selector="TextBlock.label">
+                                    <Setter Property="Foreground" Value="{DynamicResource GitKaySecondaryTextBrush}" />
+                                    <Setter Property="FontSize" Value="11" />
+                                    <Setter Property="VerticalAlignment" Value="Center" />
+                                    <Setter Property="HorizontalAlignment" Value="Right" />
+                                </Style>
+                                <Style Selector="TextBox.field">
+                                    <Setter Property="Height" Value="26" />
+                                    <Setter Property="MinHeight" Value="26" />
+                                    <Setter Property="FontSize" Value="12" />
+                                </Style>
+                            </Grid.Styles>
+                            <TextBlock Classes="label" Text="Message" />
+                            <TextBox Classes="field" Grid.Column="1" Text="{Binding AdvancedMessage, Mode=TwoWay}" PlaceholderText="headline or body" />
+                            <TextBlock Classes="label" Grid.Column="2" Text="Author" />
+                            <TextBox Classes="field" Grid.Column="3" Text="{Binding AdvancedAuthor, Mode=TwoWay}" PlaceholderText="name or email" />
+                            <TextBlock Classes="label" Grid.Column="4" Text="Hash" />
+                            <TextBox Classes="field" Grid.Column="5" Text="{Binding AdvancedHash, Mode=TwoWay}" PlaceholderText="full or partial" />
+
+                            <TextBlock Classes="label" Grid.Row="1" Text="Branch / tag" />
+                            <TextBox Classes="field" Grid.Row="1" Grid.Column="1" Text="{Binding AdvancedRef, Mode=TwoWay}" PlaceholderText="e.g. main, v1.0" />
+                            <TextBlock Classes="label" Grid.Row="1" Grid.Column="2" Text="Path" />
+                            <TextBox Classes="field" Grid.Row="1" Grid.Column="3" Text="{Binding AdvancedPath, Mode=TwoWay}" PlaceholderText="file or folder" />
+                            <TextBlock Classes="label" Grid.Row="1" Grid.Column="4" Text="Diff" />
+                            <TextBox Classes="field" Grid.Row="1" Grid.Column="5" Text="{Binding AdvancedDiff, Mode=TwoWay}" PlaceholderText="added or removed text" />
+
+                            <TextBlock Classes="label" Grid.Row="2" Text="After" />
+                            <TextBox Classes="field" Grid.Row="2" Grid.Column="1" Text="{Binding AdvancedAfter, Mode=TwoWay}" PlaceholderText="yyyy-mm-dd" />
+                            <TextBlock Classes="label" Grid.Row="2" Grid.Column="2" Text="Before" />
+                            <TextBox Classes="field" Grid.Row="2" Grid.Column="3" Text="{Binding AdvancedBefore, Mode=TwoWay}" PlaceholderText="yyyy-mm-dd" />
+                            <Button Grid.Row="2" Grid.Column="5" HorizontalAlignment="Right" Height="26" Padding="10,0"
+                                    Content="Clear" Command="{Binding ClearAdvancedSearchCommand}" />
+                        </Grid>
                         </Grid>
                     </Border>
+
 
                     <Border Grid.Row="1"
                             Background="{DynamicResource GitKayRaisedBrush}"
@@ -98,10 +208,30 @@
                                 <ColumnDefinition Width="110" MinWidth="72" />
                                 <ColumnDefinition Width="110" MinWidth="90" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="1" Text="COMMIT" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="10" FontWeight="SemiBold" Margin="6,0" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="2" Text="HASH" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="10" FontWeight="SemiBold" Margin="6,0" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="3" Text="AUTHOR" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="10" FontWeight="SemiBold" Margin="6,0" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="4" Text="DATE" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="10" FontWeight="SemiBold" Margin="6,0" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" Margin="6,0" VerticalAlignment="Center" Background="Transparent" Tag="message" ContextRequested="OnHistoryHeaderContextRequested">
+                                <TextBlock Text="COMMIT" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="10" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <Button Classes="funnel" IsVisible="{Binding HasCommitFilter}" Command="{Binding ClearColumnFilterCommand}" CommandParameter="message" ToolTip.Tip="Commit filter active — click to clear">
+                                    <PathIcon Width="9" Height="9" Data="M1,2 H15 L9.5,8.5 V14 L6.5,12.5 V8.5 Z" Foreground="{DynamicResource GitKayAccentBrush}" />
+                                </Button>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" Margin="6,0" VerticalAlignment="Center" Background="Transparent" Tag="hash" ContextRequested="OnHistoryHeaderContextRequested">
+                                <TextBlock Text="HASH" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="10" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <Button Classes="funnel" IsVisible="{Binding HasHashFilter}" Command="{Binding ClearColumnFilterCommand}" CommandParameter="hash" ToolTip.Tip="Hash filter active — click to clear">
+                                    <PathIcon Width="9" Height="9" Data="M1,2 H15 L9.5,8.5 V14 L6.5,12.5 V8.5 Z" Foreground="{DynamicResource GitKayAccentBrush}" />
+                                </Button>
+                            </StackPanel>
+                            <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="4" Margin="6,0" VerticalAlignment="Center" Background="Transparent" Tag="author" ContextRequested="OnHistoryHeaderContextRequested">
+                                <TextBlock Text="AUTHOR" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="10" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <Button Classes="funnel" IsVisible="{Binding HasAuthorFilter}" Command="{Binding ClearColumnFilterCommand}" CommandParameter="author" ToolTip.Tip="Author filter active — click to clear">
+                                    <PathIcon Width="9" Height="9" Data="M1,2 H15 L9.5,8.5 V14 L6.5,12.5 V8.5 Z" Foreground="{DynamicResource GitKayAccentBrush}" />
+                                </Button>
+                            </StackPanel>
+                            <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="4" Margin="6,0" VerticalAlignment="Center" Background="Transparent" Tag="date" ContextRequested="OnHistoryHeaderContextRequested">
+                                <TextBlock Text="DATE" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="10" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <Button Classes="funnel" IsVisible="{Binding HasDateFilter}" Command="{Binding ClearColumnFilterCommand}" CommandParameter="date" ToolTip.Tip="Date filter active — click to clear">
+                                    <PathIcon Width="9" Height="9" Data="M1,2 H15 L9.5,8.5 V14 L6.5,12.5 V8.5 Z" Foreground="{DynamicResource GitKayAccentBrush}" />
+                                </Button>
+                            </StackPanel>
                             <Border Grid.Column="0" Width="4" HorizontalAlignment="Right" VerticalAlignment="Stretch"
                                     Background="Transparent" Cursor="SizeWestEast" Tag="0"
                                     PointerPressed="OnHistoryColumnResizePointerPressed" PointerMoved="OnHistoryColumnResizePointerMoved"
@@ -135,12 +265,18 @@
                         </Grid>
                     </Border>
 
+<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Row="2" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10,4,0,0"><TextBlock Text="1  commits" /></Border>
+                    <Border x:Name="CommitPaneFocus" Grid.Row="2" IsHitTestVisible="False" Background="{DynamicResource GitKayWindowBrush}" Opacity="0" ZIndex="10">
+                        <Border.Transitions><Transitions><DoubleTransition Property="Opacity" Duration="0:0:0.12" /></Transitions></Border.Transitions>
+                    </Border>
                     <ScrollViewer x:Name="CommitScrollViewer" Grid.Row="2" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-                        <local:CommitSurfaceControl x:Name="CommitListBox" ItemsSource="{Binding Commits}" SelectedItem="{Binding SelectedCommit, Mode=TwoWay}"
+                        <local:CommitSurfaceControl x:Name="CommitListBox" ItemsSource="{Binding Commits}" SelectedItem="{Binding SelectedCommit, Mode=TwoWay}" ShowOnlyMatches="{Binding ShowOnlySearchMatches}" SearchActive="{Binding IsCommitSearchActive}" SearchHighlight="{Binding CommitSearchHighlight}"
                             GraphWidth="{Binding #HistoryHeaderGrid.ColumnDefinitions[0].ActualWidth}" SubjectWidth="{Binding #HistoryHeaderGrid.ColumnDefinitions[1].ActualWidth}"
                             HashWidth="{Binding #HistoryHeaderGrid.ColumnDefinitions[2].ActualWidth}" AuthorWidth="{Binding #HistoryHeaderGrid.ColumnDefinitions[3].ActualWidth}"
                             DateWidth="{Binding #HistoryHeaderGrid.ColumnDefinitions[4].ActualWidth}" HorizontalAlignment="Stretch" />
                     </ScrollViewer>
+                    <local:OverviewRuler Grid.Row="2" Width="4" HorizontalAlignment="Left" ZIndex="5"
+                                         Source="{Binding #CommitListBox}" ToolTip.Tip="Search matches — click to jump" />
                 </Grid>
             </Border>
 
@@ -155,151 +291,255 @@
             <Grid Grid.Row="2"
                   RowDefinitions="Auto,*"
                   MinHeight="0">
-                    <Border Grid.Row="0"
+                <Border Grid.Row="0"
                         Background="{DynamicResource GitKaySurfaceBrush}"
                         BorderBrush="{DynamicResource GitKayBorderBrush}"
                         BorderThickness="0,1"
-                        Padding="10,6">
-                    <Grid RowDefinitions="Auto,Auto"
-                          ColumnDefinitions="*,Auto"
-                          RowSpacing="5"
-                          ColumnSpacing="16"
-                          IsVisible="{Binding SelectedCommit, Converter={x:Static local:ObjectConverters.IsNotNull}}">
-                        <SelectableTextBlock Grid.Row="0"
-                                             Text="{Binding SelectedCommit.Subject}"
-                                             FontSize="14"
-                                             FontWeight="SemiBold"
-                                             Foreground="{DynamicResource GitKayTextBrush}"
-                                             TextTrimming="CharacterEllipsis"
-                                             TextWrapping="NoWrap" />
-
-                        <StackPanel Grid.Row="0" Grid.Column="1"
-                                    Orientation="Horizontal"
-                                    Spacing="8"
-                                    VerticalAlignment="Center">
-                            <TextBlock Text="{Binding SelectedCommit.Author}"
-                                       Foreground="{DynamicResource GitKaySecondaryTextBrush}"
-                                       FontSize="11" />
-                            <TextBlock Text="·" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="11" />
-                            <TextBlock Text="{Binding SelectedCommit.Date}"
-                                       Foreground="{DynamicResource GitKayMutedTextBrush}"
-                                       FontSize="11" />
+                        Padding="6,4">
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto"
+                          ColumnSpacing="6">
+                        <StackPanel Grid.Column="0" Orientation="Horizontal">
+                        <Button
+                                Width="28" Height="28" Padding="0"
+                                Background="Transparent" BorderThickness="0"
+                                Command="{Binding ToggleCommitDetailsCommand}"
+                                IsEnabled="{Binding SelectedCommit, Converter={x:Static local:ObjectConverters.IsNotNull}}"
+                                ToolTip.Tip="Show commit details">
+                            <Panel>
+                                <PathIcon Width="12" Height="12"
+                                          Data="M5,2 L11,8 L5,14 L3.6,12.6 L8.2,8 L3.6,3.4 Z"
+                                          Foreground="{DynamicResource GitKaySecondaryTextBrush}"
+                                          IsVisible="{Binding !IsCommitDetailsExpanded}" />
+                                <PathIcon Width="12" Height="12"
+                                          Data="M2,5 L8,11 L14,5 L12.6,3.6 L8,8.2 L3.4,3.6 Z"
+                                          Foreground="{DynamicResource GitKaySecondaryTextBrush}"
+                                          IsVisible="{Binding IsCommitDetailsExpanded}" />
+                            </Panel>
+                        </Button>
                         </StackPanel>
 
-                        <StackPanel Grid.Row="1"
-                                    Orientation="Horizontal"
-                                    Spacing="8"
-                                    VerticalAlignment="Center"
-                                    ClipToBounds="True">
+                        <Grid Grid.Column="1"
+                              ColumnDefinitions="Auto,*,Auto"
+                              ColumnSpacing="8"
+                              VerticalAlignment="Center">
                             <SelectableTextBlock Text="{Binding SelectedCommit.Hash}"
                                                  Foreground="{DynamicResource GitKayAccentBrush}"
-                                                 FontFamily="Cascadia Code,Consolas,Monospace"
-                                                 FontSize="11" />
-                            <ItemsControl ItemsSource="{Binding SelectedCommit.RefBadges}"
-                                          IsVisible="{Binding SelectedCommit.HasRefBadges}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="local:CommitRefProjection">
-                                        <Border Background="{Binding Background}"
-                                                BorderBrush="{Binding BorderBrush}"
-                                                BorderThickness="1"
-                                                CornerRadius="3"
-                                                Padding="5,1"
-                                                Margin="0,0,3,0">
-                                            <TextBlock Text="{Binding Text}"
-                                                       Foreground="{Binding Foreground}"
-                                                       FontSize="10"
-                                                       FontWeight="SemiBold" />
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
+                                                 FontFamily="{x:Static local:FontStacks.Mono}"
+                                                 FontSize="12"
+                                                 VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding SelectedCommit.Subject}"
+                                       Foreground="{DynamicResource GitKayTextBrush}"
+                                       FontSize="13"
+                                       FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis"
+                                       TextWrapping="NoWrap"
+                                       VerticalAlignment="Center" />
+                            <!-- Search progress and counts live in the search boxes; underlines mark matches in the diff. -->
+                        </Grid>
 
-                        <StackPanel Grid.Row="1" Grid.Column="1"
-                                    Orientation="Horizontal"
-                                    Spacing="6">
-                            <TextBox x:Name="CommitFindBox"
-                                     Width="220"
-                                     Height="28"
-                                     Text="{Binding CommitFindQuery, Mode=TwoWay}"
-                                     PlaceholderText="Find in selected commit">
-                                <TextBox.KeyBindings>
-                                    <KeyBinding Gesture="Enter" Command="{Binding FindInCommitCommand}" />
-                                </TextBox.KeyBindings>
-                            </TextBox>
-                            <Button Content="Find next"
-                                    Height="28"
-                                    Padding="10,2"
-                                    Command="{Binding FindInCommitCommand}" />
+<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Center"><TextBlock Text="G  go to ref" /></Border>
+<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Column="2" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="6,0,0,0"><TextBlock Text="F  find" /></Border>
+                        <TextBox x:Name="CommitFindBox"
+                                 Grid.Column="2"
+                                 Width="340"
+                                 Height="28"
+                                 Text="{Binding CommitFindQuery, Mode=TwoWay}"
+                                 PlaceholderText="{Binding CommitFindPlaceholder}">
+<TextBox.InnerRightContent>
+    <StackPanel Orientation="Horizontal" Spacing="2" Margin="0,0,4,0">
+        <TextBlock Text="{Binding CommitFindStatusText}" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0" />
+        <Button Classes="inline" Command="{Binding FindPreviousInCommitCommand}" ToolTip.Tip="Previous match (Shift+Enter, N)">
+            <PathIcon Width="9" Height="9" Data="M2,11 L8,5 L14,11 L12.6,12.4 L8,7.8 L3.4,12.4 Z" Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
+        </Button>
+        <Button Classes="inline" Command="{Binding FindInCommitCommand}" ToolTip.Tip="Next match (Enter, n)">
+            <PathIcon Width="9" Height="9" Data="M2,5 L8,11 L14,5 L12.6,3.6 L8,8.2 L3.4,3.6 Z" Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
+        </Button>
+        <ToggleButton Classes="inline" IsChecked="{Binding CommitFindUseRegex}" ToolTip.Tip="Regular expression">
+            <TextBlock Text=".*" FontSize="11" FontFamily="{x:Static local:FontStacks.Mono}" />
+        </ToggleButton>
+    </StackPanel>
+</TextBox.InnerRightContent>
+                            <TextBox.KeyBindings>
+                                <KeyBinding Gesture="Enter" Command="{Binding FindInCommitCommand}" />
+                                <KeyBinding Gesture="Shift+Enter" Command="{Binding FindPreviousInCommitCommand}" />
+                            </TextBox.KeyBindings>
+                        </TextBox>
+                        <Border x:Name="DiffModeButton"
+                                Grid.Column="4"
+                                Background="{DynamicResource GitKayRaisedBrush}"
+                                BorderBrush="{DynamicResource GitKayBorderBrush}"
+                                BorderThickness="1" CornerRadius="4" Padding="1"
+                                ContextRequested="OnDiffModeButtonContextRequested">
+                        <StackPanel Orientation="Horizontal" Spacing="1">
+                            <Button Classes="segment"
+                                    Classes.selected="{Binding IsUnifiedDiffMode}"
+                                    Command="{Binding SetDiffPresentationModeCommand}"
+                                    CommandParameter="diff"
+                                    ToolTip.Tip="Unified diff — changes inline">
+                                <Canvas Width="16" Height="16">
+                                    <Rectangle Canvas.Left="0.5" Canvas.Top="1.5" Width="15" Height="13" RadiusX="2" RadiusY="2" Stroke="{DynamicResource GitKaySecondaryTextBrush}" StrokeThickness="1" />
+                                    <Rectangle Canvas.Left="3" Canvas.Top="5" Width="10" Height="2" Fill="{DynamicResource GitKayRemovedAccentBrush}" />
+                                    <Rectangle Canvas.Left="3" Canvas.Top="9" Width="10" Height="2" Fill="{DynamicResource GitKayAddedAccentBrush}" />
+                                </Canvas>
+                            </Button>
+                            <Button Classes="segment"
+                                    Classes.selected="{Binding IsSideBySideDiffMode}"
+                                    Command="{Binding SetDiffPresentationModeCommand}"
+                                    CommandParameter="side-by-side"
+                                    ToolTip.Tip="Side-by-side — old left, new right">
+                                <Canvas Width="16" Height="16">
+                                    <Rectangle Canvas.Left="0.5" Canvas.Top="1.5" Width="15" Height="13" RadiusX="2" RadiusY="2" Stroke="{DynamicResource GitKaySecondaryTextBrush}" StrokeThickness="1" />
+                                    <Rectangle Canvas.Left="7.5" Canvas.Top="2" Width="1" Height="12" Fill="{DynamicResource GitKaySecondaryTextBrush}" />
+                                    <Rectangle Canvas.Left="2.5" Canvas.Top="7" Width="4" Height="2" Fill="{DynamicResource GitKayRemovedAccentBrush}" />
+                                    <Rectangle Canvas.Left="9.5" Canvas.Top="7" Width="4" Height="2" Fill="{DynamicResource GitKayAddedAccentBrush}" />
+                                </Canvas>
+                            </Button>
+                            <Button Classes="segment"
+                                    Classes.selected="{Binding IsNewDiffMode}"
+                                    Command="{Binding SetDiffPresentationModeCommand}"
+                                    CommandParameter="new"
+                                    ToolTip.Tip="New file — after the change">
+                                <Canvas Width="16" Height="16">
+                                    <Path Data="M3,0.5 H10 L13.5,4 V15.5 H3 Z" Stroke="{DynamicResource GitKaySecondaryTextBrush}" StrokeThickness="1" />
+                                    <Rectangle Canvas.Left="5" Canvas.Top="7.5" Width="6" Height="2" Fill="{DynamicResource GitKayAddedAccentBrush}" />
+                                    <Rectangle Canvas.Left="7" Canvas.Top="5.5" Width="2" Height="6" Fill="{DynamicResource GitKayAddedAccentBrush}" />
+                                </Canvas>
+                            </Button>
+                            <Button Classes="segment"
+                                    Classes.selected="{Binding IsOldDiffMode}"
+                                    Command="{Binding SetDiffPresentationModeCommand}"
+                                    CommandParameter="old"
+                                    ToolTip.Tip="Old file — before the change">
+                                <Canvas Width="16" Height="16">
+                                    <Path Data="M3,0.5 H10 L13.5,4 V15.5 H3 Z" Stroke="{DynamicResource GitKaySecondaryTextBrush}" StrokeThickness="1" />
+                                    <Rectangle Canvas.Left="5" Canvas.Top="7.5" Width="6" Height="2" Fill="{DynamicResource GitKayRemovedAccentBrush}" />
+                                </Canvas>
+                            </Button>
                         </StackPanel>
+                        </Border>
+
                     </Grid>
                 </Border>
 
-                <Grid Grid.Row="1"
+                <Grid x:Name="DiffSplitGrid"
+                      Grid.Row="1"
                       ColumnDefinitions="*,4,220"
                       Background="{DynamicResource GitKayWindowBrush}">
+                    <Border x:Name="DiffPaneFocus" Grid.Column="0" IsHitTestVisible="False" Background="{DynamicResource GitKayWindowBrush}" Opacity="0" ZIndex="10">
+                        <Border.Transitions><Transitions><DoubleTransition Property="Opacity" Duration="0:0:0.12" /></Transitions></Border.Transitions>
+                    </Border>
+<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,10,0"><TextBlock Text="3  files · P  go to file" /></Border>
+                    <Border x:Name="FilesPaneFocus" Grid.Column="2" IsHitTestVisible="False" Background="{DynamicResource GitKayWindowBrush}" Opacity="0" ZIndex="10">
+                        <Border.Transitions><Transitions><DoubleTransition Property="Opacity" Duration="0:0:0.12" /></Transitions></Border.Transitions>
+                    </Border>
                     <Border Grid.Column="0" Background="{DynamicResource GitKayWindowBrush}" BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="0,1,0,0">
                         <DockPanel>
-                            <Border DockPanel.Dock="Top"
-                                    Background="{DynamicResource GitKayRaisedBrush}"
-                                    BorderBrush="{DynamicResource GitKayBorderBrush}"
-                                    BorderThickness="0,0,0,1"
-                                    Padding="10,6">
-                                <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="4">
-                                    <TextBlock Text="{Binding SelectedDiffFile.DisplayPath}"
-                                               Foreground="{DynamicResource GitKayTextBrush}"
-                                               FontSize="13"
-                                               FontWeight="SemiBold"
-                                               TextTrimming="CharacterEllipsis"
-                                               VerticalAlignment="Center" />
+                        <!-- Commit details show within the diff column only; the file list keeps its layout. -->
+                        <Border DockPanel.Dock="Top"
+                                Padding="12,8,12,10"
+                                Background="{DynamicResource GitKaySurfaceBrush}"
+                                BorderBrush="{DynamicResource GitKayBorderBrush}"
+                                BorderThickness="0,0,0,1"
+                                IsVisible="{Binding IsCommitDetailsExpanded}">
+                            <Grid ColumnDefinitions="Auto,*"
+                                  RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
+                                  ColumnSpacing="12" RowSpacing="4"
+                                  IsVisible="{Binding SelectedCommit, Converter={x:Static local:ObjectConverters.IsNotNull}}">
 
-                                    <TextBlock Grid.Column="1" Text="View" Foreground="{DynamicResource GitKaySecondaryTextBrush}" FontSize="11" VerticalAlignment="Center" />
-                                    <ComboBox Grid.Column="2" Width="132" Height="28"
-                                              ItemsSource="{Binding DiffPresentationModes}"
-                                              SelectedItem="{Binding SelectedDiffPresentationMode}">
-                                        <ComboBox.ItemTemplate>
-                                            <DataTemplate x:DataType="local:DiffPresentationModeProjection">
-                                                <TextBlock Text="{Binding Label}" FontSize="11" />
+                                <TextBlock Grid.Row="1" Text="Commit" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="11" />
+                                <SelectableTextBlock Grid.Row="1" Grid.Column="1"
+                                                     Text="{Binding SelectedCommit.FullHash}"
+                                                     Foreground="{DynamicResource GitKayAccentBrush}"
+                                                     FontFamily="{x:Static local:FontStacks.Mono}" FontSize="11" />
+
+                                <TextBlock Grid.Row="2" Text="Parents · children" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="11" VerticalAlignment="Center" />
+                                <WrapPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal">
+                                    <ItemsControl ItemsSource="{Binding SelectedCommitParents}">
+                                        <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="local:CommitLinkProjection">
+                                                <Button Classes="commitLink" Command="{Binding $parent[Window].((local:MainProjection)DataContext).GoToCommitCommand}" CommandParameter="{Binding FullHash}"
+                                                        ToolTip.Tip="{Binding Subject}">
+                                                    <TextBlock><Run Text="↑ " /><Run Text="{Binding ShortHash}" FontFamily="{x:Static local:FontStacks.Mono}" /><Run Text="  " /><Run Text="{Binding Subject}" /></TextBlock>
+                                                </Button>
                                             </DataTemplate>
-                                        </ComboBox.ItemTemplate>
-                                    </ComboBox>
-
-                                    <TextBlock Grid.Column="3" Text="Context" Foreground="{DynamicResource GitKaySecondaryTextBrush}" FontSize="11" VerticalAlignment="Center" />
-                                    <ComboBox Grid.Column="4" Width="86" Height="28"
-                                              ItemsSource="{Binding DiffContextLineCounts}"
-                                              SelectedItem="{Binding SelectedDiffContextLineCount}">
-                                        <ComboBox.ItemTemplate>
-                                            <DataTemplate x:DataType="local:DiffContextLineCountProjection">
-                                                <TextBlock Text="{Binding Label}" FontSize="11" />
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <ItemsControl ItemsSource="{Binding SelectedCommitChildren}">
+                                        <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="local:CommitLinkProjection">
+                                                <Button Classes="commitLink" Command="{Binding $parent[Window].((local:MainProjection)DataContext).GoToCommitCommand}" CommandParameter="{Binding FullHash}"
+                                                        ToolTip.Tip="{Binding Subject}">
+                                                    <TextBlock><Run Text="↓ " /><Run Text="{Binding ShortHash}" FontFamily="{x:Static local:FontStacks.Mono}" /><Run Text="  " /><Run Text="{Binding Subject}" /></TextBlock>
+                                                </Button>
                                             </DataTemplate>
-                                        </ComboBox.ItemTemplate>
-                                    </ComboBox>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </WrapPanel>
 
-                                    <Border Grid.Row="1" Grid.ColumnSpan="5"
-                                            Background="{DynamicResource GitKayAccentMutedBrush}"
-                                            CornerRadius="3" Padding="6,2"
-                                            IsVisible="{Binding HasDiffSearchStatus}">
-                                        <TextBlock Text="{Binding DiffSearchStatusText}"
-                                                   Foreground="{Binding DiffSearchStatusForeground}"
-                                                   FontSize="11" />
-                                    </Border>
-                                </Grid>
-                            </Border>
+                                <TextBlock Grid.Row="3" Text="Author" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="11" />
+                                <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                                    <SelectableTextBlock Text="{Binding SelectedCommit.Author}" Foreground="{DynamicResource GitKayTextBrush}" FontSize="11" />
+                                    <SelectableTextBlock Text="{Binding SelectedCommit.AuthorEmail, StringFormat='&lt;{0}&gt;'}" Foreground="{DynamicResource GitKaySecondaryTextBrush}" FontSize="11" />
+                                    <TextBlock Text="·" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="11" />
+                                    <TextBlock Text="{Binding SelectedCommit.FullDate}" Foreground="{DynamicResource GitKaySecondaryTextBrush}" FontSize="11" />
+                                </StackPanel>
+
+                                <TextBlock Grid.Row="4" Text="Refs" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="11"
+                                           IsVisible="{Binding SelectedCommit.HasRefBadges}" />
+                                <ItemsControl Grid.Row="4" Grid.Column="1"
+                                              ItemsSource="{Binding SelectedCommit.RefBadges}"
+                                              IsVisible="{Binding SelectedCommit.HasRefBadges}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="local:CommitRefProjection">
+                                            <Border Background="{Binding Background}"
+                                                    BorderBrush="{Binding BorderBrush}"
+                                                    BorderThickness="1" CornerRadius="3"
+                                                    Padding="5,1" Margin="0,0,3,0">
+                                                <TextBlock Text="{Binding Text}" Foreground="{Binding Foreground}" FontSize="10" FontWeight="SemiBold" />
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <ScrollViewer Grid.Row="5" Grid.ColumnSpan="2"
+                                              MaxHeight="180" Margin="0,4,0,0"
+                                              HorizontalScrollBarVisibility="Disabled">
+                                    <SelectableTextBlock Text="{Binding SelectedCommit.Message}"
+                                                         Foreground="{DynamicResource GitKayTextBrush}"
+                                                         FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12"
+                                                         TextWrapping="Wrap" />
+                                </ScrollViewer>
+                            </Grid>
+                        </Border>
+                            <Panel>
+<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10,6,0,0"><TextBlock Text="2  diff · C  copy" /></Border>
                             <ScrollViewer x:Name="DiffRowsScrollViewer"
                                           HorizontalScrollBarVisibility="Disabled"
                                           VerticalScrollBarVisibility="Auto">
                                 <local:DiffSurfaceControl x:Name="DiffRowsListBox"
                                                           ItemsSource="{Binding SelectedDiffRows}"
                                                           SelectedItem="{Binding SelectedDiffRow, Mode=TwoWay}"
+                                                          FindQuery="{Binding CommitFindQuery}"
+                                                          FindUseRegex="{Binding CommitFindUseRegex}"
+                                                          SearchHighlightQuery="{Binding CommitSearchDiffTerm}"
+                                                          SearchPathQuery="{Binding CommitSearchPathTerm}"
+                                                          SearchHighlightUseRegex="{Binding CommitSearchDiffTermUseRegex}"
                                                           Mode="{Binding SelectedDiffPresentationMode.Key}"
-                                                          ExpandBlockCommand="{Binding ExpandDiffBlockCommand}"
                                                           ExpandGapCommand="{Binding ExpandDiffGapCommand}"
+                                                          ToggleFileCommand="{Binding ToggleDiffFileCollapsedCommand}"
+                                                          ToggleFileContextCommand="{Binding ToggleDiffFileContextCommand}"
                                                           HorizontalAlignment="Stretch"
                                                           GotFocus="OnDiffRowsListBoxGotFocus" />
                             </ScrollViewer>
+                                <local:OverviewRuler Width="4" HorizontalAlignment="Left" ZIndex="5"
+                                                     Source="{Binding #DiffRowsListBox}" ToolTip.Tip="Changes and matches — click to jump" />
+                            </Panel>
                         </DockPanel>
                     </Border>
 
@@ -317,10 +557,37 @@
                             BorderThickness="1,1,0,0"
                             Padding="8">
                         <DockPanel>
-                            <TextBlock DockPanel.Dock="Top" Text="CHANGED FILES" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="10" FontWeight="SemiBold" Margin="4,2,4,8"/>
+                            <Border DockPanel.Dock="Top" Classes="segmentGroup" HorizontalAlignment="Left" Margin="2,0,0,8">
+                                <StackPanel Orientation="Horizontal" Spacing="1">
+                                    <Button Classes="segment"
+                                            Classes.selected="{Binding !IsDiffFileTreeMode}"
+                                            Command="{Binding SetDiffFileListModeCommand}"
+                                            CommandParameter="patch"
+                                            ToolTip.Tip="Patch — changed files as full paths">
+                                        <Canvas Width="16" Height="16">
+                                            <Path Data="M3,0.5 H10 L13.5,4 V15.5 H3 Z" Stroke="{DynamicResource GitKaySecondaryTextBrush}" StrokeThickness="1" />
+                                            <Rectangle Canvas.Left="5" Canvas.Top="6" Width="6" Height="1.5" Fill="{DynamicResource GitKayRemovedAccentBrush}" />
+                                            <Rectangle Canvas.Left="5" Canvas.Top="9" Width="6" Height="1.5" Fill="{DynamicResource GitKayAddedAccentBrush}" />
+                                            <Rectangle Canvas.Left="5" Canvas.Top="12" Width="4" Height="1.5" Fill="{DynamicResource GitKaySecondaryTextBrush}" />
+                                        </Canvas>
+                                    </Button>
+                                    <Button Classes="segment"
+                                            Classes.selected="{Binding IsDiffFileTreeMode}"
+                                            Command="{Binding SetDiffFileListModeCommand}"
+                                            CommandParameter="tree"
+                                            ToolTip.Tip="Tree — changed files grouped by folder">
+                                        <Canvas Width="16" Height="16">
+                                            <Rectangle Canvas.Left="1" Canvas.Top="2" Width="6" Height="4" RadiusX="1" RadiusY="1" Stroke="{DynamicResource GitKaySecondaryTextBrush}" StrokeThickness="1" />
+                                            <Path Data="M3.5,6 V13.5 H8 M3.5,9.5 H8" Stroke="{DynamicResource GitKaySecondaryTextBrush}" StrokeThickness="1" />
+                                            <Rectangle Canvas.Left="9" Canvas.Top="8" Width="6" Height="3" RadiusX="1" RadiusY="1" Fill="{DynamicResource GitKayAccentBrush}" />
+                                            <Rectangle Canvas.Left="9" Canvas.Top="12" Width="6" Height="3" RadiusX="1" RadiusY="1" Fill="{DynamicResource GitKayAccentBrush}" />
+                                        </Canvas>
+                                    </Button>
+                                </StackPanel>
+                            </Border>
                             <ListBox x:Name="DiffFilesListBox"
-                                     ItemsSource="{Binding SelectedDiffFiles}"
-                                     SelectedItem="{Binding SelectedDiffFile}"
+                                     ItemsSource="{Binding DiffFileListRows}"
+                                     SelectedItem="{Binding SelectedDiffFileListRow}"
                                      Background="Transparent"
                                      BorderThickness="0"
                                      SelectionMode="Single"
@@ -344,29 +611,91 @@
                                     <Style Selector="ListBoxItem:pointerover">
                                         <Setter Property="Background" Value="{DynamicResource GitKayHoverBrush}" />
                                     </Style>
+                                        <Style Selector="TextBlock.pathMatch">
+                                            <Setter Property="TextDecorations">
+                                                <TextDecorationCollection>
+                                                    <TextDecoration Location="Underline" StrokeThickness="1.5" StrokeDashArray="1,2" StrokeOffset="2"
+                                                                    Stroke="{DynamicResource GitKayAccentBrush}" />
+                                                </TextDecorationCollection>
+                                            </Setter>
+                                        </Style>
+                                        <Style Selector="Border.fileChange.added">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource GitKayAddedAccentBrush}" />
+                                        </Style>
+                                        <Style Selector="Border.fileChange.added > TextBlock">
+                                            <Setter Property="Foreground" Value="{DynamicResource GitKayAddedAccentBrush}" />
+                                        </Style>
+                                        <Style Selector="Border.fileChange.deleted">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource GitKayRemovedAccentBrush}" />
+                                        </Style>
+                                        <Style Selector="Border.fileChange.deleted > TextBlock">
+                                            <Setter Property="Foreground" Value="{DynamicResource GitKayRemovedAccentBrush}" />
+                                        </Style>
+                                        <Style Selector="Border.fileChange.modified">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource GitKayMutedTextBrush}" />
+                                        </Style>
+                                        <Style Selector="Border.fileChange.modified > TextBlock">
+                                            <Setter Property="Foreground" Value="{DynamicResource GitKaySecondaryTextBrush}" />
+                                        </Style>
                                 </ListBox.Styles>
-                                <ListBox.ItemTemplate>
+                                <ListBox.DataTemplates>
+                                    <DataTemplate x:DataType="local:DiffFileFolderRow">
+                                        <Border Padding="8,5" Background="Transparent" Cursor="Hand"
+                                                PointerPressed="OnDiffFolderPointerPressed">
+                                            <StackPanel Orientation="Horizontal" Spacing="6" Margin="{Binding Indent}">
+                                                <Panel Width="10" Height="10" VerticalAlignment="Center">
+                                                    <PathIcon Width="8" Height="8" Data="M5,2 L11,8 L5,14 L3.6,12.6 L8.2,8 L3.6,3.4 Z"
+                                                              Foreground="{DynamicResource GitKaySecondaryTextBrush}"
+                                                              IsVisible="{Binding !IsExpanded}" />
+                                                    <PathIcon Width="8" Height="8" Data="M2,5 L8,11 L14,5 L12.6,3.6 L8,8.2 L3.4,3.6 Z"
+                                                              Foreground="{DynamicResource GitKaySecondaryTextBrush}"
+                                                              IsVisible="{Binding IsExpanded}" />
+                                                </Panel>
+                                                <PathIcon Width="14" Height="12" VerticalAlignment="Center"
+                                                          Data="M1,3 C1,2 1.5,1.5 2.5,1.5 H6 L7.5,3 H13.5 C14.5,3 15,3.5 15,4.5 V12.5 C15,13.5 14.5,14 13.5,14 H2.5 C1.5,14 1,13.5 1,12.5 Z"
+                                                          Foreground="{DynamicResource GitKayMutedTextBrush}" />
+                                                <TextBlock Text="{Binding Name}"
+                                                           FontSize="12"
+                                                           Foreground="{DynamicResource GitKaySecondaryTextBrush}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
                                     <DataTemplate x:DataType="local:DiffFileProjection">
                                         <Border Padding="8,6"
-                                                Background="{Binding RowBackground}"
+                                                Background="Transparent"
                                                 BorderThickness="0">
-                                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="7">
-                                                <TextBlock Text="{Binding DisplayPath}"
+                                            <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="7" ToolTip.Tip="{Binding ChangeToolTip}" Margin="{Binding ListIndent}">
+                                                <Border Classes="fileChange"
+                                                        Width="14" Height="14" CornerRadius="3"
+                                                        BorderThickness="1"
+                                                        VerticalAlignment="Center"
+                                                        Classes.added="{Binding IsAddedFile}"
+                                                        Classes.deleted="{Binding IsDeletedFile}"
+                                                        Classes.modified="{Binding IsModifiedFile}">
+                                                    <TextBlock Text="{Binding ChangeGlyph}"
+                                                               FontSize="10" FontWeight="Bold"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{Binding ListLabel}"
+                                                           Classes.pathMatch="{Binding IsPathSearchMatch}"
                                                            FontSize="12"
                                                            Foreground="{DynamicResource GitKayTextBrush}"
                                                            TextWrapping="NoWrap"
                                                            TextTrimming="CharacterEllipsis"
                                                            VerticalAlignment="Center" />
-                                                <TextBlock Grid.Column="1"
-                                                           Text="{Binding SearchMatchSummary}"
-                                                           IsVisible="{Binding HasSearchMatch}"
-                                                           Foreground="{DynamicResource GitKayAccentBrush}"
-                                                           FontSize="10"
-                                                           VerticalAlignment="Center" />
+                                                <local:DiffStatBar Grid.Column="3"
+                                                                   Added="{Binding AddedLines}"
+                                                                   Removed="{Binding RemovedLines}"
+                                                                   IsKnown="{Binding IsLoaded}"
+                                                                   BlockSize="5"
+                                                                   VerticalAlignment="Center" />
                                             </Grid>
                                         </Border>
                                     </DataTemplate>
-                                </ListBox.ItemTemplate>
+                                </ListBox.DataTemplates>
                             </ListBox>
                         </DockPanel>
                     </Border>
@@ -374,9 +703,180 @@
             </Grid>
         </Grid>
 
+        <!-- Palette: commands (Ctrl+Shift+P or :), refs and commits (Ctrl+G), changed files (Ctrl+P). -->
+        <Border IsVisible="{Binding IsPaletteOpen}"
+                Background="#33000000"
+                ZIndex="40"
+                PointerPressed="OnPaletteBackdropPressed">
+            <Border HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,70,0,0"
+                    Width="680" MaxHeight="520" CornerRadius="8" Padding="6"
+                    Background="{DynamicResource GitKaySurfaceBrush}"
+                    BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="1"
+                    BoxShadow="0 12 32 0 #50000000"
+                    PointerPressed="OnPalettePanelPressed">
+                <DockPanel>
+                    <TextBox x:Name="PaletteBox" DockPanel.Dock="Top" Height="34" FontSize="14"
+                             Text="{Binding PaletteQuery, Mode=TwoWay}"
+                             PlaceholderText="{Binding PalettePlaceholder}" />
+                    <ListBox x:Name="PaletteList" Margin="0,6,0,0"
+                             ItemsSource="{Binding PaletteItems}"
+                             SelectedIndex="{Binding PaletteSelectedIndex, Mode=TwoWay}"
+                             Background="Transparent" BorderThickness="0"
+                             PointerReleased="OnPaletteListPointerReleased">
+                        <ListBox.Styles>
+                            <Style Selector="ListBoxItem">
+                                <Setter Property="Padding" Value="8,5" />
+                                <Setter Property="MinHeight" Value="0" />
+                                <Setter Property="CornerRadius" Value="4" />
+                            </Style>
+                            <Style Selector="ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+                                <Setter Property="Background" Value="{DynamicResource GitKaySelectionBrush}" />
+                            </Style>
+                            <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+                                <Setter Property="Background" Value="{DynamicResource GitKayHoverBrush}" />
+                            </Style>
+                        </ListBox.Styles>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="local:PaletteItem">
+                                <Grid ColumnDefinitions="22,*,Auto" Margin="2,1">
+                                    <TextBlock Text="{Binding Glyph}" Foreground="{DynamicResource GitKayMutedTextBrush}" VerticalAlignment="Center" />
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Title}" FontSize="13" Foreground="{DynamicResource GitKayTextBrush}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Detail}" FontSize="11" Foreground="{DynamicResource GitKayMutedTextBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <Border Grid.Column="2" IsVisible="{Binding HasShortcut}" Padding="6,1" CornerRadius="3"
+                                            Background="{DynamicResource GitKayRaisedBrush}" BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="1">
+                                        <TextBlock Text="{Binding Shortcut}" FontSize="11" FontFamily="{x:Static local:FontStacks.Mono}" Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
+                                    </Border>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </Border>
+        </Border>
+
+        <!-- Keyboard shortcut sheet: ? or F1. -->
+        <Border IsVisible="{Binding IsShortcutHelpOpen}"
+                Background="#66000000"
+                ZIndex="30"
+                PointerPressed="OnShortcutHelpBackdropPressed">
+            <Border HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Width="600" MaxHeight="760" Padding="20,14,20,18" CornerRadius="8"
+                    Background="{DynamicResource GitKaySurfaceBrush}"
+                    BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="1"
+                    BoxShadow="0 12 32 0 #50000000">
+                <StackPanel>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Text="Keyboard shortcuts" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource GitKayTextBrush}" />
+                        <TextBlock Grid.Column="1" Text="? or Esc to close" FontSize="11" VerticalAlignment="Center" Foreground="{DynamicResource GitKayMutedTextBrush}" />
+                    </Grid>
+                    <StackPanel>
+                        <TextBlock Text="General" FontWeight="SemiBold" FontSize="12" Margin="0,10,0,4" Foreground="{DynamicResource GitKayAccentBrush}" />
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Ctrl+F  or  /" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Search commits — or the diff, when the diff has focus" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="?  or  F1" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Show or hide these shortcuts — or hold Ctrl to see Ctrl shortcuts on screen" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Esc" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Clear search / close popup" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <TextBlock Text="Go to" FontWeight="SemiBold" FontSize="12" Margin="0,10,0,4" Foreground="{DynamicResource GitKayAccentBrush}" />
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Ctrl+Shift+P  or  :" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Command palette" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Ctrl+G" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Go to branch, tag or commit" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Ctrl+P" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Go to changed file" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Alt+← / Alt+→" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Back / forward (also Ctrl+O / Ctrl+I)" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="p / Shift+P / c" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Parent / second parent / child" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="y / Y" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Copy commit hash / subject" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <TextBlock Text="Moving" FontWeight="SemiBold" FontSize="12" Margin="0,10,0,4" Foreground="{DynamicResource GitKayAccentBrush}" />
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="j / k   ↓ / ↑" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Next / previous row" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Ctrl+h/j/k/l" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Pane left / down / up / right" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Tab / Shift+Tab" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Next / previous pane" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Ctrl+1 / 2 / 3" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Commits / diff / files" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Enter / Esc" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Open in diff / back to commits" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="gg / G" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Top / bottom" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Ctrl+D / Ctrl+U" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Half page down / up" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <TextBlock Text="Searching" FontWeight="SemiBold" FontSize="12" Margin="0,10,0,4" Foreground="{DynamicResource GitKayAccentBrush}" />
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Enter / Shift+Enter" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Next / previous match" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="n / N" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Next / previous match (commits or diff)" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="author: path: diff:" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Filter by field; also message: hash: ref: after: before:" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text=".*" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Regular expression toggle" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <TextBlock Text="Diff" FontWeight="SemiBold" FontSize="12" Margin="0,10,0,4" Foreground="{DynamicResource GitKayAccentBrush}" />
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Enter / Space" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="On a file: collapse / expand (Shift: all context) · on a gap: show hidden lines" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="]c / [c" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Next / previous hunk" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Right-click view modes" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Context lines" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Border>
+
         <Grid IsVisible="{Binding IsInitialLoading}"
               Background="{DynamicResource GitKayWindowBrush}"
-              RowDefinitions="2*,6,3*"
+              RowDefinitions="3*,6,7*"
               Panel.ZIndex="10"
               IsHitTestVisible="False">
             <Border Background="{DynamicResource GitKayWindowBrush}"

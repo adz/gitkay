@@ -8,14 +8,17 @@ namespace GitKay.UI;
 
 public sealed class SearchScopeProjection
 {
-    public SearchScopeProjection(string key, string label)
+    public SearchScopeProjection(string key, string label, string placeholder = "")
     {
         Key = key;
         Label = label;
+        Placeholder = placeholder;
     }
 
     public string Key { get; }
     public string Label { get; }
+    /// <summary>Search box hint describing what this scope matches.</summary>
+    public string Placeholder { get; }
 
     public override string ToString() => Label;
 }
@@ -93,4 +96,19 @@ public partial class SearchResultProjection : ObservableObject, IProjection<GitK
             _ => kind,
         };
     }
+}
+
+/// <summary>A clickable reference to a related commit (parent or child).</summary>
+public sealed class CommitLinkProjection
+{
+    public CommitLinkProjection(string fullHash, string subject)
+    {
+        FullHash = fullHash;
+        ShortHash = fullHash.Length > 8 ? fullHash[..8] : fullHash;
+        Subject = subject;
+    }
+
+    public string FullHash { get; }
+    public string ShortHash { get; }
+    public string Subject { get; }
 }

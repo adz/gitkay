@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using GitKay.Serialization;
 
 namespace GitKay.UI;
@@ -28,6 +29,18 @@ public sealed class AppUiStateStore
             var json = File.ReadAllText(_statePath);
             var document = GitKayJson.DeserializeUiState(json);
             var state = AppUiState.Default.WithWindowSize(document.WindowWidth, document.WindowHeight);
+            if (document.Layout != null)
+            {
+                state = state.WithLayout(new UiLayoutState
+                {
+                    HistoryPaneRatio = document.Layout.HistoryPaneRatio,
+                    FileListWidth = document.Layout.FileListWidth,
+                    GraphColumnWidth = document.Layout.GraphColumnWidth,
+                    HashColumnWidth = document.Layout.HashColumnWidth,
+                    AuthorColumnWidth = document.Layout.AuthorColumnWidth,
+                    DateColumnWidth = document.Layout.DateColumnWidth,
+                });
+            }
 
             foreach (var repoSelection in document.RepoSelections)
             {
@@ -66,12 +79,83 @@ public sealed class AppUiStateStore
                 }
             }
 
+            var layout = normalized.Layout;
             var json = GitKayJson.SerializeUiState(
                 normalized.WindowWidth,
                 normalized.WindowHeight,
-                repoSelections);
+                repoSelections,
+                new UiLayoutDocument(
+                    layout.HistoryPaneRatio,
+                    layout.FileListWidth,
+                    layout.GraphColumnWidth,
+                    layout.HashColumnWidth,
+                    layout.AuthorColumnWidth,
+                    layout.DateColumnWidth));
 
             File.WriteAllText(_statePath, json);
+        }
+        catch
+        {
+        }
+    }
+
+    private string SearchHistoryPath => Path.Combine(Path.GetDirectoryName(_statePath) ?? "", "search-history.txt");
+
+    /// <summary>Recent commit searches, newest first, one per line.</summary>
+    public IReadOnlyList<string> LoadSearchHistory()
+    {
+        try
+        {
+            return File.Exists(SearchHistoryPath) ? File.ReadAllLines(SearchHistoryPath) : Array.Empty<string>();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    public void SaveSearchHistory(IEnumerable<string> searches)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(SearchHistoryPath);
+            if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
+            File.WriteAllLines(SearchHistoryPath, searches);
+        }
+        catch
+        {
+        }
+    }
+
+    private string ViewPreferencesPath => Path.Combine(Path.GetDirectoryName(_statePath) ?? "", "view-preferences.txt");
+
+    /// <summary>Small view toggles (file tree mode, details expanded, search mode...) as key=value lines.</summary>
+    public IReadOnlyDictionary<string, string> LoadViewPreferences()
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        try
+        {
+            if (!File.Exists(ViewPreferencesPath)) return result;
+            foreach (var line in File.ReadAllLines(ViewPreferencesPath))
+            {
+                var separator = line.IndexOf('=');
+                if (separator > 0) result[line[..separator]] = line[(separator + 1)..];
+            }
+        }
+        catch
+        {
+        }
+
+        return result;
+    }
+
+    public void SaveViewPreferences(IReadOnlyDictionary<string, string> preferences)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(ViewPreferencesPath);
+            if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
+            File.WriteAllLines(ViewPreferencesPath, preferences.Select(entry => $"{entry.Key}={entry.Value}"));
         }
         catch
         {

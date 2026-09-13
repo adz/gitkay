@@ -37,6 +37,7 @@ module GitServiceTests =
         {
             OldPath = oldPath
             NewPath = newPath
+            NewLineCount = None
             Hunks =
                 [
                     {
@@ -296,7 +297,7 @@ summary Another line
             test <@ options.DiffContextLines = 10 @>
             test <@ options.DiffPresentationModeKey = "side-by-side" @>
             test <@ options.SearchQuery = "needle" @>
-            test <@ options.SearchScopeKey = "message" @>
+            test <@ options.SearchScopeKey = "commit" @>
             test <@ options.SelectedCommitHash = Some "abc123" @>
 
     [<Fact>]
@@ -387,6 +388,114 @@ summary Another line
                     | Ok withContext ->
                         test <@ withContext.Hunks.Head.Lines |> List.exists (fun line -> line.Type = Models.Context) @>
                         test <@ withContext.Hunks.Head.Lines.Length > noContext.Hunks.Head.Lines.Length @>)
+
+    [<Fact>]
+    let ``fetchDiffFileFullContext should include every unchanged line of one file`` () =
+        withTempRepository (fun root repo ->
+            let lines = [ 1 .. 60 ] |> List.map (sprintf "line%d")
+            let _ = commitFile repo root "foo.txt" (String.Join("\n", lines) + "\n") "base commit"
+            let changed = lines |> List.map (fun line -> if line = "line30" then "line30 changed" else line)
+            let updatedCommit = commitFile repo root "foo.txt" (String.Join("\n", changed) + "\n") "updated commit"
+
+            match runFlow root (GitService.fetchDiffFileFullContext updatedCommit.Sha "foo.txt" "foo.txt") with
+            | Error err -> failwith (GitError.describe err)
+            | Ok file ->
+                let all = file.Hunks |> List.collect _.Lines
+                test <@ file.Hunks.Length = 1 @>
+                test <@ all |> List.filter (fun line -> line.Type = Models.Context) |> List.length = 59 @>
+                test <@ all |> List.exists (fun line -> line.Type = Models.Added && line.Content = "line30 changed") @>
+                test <@ file.NewLineCount = Some 60 @>)
+
+    [<Fact>]
+    let ``fetchDiffFileList should identify added and deleted files like their loaded content`` () =
+        withTempRepository (fun root repo ->
+            let _ = commitFile repo root "old.txt" "gone\n" "base commit"
+            File.Delete(Path.Combine(root, "old.txt"))
+            File.WriteAllText(Path.Combine(root, "new.txt"), "fresh\n")
+            Commands.Stage(repo, "*")
+            let signature = Signature("Test", "test@example.com", DateTimeOffset.Now)
+            let changed = repo.Commit("add and delete", signature, signature)
+
+            match runFlow root (GitService.fetchDiffFileList changed.Sha) with
+            | Error err -> failwith (GitError.describe err)
+            | Ok files ->
+                let keys = files |> List.map (fun file -> file.OldPath, file.NewPath) |> List.sort
+                test <@ keys = [ "/dev/null", "new.txt"; "old.txt", "/dev/null" ] @>
+
+                for file in files do
+                    match runFlow root (GitService.fetchDiffFileContent 3 changed.Sha file.OldPath file.NewPath) with
+                    | Error err -> failwith (GitError.describe err)
+                    | Ok content -> test <@ (content.OldPath, content.NewPath) = (file.OldPath, file.NewPath) @>)
+
+    [<Fact>]
+    let ``GitCache should retain diff file lists between calls`` () =
+        withTempRepository (fun root repo ->
+            let commit = commitFile repo root "foo.txt" "one\n" "first commit"
+            let env = GitService.environment root
+            let first = Flow.run env (GitService.fetchDiffFileList commit.Sha) |> Exit.toResult
+            File.WriteAllText(Path.Combine(root, ".git", "objects", "sentinel"), "")
+            let second = Flow.run env (GitService.fetchDiffFileList commit.Sha) |> Exit.toResult
+            match first, second with
+            | Ok a, Ok b -> test <@ obj.ReferenceEquals(a, b) @>
+            | _ -> failwith "expected file lists")
+
+    [<Fact>]
+    let ``resolveCommit should accept short hashes, branches, tags and relative revisions`` () =
+        withTempRepository (fun root repo ->
+            let first = commitFile repo root "a.txt" "1" "first"
+            let second = commitFile repo root "a.txt" "2" "second"
+            repo.ApplyTag("v1", first.Sha) |> ignore
+            let resolve revision =
+                match runFlow root (GitService.resolveCommit revision) with
+                | Ok hash -> Some hash
+                | Error _ -> None
+            test <@ resolve (second.Sha.Substring(0, 7)) = Some second.Sha @>
+            test <@ resolve "HEAD~1" = Some first.Sha @>
+            test <@ resolve "v1" = Some first.Sha @>
+            test <@ resolve repo.Head.FriendlyName = Some second.Sha @>
+            test <@ resolve "no-such-thing" = None @>)
+
+    [<Fact>]
+    let ``parseStartupOptions should accept gitk-style select-commit`` () =
+        let selected args = match GitStartup.parseStartupOptions args with Ok options -> options.SelectedCommitHash | Error e -> failwith e
+        test <@ selected [| "--select-commit=HEAD~2" |] = Some "HEAD~2" @>
+        test <@ selected [| "--select-commit"; "main" |] = Some "main" @>
+        test <@ selected [| "--select"; "abc123" |] = Some "abc123" @>
+
+    [<Fact>]
+    let ``parseHunks should keep content lines that look like file headers`` () =
+        let hunks = GitParsing.parseHunks "@@ -1,2 +1,3 @@\n context\n+++ b/foo.txt\n--- a/foo.txt\n+added\n\\ No newline at end of file\n"
+        let lines = hunks.Head.Lines |> List.map (fun line -> line.Type, line.Content, line.OldLineNo, line.NewLineNo)
+        test <@ hunks.Length = 1 @>
+        test <@ lines = [ Models.Context, "context", Some 1, Some 1
+                          Models.Added, "++ b/foo.txt", None, Some 2
+                          Models.Removed, "-- a/foo.txt", Some 2, None
+                          Models.Added, "added", None, Some 3 ] @>
+
+    [<Fact>]
+    let ``fetchDiffFileContent should handle added, deleted and binary files`` () =
+        withTempRepository (fun root repo ->
+            let _ = commitFile repo root "old.txt" "gone\n" "base commit"
+            File.Delete(Path.Combine(root, "old.txt"))
+            File.WriteAllText(Path.Combine(root, "new.txt"), "a\nb")
+            File.WriteAllBytes(Path.Combine(root, "image.bin"), [| 0uy; 1uy; 2uy; 0uy |])
+            Commands.Stage(repo, "*")
+            let signature = Signature("Test", "test@example.com", DateTimeOffset.Now)
+            let changed = repo.Commit("mixed", signature, signature)
+
+            let load oldPath newPath =
+                match runFlow root (GitService.fetchDiffFileContent 3 changed.Sha oldPath newPath) with
+                | Ok file -> file
+                | Error err -> failwith (GitError.describe err)
+
+            let added = load "/dev/null" "new.txt"
+            test <@ added.NewLineCount = Some 2 @>
+            test <@ added.Hunks.Head.Lines |> List.map (fun line -> line.Type, line.Content) = [ Models.Added, "a"; Models.Added, "b" ] @>
+            let deleted = load "old.txt" "/dev/null"
+            test <@ deleted.NewLineCount = None @>
+            test <@ deleted.Hunks.Head.Lines |> List.map (fun line -> line.Type, line.Content) = [ Models.Removed, "gone" ] @>
+            let binary = load "/dev/null" "image.bin"
+            test <@ binary.Hunks = [] @>)
 
     [<Fact>]
     let ``fetchDiffFileContent should load root commit file contents`` () =
@@ -528,114 +637,72 @@ summary Another line
             test <@ revertedRepo.Head.Tip.Sha <> pickedCommit.Sha @>
             test <@ revertedRepo.Head.Tip.Sha <> baseCommit.Sha @>)
 
-    [<Fact>]
-    let ``searchCommitsWithDiffLoader should match metadata, refs, paths, and text`` () =
-        let commits : Models.Commit list =
-            [
-                {
-                    Hash = "abc12345abc12345abc12345abc12345abc12345"
-                    AuthorName = "Jane Doe"
-                    AuthorEmail = "jane@example.com"
-                    Timestamp = 1710000000L
-                    Parents = []
-                    Subject = "Fix parser"
-                    Message = "Fix parser\n\nNeedle body"
-                    Refs = [ RefHelpers.branchRef "main"; RefHelpers.tagRef "v1.0" ]
-                }
-                {
-                    Hash = "def67890def67890def67890def67890def67890"
-                    AuthorName = "John Smith"
-                    AuthorEmail = "john@example.com"
-                    Timestamp = 1710003600L
-                    Parents = []
-                    Subject = "Add docs"
-                    Message = "Add docs"
-                    Refs = [ RefHelpers.remoteRef "origin/release/1.0" ]
-                }
-            ]
+    let private searchCommit hash subject message (author: string) (refs: Models.CommitRef list) timestamp : Models.Commit =
+        { Hash = hash; AuthorName = author; AuthorEmail = author.ToLowerInvariant().Replace(" ", ".") + "@example.com"
+          Timestamp = timestamp; Parents = []; Subject = subject; Message = message; Refs = refs }
 
-        let diffLoader hash =
-            match hash with
-            | "abc12345abc12345abc12345abc12345abc12345" ->
-                Flow.ok
-                    [
-                        sampleFile
-                            "src/needle.txt"
-                            "src/needle.txt"
-                            [
-                                {
-                                    Type = Models.Context
-                                    Content = "needle line"
-                                    OldLineNo = Some 1
-                                    NewLineNo = Some 1
-                                }
-                            ]
-                    ]
-            | _ -> Flow.ok []
+    let private searchCommits () =
+        [ searchCommit "abc12345abc12345abc12345abc12345abc12345" "Fix parser" "Fix parser\n\nNeedle body" "Jane Doe" [ RefHelpers.branchRef "main"; RefHelpers.tagRef "v1.0" ] 1710000000L
+          searchCommit "def67890def67890def67890def67890def67890" "Add docs" "Add docs" "John Smith" [ RefHelpers.remoteRef "origin/release/1.0" ] 1720000000L ]
 
-        match runFlow "" (GitSearch.searchCommitsWithDiffLoader commits "needle" GitSearch.Scope.All diffLoader) with
+    let private searchDiffLoader hash =
+        match hash with
+        | "abc12345abc12345abc12345abc12345abc12345" ->
+            Flow.ok
+                [ sampleFile "src/needle.txt" "src/needle.txt"
+                      [ { Type = Models.Context; Content = "context needle"; OldLineNo = Some 1; NewLineNo = Some 1 }
+                        { Type = Models.Added; Content = "let findCommit = 1"; OldLineNo = None; NewLineNo = Some 2 } ] ]
+        | _ -> Flow.ok [ sampleFile "docs/readme.md" "docs/readme.md" [ { Type = Models.Removed; Content = "old docs"; OldLineNo = Some 1; NewLineNo = None } ] ]
+
+    let private search mode useRegex query =
+        match runFlow "" (GitSearch.searchCommitsWithDiffLoader (searchCommits ()) mode useRegex query searchDiffLoader) with
         | Error err -> failwith (GitError.describe err)
-        | Ok results ->
-            test <@ results.Length = 1 @>
-            let hit = results.Head
-            test <@ hit.Commit.Hash = "abc12345abc12345abc12345abc12345abc12345" @>
-            test <@ hit.MatchKinds |> List.contains "message" @>
-            test <@ hit.MatchKinds |> List.contains "path" @>
-            test <@ hit.MatchKinds |> List.contains "text" @>
-            test <@ hit.MatchSummary.Contains "paths: src/needle.txt" @>
+        | Ok results -> results
 
-        match runFlow "" (GitSearch.searchCommitsWithDiffLoader commits "release" GitSearch.Scope.Ref diffLoader) with
-        | Error err -> failwith (GitError.describe err)
-        | Ok results ->
-            test <@ results.Length = 1 @>
-            let hit = results.Head
-            test <@ hit.Commit.Hash = "def67890def67890def67890def67890def67890" @>
-            test <@ hit.MatchKinds = [ "ref" ] @>
-            test <@ hit.MatchSummary.Contains "refs: origin/release/1.0" @>
+    let private hashes (results: GitSearch.Result list) = results |> List.map (fun r -> r.Commit.Hash.Substring(0, 3))
 
     [<Fact>]
-    let ``searchCommitsWithDiffLoader should match diff text in the all scope even when metadata and paths do not match`` () =
-        let commit : Models.Commit =
-            {
-                Hash = "feedfacefeedfacefeedfacefeedfacefeedface"
-                AuthorName = "Jane Doe"
-                AuthorEmail = "jane@example.com"
-                Timestamp = 1710000000L
-                Parents = []
-                Subject = "No metadata hit"
-                Message = "No metadata hit"
-                Refs = []
-            }
+    let ``commit mode should match headline, message, hash and refs but not authors or diffs`` () =
+        test <@ hashes (search GitSearch.Commit false "needle") = [ "abc" ] @>
+        test <@ hashes (search GitSearch.Commit false "release") = [ "def" ] @>
+        test <@ hashes (search GitSearch.Commit false "def678") = [ "def" ] @>
+        test <@ hashes (search GitSearch.Commit false "Smith") = [] @>
+        test <@ hashes (search GitSearch.Commit false "findCommit") = [] @>
+        let hit = (search GitSearch.Commit false "release").Head
+        test <@ hit.MatchKinds = [ "ref" ] && hit.MatchedRefs = [ "origin/release/1.0" ] @>
 
-        let diffLoader hash =
-            match hash with
-            | "feedfacefeedfacefeedfacefeedfacefeedface" ->
-                Flow.ok
-                    [
-                        sampleFile
-                            "src/other.txt"
-                            "src/other.txt"
-                            [
-                                {
-                                    Type = Models.Context
-                                    Content = "needle line in diff text"
-                                    OldLineNo = Some 1
-                                    NewLineNo = Some 1
-                                }
-                            ]
-                    ]
-            | _ -> Flow.ok []
+    [<Fact>]
+    let ``path and diff modes should search changed files and only added or removed lines`` () =
+        test <@ hashes (search GitSearch.Path false "src/") = [ "abc" ] @>
+        test <@ (search GitSearch.Path false "src/").Head.MatchedPaths = [ "src/needle.txt" ] @>
+        test <@ hashes (search GitSearch.Diff false "findCommit") = [ "abc" ] @>
+        test <@ hashes (search GitSearch.Diff false "context needle") = [] @>
+        test <@ hashes (search GitSearch.Diff false "old docs") = [ "def" ] @>
 
-        match runFlow "" (GitSearch.searchCommitsWithDiffLoader [ commit ] "needle" GitSearch.Scope.All diffLoader) with
-        | Error err -> failwith (GitError.describe err)
-        | Ok results ->
-            test <@ results.Length = 1 @>
-            let hit = results.Head
-            test <@ hit.Commit.Hash = commit.Hash @>
-            test <@ hit.MatchKinds = [ "text" ] @>
-            test <@ hit.MatchSummary = "text" @>
-            test <@ hit.MatchedPaths = [] @>
-            test <@ hit.MatchedRefs = [] @>
+    [<Fact>]
+    let ``prefixes combine with AND across fields and dates`` () =
+        test <@ hashes (search GitSearch.Commit false "author:jane") = [ "abc" ] @>
+        test <@ hashes (search GitSearch.Commit false "author:jane path:docs") = [] @>
+        test <@ hashes (search GitSearch.Commit false "author:john diff:docs") = [ "def" ] @>
+        test <@ hashes (search GitSearch.Diff false "ref:main findCommit") = [ "abc" ] @>
+        test <@ hashes (search GitSearch.Commit false "after:2024-06-01") = [ "def" ] @>
+        test <@ hashes (search GitSearch.Commit false "before:2024-06-01") = [ "abc" ] @>
+        test <@ hashes (search GitSearch.Commit false "message:\"Fix parser\"") = [ "abc" ] @>
+
+    [<Fact>]
+    let ``regex option should apply to every field and tolerate invalid patterns`` () =
+        test <@ hashes (search GitSearch.Diff true "find\\w+ =") = [ "abc" ] @>
+        test <@ hashes (search GitSearch.Commit true "^Add") = [ "def" ] @>
+        test <@ hashes (search GitSearch.Path true "^src/.*\\.txt$") = [ "abc" ] @>
+        test <@ hashes (search GitSearch.Commit true "author:^john") = [ "def" ] @>
+        test <@ hashes (search GitSearch.Commit true "Fix (") = [] @>
+
+    [<Fact>]
+    let ``parseQuery and formatQuery should round-trip prefixed and quoted terms`` () =
+        let terms = GitSearch.parseQuery GitSearch.Commit "fonts author:\"Jane Doe\" path:src/ bogus:x"
+        test <@ terms |> List.map (fun t -> t.Field, t.Text) = [ GitSearch.CommitInfo, "fonts"; GitSearch.Author, "Jane Doe"; GitSearch.ChangedPath, "src/"; GitSearch.CommitInfo, "bogus:x" ] @>
+        test <@ GitSearch.formatQuery GitSearch.Commit terms = "fonts author:\"Jane Doe\" path:src/ bogus:x" @>
+        test <@ GitSearch.formatQuery GitSearch.Path (GitSearch.parseQuery GitSearch.Path "src/ author:jane") = "src/ author:jane" @>
 
 module AppTests =
 
@@ -655,6 +722,7 @@ module AppTests =
         {
             OldPath = oldPath
             NewPath = newPath
+            NewLineCount = None
             Hunks =
                 [
                     {
@@ -882,6 +950,7 @@ module AppTests =
 
     let private emptyModel : App.Model =
         {
+            StartupSelection = App.NoStartupSelection
             GitEnv = GitService.environment ""
             Status = ""
             StartupTargets = []
@@ -891,6 +960,7 @@ module AppTests =
             DiffPresentationModeKey = "diff"
             SearchQuery = ""
             SearchScopeKey = "all"
+            SearchUseRegex = false
             SearchResults = None
             Commits = []
             HasFullHistory = false
@@ -899,6 +969,7 @@ module AppTests =
             SelectedDiffFiles = None
             SelectedDiff = None
             SelectedDiffFileKey = None
+            DiffExpansions = Map.empty
             SelectionStartedAtTicks = None
             SelectedDiffStartedAtTicks = None
             SearchStartedAtTicks = None
@@ -928,7 +999,7 @@ module AppTests =
         test <@ model.DiffContextLines = 10 @>
         test <@ model.DiffPresentationModeKey = "side-by-side" @>
         test <@ model.SearchQuery = "needle" @>
-        test <@ model.SearchScopeKey = "message" @>
+        test <@ model.SearchScopeKey = "commit" @>
         test <@ model.SearchStartedAtTicks = None @>
 
     [<Fact>]
@@ -1367,7 +1438,7 @@ module AppTests =
 
         test <@ projection.SelectedDiffFiles.Count = 2 @>
         test <@ projection.SelectedDiffFile.DisplayPath = "foo.txt" @>
-        test <@ projection.SelectedDiffRows.Count = 6 @>
+        test <@ projection.SelectedDiffRows.Count = 7 @>
 
         match projection.SelectedDiffRow with
         | :? DiffFileHeaderProjection as header -> test <@ header.DisplayPath = "foo.txt" @>
@@ -1379,7 +1450,7 @@ module AppTests =
         | :? DiffFileHeaderProjection as header -> test <@ header.DisplayPath = "bar.txt (new file)" @>
         | other -> failwithf "Expected a file header after selection sync, got %A" other
 
-        test <@ projection.SelectedDiffRows.Count = 6 @>
+        test <@ projection.SelectedDiffRows.Count = 7 @>
 
     [<Fact>]
     let ``MainProjection should dispatch diff file selection and keep the focus row in sync`` () =
@@ -1439,7 +1510,7 @@ module AppTests =
         projection.SelectedDiffFile <- projection.SelectedDiffFiles.[1]
 
         test <@ projection.SelectedDiffFile.DisplayPath = "bar.txt (new file)" @>
-        test <@ projection.SelectedDiffRows.Count = 6 @>
+        test <@ projection.SelectedDiffRows.Count = 7 @>
 
         match projection.SelectedDiffRow with
         | :? DiffFileHeaderProjection as header -> test <@ header.DisplayPath = "bar.txt (new file)" @>
@@ -1670,6 +1741,17 @@ module AppTests =
             test <@ loaded.WindowHeight = Nullable 720.0 @>
             test <@ loaded.GetLastSelectedCommitHash(repoKey) = "abc123" @>
             test <@ File.Exists(path) @>
+            test <@ loaded.Layout.HistoryPaneRatio = Nullable() @>
+
+            let layout = UiLayoutState(HistoryPaneRatio = Nullable 0.3, FileListWidth = Nullable 260.0, HashColumnWidth = Nullable 70.0, DateColumnWidth = Nullable 2.0e6)
+            store.Save(state.WithLayout(layout))
+            let reloaded = store.Load()
+            test <@ reloaded.Layout.HistoryPaneRatio = Nullable 0.3 @>
+            test <@ reloaded.Layout.FileListWidth = Nullable 260.0 @>
+            test <@ reloaded.Layout.HashColumnWidth = Nullable 70.0 @>
+            test <@ reloaded.Layout.GraphColumnWidth = Nullable() @>
+            test <@ reloaded.Layout.DateColumnWidth = Nullable 10000.0 @>
+            test <@ reloaded.GetLastSelectedCommitHash(repoKey) = "abc123" @>
         finally
             try
                 Directory.Delete(root, true)
@@ -1703,7 +1785,7 @@ module AppTests =
                 | _ -> None)
 
         test <@ setQueries = [| "nee"; "needle" |] @>
-        test <@ runSearches = [| ("needle", "all") |] @>
+        test <@ runSearches = [| ("needle", "commit") |] @>
 
     [<Fact>]
     let ``SearchResultProjection should surface matched fields, files, and counts`` () =
@@ -1795,7 +1877,7 @@ module AppTests =
                     SelectedDiff = Some [ file ]
                     SelectedDiffFileKey = Some { OldPath = "src/needle.txt"; NewPath = "src/needle.txt" }
                     SearchQuery = "needle"
-                    SearchScopeKey = "all"
+                    SearchScopeKey = "diff"
             }
 
         projection.Update model
@@ -1806,7 +1888,7 @@ module AppTests =
         test <@ projection.IsSearchPanelExpanded @>
         test <@ projection.HasDiffSearchStatus @>
         test <@ projection.DiffSearchStatusText = "Searching diff for \"needle\"..." @>
-        test <@ projection.SelectedDiffRows.Count = 3 @>
+        test <@ projection.SelectedDiffRows.Count = 4 @>
 
         Task.Delay(50).Wait()
         projection.Update model
@@ -1822,7 +1904,7 @@ module AppTests =
         projection.Update model
 
         test <@ projection.SelectedDiffFiles.[0].HasSearchMatch @>
-        test <@ projection.SelectedDiffFiles.[0].SearchMatchSummary = "path · text" @>
+        test <@ projection.SelectedDiffFiles.[0].SearchMatchSummary = "text" @>
         test <@ projection.DiffSearchStatusText = "Diff search: 1 file and 1 line matched" @>
 
         let diffLine =
@@ -1875,6 +1957,7 @@ module AppTests =
         let line number content : Models.DiffLine = { Type = Models.Context; Content = content; OldLineNo = Some number; NewLineNo = Some number }
         let file : Models.FileDiff =
             { OldPath = "sample.txt"; NewPath = "sample.txt"
+              NewLineCount = None
               Hunks =
                 [ { Header = "@@ -1 +1 @@"; Lines = [ line 1 "first" ] }
                   { Header = "@@ -12 +12 @@"; Lines = [ line 12 "second" ] } ] }
@@ -1890,22 +1973,71 @@ module AppTests =
                 SelectedDiffFileKey = Some { OldPath = "sample.txt"; NewPath = "sample.txt" } }
 
         let gaps = projection.SelectedDiffRows |> Seq.choose (function :? DiffGapProjection as gap -> Some gap | _ -> None) |> Seq.toArray
-        test <@ gaps.Length = 1 @>
-        test <@ gaps.[0].HiddenLineCount = 10 @>
+        test <@ gaps |> Array.map (fun gap -> gap.Gap.Kind) = [| DiffExpansion.Internal; DiffExpansion.Trailing |] @>
+        test <@ gaps.[0].HiddenLineCount = Nullable 10 @>
+        test <@ gaps.[1].Gap.HiddenCount = None @>
+        test <@ gaps.[0].HeaderText = "@@ -12 +12 @@" && isNull gaps.[1].HeaderText @>
+        let headers = projection.SelectedDiffRows |> Seq.filter (fun row -> row :? DiffHunkHeaderProjection) |> Seq.length
+        test <@ headers = 1 @>
 
     [<Fact>]
-    let ``MainProjection should dispatch incremental and complete gap expansion context`` () =
+    let ``MainProjection should dispatch file-scoped gap expansion without changing context preference`` () =
         let projection = MainProjection()
         let messages = ResizeArray<App.Msg>()
+        let commit = sampleCommit "1234512345123451234512345123451234512345" "Separated hunks"
+        let line number : Models.DiffLine = { Type = Models.Context; Content = string number; OldLineNo = Some number; NewLineNo = Some number }
+        let file : Models.FileDiff =
+            { OldPath = "sample.txt"; NewPath = "sample.txt"; NewLineCount = None
+              Hunks = [ { Header = "@@ -20 +20 @@"; Lines = [ line 20 ] } ] }
+        projection.Update
+            { emptyModel with
+                SelectedCommitHash = Some commit.Hash
+                SelectedDiffHash = Some commit.Hash
+                SelectedDiffFiles = Some [ sampleSummary "sample.txt" "sample.txt" "sample.txt" ]
+                SelectedDiff = Some [ file ] }
         projection.SetDispatch (fun message -> messages.Add message)
 
-        projection.ExpandDiffBlockCommand.Execute null
-        test <@ messages.ToArray() = [| App.Msg.SetDiffContextLines 13 |] @>
+        let gap = projection.SelectedDiffRows |> Seq.pick (function :? DiffGapProjection as gap -> Some gap | _ -> None)
+        test <@ gap.Gap.Kind = DiffExpansion.Leading @>
+        projection.ExpandDiffGapCommand.Execute(DiffGapExpansionRequest(gap.Gap, DiffExpansion.Up))
 
-        messages.Clear()
-        projection.ExpandDiffGapCommand.Execute 20
-        test <@ messages.ToArray() = [| App.Msg.SetDiffContextLines 23 |] @>
-        test <@ projection.DiffContextLineCounts |> Seq.exists (fun option -> option.Count = 23) @>
+        match List.ofSeq messages with
+        | [ App.Msg.ExpandDiffGap (hash, requestedGap, direction, _) ] ->
+            test <@ hash = commit.Hash && requestedGap = gap.Gap && direction = DiffExpansion.Up @>
+        | other -> failwithf "unexpected messages %A" other
+
+    [<Fact>]
+    let ``MainProjection should reveal expanded context for only the expanded file`` () =
+        let projection = MainProjection()
+        let commit = sampleCommit "1234512345123451234512345123451234512345" "Expansion"
+        let ctx number : Models.DiffLine = { Type = Models.Context; Content = sprintf "l%d" number; OldLineNo = Some number; NewLineNo = Some number }
+        let fileA : Models.FileDiff = { OldPath = "a.txt"; NewPath = "a.txt"; NewLineCount = None; Hunks = [ { Header = "@@ -30 +30 @@"; Lines = [ ctx 30 ] } ] }
+        let fileB : Models.FileDiff = { OldPath = "b.txt"; NewPath = "b.txt"; NewLineCount = None; Hunks = [ { Header = "@@ -30 +30 @@"; Lines = [ ctx 30 ] } ] }
+        let fullA : Models.FileDiff = { fileA with Hunks = [ { Header = "@@ -1,40 +1,40 @@"; Lines = [ 1 .. 40 ] |> List.map ctx } ] }
+        let baseModel =
+            { emptyModel with
+                SelectedCommitHash = Some commit.Hash
+                SelectedDiffHash = Some commit.Hash
+                SelectedDiffFiles = Some [ sampleSummary "a.txt" "a.txt" "a.txt"; sampleSummary "b.txt" "b.txt" "b.txt" ]
+                SelectedDiff = Some [ fileA; fileB ] }
+        projection.Update baseModel
+        let rowsB () =
+            projection.SelectedDiffRows
+            |> Seq.skipWhile (function :? DiffFileHeaderProjection as header -> header.DisplayPath <> "b.txt" | _ -> true)
+            |> Seq.toArray
+        let before = rowsB ()
+
+        let expansion : App.FileExpansion = { FullContext = Some fullA; Revealed = [ { Start = 20; End = 29 } ]; PendingRequestId = None }
+        projection.Update { baseModel with DiffExpansions = Map.ofList [ { OldPath = "a.txt"; NewPath = "a.txt" }, expansion ] }
+
+        let linesA =
+            projection.SelectedDiffRows
+            |> Seq.takeWhile (function :? DiffFileHeaderProjection as header -> header.DisplayPath <> "b.txt" | _ -> true)
+            |> Seq.choose (function :? DiffLineProjection as line -> line.NewLineNo |> Option.ofNullable | _ -> None)
+            |> Seq.toList
+        test <@ linesA = [ 20 .. 30 ] @>
+        test <@ rowsB () |> Array.map (fun row -> row.GetType()) = (before |> Array.map (fun row -> row.GetType())) @>
+        test <@ projection.DiffContextLineCount = emptyModel.DiffContextLines @>
 
     [<Fact>]
     let ``CommitProjection should surface refs in the row summary`` () =
@@ -2069,3 +2201,578 @@ module AppTests =
         test <@ current.SelectedDiffFileKey = initial.SelectedDiffFileKey @>
         test <@ current.SelectedDiff = Some loadedDiff @>
         test <@ current.SelectedDiffStartedAtTicks = None @>
+
+
+module DiffExpansionTests =
+
+    let private ctx number : Models.DiffLine =
+        { Type = Models.Context; Content = sprintf "l%d" number; OldLineNo = Some number; NewLineNo = Some number }
+
+    let private gapOf kind start count : DiffExpansion.DiffGap =
+        { OldPath = "f"; NewPath = "f"; Kind = kind; OldStart = start; NewStart = start; HiddenCount = count }
+
+    [<Fact>]
+    let ``normalize should sort and merge overlapping and adjacent ranges`` () =
+        let merged = DiffExpansion.normalize [ { Start = 20; End = 25 }; { Start = 1; End = 5 }; { Start = 6; End = 8 }; { Start = 24; End = 30 }; { Start = 40; End = 39 } ]
+        test <@ merged = [ { Start = 1; End = 8 }; { Start = 20; End = 30 } ] @>
+
+    [<Fact>]
+    let ``revealRange should reveal ten lines from the requested edge or the whole gap`` () =
+        let gap = gapOf DiffExpansion.Internal 11 (Some 25)
+        test <@ DiffExpansion.revealRange DiffExpansion.Down gap = Some { Start = 11; End = 20 } @>
+        test <@ DiffExpansion.revealRange DiffExpansion.Up gap = Some { Start = 26; End = 35 } @>
+        test <@ DiffExpansion.revealRange DiffExpansion.All gap = Some { Start = 11; End = 35 } @>
+        let small = gapOf DiffExpansion.Internal 11 (Some 4)
+        test <@ DiffExpansion.revealRange DiffExpansion.Down small = Some { Start = 11; End = 14 } @>
+        test <@ DiffExpansion.revealRange DiffExpansion.Up small = Some { Start = 11; End = 14 } @>
+        let trailing = gapOf DiffExpansion.Trailing 50 None
+        test <@ DiffExpansion.revealRange DiffExpansion.Up trailing = None @>
+        test <@ DiffExpansion.revealRange DiffExpansion.Down trailing = Some { Start = 50; End = 59 } @>
+
+    [<Fact>]
+    let ``availableDirections should only offer bounded controls that apply`` () =
+        test <@ DiffExpansion.availableDirections (gapOf DiffExpansion.Leading 1 (Some 30)) = [ DiffExpansion.Up; DiffExpansion.All ] @>
+        test <@ DiffExpansion.availableDirections (gapOf DiffExpansion.Internal 1 (Some 30)) = [ DiffExpansion.Down; DiffExpansion.Up; DiffExpansion.All ] @>
+        test <@ DiffExpansion.availableDirections (gapOf DiffExpansion.Trailing 1 None) = [ DiffExpansion.Down; DiffExpansion.All ] @>
+        test <@ DiffExpansion.availableDirections (gapOf DiffExpansion.Internal 1 (Some 10)) = [ DiffExpansion.All ] @>
+
+    let private configured : Models.FileDiff =
+        { OldPath = "f"; NewPath = "f"
+          NewLineCount = None
+          Hunks =
+            [ { Header = "@@ -10,2 +10,2 @@ fn a"; Lines = [ ctx 10; { Type = Models.Removed; Content = "x"; OldLineNo = Some 11; NewLineNo = None }; { Type = Models.Added; Content = "y"; OldLineNo = None; NewLineNo = Some 11 } ] }
+              { Header = "@@ -40 +40 @@ fn b"; Lines = [ ctx 40 ] } ] }
+
+    let private full : Models.FileDiff =
+        let lines =
+            [ for n in 1 .. 50 do
+                if n = 11 then
+                    yield ({ Type = Models.Removed; Content = "x"; OldLineNo = Some 11; NewLineNo = None } : Models.DiffLine)
+                    yield ({ Type = Models.Added; Content = "y"; OldLineNo = None; NewLineNo = Some 11 } : Models.DiffLine)
+                else
+                    yield ctx n ]
+        { configured with Hunks = [ { Header = "@@ -1,50 +1,50 @@"; Lines = lines } ] }
+
+    let private shape blocks =
+        blocks
+        |> List.map (function
+            | DiffExpansion.GapBlock gap -> sprintf "gap:%A:%d:%A" gap.Kind gap.NewStart gap.HiddenCount
+            | DiffExpansion.HunkBlock hunk -> sprintf "hunk:%d" hunk.Lines.Length)
+
+    [<Fact>]
+    let ``project without full context should emit leading internal and trailing gaps`` () =
+        test <@ shape (DiffExpansion.project configured None []) = [ "gap:Leading:1:Some 9"; "hunk:3"; "gap:Internal:12:Some 28"; "hunk:1"; "gap:Trailing:41:None" ] @>
+
+    [<Fact>]
+    let ``project should use the new file line count to bound or omit the trailing gap`` () =
+        test <@ shape (DiffExpansion.project { configured with NewLineCount = Some 50 } None []) |> List.last = "gap:Trailing:41:Some 10" @>
+        test <@ shape (DiffExpansion.project { configured with NewLineCount = Some 40 } None []) |> List.last = "hunk:1" @>
+
+    [<Fact>]
+    let ``project without full context should keep hunks unchanged while revealed ranges wait for context`` () =
+        let blocks = DiffExpansion.project configured None [ { Start = 1; End = 9 } ]
+        test <@ blocks |> List.choose (function DiffExpansion.HunkBlock hunk -> Some hunk | _ -> None) = configured.Hunks @>
+
+    [<Fact>]
+    let ``project should omit surrounding gaps for added and deleted files`` () =
+        let added = { configured with OldPath = "/dev/null"; NewLineCount = None; Hunks = [ configured.Hunks.Head ] }
+        test <@ shape (DiffExpansion.project added None []) = [ "hunk:3" ] @>
+
+    [<Fact>]
+    let ``project with full context should know trailing counts and reveal ranges`` () =
+        test <@ shape (DiffExpansion.project configured (Some full) []) = [ "gap:Leading:1:Some 9"; "hunk:3"; "gap:Internal:12:Some 28"; "hunk:1"; "gap:Trailing:41:Some 10" ] @>
+        let revealed = DiffExpansion.project configured (Some full) [ { Start = 12; End = 21 }; { Start = 5; End = 9 } ]
+        test <@ shape revealed = [ "gap:Leading:1:Some 4"; "hunk:18"; "gap:Internal:22:Some 18"; "hunk:1"; "gap:Trailing:41:Some 10" ] @>
+
+    [<Fact>]
+    let ``project should merge hunks when a gap is fully revealed and keep header context`` () =
+        let blocks = DiffExpansion.project configured (Some full) [ { Start = 12; End = 39 } ]
+        test <@ shape blocks = [ "gap:Leading:1:Some 9"; "hunk:32"; "gap:Trailing:41:Some 10" ] @>
+        match blocks.[1] with
+        | DiffExpansion.HunkBlock hunk -> test <@ hunk.Header = "@@ -10,31 +10,31 @@ fn a" @>
+        | _ -> failwith "expected hunk"
+
+module DiffExpansionFlowTests =
+
+    let private hash = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+    let private key : GitService.DiffFileKey = { OldPath = "f"; NewPath = "f" }
+    let private gap : DiffExpansion.DiffGap =
+        { OldPath = "f"; NewPath = "f"; Kind = DiffExpansion.Internal; OldStart = 12; NewStart = 12; HiddenCount = Some 28 }
+    let private file : Models.FileDiff = { OldPath = "f"; NewPath = "f"; NewLineCount = None; Hunks = [] }
+
+    let private selectedModel () =
+        let model, _ = App.init [||]
+        { model with
+            SelectedCommitHash = Some hash
+            SelectedDiffHash = Some hash
+            SelectedDiffFiles = Some [ { OldPath = "f"; NewPath = "f"; DisplayPath = "f" } ]
+            SelectedDiff = Some [ file ] }
+
+    [<Fact>]
+    let ``ExpandDiffGap should record revealed range and start one file load without touching context preference`` () =
+        let model = selectedModel ()
+        let next, cmd = App.update (App.Msg.ExpandDiffGap(hash, gap, DiffExpansion.Down, 7L)) model
+        let expansion = next.DiffExpansions.[key]
+        test <@ expansion.Revealed = [ { Start = 12; End = 21 } ] @>
+        test <@ expansion.PendingRequestId = Some 7L @>
+        test <@ not (List.isEmpty cmd) @>
+        test <@ next.DiffContextLines = model.DiffContextLines && next.SelectedDiff = model.SelectedDiff @>
+
+        let again, againCmd = App.update (App.Msg.ExpandDiffGap(hash, gap, DiffExpansion.Up, 8L)) next
+        test <@ again.DiffExpansions.[key].Revealed = [ { Start = 12; End = 21 }; { Start = 30; End = 39 } ] @>
+        test <@ again.DiffExpansions.[key].PendingRequestId = Some 7L @>
+        test <@ List.isEmpty againCmd @>
+
+    [<Fact>]
+    let ``DiffFileContextLoaded should accept only the current commit file and request`` () =
+        let pending, _ = App.update (App.Msg.ExpandDiffGap(hash, gap, DiffExpansion.All, 7L)) (selectedModel ())
+        let stale, _ = App.update (App.Msg.DiffFileContextLoaded(hash, key, 6L, Ok file)) pending
+        test <@ stale.DiffExpansions.[key].FullContext = None @>
+        let otherCommit, _ = App.update (App.Msg.DiffFileContextLoaded("0000", key, 7L, Ok file)) pending
+        test <@ otherCommit.DiffExpansions.[key].FullContext = None @>
+        let otherFile, _ = App.update (App.Msg.DiffFileContextLoaded(hash, { OldPath = "g"; NewPath = "g" }, 7L, Ok file)) pending
+        test <@ otherFile.DiffExpansions = pending.DiffExpansions @>
+        let accepted, _ = App.update (App.Msg.DiffFileContextLoaded(hash, key, 7L, Ok file)) pending
+        test <@ accepted.DiffExpansions.[key].FullContext = Some file && accepted.DiffExpansions.[key].PendingRequestId = None @>
+
+    [<Fact>]
+    let ``ExpandDiffGap should ignore stale commits and unknown files`` () =
+        let model = selectedModel ()
+        let staleCommit, cmd = App.update (App.Msg.ExpandDiffGap("0000", gap, DiffExpansion.Down, 7L)) model
+        test <@ staleCommit.DiffExpansions.IsEmpty && List.isEmpty cmd @>
+        let unknown, _ = App.update (App.Msg.ExpandDiffGap(hash, { gap with OldPath = "g"; NewPath = "g" }, DiffExpansion.Down, 7L)) model
+        test <@ unknown.DiffExpansions.IsEmpty @>
+
+    [<Fact>]
+    let ``SelectCommit should discard expansion state`` () =
+        let pending, _ = App.update (App.Msg.ExpandDiffGap(hash, gap, DiffExpansion.All, 7L)) (selectedModel ())
+        let next, _ = App.update (App.Msg.SelectCommit("1111", 9L)) pending
+        test <@ next.DiffExpansions.IsEmpty @>
+        let late, _ = App.update (App.Msg.DiffFileContextLoaded(hash, key, 7L, Ok file)) next
+        test <@ late.DiffExpansions.IsEmpty @>
+
+
+module FileHeaderTests =
+
+    let private hash = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+    let private key : GitService.DiffFileKey = { OldPath = "f"; NewPath = "f" }
+    let private ctx number : Models.DiffLine = { Type = Models.Context; Content = sprintf "l%d" number; OldLineNo = Some number; NewLineNo = Some number }
+    let private file : Models.FileDiff =
+        { OldPath = "f"; NewPath = "f"; NewLineCount = Some 40
+          Hunks = [ { Header = "@@ -20,2 +20,2 @@"; Lines = [ ctx 20; { Type = Models.Added; Content = "x"; OldLineNo = None; NewLineNo = Some 21 } ] } ] }
+
+    let private selectedModel () =
+        let model, _ = App.init [||]
+        { model with
+            SelectedCommitHash = Some hash
+            SelectedDiffHash = Some hash
+            SelectedDiffFiles = Some [ { OldPath = "f"; NewPath = "f"; DisplayPath = "f" } ]
+            SelectedDiff = Some [ file ] }
+
+    [<Fact>]
+    let ``DiffStatBar blocks should scale like GitHub and keep both colours visible`` () =
+        let check added removed expected = 
+            let struct (g, r) = DiffStatBar.Blocks(added, removed)
+            test <@ (g, r) = expected @>
+        check 0 0 (0, 0)
+        check 3 0 (3, 0)
+        check 9 0 (5, 0)
+        check 6 1 (4, 1)
+        check 100 1 (4, 1)
+        check 1 100 (1, 4)
+
+    [<Fact>]
+    let ``ExpandDiffFile should reveal the whole file and CollapseDiffFileContext should clear it`` () =
+        let expanded, cmd = App.update (App.Msg.ExpandDiffFile(hash, key, 5L)) (selectedModel ())
+        test <@ expanded.DiffExpansions.[key].Revealed = [ { Start = 1; End = Int32.MaxValue } ] @>
+        test <@ expanded.DiffExpansions.[key].PendingRequestId = Some 5L && not (List.isEmpty cmd) @>
+        let collapsed, _ = App.update (App.Msg.CollapseDiffFileContext(hash, key)) expanded
+        test <@ collapsed.DiffExpansions.[key].Revealed = [] @>
+        let stale, _ = App.update (App.Msg.CollapseDiffFileContext("0000", key)) expanded
+        test <@ stale.DiffExpansions = expanded.DiffExpansions @>
+
+    [<Fact>]
+    let ``MainProjection should collapse a file to its header and report stats and change kind`` () =
+        let projection = MainProjection()
+        projection.Update (selectedModel ())
+        let fileProjection = projection.SelectedDiffFiles |> Seq.head
+        test <@ fileProjection.AddedLines = 1 && fileProjection.RemovedLines = 0 @>
+        test <@ fileProjection.ChangeKind = "modified" && fileProjection.HasHiddenContext @>
+        let before = projection.SelectedDiffRows.Count
+        projection.ToggleDiffFileCollapsedCommand.Execute fileProjection
+        test <@ before > 1 && projection.SelectedDiffRows.Count = 1 @>
+        projection.ToggleDiffFileCollapsedCommand.Execute fileProjection
+        test <@ projection.SelectedDiffRows.Count = before @>
+
+    [<Fact>]
+    let ``MainProjection context toggle should dispatch expand then collapse for a file`` () =
+        let projection = MainProjection()
+        let messages = ResizeArray<App.Msg>()
+        let model = selectedModel ()
+        projection.Update model
+        projection.SetDispatch (fun message -> messages.Add message)
+        let fileProjection = projection.SelectedDiffFiles |> Seq.head
+        projection.ToggleDiffFileContextCommand.Execute fileProjection
+        match List.ofSeq messages with
+        | [ App.Msg.ExpandDiffFile (h, k, _) ] -> test <@ h = hash && k = key @>
+        | other -> failwithf "unexpected %A" other
+
+
+        let full : Models.FileDiff = { file with Hunks = [ { Header = "@@ -1,40 +1,41 @@"; Lines = [ for n in 1 .. 40 -> ctx n ] } ] }
+        let expansion : App.FileExpansion = { FullContext = Some full; Revealed = [ { Start = 1; End = Int32.MaxValue } ]; PendingRequestId = None }
+        projection.Update { model with DiffExpansions = Map.ofList [ key, expansion ] }
+        messages.Clear()
+        test <@ not fileProjection.HasHiddenContext && fileProjection.HasRevealedContext @>
+        projection.ToggleDiffFileContextCommand.Execute fileProjection
+        test <@ List.ofSeq messages = [ App.Msg.CollapseDiffFileContext(hash, key) ] @>
+
+
+
+module DiffFileTreeTests =
+
+    let private file (oldPath: string) (newPath: string) =
+        DiffFileProjection({ OldPath = oldPath; NewPath = newPath; DisplayPath = (if newPath = "/dev/null" then oldPath else newPath) } : GitService.DiffFileSummary)
+
+    let private describe (rows: obj seq) =
+        rows
+        |> Seq.map (function
+            | :? DiffFileFolderRow as folder -> sprintf "%d:[%s]" (int (folder.Indent.Left / DiffFileTree.IndentWidth)) folder.Name
+            | :? DiffFileProjection as f -> sprintf "%d:%s" (int (f.ListIndent.Left / DiffFileTree.IndentWidth)) f.ListLabel
+            | other -> string other)
+        |> List.ofSeq
+
+    let private files () =
+        [ file "src/FsLiveDocs.Cli/Program.fs" "src/FsLiveDocs.Cli/Program.fs"
+          file "NEXT_VERSION" "NEXT_VERSION"
+          file "/dev/null" "dev-docs/releases/0.6.2.md"
+          file "src/FsLiveDocs.Cli/CommandLine.fs" "src/FsLiveDocs.Cli/CommandLine.fs"
+          file "Directory.Build.props" "/dev/null" ]
+
+    [<Fact>]
+    let ``patch mode should list full paths in diff order`` () =
+        let rows = DiffFileTree.BuildRows(files (), false, Collections.Generic.HashSet<string>())
+        test <@ describe (Seq.cast rows) = [ "0:src/FsLiveDocs.Cli/Program.fs"; "0:NEXT_VERSION"; "0:dev-docs/releases/0.6.2.md"; "0:src/FsLiveDocs.Cli/CommandLine.fs"; "0:Directory.Build.props" ] @>
+
+    [<Fact>]
+    let ``tree mode should merge single-folder chains, list folders first and honour collapsed folders`` () =
+        let rows = DiffFileTree.BuildRows(files (), true, Collections.Generic.HashSet<string>())
+        test <@ describe (Seq.cast rows) = [ "0:[dev-docs/releases]"; "1:0.6.2.md"; "0:[src/FsLiveDocs.Cli]"; "1:CommandLine.fs"; "1:Program.fs"; "0:Directory.Build.props"; "0:NEXT_VERSION" ] @>
+        let collapsed = DiffFileTree.BuildRows(files (), true, Collections.Generic.HashSet<string>([ "src/FsLiveDocs.Cli" ]))
+        test <@ describe (Seq.cast collapsed) = [ "0:[dev-docs/releases]"; "1:0.6.2.md"; "0:[src/FsLiveDocs.Cli]"; "0:Directory.Build.props"; "0:NEXT_VERSION" ] @>
+
+    [<Fact>]
+    let ``MainProjection folder selection should toggle the folder and keep the selected file`` () =
+        let projection = MainProjection()
+        let summaries : GitService.DiffFileSummary list =
+            [ { OldPath = "a/x.fs"; NewPath = "a/x.fs"; DisplayPath = "a/x.fs" }
+              { OldPath = "a/y.fs"; NewPath = "a/y.fs"; DisplayPath = "a/y.fs" } ]
+        let model, _ = App.init [||]
+        projection.Update { model with SelectedCommitHash = Some "abc"; SelectedDiffHash = Some "abc"; SelectedDiffFiles = Some summaries }
+        projection.SetDiffFileListModeCommand.Execute "tree"
+        test <@ projection.DiffFileListRows.Count = 3 @>
+        let selected = projection.SelectedDiffFile
+        let folder = projection.DiffFileListRows.[0] :?> DiffFileFolderRow
+        // Selecting a folder row is ignored; toggling happens on click.
+        projection.SelectedDiffFileListRow <- folder
+        test <@ projection.DiffFileListRows.Count = 3 && obj.ReferenceEquals(projection.SelectedDiffFileListRow, selected) @>
+        projection.ToggleDiffFolderCommand.Execute folder
+        test <@ projection.DiffFileListRows.Count = 1 && obj.ReferenceEquals(projection.SelectedDiffFile, selected) @>
+        // A collapsed folder reopens on the next toggle (a fresh row instance for the same path).
+        projection.ToggleDiffFolderCommand.Execute (projection.DiffFileListRows.[0] :?> DiffFileFolderRow)
+        test <@ projection.DiffFileListRows.Count = 3 @>
+        projection.ToggleDiffFolderCommand.Execute (projection.DiffFileListRows.[0] :?> DiffFileFolderRow)
+        projection.SetDiffFileListModeCommand.Execute "patch"
+        test <@ projection.DiffFileListRows.Count = 2 @>
+
+module SearchProjectionTests =
+
+    [<Fact>]
+    let ``advanced fields should read and write prefixed terms in the query`` () =
+        let projection = MainProjection()
+        projection.SearchQuery <- "fonts author:jane"
+        test <@ projection.AdvancedAuthor = "jane" && projection.HasAuthorFilter @>
+        projection.AdvancedPath <- "src/GitKay UI"
+        test <@ projection.SearchQuery = "fonts author:jane path:\"src/GitKay UI\"" @>
+        projection.AdvancedAuthor <- ""
+        test <@ projection.SearchQuery = "fonts path:\"src/GitKay UI\"" && not projection.HasAuthorFilter @>
+
+    [<Fact>]
+    let ``column filter should set the field, show only matches and run the search`` () =
+        let projection = MainProjection()
+        let messages = ResizeArray<App.Msg>()
+        projection.SetDispatch (fun message -> messages.Add message)
+        projection.SearchQuery <- "parser"
+        messages.Clear()
+        projection.ApplyColumnFilter("author", "Jane Doe")
+        test <@ projection.SearchQuery = "parser author:\"Jane Doe\"" && projection.ShowOnlySearchMatches @>
+        test <@ messages |> Seq.exists (function App.Msg.RunSearch ("parser author:\"Jane Doe\"", "commit", _) -> true | _ -> false) @>
+
+    [<Fact>]
+    let ``recent searches should be most recent first, de-duplicated and filtered by typed text`` () =
+        let projection = MainProjection()
+        projection.LoadRecentSearches [ "author:jane"; "fonts"; "fonts"; "path:src/" ]
+        projection.SearchQuery <- "src"
+        projection.SearchOrNextCommitCommand.Execute null
+        test <@ List.ofSeq projection.RecentSearches = [ "src"; "author:jane"; "fonts"; "path:src/" ] @>
+        projection.SearchQuery <- "f"
+        projection.UpdateRecentSearchMatches true
+        test <@ List.ofSeq projection.RecentSearchMatches = [ "fonts" ] && projection.IsRecentSearchesOpen @>
+        projection.SearchQuery <- "zzz"
+        projection.UpdateRecentSearchMatches true
+        test <@ not projection.IsRecentSearchesOpen @>
+
+    [<Fact>]
+    let ``search modes should update the placeholder and dispatch the mode`` () =
+        let projection = MainProjection()
+        let messages = ResizeArray<App.Msg>()
+        projection.SetDispatch (fun message -> messages.Add message)
+        projection.SetSearchModeCommand.Execute "path"
+        test <@ projection.IsPathSearchMode && projection.SearchPlaceholder.Contains "File or folder" @>
+        test <@ messages |> Seq.contains (App.Msg.SetSearchScope "path") @>
+        projection.SearchUseRegex <- true
+        test <@ messages |> Seq.contains (App.Msg.SetSearchRegex true) @>
+
+    [<Fact>]
+    let ``Enter should find next, and select the first match once pending results arrive`` () =
+        let commitOf hash subject : Models.Commit =
+            { Hash = hash; AuthorName = "A"; AuthorEmail = "a@example.com"; Timestamp = 1L; Parents = []; Subject = subject; Message = subject; Refs = [] }
+        let first = commitOf "1111111111111111111111111111111111111111" "one"
+        let second = commitOf "2222222222222222222222222222222222222222" "needle two"
+        let third = commitOf "3333333333333333333333333333333333333333" "needle three"
+        let projection = MainProjection()
+        let messages = ResizeArray<App.Msg>()
+        let model0, _ = App.init [||]
+        let baseModel = { model0 with Commits = Graph.calculateLanes [ first; second; third ]; SelectedCommitHash = Some first.Hash }
+        projection.Update baseModel
+        projection.SetDispatch (fun message -> messages.Add message)
+
+        // Enter before results exist: runs the search and waits.
+        projection.SearchQuery <- "needle"
+        projection.SearchOrNextCommitCommand.Execute null
+        let selections () = messages |> Seq.choose (function App.Msg.SelectCommit (hash, _) -> Some hash | _ -> None) |> List.ofSeq
+        test <@ messages |> Seq.exists (function App.Msg.RunSearch ("needle", _, _) -> true | _ -> false) @>
+        test <@ selections () = [] @>
+
+        // Results arrive: the first match is selected without another Enter.
+        let result (commit: Models.Commit) : GitSearch.Result = { Commit = commit; MatchKinds = [ "message" ]; MatchSummary = "message"; MatchedPaths = []; MatchedRefs = [] }
+        let searched = { baseModel with SearchQuery = "needle"; SearchResults = Some [ result second; result third ] }
+        projection.Update searched
+        test <@ selections () = [ second.Hash ] @>
+
+        // Next Enter moves on to the following match.
+        projection.Update { searched with SelectedCommitHash = Some second.Hash }
+        projection.SearchOrNextCommitCommand.Execute null
+        test <@ selections () = [ second.Hash; third.Hash ] @>
+
+    [<Fact>]
+    let ``unobserved D-Bus platform errors should not be treated as fatal`` () =
+        let dbus = Tmds.DBus.Protocol.DBusException("org.freedesktop.DBus.Error.ServiceUnknown", "The name is not activatable")
+        test <@ FatalErrorPresenter.IsIgnorablePlatformError(AggregateException(dbus :> exn)) @>
+        test <@ not (FatalErrorPresenter.IsIgnorablePlatformError(AggregateException(InvalidOperationException("real") :> exn))) @>
+        test <@ not (FatalErrorPresenter.IsIgnorablePlatformError(AggregateException(dbus :> exn, InvalidOperationException("real") :> exn))) @>
+
+    [<Fact>]
+    let ``pane directions should follow the commits-over-diff-and-files layout`` () =
+        let move pane key = MainWindow.PaneInDirection(pane, key) |> Option.ofNullable
+        test <@ move MainWindow.Pane.Commits Key.J = Some MainWindow.Pane.Diff @>
+        test <@ move MainWindow.Pane.Diff Key.L = Some MainWindow.Pane.Files @>
+        test <@ move MainWindow.Pane.Files Key.H = Some MainWindow.Pane.Diff @>
+        test <@ move MainWindow.Pane.Files Key.Up = Some MainWindow.Pane.Commits @>
+        test <@ move MainWindow.Pane.Commits Key.L = None @>
+
+    [<Fact>]
+    let ``an active search with no results should count as active so show-only-matches shows nothing`` () =
+        let projection = MainProjection()
+        let model, _ = App.init [||]
+        projection.Update { model with SearchQuery = "author:Adzz"; SearchResults = Some [] }
+        test <@ projection.IsCommitSearchActive @>
+        projection.Update { model with SearchQuery = ""; SearchResults = None }
+        test <@ not projection.IsCommitSearchActive @>
+
+module DiffSearchBorrowTests =
+
+    [<Fact>]
+    let ``empty find box borrows the commit search diff term without being overwritten`` () =
+        let commit : Models.Commit =
+            { Hash = "abcabcabcabcabcabcabcabcabcabcabcabcabca"; AuthorName = "A"; AuthorEmail = "a@x"; Timestamp = 1L; Parents = []; Subject = "s"; Message = "s"; Refs = [] }
+        let line kind content newNo : Models.DiffLine = { Type = kind; Content = content; OldLineNo = Some newNo; NewLineNo = Some newNo }
+        let file : Models.FileDiff =
+            { OldPath = "a.fs"; NewPath = "a.fs"; NewLineCount = Some 3
+              Hunks = [ { Header = "@@ -1,3 +1,3 @@"; Lines = [ line Models.Context "let font = 1" 1; line Models.Added "other" 2; line Models.Added "font size" 3 ] } ] }
+        let model0, _ = App.init [||]
+        let model =
+            { model0 with
+                Commits = Graph.calculateLanes [ commit ]
+                SelectedCommitHash = Some commit.Hash
+                SelectedDiffHash = Some commit.Hash
+                SelectedDiffFiles = Some [ { OldPath = "a.fs"; NewPath = "a.fs"; DisplayPath = "a.fs" } ]
+                SelectedDiff = Some [ file ]
+                SearchQuery = "font"
+                SearchScopeKey = "diff"
+                SearchResults = Some [ { Commit = commit; MatchKinds = [ "text" ]; MatchSummary = "text"; MatchedPaths = []; MatchedRefs = [] } ] }
+        let projection = MainProjection()
+        projection.Update model
+
+        test <@ projection.CommitSearchDiffTerm = "font" @>
+        test <@ projection.CommitFindQuery = "" && projection.CommitFindPlaceholder.Contains "font" @>
+
+        projection.FindInCommitCommand.Execute null
+        let selectedContent () = match projection.SelectedDiffRow with :? DiffLineProjection as l -> l.Content | _ -> ""
+        test <@ selectedContent () = "let font = 1" && projection.CommitFindStatusText = "1 of 2 · search" @>
+
+        // Your own text takes over; the commit search term is untouched.
+        projection.CommitFindQuery <- "other"
+        test <@ selectedContent () = "other" && projection.CommitFindStatusText = "1 of 1" && projection.CommitSearchDiffTerm = "font" @>
+
+        // Clearing your text goes back to borrowing.
+        projection.CommitFindQuery <- ""
+        projection.FindInCommitCommand.Execute null
+        test <@ projection.CommitFindStatusText.EndsWith "· search" @>
+
+        // A commit-mode search has no diff term to borrow.
+        projection.Update { model with SearchQuery = "author:jane"; SearchScopeKey = "commit" }
+        test <@ projection.CommitSearchDiffTerm = "" @>
+
+    [<Fact>]
+    let ``parent and child links should follow the graph and navigate`` () =
+        let commitOf hash parents subject : Models.Commit =
+            { Hash = hash; AuthorName = "A"; AuthorEmail = "a@x"; Timestamp = 1L; Parents = parents; Subject = subject; Message = subject; Refs = [] }
+        let h n = String.replicate 40 (string n)
+        let merge = commitOf (h 3) [ h 2; h 1 ] "merge"
+        let side = commitOf (h 2) [ h 1 ] "side"
+        let root = commitOf (h 1) [] "root"
+        let projection = MainProjection()
+        let model0, _ = App.init [||]
+        let model = { model0 with Commits = Graph.calculateLanes [ merge; side; root ]; SelectedCommitHash = Some merge.Hash }
+        let selections = ResizeArray<string>()
+        projection.Update model
+        projection.SetDispatch (function App.Msg.SelectCommit (hash, _) -> selections.Add hash | _ -> ())
+        test <@ projection.SelectedCommitParents |> Seq.map (fun l -> l.Subject) |> List.ofSeq = [ "side"; "root" ] @>
+        test <@ projection.SelectedCommitChildren.Count = 0 @>
+        projection.GoToParent 1
+        test <@ List.ofSeq selections = [ root.Hash ] @>
+        projection.Update { model with SelectedCommitHash = Some root.Hash }
+        test <@ projection.SelectedCommitChildren |> Seq.map (fun l -> l.Subject) |> List.ofSeq = [ "merge"; "side" ] @>
+        projection.GoToChild ()
+        test <@ List.ofSeq selections = [ root.Hash; merge.Hash ] @>
+
+module PaletteTests =
+
+    let private commitOf hash subject (refs: Models.CommitRef list) : Models.Commit =
+        { Hash = hash; AuthorName = "A"; AuthorEmail = "a@x"; Timestamp = 1L; Parents = []; Subject = subject; Message = subject; Refs = refs }
+
+    [<Fact>]
+    let ``fuzzy match should prefer word starts and consecutive letters`` () =
+        test <@ FuzzyMatch.Score("Go to changed file…", "gcf").HasValue @>
+        test <@ FuzzyMatch.Score("Settings", "xyz") = Nullable() @>
+        test <@ FuzzyMatch.Score("View: side-by-side", "side").Value > FuzzyMatch.Score("Show stashes inside", "side").Value @>
+
+    [<Fact>]
+    let ``palette should rank commands, switch modes by prefix and run the selection`` () =
+        let projection = MainProjection()
+        let model0, _ = App.init [||]
+        let a = commitOf (String.replicate 40 "a") "Add fonts" [ RefHelpers.branchRef "main" ]
+        let b = commitOf (String.replicate 40 "b") "Fix parser" [ RefHelpers.tagRef "v1.0" ]
+        projection.Update { model0 with Commits = Graph.calculateLanes [ a; b ]; SelectedCommitHash = Some a.Hash; ShowBranchRefs = true }
+        let selections = ResizeArray<string>()
+        projection.SetDispatch (function App.Msg.SelectCommit (hash, _) -> selections.Add hash | _ -> ())
+
+        projection.OpenPalette PaletteMode.Commands
+        projection.PaletteQuery <- "side by"
+        test <@ projection.PaletteItems.[0].Title = "View: side-by-side" @>
+        projection.RunPaletteItem()
+        test <@ projection.IsSideBySideDiffMode && not projection.IsPaletteOpen @>
+
+        projection.OpenPalette PaletteMode.Commands
+        projection.PaletteQuery <- "@v1"
+        test <@ projection.PaletteMode = PaletteMode.Refs && projection.PaletteItems.[0].Title = "v1.0" @>
+        projection.RunPaletteItem()
+        test <@ List.ofSeq selections = [ b.Hash ] @>
+
+    [<Fact>]
+    let ``back and forward should retrace visited commits`` () =
+        let projection = MainProjection()
+        let model0, _ = App.init [||]
+        let commits = [ for n in 1 .. 3 -> commitOf (String.replicate 40 (string n)) $"c{n}" [] ]
+        let model = { model0 with Commits = Graph.calculateLanes commits }
+        let selections = ResizeArray<string>()
+        let visit (hash: string) = projection.Update { model with SelectedCommitHash = Some hash }
+        visit commits.[0].Hash
+        visit commits.[1].Hash
+        visit commits.[2].Hash
+        projection.SetDispatch (function App.Msg.SelectCommit (hash, _) -> selections.Add hash | _ -> ())
+        test <@ projection.CanGoBack && not projection.CanGoForward @>
+        projection.GoBackCommand.Execute null
+        test <@ List.ofSeq selections = [ commits.[1].Hash ] @>
+        visit commits.[1].Hash
+        test <@ projection.CanGoForward @>
+        projection.GoForwardCommand.Execute null
+        test <@ List.ofSeq selections = [ commits.[1].Hash; commits.[2].Hash ] @>
+
+    [<Fact>]
+    let ``returning to a commit should restore its collapsed files`` () =
+        let commitOf hash : Models.Commit = { Hash = hash; AuthorName = "A"; AuthorEmail = "a@x"; Timestamp = 1L; Parents = []; Subject = hash; Message = hash; Refs = [] }
+        let a = commitOf (String.replicate 40 "a")
+        let b = commitOf (String.replicate 40 "b")
+        let summary path : GitService.DiffFileSummary = { OldPath = path; NewPath = path; DisplayPath = path }
+        let fileOf path : Models.FileDiff =
+            { OldPath = path; NewPath = path; NewLineCount = Some 1
+              Hunks = [ { Header = "@@ -1 +1 @@"; Lines = [ { Type = Models.Added; Content = "x"; OldLineNo = None; NewLineNo = Some 1 } ] } ] }
+        let model0, _ = App.init [||]
+        let modelFor (commit: Models.Commit) =
+            { model0 with
+                Commits = Graph.calculateLanes [ a; b ]
+                SelectedCommitHash = Some commit.Hash
+                SelectedDiffHash = Some commit.Hash
+                SelectedDiffFiles = Some [ summary "one.fs"; summary "two.fs" ]
+                SelectedDiff = Some [ fileOf "one.fs"; fileOf "two.fs" ] }
+        let projection = MainProjection()
+        projection.Update (modelFor a)
+        let one () = projection.SelectedDiffFiles |> Seq.find (fun f -> f.Key.NewPath = "one.fs")
+        projection.ToggleDiffFileCollapsedCommand.Execute (one ())
+        test <@ (one ()).IsCollapsed @>
+
+        projection.Update { (modelFor b) with SelectedDiffHash = None; SelectedDiffFiles = None; SelectedDiff = None }
+        projection.Update (modelFor b)
+        test <@ not (one ()).IsCollapsed @>
+
+        projection.Update { (modelFor a) with SelectedDiffHash = None; SelectedDiffFiles = None; SelectedDiff = None }
+        projection.Update (modelFor a)
+        test <@ (one ()).IsCollapsed @>
+
+
+module StartupSelectionTests =
+
+    [<Fact>]
+    let ``positional short hash should select rather than limit history`` () =
+        match GitStartup.parseStartupOptions [| "d17398a" |] with
+        | Ok options ->
+            test <@ options.SelectedCommitHash = Some "d17398a" && options.StartupTargets = [] @>
+        | Error e -> failwith e
+        match GitStartup.parseStartupOptions [| "main" |] with
+        | Ok options -> test <@ options.SelectedCommitHash = None && options.StartupTargets = [ GitStartup.StartupTarget.Revision "main" ] @>
+        | Error e -> failwith e
+
+    let private commitOf hash : Models.Commit =
+        { Hash = hash; AuthorName = "A"; AuthorEmail = "a@x"; Timestamp = 1L; Parents = []; Subject = hash; Message = hash; Refs = [] }
+
+    [<Fact>]
+    let ``unknown sha should report and fall back to the normal view`` () =
+        let model0, _ = App.init [| "abcdef1" |]
+        test <@ model0.StartupSelection = App.ResolvingSelection "abcdef1" @>
+        let notFound, _ = App.update (App.Msg.SelectionRevisionResolved("abcdef1", Error (GitError.RevisionNotFound "abcdef1"))) model0
+        let a = commitOf (String.replicate 40 "a")
+        let loaded, _ = App.update (App.Msg.HistoryLoaded(true, Ok [ a ])) notFound
+        test <@ loaded.Status = "No commit found for 'abcdef1'" @>
+        test <@ loaded.SelectedCommitHash = Some a.Hash && loaded.Commits.Length = 1 @>
+
+    [<Fact>]
+    let ``resolved sha should be selected when history arrives, even after a partial first page`` () =
+        let model0, _ = App.init [| "bbbbbbb" |]
+        let a = commitOf (String.replicate 40 "a")
+        let b = commitOf (String.replicate 40 "b")
+        let found, _ = App.update (App.Msg.SelectionRevisionResolved("bbbbbbb", Ok b.Hash)) model0
+        let partial, _ = App.update (App.Msg.HistoryLoaded(false, Ok (List.replicate 1000 a))) found
+        test <@ partial.SelectedCommitHash = Some a.Hash && partial.StartupSelection = App.SelectionFound b.Hash @>
+        let full, _ = App.update (App.Msg.HistoryLoaded(true, Ok [ a; b ])) partial
+        test <@ full.SelectedCommitHash = Some b.Hash && full.StartupSelection = App.NoStartupSelection @>

@@ -46,6 +46,18 @@ internal static class MainWindowNavigation
         var selectedIndex = listBox.SelectedIndex;
         var nextIndex = GetNextIndex(selectedIndex, itemCount, delta);
 
+        // Folder rows in the changed-files tree aren't selectable; step over them.
+        var step = Math.Sign(delta);
+        while (nextIndex >= 0 && nextIndex < itemCount && listBox.Items[nextIndex] is DiffFileFolderRow)
+        {
+            nextIndex += step;
+        }
+
+        if (nextIndex < 0 || nextIndex >= itemCount)
+        {
+            return false;
+        }
+
         if (nextIndex < 0 || nextIndex == selectedIndex)
         {
             return false;

@@ -85,8 +85,12 @@ public partial class App : Application
                 mainWindow.Height = persistedUiState.WindowHeight.Value;
             }
 
+            mainWindow.ApplyLayout(persistedUiState.Layout);
+
             var projection = new MainProjection();
             projection.ApplySettings(persistedSettings);
+            projection.LoadRecentSearches(uiStateStore.LoadSearchHistory());
+            projection.ApplyViewPreferences(uiStateStore.LoadViewPreferences());
             mainWindow.DataContext = projection;
             desktop.MainWindow = mainWindow;
 
@@ -144,8 +148,12 @@ public partial class App : Application
                     currentUiState = currentUiState.WithRepoSelection(repoKey, projection.SelectedCommit.FullHash);
                 }
 
-                currentUiState = currentUiState.WithWindowSize(mainWindow.Bounds.Width, mainWindow.Bounds.Height);
+                currentUiState = currentUiState
+                    .WithWindowSize(mainWindow.Bounds.Width, mainWindow.Bounds.Height)
+                    .WithLayout(mainWindow.CaptureLayout());
                 uiStateStore.Save(currentUiState);
+                uiStateStore.SaveSearchHistory(projection.RecentSearches);
+                uiStateStore.SaveViewPreferences(projection.CaptureViewPreferences());
                 ((IDisposable)host).Dispose();
             };
 

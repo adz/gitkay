@@ -45,6 +45,18 @@
                                 </StackPanel>
                             </Border>
                         </GroupBox>
+
+                        <GroupBox Header="Navigation">
+                            <Border Padding="12">
+                                <StackPanel Spacing="4">
+                                    <CheckBox Content="Hover to focus"
+                                              IsChecked="{Binding HoverToFocus, Mode=TwoWay}" />
+                                    <TextBlock Text="Pointing at the commit list, diff or file list makes it the target for keyboard shortcuts — e.g. hover the diff and press Ctrl+F to find in the diff. Doesn't take focus away from a text box you're typing in."
+                                               TextWrapping="Wrap" FontSize="12"
+                                               Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
+                                </StackPanel>
+                            </Border>
+                        </GroupBox>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>

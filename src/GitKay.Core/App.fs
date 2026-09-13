@@ -12,9 +12,35 @@ module App =
     let private selectionJob = LatestJob()
     let private diffJob = LatestJob()
     let private searchJob = LatestJob()
+    let private contextJobs = Collections.Concurrent.ConcurrentDictionary<GitService.DiffFileKey, LatestJob>()
+
+    let private cancelContextJobs () =
+        for job in contextJobs.Values do
+            job.Cancel()
+        contextJobs.Clear()
+
+    /// Presentation-only expansion state for one file of the selected diff.
+    type FileExpansion =
+        {
+            /// Complete-context diff for the file, loaded lazily on first expansion.
+            FullContext: Models.FileDiff option
+            /// Revealed new-file line ranges; independent of the configured context preference.
+            Revealed: DiffExpansion.LineRange list
+            /// The in-flight full-context request, if any.
+            PendingRequestId: int64 option
+        }
+
+    /// A commit requested on the command line (gitkay <sha>, --select): resolved through git, then selected
+    /// once history containing it has loaded.
+    type StartupSelection =
+        | NoStartupSelection
+        | ResolvingSelection of revision: string
+        | SelectionFound of hash: string
+        | SelectionNotFound of revision: string
 
     type Model =
         {
+            StartupSelection: StartupSelection
             GitEnv: GitService.GitEnv
             Status: string
             StartupTargets: GitStartup.StartupTarget list
@@ -24,6 +50,8 @@ module App =
             DiffPresentationModeKey: string
             SearchQuery: string
             SearchScopeKey: string
+            /// Treat search text as regular expressions.
+            SearchUseRegex: bool
             SearchResults: GitSearch.Result list option
             Commits: Graph.CommitGraphInfo list
             HasFullHistory: bool
@@ -32,6 +60,7 @@ module App =
             SelectedDiffFiles: GitService.DiffFileSummary list option
             SelectedDiff: Models.FileDiff list option
             SelectedDiffFileKey: GitService.DiffFileKey option
+            DiffExpansions: Map<GitService.DiffFileKey, FileExpansion>
             SelectionStartedAtTicks: int64 option
             SelectedDiffStartedAtTicks: int64 option
             SearchStartedAtTicks: int64 option
@@ -48,8 +77,15 @@ module App =
         | DiffFilesLoaded of hash:string * startedAtTicks:int64 * Result<GitService.DiffFileSummary list, GitError>
         | DiffLoaded of hash:string * startedAtTicks:int64 * Result<Models.FileDiff list, GitError>
         | SelectDiffFile of hash:string * oldPath:string * newPath:string
+        /// A startup --select revision (short hash, branch, tag, HEAD~n) resolved to a full hash.
+        | SelectionRevisionResolved of revision:string * Result<string, GitError>
+        | ExpandDiffGap of hash:string * gap:DiffExpansion.DiffGap * direction:DiffExpansion.ExpandDirection * requestedAtTicks:int64
+        | ExpandDiffFile of hash:string * key:GitService.DiffFileKey * requestedAtTicks:int64
+        | CollapseDiffFileContext of hash:string * key:GitService.DiffFileKey
+        | DiffFileContextLoaded of hash:string * key:GitService.DiffFileKey * requestId:int64 * Result<Models.FileDiff, GitError>
         | SetSearchQuery of string
         | SetSearchScope of string
+        | SetSearchRegex of bool
         | RunSearch of query:string * scopeKey:string * startedAtTicks:int64
         | SearchResultsLoaded of query:string * scopeKey:string * startedAtTicks:int64 * Result<GitSearch.Result list, GitError>
         | CreateTag of hash:string * name:string
@@ -67,7 +103,7 @@ module App =
     let private historyLimit = 1000
 
     let private logTiming (message: string) =
-        let line = sprintf "[timing] %s" message
+        let line = "[timing] " + message
         Trace.WriteLine line
 
     let private loadDiffFilesFlow (hash: string) =
@@ -82,12 +118,11 @@ module App =
             return! GitService.fetchDiff contextLines hash
         }
 
-    let private loadSearchResultsFlow (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) =
+    let private loadSearchResultsFlow (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (useRegex: bool) =
         flow {
             do! Flow.Runtime.ensureNotCanceled (GitError.OperationCanceled "Search")
-            let scope = GitStartup.parseSearchScope scopeKey
             let commitList = commits |> List.map (fun info -> info.Commit)
-            return! GitService.searchCommits contextLines commitList query scope
+            return! GitService.searchCommits contextLines commitList (GitSearch.parseMode scopeKey) useRegex query
         }
 
 
@@ -113,15 +148,33 @@ module App =
             (fun err -> DiffLoaded(hash, startedAtTicks, Error err))
             (fun () -> NoOp)
 
-    let private startSearchLoad (env: GitService.GitEnv) (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (startedAtTicks: int64) =
+    let private startSearchLoad (env: GitService.GitEnv) (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (useRegex: bool) (startedAtTicks: int64) =
         let cancellationToken = searchJob.Start startedAtTicks
 
         Cmd.OfFlow.eitherWithCancellation
             env
             cancellationToken
-            (loadSearchResultsFlow contextLines commits query scopeKey)
+            (loadSearchResultsFlow contextLines commits query scopeKey useRegex)
             (fun result -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Ok result))
             (fun err -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Error err))
+            (fun () -> NoOp)
+
+    let private startDiffFileContextLoad (env: GitService.GitEnv) (hash: string) (key: GitService.DiffFileKey) (requestId: int64) =
+        let job = contextJobs.GetOrAdd(key, fun _ -> LatestJob())
+        let cancellationToken = job.Start requestId
+
+        let workflow =
+            flow {
+                do! Flow.Runtime.ensureNotCanceled (GitError.OperationCanceled "Context expansion")
+                return! GitService.fetchDiffFileFullContext hash key.OldPath key.NewPath
+            }
+
+        Cmd.OfFlow.eitherWithCancellation
+            env
+            cancellationToken
+            workflow
+            (fun result -> DiffFileContextLoaded(hash, key, requestId, Ok result))
+            (fun err -> DiffFileContextLoaded(hash, key, requestId, Error err))
             (fun () -> NoOp)
 
     let private diffFileKeyOfSummary (summary: GitService.DiffFileSummary) : GitService.DiffFileKey =
@@ -140,10 +193,16 @@ module App =
             | Some hash -> commits |> List.exists (fun info -> info.Commit.Hash = hash)
             | None -> false
 
+        let startupHash =
+            match model.StartupSelection with
+            | SelectionFound hash when commits |> List.exists (fun info -> info.Commit.Hash = hash) -> Some hash
+            | _ -> None
+
         let selectedHash =
-            match model.SelectedCommitHash, selectionExistsInHistory, commits with
-            | Some hash, true, _ -> Some hash
-            | _, _, firstCommit :: _ -> Some firstCommit.Commit.Hash
+            match startupHash, model.SelectedCommitHash, selectionExistsInHistory, commits with
+            | Some hash, _, _, _ -> Some hash
+            | None, Some hash, true, _ -> Some hash
+            | _, _, _, firstCommit :: _ -> Some firstCommit.Commit.Hash
             | _ -> None
 
         let diffReadyForSelection =
@@ -165,7 +224,7 @@ module App =
         let nextModel =
             {
                 model with
-                    Status = sprintf "Loaded %d commits" commits.Length
+                    Status = $"Loaded {commits.Length} commits"
                     Commits = commits
                     SearchResults = None
                     SearchStartedAtTicks = None
@@ -174,6 +233,7 @@ module App =
                     SelectedDiffFiles = if diffReadyForSelection then model.SelectedDiffFiles else None
                     SelectedDiff = if diffReadyForSelection then model.SelectedDiff else None
                     SelectedDiffFileKey = if diffReadyForSelection then model.SelectedDiffFileKey else None
+                    DiffExpansions = if diffReadyForSelection then model.DiffExpansions else Map.empty
                     SelectionStartedAtTicks = nextSelectionStartedAtTicks
                     SelectedDiffStartedAtTicks = nextDiffStartedAtTicks
             }
@@ -186,9 +246,45 @@ module App =
                 selectionJob.Cancel()
                 if not diffReadyForSelection then
                     diffJob.Cancel()
+                    cancelContextJobs ()
                 Cmd.none
 
         nextModel, cmd
+
+    let private revealDiffRange (model: Model) (hash: string) (key: GitService.DiffFileKey) (range: DiffExpansion.LineRange option) (requestedAtTicks: int64) =
+        let fileIsSelected =
+            model.SelectedDiffHash = Some hash
+            && model.SelectedDiffFiles |> Option.exists (tryFindDiffFileSummary key >> Option.isSome)
+
+        match fileIsSelected, range with
+        | true, Some range ->
+            let current =
+                model.DiffExpansions
+                |> Map.tryFind key
+                |> Option.defaultValue { FullContext = None; Revealed = []; PendingRequestId = None }
+
+            let revealed = { current with Revealed = DiffExpansion.addRange range current.Revealed }
+
+            match current.FullContext, current.PendingRequestId with
+            | None, None ->
+                let expansion = { revealed with PendingRequestId = Some requestedAtTicks }
+                { model with DiffExpansions = model.DiffExpansions |> Map.add key expansion },
+                startDiffFileContextLoad model.GitEnv hash key requestedAtTicks
+            | _ ->
+                { model with DiffExpansions = model.DiffExpansions |> Map.add key revealed }, Cmd.none
+        | _ ->
+            model, Cmd.none
+
+    /// Reports the outcome of a command-line selection once history is in, and finishes it on the full load.
+    let private applyStartupSelectionNotice (isFull: bool) (model: Model) =
+        match model.StartupSelection with
+        | SelectionNotFound revision ->
+            { model with Status = $"No commit found for '{revision}'"; StartupSelection = if isFull then NoStartupSelection else model.StartupSelection }
+        | SelectionFound hash when model.SelectedCommitHash = Some hash ->
+            { model with StartupSelection = NoStartupSelection }
+        | SelectionFound hash when isFull ->
+            { model with Status = $"Commit {hash.Substring(0, min 8 hash.Length)} isn't in the loaded history"; StartupSelection = NoStartupSelection }
+        | _ -> model
 
     let init (startupArgs: string array) : Model * Cmd<Msg> =
         let repoPath = GitService.tryDiscoverRepositoryPath ()
@@ -197,15 +293,17 @@ module App =
         match GitStartup.parseStartupOptions startupArgs with
         | Error err ->
             {
+                StartupSelection = NoStartupSelection
                 GitEnv = gitEnv
-                Status = sprintf "Error: %s" err
+                Status = "Error: " + err
                 StartupTargets = []
                 ShowBranchRefs = false
                 ShowStashes = false
                 DiffContextLines = 3
                 DiffPresentationModeKey = "diff"
                 SearchQuery = ""
-                SearchScopeKey = "all"
+                SearchScopeKey = "commit"
+                SearchUseRegex = false
                 SearchResults = None
                 Commits = []
                 HasFullHistory = false
@@ -214,6 +312,7 @@ module App =
                 SelectedDiffFiles = None
                 SelectedDiff = None
                 SelectedDiffFileKey = None
+                DiffExpansions = Map.empty
                 SelectionStartedAtTicks = None
                 SelectedDiffStartedAtTicks = None
                 SearchStartedAtTicks = None
@@ -222,6 +321,10 @@ module App =
         | Ok startupOptions ->
             let model =
                 {
+                    StartupSelection =
+                        match startupOptions.SelectedCommitHash with
+                        | Some revision -> ResolvingSelection revision
+                        | None -> NoStartupSelection
                     GitEnv = gitEnv
                     Status = "Loading history..."
                     StartupTargets = startupOptions.StartupTargets
@@ -231,6 +334,7 @@ module App =
                     DiffPresentationModeKey = startupOptions.DiffPresentationModeKey
                     SearchQuery = startupOptions.SearchQuery
                     SearchScopeKey = startupOptions.SearchScopeKey
+                    SearchUseRegex = false
                     SelectedCommitHash = startupOptions.SelectedCommitHash
                     SearchResults = None
                     Commits = []
@@ -239,6 +343,7 @@ module App =
                     SelectedDiffFiles = None
                     SelectedDiff = None
                     SelectedDiffFileKey = None
+                    DiffExpansions = Map.empty
                     SelectionStartedAtTicks = None
                     SelectedDiffStartedAtTicks = None
                     SearchStartedAtTicks = None
@@ -247,7 +352,15 @@ module App =
             if String.IsNullOrEmpty gitEnv.RepoPath then
                 { model with Status = "Error: Could not locate a Git repository." }, Cmd.none
             else
-                model, loadHistory gitEnv (Some historyLimit) startupOptions.ShowStashes startupOptions.StartupTargets
+                let resolveSelection =
+                    match startupOptions.SelectedCommitHash with
+                    | Some revision ->
+                        Cmd.OfFlow.either gitEnv (GitService.resolveCommit revision)
+                            (fun hash -> SelectionRevisionResolved(revision, Ok hash))
+                            (fun err -> SelectionRevisionResolved(revision, Error err))
+                    | None -> Cmd.none
+
+                model, Cmd.batch [ loadHistory gitEnv (Some historyLimit) startupOptions.ShowStashes startupOptions.StartupTargets; resolveSelection ]
 
     let update msg model : Model * Cmd<Msg> =
         match msg with
@@ -296,7 +409,7 @@ module App =
                 searchJob.Cancel()
                 let graphInfo = Graph.calculateLanes commits
                 let nextModel, historyCmd = historyLoadSelection model graphInfo
-                let nextModel = { nextModel with HasFullHistory = true }
+                let nextModel = { nextModel with HasFullHistory = true } |> applyStartupSelectionNotice true
                 let searchQuery = nextModel.SearchQuery.Trim()
 
                 if String.IsNullOrWhiteSpace searchQuery then
@@ -307,15 +420,15 @@ module App =
                         {
                             nextModel with
                                 SearchStartedAtTicks = Some startedAtTicks
-                                Status = sprintf "Searching %s..." nextModel.SearchQuery
+                                Status = $"Searching {nextModel.SearchQuery}..."
                         }
 
-                    searchModel, Cmd.batch [ historyCmd; startSearchLoad model.GitEnv searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey startedAtTicks ]
+                    searchModel, Cmd.batch [ historyCmd; startSearchLoad model.GitEnv searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey model.SearchUseRegex startedAtTicks ]
             else
                 // Partial history loaded
                 let graphInfo = Graph.calculateLanes commits
                 let nextModel, historyCmd = historyLoadSelection model graphInfo
-                let nextModel = { nextModel with Status = sprintf "Loaded %d commits (loading more...)" commits.Length }
+                let nextModel = { nextModel with Status = $"Loaded {commits.Length} commits (loading more...)" } |> applyStartupSelectionNotice false
                 
                 let loadFullCmd = loadHistory model.GitEnv None model.ShowStashes model.StartupTargets
                 
@@ -328,16 +441,17 @@ module App =
                         {
                             nextModel with
                                 SearchStartedAtTicks = Some startedAtTicks
-                                Status = sprintf "Searching %s..." nextModel.SearchQuery
+                                Status = $"Searching {nextModel.SearchQuery}..."
                         }
 
-                    searchModel, Cmd.batch [ historyCmd; loadFullCmd; startSearchLoad model.GitEnv searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey startedAtTicks ]
+                    searchModel, Cmd.batch [ historyCmd; loadFullCmd; startSearchLoad model.GitEnv searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey model.SearchUseRegex startedAtTicks ]
         | HistoryLoaded (_, Error err) ->
             searchJob.Cancel()
-            { model with Status = sprintf "Error: %s" (GitError.describe err); SearchResults = None; SearchStartedAtTicks = None }, Cmd.none
+            { model with Status = "Error: " + GitError.describe err; SearchResults = None; SearchStartedAtTicks = None }, Cmd.none
         | SelectCommit (hash, startedAtTicks) ->
             selectionJob.Cancel()
             diffJob.Cancel()
+            cancelContextJobs ()
             let nextModel =
                 {
                     model with
@@ -346,6 +460,7 @@ module App =
                         SelectedDiffFiles = None
                         SelectedDiff = None
                         SelectedDiffFileKey = None
+                        DiffExpansions = Map.empty
                         SelectionStartedAtTicks = Some startedAtTicks
                         SelectedDiffStartedAtTicks = Some startedAtTicks
                 }
@@ -362,6 +477,8 @@ module App =
                 { model with SearchQuery = query }, Cmd.none
         | SetSearchScope scopeKey ->
             { model with SearchScopeKey = scopeKey }, Cmd.none
+        | SetSearchRegex useRegex ->
+            { model with SearchUseRegex = useRegex }, Cmd.none
         | RunSearch (query, scopeKey, startedAtTicks) ->
             searchJob.Cancel()
 
@@ -375,30 +492,30 @@ module App =
                             SearchScopeKey = scopeKey
                             SearchResults = None
                             SearchStartedAtTicks = Some startedAtTicks
-                            Status = sprintf "Searching %s..." query
+                            Status = $"Searching {query}..."
                     }
 
-                let cmd = startSearchLoad model.GitEnv model.DiffContextLines model.Commits query scopeKey startedAtTicks
+                let cmd = startSearchLoad model.GitEnv model.DiffContextLines model.Commits query scopeKey model.SearchUseRegex startedAtTicks
                 nextModel, cmd
         | SearchResultsLoaded (query, scopeKey, startedAtTicks, Ok results) ->
             match model.SearchQuery, model.SearchScopeKey, model.SearchStartedAtTicks with
             | currentQuery, currentScopeKey, Some currentStartedAtTicks when currentQuery = query && currentScopeKey = scopeKey && currentStartedAtTicks = startedAtTicks ->
                 searchJob.Complete startedAtTicks
-                { model with SearchResults = Some results; SearchStartedAtTicks = None; Status = sprintf "Search: %d hit(s) for \"%s\"" results.Length query }, Cmd.none
+                { model with SearchResults = Some results; SearchStartedAtTicks = None; Status = $"Search: {results.Length} hit(s) for \"{query}\"" }, Cmd.none
             | _ ->
                 model, Cmd.none
         | SearchResultsLoaded (query, scopeKey, startedAtTicks, Error err) ->
             match model.SearchQuery, model.SearchScopeKey, model.SearchStartedAtTicks with
             | currentQuery, currentScopeKey, Some currentStartedAtTicks when currentQuery = query && currentScopeKey = scopeKey && currentStartedAtTicks = startedAtTicks ->
                 searchJob.Complete startedAtTicks
-                { model with SearchResults = None; SearchStartedAtTicks = None; Status = sprintf "Search Error: %s" (GitError.describe err) }, Cmd.none
+                { model with SearchResults = None; SearchStartedAtTicks = None; Status = "Search Error: " + GitError.describe err }, Cmd.none
             | _ ->
                 model, Cmd.none
         | DiffFilesLoaded (hash, startedAtTicks, Ok files) ->
             match model.SelectedCommitHash, model.SelectionStartedAtTicks with
             | Some currentHash, Some currentStartedAtTicks when currentHash = hash && currentStartedAtTicks = startedAtTicks ->
                 let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
-                logTiming (sprintf "commit click -> file list ready hash=%s elapsed=%.1fms files=%d" hash elapsed.TotalMilliseconds files.Length)
+                logTiming $"commit click -> file list ready hash={hash} elapsed={elapsed.TotalMilliseconds:F1}ms files={files.Length}"
             | _ ->
                 ()
 
@@ -434,13 +551,14 @@ module App =
             match model.SelectedCommitHash, model.SelectionStartedAtTicks with
             | Some currentHash, Some currentStartedAtTicks when currentHash = hash && currentStartedAtTicks = startedAtTicks ->
                 let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
-                logTiming (sprintf "commit click -> file list error hash=%s elapsed=%.1fms error=%s" hash elapsed.TotalMilliseconds (GitError.describe err))
+                logTiming $"commit click -> file list error hash={hash} elapsed={elapsed.TotalMilliseconds:F1}ms error={GitError.describe err}"
             | _ ->
                 ()
 
             if model.SelectedCommitHash = Some hash && model.SelectionStartedAtTicks = Some startedAtTicks then
                 selectionJob.Complete startedAtTicks
-                { model with Status = sprintf "Diff Error: %s" (GitError.describe err); SelectedDiffHash = None; SelectedDiffFiles = None; SelectedDiff = None; SelectedDiffFileKey = None; SelectionStartedAtTicks = None; SelectedDiffStartedAtTicks = None }, Cmd.none
+                cancelContextJobs ()
+                { model with Status = "Diff Error: " + GitError.describe err; SelectedDiffHash = None; SelectedDiffFiles = None; SelectedDiff = None; SelectedDiffFileKey = None; DiffExpansions = Map.empty; SelectionStartedAtTicks = None; SelectedDiffStartedAtTicks = None }, Cmd.none
             else
                 model, Cmd.none
         | DiffLoaded (hash, startedAtTicks, Ok diff) ->
@@ -448,7 +566,7 @@ module App =
             | Some currentCommitHash, Some currentStartedAtTicks
                 when currentCommitHash = hash && currentStartedAtTicks = startedAtTicks ->
                 let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
-                logTiming (sprintf "commit click -> unified diff ready hash=%s elapsed=%.1fms files=%d" hash elapsed.TotalMilliseconds diff.Length)
+                logTiming $"commit click -> unified diff ready hash={hash} elapsed={elapsed.TotalMilliseconds:F1}ms files={diff.Length}"
             | _ ->
                 ()
 
@@ -462,13 +580,13 @@ module App =
             | Some currentCommitHash, Some currentStartedAtTicks
                 when currentCommitHash = hash && currentStartedAtTicks = startedAtTicks ->
                 let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
-                logTiming (sprintf "commit click -> unified diff error hash=%s elapsed=%.1fms error=%s" hash elapsed.TotalMilliseconds (GitError.describe err))
+                logTiming $"commit click -> unified diff error hash={hash} elapsed={elapsed.TotalMilliseconds:F1}ms error={GitError.describe err}"
             | _ ->
                 ()
 
             if model.SelectedCommitHash = Some hash && model.SelectedDiffStartedAtTicks = Some startedAtTicks then
                 diffJob.Complete startedAtTicks
-                { model with Status = sprintf "Diff Error: %s" (GitError.describe err); SelectedDiff = None; SelectedDiffStartedAtTicks = None }, Cmd.none
+                { model with Status = "Diff Error: " + GitError.describe err; SelectedDiff = None; SelectedDiffStartedAtTicks = None }, Cmd.none
             else
                 model, Cmd.none
         | SelectDiffFile (hash, oldPath, newPath) ->
@@ -481,6 +599,35 @@ module App =
             if model.SelectedCommitHash = Some hash && model.SelectedDiffHash = Some hash then
                 { model with SelectedDiffFileKey = Some key }, Cmd.none
             else
+                model, Cmd.none
+        | ExpandDiffGap (hash, gap, direction, requestedAtTicks) ->
+            let key: GitService.DiffFileKey = { OldPath = gap.OldPath; NewPath = gap.NewPath }
+            revealDiffRange model hash key (DiffExpansion.revealRange direction gap) requestedAtTicks
+        | ExpandDiffFile (hash, key, requestedAtTicks) ->
+            revealDiffRange model hash key (Some { Start = 1; End = Int32.MaxValue }) requestedAtTicks
+        | CollapseDiffFileContext (hash, key) ->
+            match model.SelectedDiffHash, Map.tryFind key model.DiffExpansions with
+            | Some currentHash, Some expansion when currentHash = hash ->
+                { model with DiffExpansions = model.DiffExpansions |> Map.add key { expansion with Revealed = [] } }, Cmd.none
+            | _ ->
+                model, Cmd.none
+        | DiffFileContextLoaded (hash, key, requestId, result) ->
+            match model.SelectedDiffHash, Map.tryFind key model.DiffExpansions with
+            | Some currentHash, Some expansion when currentHash = hash && expansion.PendingRequestId = Some requestId ->
+                match contextJobs.TryGetValue key with
+                | true, job -> job.Complete requestId
+                | _ -> ()
+
+                match result with
+                | Ok file ->
+                    let expansion = { expansion with FullContext = Some file; PendingRequestId = None }
+                    { model with DiffExpansions = model.DiffExpansions |> Map.add key expansion }, Cmd.none
+                | Error err ->
+                    { model with
+                        Status = "Context Error: " + GitError.describe err
+                        DiffExpansions = model.DiffExpansions |> Map.remove key },
+                    Cmd.none
+            | _ ->
                 model, Cmd.none
         | CreateTag (hash, name) ->
             model, Cmd.OfFlow.either model.GitEnv (GitService.createTag hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
@@ -495,7 +642,23 @@ module App =
         | OperationResult (Ok _) ->
             model, Cmd.ofMsg RereadRefs
         | OperationResult (Error err) ->
-            { model with Status = sprintf "Git Error: %s" (GitError.describe err) }, Cmd.none
+            { model with Status = "Git Error: " + GitError.describe err }, Cmd.none
+        | SelectionRevisionResolved (_, Ok hash) ->
+            let historyHasCommit = model.Commits |> List.exists (fun info -> info.Commit.Hash = hash)
+
+            if model.SelectedCommitHash = Some hash then
+                { model with StartupSelection = NoStartupSelection }, Cmd.none
+            elif historyHasCommit then
+                // History already loaded (and picked a default): select the requested commit now.
+                { model with StartupSelection = NoStartupSelection }, Cmd.ofMsg (SelectCommit(hash, Stopwatch.GetTimestamp()))
+            else
+                // History still loading, or the commit is older than the first page: selected when it arrives.
+                { model with StartupSelection = SelectionFound hash }, Cmd.none
+        | SelectionRevisionResolved (revision, Error _) ->
+            // Fall back to the normal view: history is unaffected; just say what couldn't be found.
+            let nextModel = { model with StartupSelection = SelectionNotFound revision }
+            if model.Commits.IsEmpty then nextModel, Cmd.none
+            else applyStartupSelectionNotice model.HasFullHistory nextModel, Cmd.none
         | NoOp ->
             model, Cmd.none
 

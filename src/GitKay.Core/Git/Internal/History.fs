@@ -37,7 +37,7 @@ module internal History =
             |> Seq.mapi (fun index stash -> index, stash)
             |> Seq.iter (fun (index, stash) ->
                 if not (isNull stash.WorkTree) then
-                    addRef stash.WorkTree.Sha CommitRefKind.Stash (sprintf "stash@{%d}" index) false)
+                    addRef stash.WorkTree.Sha CommitRefKind.Stash ("stash@{" + string index + "}") false)
 
         refsByCommit
         |> Seq.map (fun pair ->

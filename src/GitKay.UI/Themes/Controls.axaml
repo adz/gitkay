@@ -1,9 +1,10 @@
 <Styles xmlns="https://github.com/avaloniaui"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:GitKay.UI">
     <Style Selector="Window">
         <Setter Property="Background" Value="{DynamicResource GitKayWindowBrush}" />
         <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
-        <Setter Property="FontFamily" Value="Inter,Segoe UI,Arial,sans-serif" />
+        <Setter Property="FontFamily" Value="{x:Static local:FontStacks.Ui}" />
     </Style>
     <Style Selector="Menu">
         <Setter Property="Background" Value="{DynamicResource GitKaySurfaceBrush}" />
@@ -23,5 +24,143 @@
         <Setter Property="Background" Value="{DynamicResource GitKayRaisedBrush}" />
         <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
         <Setter Property="BorderBrush" Value="{DynamicResource GitKayBorderBrush}" />
+    </Style>
+    <!-- Segmented icon toggles (diff view modes, file list modes). -->
+    <Style Selector="Button.segment">
+        <Setter Property="Width" Value="30" />
+        <Setter Property="Height" Value="24" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="CornerRadius" Value="3" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Opacity" Value="0.7" />
+    </Style>
+    <Style Selector="Button.segment:pointerover">
+        <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="Button.segment:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource GitKayHoverBrush}" />
+    </Style>
+    <Style Selector="Button.segment.selected">
+        <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="Button.segment.selected /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource GitKaySelectionBrush}" />
+    </Style>
+    <Style Selector="Button.segment.text, ToggleButton.segment.text">
+        <Setter Property="Width" Value="NaN" />
+        <Setter Property="Padding" Value="9,0" />
+    </Style>
+    <Style Selector="ToggleButton.segment">
+        <Setter Property="Width" Value="30" />
+        <Setter Property="Height" Value="24" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="CornerRadius" Value="3" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Opacity" Value="0.7" />
+    </Style>
+    <Style Selector="ToggleButton.segment:pointerover">
+        <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="ToggleButton.segment:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource GitKayHoverBrush}" />
+    </Style>
+    <Style Selector="ToggleButton.segment:checked">
+        <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="ToggleButton.segment:checked /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource GitKaySelectionBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
+    </Style>
+    <Style Selector="Button.inline, Button.funnel">
+        <Setter Property="Width" Value="20" />
+        <Setter Property="Height" Value="20" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="3" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="ToggleButton.inline">
+        <Setter Property="Width" Value="22" />
+        <Setter Property="Height" Value="20" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="3" />
+        <Setter Property="Opacity" Value="0.65" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="ToggleButton.inline:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource GitKayHoverBrush}" />
+    </Style>
+    <Style Selector="ToggleButton.inline:checked">
+        <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="ToggleButton.inline:checked /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource GitKaySelectionBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
+    </Style>
+    <Style Selector="Button.funnel">
+        <Setter Property="Width" Value="14" />
+        <Setter Property="Height" Value="14" />
+    </Style>
+    <Style Selector="Button.inline:pointerover /template/ ContentPresenter#PART_ContentPresenter, Button.funnel:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource GitKayHoverBrush}" />
+    </Style>
+    <Style Selector="ToggleButton.expander">
+        <Setter Property="Height" Value="26" />
+        <Setter Property="Padding" Value="8,0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Foreground" Value="{DynamicResource GitKaySecondaryTextBrush}" />
+    </Style>
+    <Style Selector="ToggleButton.expander:checked /template/ ContentPresenter#PART_ContentPresenter, ToggleButton.expander:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource GitKayHoverBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
+    </Style>
+    <Style Selector="Button.commitLink">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="4,1" />
+        <Setter Property="Margin" Value="0,0,10,0" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{DynamicResource GitKayAccentBrush}" />
+        <Setter Property="Cursor" Value="Hand" />
+    </Style>
+    <Style Selector="Button.commitLink:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource GitKayHoverBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource GitKayAccentBrush}" />
+    </Style>
+    <!-- Segment groups carry no outline: only the selected segment is tinted, which keeps bars quiet. -->
+    <!-- Ctrl-held shortcut hints. -->
+    <Style Selector="Border.keyHint">
+        <Setter Property="Background" Value="{DynamicResource GitKayAccentBrush}" />
+        <Setter Property="CornerRadius" Value="3" />
+        <Setter Property="Padding" Value="5,1" />
+        <Setter Property="ZIndex" Value="50" />
+        <Setter Property="IsHitTestVisible" Value="False" />
+        <Setter Property="BoxShadow" Value="0 2 6 0 #40000000" />
+    </Style>
+    <Style Selector="Border.keyHint > TextBlock">
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Border.segmentGroup">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="Padding" Value="0" />
     </Style>
 </Styles>

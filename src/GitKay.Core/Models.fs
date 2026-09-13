@@ -60,4 +60,6 @@ module Models =
             OldPath: string
             NewPath: string
             Hunks: DiffHunk list
+            /// Line count of the new file, when known; bounds trailing context expansion.
+            NewLineCount: int option
         }

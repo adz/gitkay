@@ -169,6 +169,15 @@ internal static class SyntaxHighlighting
     private static readonly object TokenCacheLock = new();
     private const int MaxCacheSize = 2000;
 
+    /// <summary>Benchmark hook: measures cold tokenization.</summary>
+    internal static void ClearTokenCache()
+    {
+        lock (TokenCacheLock)
+        {
+            TokenCache.Clear();
+        }
+    }
+
     internal static IReadOnlyList<HighlightToken> Tokenize(string text)
     {
         if (string.IsNullOrEmpty(text))

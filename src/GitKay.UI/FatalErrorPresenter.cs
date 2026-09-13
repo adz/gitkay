@@ -1,3 +1,4 @@
+using System.Linq;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -74,7 +75,23 @@ public static class FatalErrorPresenter
     private static void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
     {
         e.SetObserved();
+        if (IsIgnorablePlatformError(e.Exception))
+        {
+            // Avalonia's Linux integration fires D-Bus calls (accessibility, input method, portals) without
+            // awaiting them; on sessions where a service isn't running they fail harmlessly.
+            System.Diagnostics.Trace.WriteLine($"[platform] ignored unobserved D-Bus error: {e.Exception.GetBaseException().Message}");
+            return;
+        }
+
         ReportFatalError("GitKay hit an unrecoverable async error.", e.Exception);
+    }
+
+    /// <summary>True when every inner exception is a D-Bus protocol error from the desktop platform layer.</summary>
+    internal static bool IsIgnorablePlatformError(AggregateException exception)
+    {
+        var inner = exception.Flatten().InnerExceptions;
+        return inner.Count > 0
+            && inner.All(error => error.GetType().FullName?.StartsWith("Tmds.DBus", StringComparison.Ordinal) == true);
     }
 
     private static void ReportFatalError(string heading, Exception exception)

@@ -34,22 +34,18 @@ module GitStartup =
             DiffContextLines = 3
             DiffPresentationModeKey = "diff"
             SearchQuery = ""
-            SearchScopeKey = "all"
+            SearchScopeKey = "commit"
             SelectedCommitHash = None
             LogFile = None
             HelpRequested = false
             VersionRequested = false
         }
 
+    /// Search mode keys (commit, path, diff); older scope names are accepted and mapped to the nearest mode.
     let private tryParseSearchScopeKey (value: string) =
         match value.Trim().ToLowerInvariant() with
-        | "hash" -> Some "hash"
-        | "message" -> Some "message"
-        | "author" -> Some "author"
-        | "path" -> Some "path"
-        | "text" -> Some "text"
-        | "ref" -> Some "ref"
-        | "all" -> Some "all"
+        | "commit" | "path" | "diff" | "fields" | "all" | "message" | "author" | "hash" | "ref" | "text" as key ->
+            Some(GitSearch.modeKey (GitSearch.parseMode key))
         | _ -> None
 
     let private tryParseDiffPresentationModeKey (value: string) =
@@ -70,11 +66,11 @@ module GitStartup =
             if allowEmpty || not (String.IsNullOrWhiteSpace value) then
                 Ok(value, index + 1)
             else
-                Error (sprintf "Missing %s after %s." valueLabel optionName)
+                Error $"Missing {valueLabel} after {optionName}."
         elif index + 1 < args.Length && not (args.[index + 1].StartsWith("--")) then
             Ok(args.[index + 1], index + 2)
         else
-            Error (sprintf "Missing %s after %s." valueLabel optionName)
+            Error $"Missing {valueLabel} after {optionName}."
 
     let getHelpText () =
         "Usage: gitkay [options] [revision]\n\n" +
@@ -85,9 +81,10 @@ module GitStartup =
         "  --branch <name>          Show commits from the specified branch\n" +
         "  --sha <hash>             Show commits from the specified commit hash\n" +
         "  --tag <name>             Show commits from the specified tag\n" +
-        "  --select <hash>          Select the specified commit on startup\n" +
+        "  --select <revision>      Select a commit on startup: hash, short hash, branch, tag or HEAD~n\n" +
+        "                           (also --select-commit, as in gitk)\n" +
         "  --search <query>         Filter commits by the specified search query\n" +
-        "  --search-scope <scope>   Set search scope (all, hash, message, author, path, text, ref)\n" +
+        "  --search-scope <scope>   Set search mode (commit, path, diff)\n" +
         "  --show-branch-refs       Show branch and tag markers in the history list\n" +
         "  --hide-branch-refs       Hide branch and tag markers in the history list\n" +
         "  --show-stashes           Show stashes in the history list\n" +
@@ -96,7 +93,8 @@ module GitStartup =
         "  --diff-presentation <m>  Diff presentation mode (diff, side-by-side, new, old)\n" +
         "  --log <file>             Write logs to the specified file\n\n" +
         "Arguments:\n" +
-        "  [revision]               Optional branch, tag, or commit hash to use as the history tip\n"
+        "  [sha]                    Open with that commit selected (full or short hash)\n" +
+        "  [revision]               Or a branch or tag to use as the history tip\n"
 
     let parseStartupOptions (args: string array) =
         let mutable index = 0
@@ -176,7 +174,7 @@ module GitStartup =
                             index <- nextIndex
                             loop ()
                         | false, _ ->
-                            Error (sprintf "Invalid diff context line count: %s" value)
+                            Error ("Invalid diff context line count: " + value)
                 | arg when arg.StartsWith("--diff-context=") ->
                     let value = arg.Substring("--diff-context=".Length)
 
@@ -186,7 +184,7 @@ module GitStartup =
                         index <- index + 1
                         loop ()
                     | false, _ ->
-                        Error (sprintf "Invalid diff context line count: %s" value)
+                        Error ("Invalid diff context line count: " + value)
                 | "--diff-presentation" ->
                     match tryConsumeValue args index "--diff-presentation" "diff presentation mode" false with
                     | Error err -> Error err
@@ -197,7 +195,7 @@ module GitStartup =
                             index <- nextIndex
                             loop ()
                         | None ->
-                            Error (sprintf "Invalid diff presentation mode: %s" value)
+                            Error ("Invalid diff presentation mode: " + value)
                 | arg when arg.StartsWith("--diff-presentation=") ->
                     let value = arg.Substring("--diff-presentation=".Length)
 
@@ -207,7 +205,7 @@ module GitStartup =
                         index <- index + 1
                         loop ()
                     | None ->
-                        Error (sprintf "Invalid diff presentation mode: %s" value)
+                        Error ("Invalid diff presentation mode: " + value)
                 | "--search" ->
                     match tryConsumeValue args index "--search" "search query" true with
                     | Error err -> Error err
@@ -229,7 +227,7 @@ module GitStartup =
                             index <- nextIndex
                             loop ()
                         | None ->
-                            Error (sprintf "Invalid search scope: %s" value)
+                            Error ("Invalid search scope: " + value)
                 | arg when arg.StartsWith("--search-scope=") ->
                     let value = arg.Substring("--search-scope=".Length)
 
@@ -239,16 +237,16 @@ module GitStartup =
                         index <- index + 1
                         loop ()
                     | None ->
-                        Error (sprintf "Invalid search scope: %s" value)
-                | "--select" ->
-                    match tryConsumeValue args index "--select" "commit hash" false with
+                        Error ("Invalid search scope: " + value)
+                | "--select" | "--select-commit" as option ->
+                    match tryConsumeValue args index option "revision" false with
                     | Error err -> Error err
                     | Ok (value, nextIndex) ->
                         selectedCommitHash <- Some value
                         index <- nextIndex
                         loop ()
-                | arg when arg.StartsWith("--select=") ->
-                    let value = arg.Substring("--select=".Length)
+                | arg when arg.StartsWith("--select=") || arg.StartsWith("--select-commit=") ->
+                    let value = arg.Substring(arg.IndexOf('=') + 1)
                     selectedCommitHash <- Some value
                     index <- index + 1
                     loop ()
@@ -335,6 +333,13 @@ module GitStartup =
 
                     index <- index + 1
                     loop ()
+                | arg when not (arg.StartsWith("-")) && not positionalTargetSeen
+                           && arg.Length >= 4 && arg.Length <= 40 && arg |> Seq.forall Uri.IsHexDigit ->
+                    // gitkay <sha>: open the normal history with that commit selected (short hashes allowed).
+                    positionalTargetSeen <- true
+                    if selectedCommitHash.IsNone then selectedCommitHash <- Some arg
+                    index <- index + 1
+                    loop ()
                 | arg ->
                     if not (arg.StartsWith("-")) && not positionalTargetSeen then
                         positionalTargetSeen <- true
@@ -343,19 +348,11 @@ module GitStartup =
                         index <- index + 1
                         loop ()
                     else
-                        Error (sprintf "Unrecognized startup argument: %s" arg)
+                        Error ("Unrecognized startup argument: " + arg)
 
         loop ()
 
     let parseStartupTargets args =
         parseStartupOptions args |> Result.map _.StartupTargets
 
-    let parseSearchScope value =
-        match tryParseSearchScopeKey value with
-        | Some "hash" -> GitSearch.Scope.Hash
-        | Some "message" -> GitSearch.Scope.Message
-        | Some "author" -> GitSearch.Scope.Author
-        | Some "path" -> GitSearch.Scope.Path
-        | Some "text" -> GitSearch.Scope.Text
-        | Some "ref" -> GitSearch.Scope.Ref
-        | _ -> GitSearch.Scope.All
+    let parseSearchScope value = GitSearch.parseMode value

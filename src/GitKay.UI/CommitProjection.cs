@@ -28,6 +28,10 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     [ObservableProperty] private string _subject = "";
     [ObservableProperty] private string _author = "";
     [ObservableProperty] private string _date = "";
+    [ObservableProperty] private string _authorEmail = "";
+    [ObservableProperty] private string _fullDate = "";
+    [ObservableProperty] private string _message = "";
+    [ObservableProperty] private string _parents = "";
     [ObservableProperty] private string _refsSummary = "";
     [ObservableProperty] private bool _hasRefs;
     [ObservableProperty] private bool _hasSearchMatch;
@@ -68,7 +72,12 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         Hash = commit.Hash.Substring(0, shortHashLength);
         Subject = commit.Subject;
         Author = commit.AuthorName;
-        Date = System.DateTimeOffset.FromUnixTimeSeconds(commit.Timestamp).LocalDateTime.ToString("yyyy-MM-dd HH:mm");
+        var timestamp = System.DateTimeOffset.FromUnixTimeSeconds(commit.Timestamp).ToLocalTime();
+        Date = timestamp.ToString("yyyy-MM-dd HH:mm");
+        FullDate = timestamp.ToString("dddd, d MMMM yyyy HH:mm:ss zzz");
+        AuthorEmail = commit.AuthorEmail;
+        Message = string.IsNullOrWhiteSpace(commit.Message) ? commit.Subject : commit.Message.TrimEnd();
+        Parents = commit.Parents.IsEmpty ? "(root commit)" : string.Join("  ", commit.Parents);
         _refs = commit.Refs.ToArray();
         HasRefs = _refs.Any();
         RefsSummary = HasRefs ? FormatRefsSummary(_refs) : "";

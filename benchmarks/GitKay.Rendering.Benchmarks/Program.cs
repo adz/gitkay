@@ -10,9 +10,27 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using GitKay.UI;
 
+if (args.FirstOrDefault() == "ui")
+{
+    // The real application styles and Skia text shaping, so layout and rendering costs are representative.
+    AppBuilder.Configure<GitKay.UI.App>()
+        .UseSkia()
+        .WithInterFont()
+        .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+        .SetupWithoutStarting();
+    UiInteractions.Run(args.Skip(1).ToArray());
+    return;
+}
+
 AppBuilder.Configure<BenchmarkApp>()
     .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = true })
     .SetupWithoutStarting();
+
+if (args.FirstOrDefault() == "hotpaths")
+{
+    HotPaths.Run(args.Skip(1).ToArray());
+    return;
+}
 
 var source = args.FirstOrDefault() ?? "/home/adam/projects/Axial/main";
 var lines = Directory.EnumerateFiles(source, "*.*", SearchOption.AllDirectories)

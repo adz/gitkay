@@ -24,8 +24,37 @@ public sealed record RepoUiState
     }
 }
 
+/// <summary>Splitter positions and history column widths chosen by the user; null values use layout defaults.</summary>
+public sealed record UiLayoutState
+{
+    /// <summary>Commit list height as a fraction of the commit list plus diff area.</summary>
+    public double? HistoryPaneRatio { get; init; }
+    public double? FileListWidth { get; init; }
+    public double? GraphColumnWidth { get; init; }
+    public double? HashColumnWidth { get; init; }
+    public double? AuthorColumnWidth { get; init; }
+    public double? DateColumnWidth { get; init; }
+
+    public static UiLayoutState Default { get; } = new();
+
+    public UiLayoutState Normalize() => new()
+    {
+        HistoryPaneRatio = HistoryPaneRatio is { } ratio && double.IsFinite(ratio) ? Math.Clamp(ratio, 0.1, 0.9) : null,
+        FileListWidth = Width(FileListWidth),
+        GraphColumnWidth = Width(GraphColumnWidth),
+        HashColumnWidth = Width(HashColumnWidth),
+        AuthorColumnWidth = Width(AuthorColumnWidth),
+        DateColumnWidth = Width(DateColumnWidth),
+    };
+
+    private static double? Width(double? value) =>
+        value is { } width && double.IsFinite(width) && width > 0 ? Math.Min(width, 10000) : null;
+}
+
 public sealed record AppUiState
 {
+    public UiLayoutState Layout { get; init; } = UiLayoutState.Default;
+
     public double? WindowWidth { get; init; }
 
     public double? WindowHeight { get; init; }
@@ -54,8 +83,11 @@ public sealed record AppUiState
             WindowWidth = NormalizeDimension(WindowWidth),
             WindowHeight = NormalizeDimension(WindowHeight),
             RepoStates = normalizedRepoStates,
+            Layout = (Layout ?? UiLayoutState.Default).Normalize(),
         };
     }
+
+    public AppUiState WithLayout(UiLayoutState layout) => this with { Layout = layout.Normalize() };
 
     public AppUiState WithWindowSize(double? width, double? height)
     {

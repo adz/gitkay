@@ -16,7 +16,7 @@ namespace GitKay.UI;
 public sealed class DiffLineControl : Control
 {
     private const int MaxHighlightedLineLength = 240;
-    private static readonly Typeface CodeTypeface = new("Cascadia Code,Consolas,Monospace");
+    private static readonly Typeface CodeTypeface = new(FontStacks.Mono);
     private const int HighlightPromotionsPerFrame = 8;
     private static readonly SemaphoreSlim HighlightWorkers = new(Math.Clamp(Environment.ProcessorCount / 2, 1, 4));
     private static readonly ConcurrentQueue<HighlightCompletion> HighlightCompletions = new();

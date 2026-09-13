@@ -29,16 +29,30 @@ module internal RepositoryDiscovery =
         |> Seq.distinct
         |> Seq.toList
 
+    /// Walks up from a start directory to the first repository and returns its git directory, matching
+    /// Repository.Discover. Discover itself returns null under NativeAOT, while IsValid and opening work.
+    let private discoverFrom (start: string) =
+        let rec walk (directory: DirectoryInfo) =
+            if isNull directory then
+                None
+            elif Repository.IsValid directory.FullName then
+                use repo = new Repository(directory.FullName)
+                Some repo.Info.Path
+            else
+                walk directory.Parent
+
+        walk (DirectoryInfo start)
+
     let discover () =
         let rec tryRoots attempted = function
             | [] -> Error (GitError.RepositoryNotFound(List.rev attempted))
             | root :: remaining ->
                 try
-                    match Repository.Discover root with
-                    | repoPath when String.IsNullOrWhiteSpace repoPath ->
-                        tryRoots (root :: attempted) remaining
-                    | repoPath ->
+                    match discoverFrom root with
+                    | Some repoPath when not (String.IsNullOrWhiteSpace repoPath) ->
                         Ok (Path.TrimEndingDirectorySeparator(Path.GetFullPath repoPath))
+                    | _ ->
+                        tryRoots (root :: attempted) remaining
                 with _ ->
                     tryRoots (root :: attempted) remaining
 

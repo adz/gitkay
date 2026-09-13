@@ -90,6 +90,46 @@ module GitParsing =
             Refs = refs
         }
 
+    /// Parses the hunks of a single-file patch body (no file headers), such as a blob-to-blob diff.
+    /// Every line after a hunk header is content, so removed lines beginning "--" are not mistaken for headers.
+    let parseHunks (patch: string) : DiffHunk list =
+        let hunks = ResizeArray<DiffHunk>()
+        let lines = ResizeArray<DiffLine>()
+        let mutable header : string option = None
+        let mutable oldLineNumber = 0
+        let mutable newLineNumber = 0
+
+        let flush () =
+            header |> Option.iter (fun h -> hunks.Add { Header = h; Lines = List.ofSeq lines })
+            lines.Clear()
+
+        for raw in patch.Split('\n') do
+            let line = raw.TrimEnd('\r')
+            if line.StartsWith("@@") then
+                flush ()
+                header <- Some line
+                match parseHunkHeader line with
+                | Some(oldStart, newStart) ->
+                    oldLineNumber <- oldStart
+                    newLineNumber <- newStart
+                | None -> ()
+            elif header.IsSome && line.Length > 0 then
+                match line.[0] with
+                | '+' ->
+                    lines.Add { Type = Added; Content = line.Substring(1); OldLineNo = None; NewLineNo = Some newLineNumber }
+                    newLineNumber <- newLineNumber + 1
+                | '-' ->
+                    lines.Add { Type = Removed; Content = line.Substring(1); OldLineNo = Some oldLineNumber; NewLineNo = None }
+                    oldLineNumber <- oldLineNumber + 1
+                | ' ' ->
+                    lines.Add { Type = Context; Content = line.Substring(1); OldLineNo = Some oldLineNumber; NewLineNo = Some newLineNumber }
+                    oldLineNumber <- oldLineNumber + 1
+                    newLineNumber <- newLineNumber + 1
+                | _ -> () // "\ No newline at end of file"
+
+        flush ()
+        List.ofSeq hunks
+
     let parseDiff (output: string) : FileDiff list =
         let lines = output.Replace("\r", "").Split('\n')
         let mutable files = []
@@ -114,8 +154,8 @@ module GitParsing =
                 flushFile ()
                 currentFile <-
                     match parseDiffHeader line with
-                    | Some(oldPath, newPath) -> Some { OldPath = oldPath; NewPath = newPath; Hunks = [] }
-                    | None -> Some { OldPath = ""; NewPath = ""; Hunks = [] }
+                    | Some(oldPath, newPath) -> Some { OldPath = oldPath; NewPath = newPath; NewLineCount = None; Hunks = [] }
+                    | None -> Some { OldPath = ""; NewPath = ""; NewLineCount = None; Hunks = [] }
                 oldLineNumber <- 0
                 newLineNumber <- 0
             elif line.StartsWith("--- ") then
