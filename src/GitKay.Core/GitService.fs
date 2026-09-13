@@ -215,13 +215,14 @@ module GitService =
                 let gate = env.Cache.DiffGates.GetOrAdd(hash, fun _ -> obj ())
                 let! entry, cached =
                     lock gate (fun () ->
-                        match env.Cache.Diff.TryGetValue hash with
-                        | true, entry -> Ok(entry, true)
-                        | false, _ ->
-                            loadDiffCacheEntry env.RepoPath hash
-                            |> Result.map (fun entry ->
+                        result {
+                            match env.Cache.Diff.TryGetValue hash |> Result.fromTry with
+                            | Ok entry -> return entry, true
+                            | Error () ->
+                                let! entry = loadDiffCacheEntry env.RepoPath hash
                                 env.Cache.Diff.TryAdd(hash, entry) |> ignore
-                                entry, false))
+                                return entry, false
+                        })
                 return (entry, cached)
         }
 
