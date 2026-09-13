@@ -9,10 +9,14 @@ open GitKay.Core.Models
 
 module App =
 
-    let private selectionJob = LatestJob()
-    let private diffJob = LatestJob()
-    let private searchJob = LatestJob()
-    let private contextJobs = Collections.Concurrent.ConcurrentDictionary<GitService.DiffFileKey, LatestJob>()
+    /// Shared cancellation lifetime for every Axial-backed Cmd this program issues. Disposed by
+    /// the host alongside the ElmishHostConnection so no flow outlives the window.
+    let runtime = new AxialElmishRuntime()
+
+    let private selectionJob = AxialLatestSlot(runtime)
+    let private diffJob = AxialLatestSlot(runtime)
+    let private searchJob = AxialLatestSlot(runtime)
+    let private contextJobs = Collections.Concurrent.ConcurrentDictionary<GitService.DiffFileKey, AxialLatestSlot>()
 
     let private cancelContextJobs () =
         for job in contextJobs.Values do
@@ -100,7 +104,7 @@ module App =
 
     let private loadHistory (env: GitService.GitEnv) (limit: int option) (includeStashes: bool) (targets: GitStartup.StartupTarget list) =
         let isFull = limit.IsNone
-        Cmd.OfFlow.either env (GitService.fetchHistory limit includeStashes targets) (fun r -> HistoryLoaded(isFull, Ok r)) (fun ex -> HistoryLoaded (isFull, Error ex))
+        Cmd.OfFlow.viaRuntime runtime env (GitService.fetchHistory limit includeStashes targets) (fun r -> HistoryLoaded(isFull, Ok r)) (fun ex -> HistoryLoaded (isFull, Error ex))
 
     let private historyLimit = 1000
 
@@ -129,41 +133,34 @@ module App =
 
 
     let private startDiffFilesLoad (env: GitService.GitEnv) (hash: string) (startedAtTicks: int64) =
-        let cancellationToken = selectionJob.Start startedAtTicks
-
-        Cmd.OfFlow.eitherWithCancellation
+        Cmd.OfFlow.latest
+            selectionJob
             env
-            cancellationToken
             (loadDiffFilesFlow hash)
             (fun result -> DiffFilesLoaded(hash, startedAtTicks, Ok result))
             (fun err -> DiffFilesLoaded(hash, startedAtTicks, Error err))
             (fun () -> NoOp)
 
     let private startDiffLoad (env: GitService.GitEnv) (hash: string) (startedAtTicks: int64) (contextLines: int) =
-        let cancellationToken = diffJob.Start startedAtTicks
-
-        Cmd.OfFlow.eitherWithCancellation
+        Cmd.OfFlow.latest
+            diffJob
             env
-            cancellationToken
             (loadDiffFlow contextLines hash)
             (fun result -> DiffLoaded(hash, startedAtTicks, Ok result))
             (fun err -> DiffLoaded(hash, startedAtTicks, Error err))
             (fun () -> NoOp)
 
     let private startSearchLoad (env: GitService.GitEnv) (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (useRegex: bool) (startedAtTicks: int64) =
-        let cancellationToken = searchJob.Start startedAtTicks
-
-        Cmd.OfFlow.eitherWithCancellation
+        Cmd.OfFlow.latest
+            searchJob
             env
-            cancellationToken
             (loadSearchResultsFlow contextLines commits query scopeKey useRegex)
             (fun result -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Ok result))
             (fun err -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Error err))
             (fun () -> NoOp)
 
     let private startDiffFileContextLoad (env: GitService.GitEnv) (hash: string) (key: GitService.DiffFileKey) (requestId: int64) =
-        let job = contextJobs.GetOrAdd(key, fun _ -> LatestJob())
-        let cancellationToken = job.Start requestId
+        let job = contextJobs.GetOrAdd(key, fun _ -> AxialLatestSlot(runtime))
 
         let workflow =
             flow {
@@ -171,9 +168,9 @@ module App =
                 return! GitService.fetchDiffFileFullContext hash key.OldPath key.NewPath
             }
 
-        Cmd.OfFlow.eitherWithCancellation
+        Cmd.OfFlow.latest
+            job
             env
-            cancellationToken
             workflow
             (fun result -> DiffFileContextLoaded(hash, key, requestId, Ok result))
             (fun err -> DiffFileContextLoaded(hash, key, requestId, Error err))
@@ -359,7 +356,7 @@ module App =
                 let resolveSelection =
                     match startupOptions.SelectedCommitHash with
                     | Some revision ->
-                        Cmd.OfFlow.either gitEnv (GitService.resolveCommit revision)
+                        Cmd.OfFlow.viaRuntime runtime gitEnv (GitService.resolveCommit revision)
                             (fun hash -> SelectionRevisionResolved(revision, Ok hash))
                             (fun err -> SelectionRevisionResolved(revision, Error err))
                     | None -> Cmd.none
@@ -526,14 +523,12 @@ module App =
         | SearchResultsLoaded (query, scopeKey, startedAtTicks, Ok results) ->
             match model.SearchQuery, model.SearchScopeKey, model.SearchStartedAtTicks with
             | currentQuery, currentScopeKey, Some currentStartedAtTicks when currentQuery = query && currentScopeKey = scopeKey && currentStartedAtTicks = startedAtTicks ->
-                searchJob.Complete startedAtTicks
                 { model with SearchResults = Some results; SearchStartedAtTicks = None; Status = $"Search: {results.Length} hit(s) for \"{query}\"" }, Cmd.none
             | _ ->
                 model, Cmd.none
         | SearchResultsLoaded (query, scopeKey, startedAtTicks, Error err) ->
             match model.SearchQuery, model.SearchScopeKey, model.SearchStartedAtTicks with
             | currentQuery, currentScopeKey, Some currentStartedAtTicks when currentQuery = query && currentScopeKey = scopeKey && currentStartedAtTicks = startedAtTicks ->
-                searchJob.Complete startedAtTicks
                 { model with SearchResults = None; SearchStartedAtTicks = None; Status = "Search Error: " + GitError.describe err }, Cmd.none
             | _ ->
                 model, Cmd.none
@@ -546,7 +541,6 @@ module App =
                 ()
 
             if model.SelectedCommitHash = Some hash && model.SelectionStartedAtTicks = Some startedAtTicks then
-                selectionJob.Complete startedAtTicks
 
                 let selectedFileSummary =
                     match model.SelectedDiffFileKey with
@@ -582,7 +576,6 @@ module App =
                 ()
 
             if model.SelectedCommitHash = Some hash && model.SelectionStartedAtTicks = Some startedAtTicks then
-                selectionJob.Complete startedAtTicks
                 cancelContextJobs ()
                 { model with Status = "Diff Error: " + GitError.describe err; SelectedDiffHash = None; SelectedDiffFiles = None; SelectedDiff = None; SelectedDiffFileKey = None; DiffExpansions = Map.empty; SelectionStartedAtTicks = None; SelectedDiffStartedAtTicks = None }, Cmd.none
             else
@@ -597,7 +590,6 @@ module App =
                 ()
 
             if model.SelectedCommitHash = Some hash && model.SelectedDiffStartedAtTicks = Some startedAtTicks then
-                diffJob.Complete startedAtTicks
                 { model with SelectedDiff = Some diff; SelectedDiffStartedAtTicks = None }, Cmd.none
             else
                 model, Cmd.none
@@ -611,7 +603,6 @@ module App =
                 ()
 
             if model.SelectedCommitHash = Some hash && model.SelectedDiffStartedAtTicks = Some startedAtTicks then
-                diffJob.Complete startedAtTicks
                 { model with Status = "Diff Error: " + GitError.describe err; SelectedDiff = None; SelectedDiffStartedAtTicks = None }, Cmd.none
             else
                 model, Cmd.none
@@ -640,10 +631,6 @@ module App =
         | DiffFileContextLoaded (hash, key, requestId, result) ->
             match model.SelectedDiffHash, Map.tryFind key model.DiffExpansions with
             | Some currentHash, Some expansion when currentHash = hash && expansion.PendingRequestId = Some requestId ->
-                match contextJobs.TryGetValue key with
-                | true, job -> job.Complete requestId
-                | _ -> ()
-
                 match result with
                 | Ok file ->
                     let expansion = { expansion with FullContext = Some file; PendingRequestId = None }
@@ -656,15 +643,15 @@ module App =
             | _ ->
                 model, Cmd.none
         | CreateTag (hash, name) ->
-            model, Cmd.OfFlow.either model.GitEnv (GitService.createTag hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, Cmd.OfFlow.viaRuntime runtime model.GitEnv (GitService.createTag hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | CreateBranch (hash, name) ->
-            model, Cmd.OfFlow.either model.GitEnv (GitService.createBranch hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, Cmd.OfFlow.viaRuntime runtime model.GitEnv (GitService.createBranch hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | CherryPick hash ->
-            model, Cmd.OfFlow.either model.GitEnv (GitService.cherryPick hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, Cmd.OfFlow.viaRuntime runtime model.GitEnv (GitService.cherryPick hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | ResetTo (hash, hard) ->
-            model, Cmd.OfFlow.either model.GitEnv (GitService.resetTo hash hard) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, Cmd.OfFlow.viaRuntime runtime model.GitEnv (GitService.resetTo hash hard) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | Revert hash ->
-            model, Cmd.OfFlow.either model.GitEnv (GitService.revert hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, Cmd.OfFlow.viaRuntime runtime model.GitEnv (GitService.revert hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | OperationResult (Ok _) ->
             model, Cmd.ofMsg RereadRefs
         | OperationResult (Error err) ->
