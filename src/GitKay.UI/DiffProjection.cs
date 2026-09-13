@@ -280,6 +280,12 @@ public sealed partial class DiffFileHeaderProjection : ObservableObject, IDiffRo
     }
 }
 
+public sealed class DiffGapProjection(int hiddenLineCount) : IDiffRowProjection
+{
+    public int HiddenLineCount { get; } = hiddenLineCount;
+    public string Label => $"⋯  {HiddenLineCount} hidden lines";
+}
+
 public sealed class DiffHunkHeaderProjection : IDiffRowProjection
 {
     private InlineCollection? _headerInlines;
@@ -325,6 +331,8 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
         var isRemoved = line.Type.Equals(DiffLineType.Removed);
         var isContext = line.Type.Equals(DiffLineType.Context);
 
+        OldLineNo = line.OldLineNo is null ? null : line.OldLineNo.Value;
+        NewLineNo = line.NewLineNo is null ? null : line.NewLineNo.Value;
         OldLineNoText = FormatLineNumber(line.OldLineNo);
         NewLineNoText = FormatLineNumber(line.NewLineNo);
         OldContent = isAdded ? "" : line.Content;
@@ -358,6 +366,8 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
 
     private DiffLineProjection(DiffLineProjection removedLine, DiffLineProjection addedLine)
     {
+        OldLineNo = removedLine.OldLineNo;
+        NewLineNo = addedLine.NewLineNo;
         OldLineNoText = removedLine.OldLineNoText;
         NewLineNoText = addedLine.NewLineNoText;
         OldContent = removedLine.Content;
@@ -376,6 +386,8 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
     public static DiffLineProjection CreateSideBySidePair(DiffLineProjection removedLine, DiffLineProjection addedLine) =>
         new(removedLine, addedLine);
 
+    public int? OldLineNo { get; }
+    public int? NewLineNo { get; }
     public string OldLineNoText { get; }
     public string NewLineNoText { get; }
     public string OldContent { get; }
@@ -409,7 +421,7 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
     private string _searchQuery = "";
     private bool _searchTextEnabled;
 
-    private static string FormatLineNumber(FSharpOption<int> lineNumber) =>
+    private static string FormatLineNumber(FSharpOption<int>? lineNumber) =>
         lineNumber is null ? "" : lineNumber.Value.ToString();
 
     public bool ApplySearchState(string query, bool searchTextEnabled)

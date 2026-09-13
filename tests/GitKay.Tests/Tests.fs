@@ -186,6 +186,13 @@ diff --git a/foo.txt b/foo.txt
         test <@ tokens |> Seq.exists (fun token -> token.Text.StartsWith("//") && token.Kind = HighlightKind.Comment) @>
 
     [<Fact>]
+    let ``SyntaxHighlighting should make progress past non-comment markers`` () =
+        let text = "url=https://example.test/path value#fragment"
+        let tokens = SyntaxHighlighting.Tokenize(text)
+
+        test <@ tokens |> Seq.sumBy (fun token -> token.Text.Length) = text.Length @>
+
+    [<Fact>]
     let ``GraphRowControl should bias the commit marker toward the text baseline`` () =
         test <@ GraphRowControl.GetCommitMarkerCenterY 24.0 = 14.0 @>
 
@@ -197,6 +204,10 @@ diff --git a/foo.txt b/foo.txt
         Assert.Equal(1, delta)
 
         Assert.True(MainWindowNavigation.TryGetListNavigationDelta(Key.K, KeyModifiers.None, &delta))
+        Assert.Equal(-1, delta)
+        Assert.True(MainWindowNavigation.TryGetListNavigationDelta(Key.Down, KeyModifiers.None, &delta))
+        Assert.Equal(1, delta)
+        Assert.True(MainWindowNavigation.TryGetListNavigationDelta(Key.Up, KeyModifiers.None, &delta))
         Assert.Equal(-1, delta)
 
         Assert.False(MainWindowNavigation.TryGetListNavigationDelta(Key.J, KeyModifiers.Control, &delta))
@@ -1823,6 +1834,78 @@ module AppTests =
 
         test <@ diffLine.IsSearchMatch @>
         test <@ diffLine.MatchText = "needle" @>
+
+    [<Fact>]
+    let ``MainProjection should omit opposite-side rows in old and new diff modes`` () =
+        let projection = MainProjection()
+        let commit = sampleCommit "abcdefabcdefabcdefabcdefabcdefabcdefabcd" "Change lines"
+        let file =
+            sampleFile "sample.txt" "sample.txt"
+                [
+                    { Type = Models.Context; Content = "same"; OldLineNo = Some 1; NewLineNo = Some 1 }
+                    { Type = Models.Removed; Content = "old"; OldLineNo = Some 2; NewLineNo = None }
+                    { Type = Models.Added; Content = "new"; OldLineNo = None; NewLineNo = Some 2 }
+                ]
+        let summary = sampleSummary "sample.txt" "sample.txt" "sample.txt"
+        let model =
+            { emptyModel with
+                Status = "Loaded"
+                Commits = Graph.calculateLanes [ commit ]
+                SelectedCommitHash = Some commit.Hash
+                SelectedDiffHash = Some commit.Hash
+                SelectedDiffFiles = Some [ summary ]
+                SelectedDiff = Some [ file ]
+                SelectedDiffFileKey = Some { OldPath = "sample.txt"; NewPath = "sample.txt" } }
+
+        projection.Update model
+        projection.SelectedDiffPresentationMode <- projection.DiffPresentationModes |> Seq.find (fun mode -> mode.Key = "new")
+        let newLines = projection.SelectedDiffRows |> Seq.choose (function :? DiffLineProjection as line -> Some line | _ -> None) |> Seq.toArray
+        test <@ newLines.Length = 2 @>
+        test <@ newLines |> Array.forall (fun line -> not line.IsRemoved) @>
+
+        projection.SelectedDiffPresentationMode <- projection.DiffPresentationModes |> Seq.find (fun mode -> mode.Key = "old")
+        let oldLines = projection.SelectedDiffRows |> Seq.choose (function :? DiffLineProjection as line -> Some line | _ -> None) |> Seq.toArray
+        test <@ oldLines.Length = 2 @>
+        test <@ oldLines |> Array.forall (fun line -> not line.IsAdded) @>
+
+    [<Fact>]
+    let ``MainProjection should project a visible action row between separated hunks`` () =
+        let projection = MainProjection()
+        let commit = sampleCommit "1234512345123451234512345123451234512345" "Separated hunks"
+        let line number content : Models.DiffLine = { Type = Models.Context; Content = content; OldLineNo = Some number; NewLineNo = Some number }
+        let file : Models.FileDiff =
+            { OldPath = "sample.txt"; NewPath = "sample.txt"
+              Hunks =
+                [ { Header = "@@ -1 +1 @@"; Lines = [ line 1 "first" ] }
+                  { Header = "@@ -12 +12 @@"; Lines = [ line 12 "second" ] } ] }
+        let summary = sampleSummary "sample.txt" "sample.txt" "sample.txt"
+        projection.Update
+            { emptyModel with
+                Status = "Loaded"
+                Commits = Graph.calculateLanes [ commit ]
+                SelectedCommitHash = Some commit.Hash
+                SelectedDiffHash = Some commit.Hash
+                SelectedDiffFiles = Some [ summary ]
+                SelectedDiff = Some [ file ]
+                SelectedDiffFileKey = Some { OldPath = "sample.txt"; NewPath = "sample.txt" } }
+
+        let gaps = projection.SelectedDiffRows |> Seq.choose (function :? DiffGapProjection as gap -> Some gap | _ -> None) |> Seq.toArray
+        test <@ gaps.Length = 1 @>
+        test <@ gaps.[0].HiddenLineCount = 10 @>
+
+    [<Fact>]
+    let ``MainProjection should dispatch incremental and complete gap expansion context`` () =
+        let projection = MainProjection()
+        let messages = ResizeArray<App.Msg>()
+        projection.SetDispatch (fun message -> messages.Add message)
+
+        projection.ExpandDiffBlockCommand.Execute null
+        test <@ messages.ToArray() = [| App.Msg.SetDiffContextLines 13 |] @>
+
+        messages.Clear()
+        projection.ExpandDiffGapCommand.Execute 20
+        test <@ messages.ToArray() = [| App.Msg.SetDiffContextLines 23 |] @>
+        test <@ projection.DiffContextLineCounts |> Seq.exists (fun option -> option.Count = 23) @>
 
     [<Fact>]
     let ``CommitProjection should surface refs in the row summary`` () =

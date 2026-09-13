@@ -15,13 +15,13 @@ internal static class SyntaxHighlighting
         @"^(@@)\s+(-\d+(?:,\d+)?)\s+(\+\d+(?:,\d+)?)\s+(@@)(.*)$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    private static readonly IBrush KeywordBrush = new SolidColorBrush(Color.FromRgb(86, 156, 214));
-    private static readonly IBrush StringBrush = new SolidColorBrush(Color.FromRgb(206, 145, 120));
-    private static readonly IBrush NumberBrush = new SolidColorBrush(Color.FromRgb(181, 206, 168));
-    private static readonly IBrush CommentBrush = new SolidColorBrush(Color.FromRgb(87, 166, 74));
-    private static readonly IBrush TypeBrush = new SolidColorBrush(Color.FromRgb(78, 201, 176));
-    private static readonly IBrush HunkMarkerBrush = new SolidColorBrush(Color.FromRgb(180, 180, 180));
-    private static readonly IBrush HunkRangeBrush = new SolidColorBrush(Color.FromRgb(215, 186, 125));
+    private static readonly IBrush KeywordBrush = new SolidColorBrush(Color.FromRgb(86, 156, 214)).ToImmutable();
+    private static readonly IBrush StringBrush = new SolidColorBrush(Color.FromRgb(206, 145, 120)).ToImmutable();
+    private static readonly IBrush NumberBrush = new SolidColorBrush(Color.FromRgb(181, 206, 168)).ToImmutable();
+    private static readonly IBrush CommentBrush = new SolidColorBrush(Color.FromRgb(87, 166, 74)).ToImmutable();
+    private static readonly IBrush TypeBrush = new SolidColorBrush(Color.FromRgb(78, 201, 176)).ToImmutable();
+    private static readonly IBrush HunkMarkerBrush = new SolidColorBrush(Color.FromRgb(180, 180, 180)).ToImmutable();
+    private static readonly IBrush HunkRangeBrush = new SolidColorBrush(Color.FromRgb(215, 186, 125)).ToImmutable();
 
     private static readonly HashSet<string> Keywords = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -166,6 +166,7 @@ internal static class SyntaxHighlighting
     }
 
     private static readonly Dictionary<string, IReadOnlyList<HighlightToken>> TokenCache = new(StringComparer.Ordinal);
+    private static readonly object TokenCacheLock = new();
     private const int MaxCacheSize = 2000;
 
     internal static IReadOnlyList<HighlightToken> Tokenize(string text)
@@ -175,9 +176,12 @@ internal static class SyntaxHighlighting
             return Array.Empty<HighlightToken>();
         }
 
-        if (TokenCache.TryGetValue(text, out var cached))
+        lock (TokenCacheLock)
         {
-            return cached;
+            if (TokenCache.TryGetValue(text, out var cached))
+            {
+                return cached;
+            }
         }
 
         var tokens = new List<HighlightToken>();
@@ -249,6 +253,14 @@ internal static class SyntaxHighlighting
                 }
                 index++;
             }
+
+            // A comment marker that is not at a valid comment boundary still belongs to plain
+            // text. Ensure this branch always consumes at least one character.
+            if (index == plainStart)
+            {
+                index++;
+            }
+
             tokens.Add(new HighlightToken(text[plainStart..index], HighlightKind.Plain));
         }
 
@@ -274,13 +286,12 @@ internal static class SyntaxHighlighting
         }
 
         var result = tokens.AsReadOnly();
-        if (TokenCache.Count < MaxCacheSize)
+        lock (TokenCacheLock)
         {
-            TokenCache[text] = result;
-        }
-        else
-        {
-            TokenCache.Clear();
+            if (TokenCache.Count >= MaxCacheSize)
+            {
+                TokenCache.Clear();
+            }
             TokenCache[text] = result;
         }
 

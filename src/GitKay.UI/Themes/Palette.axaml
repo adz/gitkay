@@ -1,0 +1,57 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Dark">
+            <SolidColorBrush x:Key="GitKayWindowBrush" Color="#0D1117" />
+            <SolidColorBrush x:Key="GitKaySurfaceBrush" Color="#161B22" />
+            <SolidColorBrush x:Key="GitKayRaisedBrush" Color="#1C2128" />
+            <SolidColorBrush x:Key="GitKayHoverBrush" Color="#21262D" />
+            <SolidColorBrush x:Key="GitKaySelectionBrush" Color="#27364A" />
+            <SolidColorBrush x:Key="GitKayBorderBrush" Color="#30363D" />
+            <SolidColorBrush x:Key="GitKayTextBrush" Color="#E6EDF3" />
+            <SolidColorBrush x:Key="GitKaySecondaryTextBrush" Color="#9DA7B3" />
+            <SolidColorBrush x:Key="GitKayMutedTextBrush" Color="#6E7681" />
+            <SolidColorBrush x:Key="GitKayAccentBrush" Color="#58A6FF" />
+            <SolidColorBrush x:Key="GitKayAccentMutedBrush" Color="#1F3B59" />
+            <SolidColorBrush x:Key="GitKayAddedBrush" Color="#173B2A" />
+            <SolidColorBrush x:Key="GitKayRemovedBrush" Color="#46252A" />
+            <SolidColorBrush x:Key="GitKayAddedStrongBrush" Color="#245A3B" />
+            <SolidColorBrush x:Key="GitKayRemovedStrongBrush" Color="#71313A" />
+            <SolidColorBrush x:Key="GitKayAddedAccentBrush" Color="#3FB950" />
+            <SolidColorBrush x:Key="GitKayRemovedAccentBrush" Color="#F85149" />
+            <SolidColorBrush x:Key="GitKayGutterBrush" Color="#11161D" />
+            <SolidColorBrush x:Key="GitKayStatusBrush" Color="#18212B" />
+            <SolidColorBrush x:Key="GitKaySyntaxKeywordBrush" Color="#79C0FF" />
+            <SolidColorBrush x:Key="GitKaySyntaxStringBrush" Color="#FFA657" />
+            <SolidColorBrush x:Key="GitKaySyntaxNumberBrush" Color="#A5D6FF" />
+            <SolidColorBrush x:Key="GitKaySyntaxCommentBrush" Color="#7EE787" />
+            <SolidColorBrush x:Key="GitKaySyntaxTypeBrush" Color="#D2A8FF" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Light">
+            <SolidColorBrush x:Key="GitKayWindowBrush" Color="#F6F8FA" />
+            <SolidColorBrush x:Key="GitKaySurfaceBrush" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="GitKayRaisedBrush" Color="#F0F3F6" />
+            <SolidColorBrush x:Key="GitKayHoverBrush" Color="#EAEFF4" />
+            <SolidColorBrush x:Key="GitKaySelectionBrush" Color="#DDEBFF" />
+            <SolidColorBrush x:Key="GitKayBorderBrush" Color="#D0D7DE" />
+            <SolidColorBrush x:Key="GitKayTextBrush" Color="#1F2328" />
+            <SolidColorBrush x:Key="GitKaySecondaryTextBrush" Color="#59636E" />
+            <SolidColorBrush x:Key="GitKayMutedTextBrush" Color="#818B98" />
+            <SolidColorBrush x:Key="GitKayAccentBrush" Color="#0969DA" />
+            <SolidColorBrush x:Key="GitKayAccentMutedBrush" Color="#DDF4FF" />
+            <SolidColorBrush x:Key="GitKayAddedBrush" Color="#DAFBE1" />
+            <SolidColorBrush x:Key="GitKayRemovedBrush" Color="#FFEBE9" />
+            <SolidColorBrush x:Key="GitKayAddedStrongBrush" Color="#ACE6B7" />
+            <SolidColorBrush x:Key="GitKayRemovedStrongBrush" Color="#FFCECB" />
+            <SolidColorBrush x:Key="GitKayAddedAccentBrush" Color="#1A7F37" />
+            <SolidColorBrush x:Key="GitKayRemovedAccentBrush" Color="#CF222E" />
+            <SolidColorBrush x:Key="GitKayGutterBrush" Color="#F0F3F6" />
+            <SolidColorBrush x:Key="GitKayStatusBrush" Color="#EAEFF4" />
+            <SolidColorBrush x:Key="GitKaySyntaxKeywordBrush" Color="#0550AE" />
+            <SolidColorBrush x:Key="GitKaySyntaxStringBrush" Color="#953800" />
+            <SolidColorBrush x:Key="GitKaySyntaxNumberBrush" Color="#0A3069" />
+            <SolidColorBrush x:Key="GitKaySyntaxCommentBrush" Color="#116329" />
+            <SolidColorBrush x:Key="GitKaySyntaxTypeBrush" Color="#8250DF" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>

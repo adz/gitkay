@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
 using Elmish.Avalonia.Glue;
 using GitKay.Core;
 
@@ -123,6 +124,13 @@ public partial class App : Application
                 settingsStore.Save(projection.CaptureSettings());
             };
 
+            // Present and compose the opaque shell before repository initialization can
+            // occupy the UI thread. This guarantees the first native frame is the static
+            // loading surface rather than an unpainted compositor window.
+            mainWindow.Show();
+            await Dispatcher.UIThread.InvokeAsync(mainWindow.InvalidateVisual, DispatcherPriority.Render);
+            await Task.Delay(1);
+
             var host = ElmishHost.startAndBind(
                 GitKay.Core.App.program(startupArgs),
                 model => projection.Update(model),
@@ -141,7 +149,6 @@ public partial class App : Application
                 ((IDisposable)host).Dispose();
             };
 
-            mainWindow.Show();
         }
         catch (Exception ex)
         {

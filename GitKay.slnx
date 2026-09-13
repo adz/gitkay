@@ -7,6 +7,9 @@
   <Folder Name="/tests/">
     <Project Path="tests/GitKay.Tests/GitKay.Tests.fsproj" />
   </Folder>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/GitKay.Rendering.Benchmarks/GitKay.Rendering.Benchmarks.csproj" />
+  </Folder>
   <Folder Name="/external/">
     <Project Path="../../Elmish.Avalonia.Glue/main/src/Elmish.Glue.Core/Elmish.Glue.Core.fsproj" />
     <Project Path="../../Elmish.Avalonia.Glue/main/src/Elmish.Avalonia.Glue/Elmish.Avalonia.Glue.fsproj" />

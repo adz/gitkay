@@ -114,6 +114,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     };
 
     [ObservableProperty] private string _status = "";
+    [ObservableProperty] private bool _isInitialLoading = true;
     [ObservableProperty] private string _commitRowFontFamily = AppSettings.DefaultCommitRowFontFamily;
     [ObservableProperty] private string _commitRowMonoFontFamily = AppSettings.DefaultCommitRowMonoFontFamily;
     [ObservableProperty] private double _commitRowTextFontSize = AppSettings.DefaultCommitRowTextFontSize;
@@ -229,6 +230,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     {
         var startedAtTicks = Stopwatch.GetTimestamp();
         Status = model.Status;
+        IsInitialLoading = model.Commits.IsEmpty && !model.Status.StartsWith("Error", StringComparison.OrdinalIgnoreCase);
         if (ShowBranchRefs != model.ShowBranchRefs)
         {
             _suppressShowBranchRefsDispatch = true;
@@ -370,8 +372,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
         var diffCollectionChanged =
             !string.Equals(_selectedDiffHash, selectedDiffHash, StringComparison.Ordinal)
-            || !ReferenceEquals(_selectedDiffFilesSource, selectedDiffFilesSource)
-            || !ReferenceEquals(_selectedDiffFileSource, selectedDiffContentSource);
+            || !ReferenceEquals(_selectedDiffFilesSource, selectedDiffFilesSource);
 
         if (selectedDiffHash == null)
         {
@@ -425,23 +426,15 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         {
             var selectedDiffFile = ResolveSelectedDiffFile(model, _selectedDiffFileKey);
             var selectedDiffFileKey = selectedDiffFile?.Key;
-            var diffContentChanged = !ReferenceEquals(_selectedDiffFileSource, selectedDiffContentSource);
+            // A context expansion temporarily publishes no content while its replacement
+            // loads. Keep the current rows visible until the new diff can replace them.
+            var diffContentChanged = selectedDiffContentSource != null
+                                     && !ReferenceEquals(_selectedDiffFileSource, selectedDiffContentSource);
             var selectionChanged = !Nullable.Equals(_selectedDiffFileKey, selectedDiffFileKey);
 
             if (diffContentChanged)
             {
-                if (model.SelectedDiff != null)
-                {
-                    SyncSelectedDiffFileContents(model.SelectedDiff.Value);
-                }
-                else
-                {
-                    foreach (var file in SelectedDiffFiles)
-                    {
-                        file.ClearContent();
-                    }
-                }
-
+                SyncSelectedDiffFileContents(model.SelectedDiff!.Value);
                 RenderSelectedDiffRows();
                 _selectedDiffFileSource = selectedDiffContentSource;
             }
@@ -1208,25 +1201,74 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                 continue;
             }
 
+            DiffHunkProjection? previousHunk = null;
             foreach (var hunk in file.Hunks)
             {
-                rows.Add(new DiffHunkHeaderProjection(hunk));
+                if (previousHunk != null)
+                {
+                    var hiddenLines = HiddenLinesBetween(previousHunk, hunk);
+                    if (hiddenLines > 0)
+                        rows.Add(new DiffGapProjection(hiddenLines));
+                }
+                previousHunk = hunk;
 
                 if (IsSideBySideDiffMode)
                 {
+                    rows.Add(new DiffHunkHeaderProjection(hunk));
                     AddSideBySideDiffRowsToList(rows, hunk.Lines);
                     continue;
                 }
 
-                foreach (var line in hunk.Lines)
-                {
-                    rows.Add(line);
-                }
+                var visibleLines = IsNewDiffMode
+                    ? hunk.Lines.Where(line => !line.IsRemoved)
+                    : IsOldDiffMode
+                        ? hunk.Lines.Where(line => !line.IsAdded)
+                        : hunk.Lines;
+                var materializedLines = visibleLines.ToArray();
+                if (materializedLines.Length == 0)
+                    continue;
+
+                rows.Add(new DiffHunkHeaderProjection(hunk));
+                rows.AddRange(materializedLines);
             }
         }
 
         SelectedDiffRows.Clear();
         SelectedDiffRows.AddRange(rows);
+    }
+
+    private static int HiddenLinesBetween(DiffHunkProjection previous, DiffHunkProjection next)
+    {
+        static int Gap(int? previousLine, int? nextLine) =>
+            previousLine.HasValue && nextLine.HasValue ? Math.Max(0, nextLine.Value - previousLine.Value - 1) : 0;
+
+        var previousLast = previous.Lines.LastOrDefault();
+        var nextFirst = next.Lines.FirstOrDefault();
+        if (previousLast == null || nextFirst == null) return 0;
+        return Math.Max(Gap(previousLast.OldLineNo, nextFirst.OldLineNo), Gap(previousLast.NewLineNo, nextFirst.NewLineNo));
+    }
+
+    [RelayCommand]
+    private void ExpandDiffBlock()
+    {
+        SetExpandedDiffContext(DiffContextLineCount + 10);
+    }
+
+    [RelayCommand]
+    private void ExpandDiffGap(int hiddenLineCount)
+    {
+        SetExpandedDiffContext(DiffContextLineCount + (int)Math.Ceiling(hiddenLineCount / 2.0));
+    }
+
+    private void SetExpandedDiffContext(int contextLines)
+    {
+        var option = DiffContextLineCounts.FirstOrDefault(candidate => candidate.Count == contextLines);
+        if (option == null)
+        {
+            option = new DiffContextLineCountProjection(contextLines);
+            DiffContextLineCounts.Add(option);
+        }
+        SelectedDiffContextLineCount = option;
     }
 
     private void AddSideBySideDiffRowsToList(List<IDiffRowProjection> target, ObservableCollection<DiffLineProjection> lines)

@@ -18,9 +18,11 @@ internal static class MainWindowNavigation
         switch (key)
         {
             case Key.J:
+            case Key.Down:
                 delta = 1;
                 return true;
             case Key.K:
+            case Key.Up:
                 delta = -1;
                 return true;
             default:

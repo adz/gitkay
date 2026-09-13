@@ -1,0 +1,27 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Style Selector="Window">
+        <Setter Property="Background" Value="{DynamicResource GitKayWindowBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
+        <Setter Property="FontFamily" Value="Inter,Segoe UI,Arial,sans-serif" />
+    </Style>
+    <Style Selector="Menu">
+        <Setter Property="Background" Value="{DynamicResource GitKaySurfaceBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
+    </Style>
+    <Style Selector="TextBox">
+        <Setter Property="Background" Value="{DynamicResource GitKayRaisedBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GitKayBorderBrush}" />
+    </Style>
+    <Style Selector="ComboBox">
+        <Setter Property="Background" Value="{DynamicResource GitKayRaisedBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GitKayBorderBrush}" />
+    </Style>
+    <Style Selector="Button">
+        <Setter Property="Background" Value="{DynamicResource GitKayRaisedBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GitKayBorderBrush}" />
+    </Style>
+</Styles>

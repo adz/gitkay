@@ -16,7 +16,7 @@
                    TextWrapping="Wrap"
                    FontSize="15"
                    FontWeight="SemiBold"
-                   Foreground="#ddd" />
+                   Foreground="{DynamicResource GitKayTextBrush}" />
 
         <Expander Grid.Row="1"
                   Header="Details"
@@ -28,9 +28,9 @@
                      TextWrapping="Wrap"
                      FontFamily="Cascadia Code,Consolas,Monospace"
                      FontSize="12"
-                     Background="#1e1e1e"
-                     Foreground="#ddd"
-                     BorderBrush="#333"
+                     Background="{DynamicResource GitKayWindowBrush}"
+                     Foreground="{DynamicResource GitKayTextBrush}"
+                     BorderBrush="{DynamicResource GitKayBorderBrush}"
                      BorderThickness="1"
                      Padding="10" />
         </Expander>

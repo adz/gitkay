@@ -1,4 +1,6 @@
 using System;
+using System.Diagnostics;
+using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -77,6 +79,8 @@ public static class FatalErrorPresenter
 
     private static void ReportFatalError(string heading, Exception exception)
     {
+        PersistCrashDetails(heading, exception);
+
         if (Interlocked.Exchange(ref _fatalDialogShown, 1) != 0)
         {
             return;
@@ -122,6 +126,28 @@ public static class FatalErrorPresenter
         catch (Exception ex)
         {
             WriteFallbackError("GitKay could not display the fatal error dialog.", ex);
+        }
+    }
+
+    private static void PersistCrashDetails(string heading, Exception exception)
+    {
+        var details = BuildDetails(heading, exception);
+        try
+        {
+            Trace.WriteLine(details);
+            Trace.Flush();
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            var path = Path.Combine(Path.GetTempPath(), "gitkay-crash.log");
+            File.WriteAllText(path, details);
+        }
+        catch
+        {
         }
     }
 

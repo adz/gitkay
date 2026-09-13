@@ -33,7 +33,7 @@
                                    FontSize="18"
                                    FontWeight="SemiBold" />
                         <TextBlock Text="Controls for the commit history view."
-                                   Foreground="#aaa" />
+                                   Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
 
                         <GroupBox Header="Ref badges">
                             <Border Padding="12">
@@ -56,7 +56,7 @@
                                    FontSize="18"
                                    FontWeight="SemiBold" />
                         <TextBlock Text="Typography used by the commit list and commit header."
-                                   Foreground="#aaa" />
+                                   Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
 
                         <GroupBox Header="Row typography">
                             <Border Padding="12">
@@ -66,35 +66,35 @@
                                       ColumnSpacing="12">
                                     <TextBlock Grid.Row="0"
                                                Text="Font family"
-                                               Foreground="#ddd" />
+                                               Foreground="{DynamicResource GitKayTextBrush}" />
                                     <TextBox Grid.Row="0"
                                              Grid.Column="1"
                                              Text="{Binding CommitRowFontFamily, Mode=TwoWay}" />
 
                                     <TextBlock Grid.Row="1"
                                                Text="Mono font family"
-                                               Foreground="#ddd" />
+                                               Foreground="{DynamicResource GitKayTextBrush}" />
                                     <TextBox Grid.Row="1"
                                              Grid.Column="1"
                                              Text="{Binding CommitRowMonoFontFamily, Mode=TwoWay}" />
 
                                     <TextBlock Grid.Row="2"
                                                Text="Subject font size"
-                                               Foreground="#ddd" />
+                                               Foreground="{DynamicResource GitKayTextBrush}" />
                                     <TextBox Grid.Row="2"
                                              Grid.Column="1"
                                              Text="{Binding CommitRowTextFontSize, Mode=TwoWay}" />
 
                                     <TextBlock Grid.Row="3"
                                                Text="Meta font size"
-                                               Foreground="#ddd" />
+                                               Foreground="{DynamicResource GitKayTextBrush}" />
                                     <TextBox Grid.Row="3"
                                              Grid.Column="1"
                                              Text="{Binding CommitRowMetaFontSize, Mode=TwoWay}" />
 
                                     <TextBlock Grid.Row="4"
                                                Text="Badge font size"
-                                               Foreground="#ddd" />
+                                               Foreground="{DynamicResource GitKayTextBrush}" />
                                     <TextBox Grid.Row="4"
                                              Grid.Column="1"
                                              Text="{Binding CommitRowBadgeFontSize, Mode=TwoWay}" />
@@ -112,14 +112,14 @@
                                    FontSize="18"
                                    FontWeight="SemiBold" />
                         <TextBlock Text="Presentation and search behavior for the diff view."
-                                   Foreground="#aaa" />
+                                   Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
 
                         <GroupBox Header="Diff presentation">
                             <Border Padding="12">
                                 <StackPanel Spacing="10">
                                     <StackPanel Orientation="Horizontal" Spacing="12">
                                         <TextBlock Text="Mode"
-                                                   Foreground="#ddd"
+                                                   Foreground="{DynamicResource GitKayTextBrush}"
                                                    VerticalAlignment="Center" />
                                         <ComboBox Width="180"
                                                   ItemsSource="{Binding DiffPresentationModes}"
@@ -134,7 +134,7 @@
 
                                     <StackPanel Orientation="Horizontal" Spacing="12">
                                         <TextBlock Text="Context lines"
-                                                   Foreground="#ddd"
+                                                   Foreground="{DynamicResource GitKayTextBrush}"
                                                    VerticalAlignment="Center" />
                                         <ComboBox Width="150"
                                                   ItemsSource="{Binding DiffContextLineCounts}"
@@ -149,12 +149,12 @@
 
                                     <StackPanel Orientation="Horizontal" Spacing="12">
                                         <TextBlock Text="Search debounce"
-                                                   Foreground="#ddd"
+                                                   Foreground="{DynamicResource GitKayTextBrush}"
                                                    VerticalAlignment="Center" />
                                         <TextBox Width="88"
                                                  Text="{Binding SearchDebounceSeconds, Mode=TwoWay}" />
                                         <TextBlock Text="seconds"
-                                                   Foreground="#aaa"
+                                                   Foreground="{DynamicResource GitKaySecondaryTextBrush}"
                                                    VerticalAlignment="Center" />
                                     </StackPanel>
                                 </StackPanel>

@@ -1,5 +1,6 @@
 using System;
 using System.ComponentModel;
+using System.Linq;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -15,15 +16,17 @@ public partial class MainWindow : Window
     private Control? _activeHistoryColumnResizeHandle;
     private int _activeHistoryColumnResizeIndex = -1;
     private double _activeHistoryColumnResizeStartX;
-    private double _activeHistoryColumnResizeStartWidth;
+    private double[]? _activeHistoryColumnResizeStartWidths;
 
     public MainWindow()
     {
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
         CommitListBox.AddHandler(InputElement.KeyDownEvent, OnMainListBoxKeyDown, RoutingStrategies.Tunnel);
+        CommitScrollViewer.AddHandler(InputElement.PointerPressedEvent, OnCommitScrollPointerPressed, RoutingStrategies.Tunnel);
         DiffRowsListBox.AddHandler(InputElement.KeyDownEvent, OnMainListBoxKeyDown, RoutingStrategies.Tunnel);
         DiffFilesListBox.AddHandler(InputElement.KeyDownEvent, OnMainListBoxKeyDown, RoutingStrategies.Tunnel);
+        HistoryHeaderGrid.LayoutUpdated += (_, _) => SyncCommitColumnWidths();
     }
 
     private async void OnSettingsMenuItemClick(object? sender, RoutedEventArgs e)
@@ -91,6 +94,10 @@ public partial class MainWindow : Window
             return;
         }
 
+        var shouldScrollCommit = e.PropertyName is nameof(MainProjection.SelectedCommit) or nameof(MainProjection.Commits);
+        var shouldScrollFile = e.PropertyName == nameof(MainProjection.SelectedDiffFile);
+        var shouldScrollDiff = e.PropertyName is nameof(MainProjection.SelectedDiffFile) or nameof(MainProjection.SelectedDiffRow);
+
         Dispatcher.UIThread.Post(() =>
         {
             if (!ReferenceEquals(_projection, projection))
@@ -98,27 +105,35 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (projection.SelectedCommit != null)
+            if (shouldScrollCommit && projection.SelectedCommit != null)
             {
                 CommitListBox.ScrollIntoView(projection.SelectedCommit);
             }
 
-            if (projection.SelectedDiffFile != null)
+            if (shouldScrollFile && projection.SelectedDiffFile != null)
             {
                 DiffFilesListBox.ScrollIntoView(projection.SelectedDiffFile);
             }
 
-            var target = (object?)projection.SelectedDiffRow ?? projection.SelectedDiffFile?.Header;
-            if (target != null)
+            var target = projection.SelectedDiffRow ?? projection.SelectedDiffFile?.Header;
+            if (shouldScrollDiff && target != null)
             {
                 DiffRowsListBox.ScrollIntoView(target);
             }
 
-            if (!DiffRowsListBox.IsKeyboardFocusWithin && !DiffFilesListBox.IsKeyboardFocusWithin)
+            if (!CommitListBox.IsKeyboardFocusWithin
+                && !DiffRowsListBox.IsKeyboardFocusWithin
+                && !DiffFilesListBox.IsKeyboardFocusWithin)
             {
                 DiffRowsListBox.Focus();
             }
         }, DispatcherPriority.Loaded);
+    }
+
+    private void OnCommitScrollPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        CommitListBox.Focus();
+        CommitListBox.SelectAt(e.GetPosition(CommitListBox).Y);
     }
 
     private void OnDiffRowsListBoxGotFocus(object? sender, FocusChangedEventArgs e)
@@ -133,33 +148,34 @@ public partial class MainWindow : Window
 
     private void OnMainListBoxKeyDown(object? sender, KeyEventArgs e)
     {
-        if (sender is not ListBox listBox)
-        {
+        if (sender is not ListBox && sender is not DiffSurfaceControl && sender is not CommitSurfaceControl)
             return;
-        }
 
         if (MainWindowNavigation.TryGetListNavigationDelta(e.Key, e.KeyModifiers, out var delta))
         {
-            MainWindowNavigation.TryMoveSelection(listBox, delta);
+            if (sender is ListBox listBox)
+                MainWindowNavigation.TryMoveSelection(listBox, delta);
+            else if (sender is DiffSurfaceControl diffSurface)
+                diffSurface.MoveSelection(delta);
+            else
+                ((CommitSurfaceControl)sender).MoveSelection(delta);
             e.Handled = true;
             return;
         }
 
         if ((e.Key == Key.F && e.KeyModifiers == KeyModifiers.Control) || (e.Key == Key.Oem2 && e.KeyModifiers == KeyModifiers.None))
         {
-            if (ReferenceEquals(listBox, CommitListBox))
+            if (ReferenceEquals(sender, CommitListBox))
             {
                 if (_projection != null)
-                {
                     _projection.IsSearchPanelExpanded = true;
-                }
                 SearchBox.Focus();
                 SearchBox.SelectAll();
                 e.Handled = true;
                 return;
             }
 
-            if (ReferenceEquals(listBox, DiffRowsListBox) || ReferenceEquals(listBox, DiffFilesListBox))
+            if (ReferenceEquals(sender, DiffRowsListBox) || ReferenceEquals(sender, DiffFilesListBox))
             {
                 CommitFindBox.Focus();
                 CommitFindBox.SelectAll();
@@ -168,18 +184,15 @@ public partial class MainWindow : Window
             }
         }
 
-        if (ReferenceEquals(listBox, CommitListBox)
-            && e.Key == Key.Right
-            && e.KeyModifiers == KeyModifiers.None)
+        if (ReferenceEquals(sender, CommitListBox) && e.Key == Key.Right && e.KeyModifiers == KeyModifiers.None)
         {
             FocusDiffPane();
             e.Handled = true;
             return;
         }
 
-        if ((ReferenceEquals(listBox, DiffRowsListBox) || ReferenceEquals(listBox, DiffFilesListBox))
-            && e.Key == Key.Left
-            && e.KeyModifiers == KeyModifiers.None)
+        if ((ReferenceEquals(sender, DiffRowsListBox) || ReferenceEquals(sender, DiffFilesListBox))
+            && e.Key == Key.Left && e.KeyModifiers == KeyModifiers.None)
         {
             CommitListBox.Focus();
             e.Handled = true;
@@ -212,8 +225,13 @@ public partial class MainWindow : Window
         var column = HistoryHeaderGrid.ColumnDefinitions[columnIndex];
         _activeHistoryColumnResizeHandle = handle;
         _activeHistoryColumnResizeIndex = columnIndex;
+        if (columnIndex + 1 >= HistoryHeaderGrid.ColumnDefinitions.Count)
+            return;
+
         _activeHistoryColumnResizeStartX = e.GetPosition(HistoryHeaderGrid).X;
-        _activeHistoryColumnResizeStartWidth = GetEffectiveColumnWidth(columnIndex, column);
+        _activeHistoryColumnResizeStartWidths = HistoryHeaderGrid.ColumnDefinitions
+            .Select((definition, index) => GetEffectiveColumnWidth(index, definition))
+            .ToArray();
 
         e.Pointer.Capture(handle);
         e.Handled = true;
@@ -224,16 +242,41 @@ public partial class MainWindow : Window
         if (_activeHistoryColumnResizeHandle == null
             || !ReferenceEquals(sender, _activeHistoryColumnResizeHandle)
             || _activeHistoryColumnResizeIndex < 0
-            || _activeHistoryColumnResizeIndex >= HistoryHeaderGrid.ColumnDefinitions.Count)
+            || _activeHistoryColumnResizeIndex >= HistoryHeaderGrid.ColumnDefinitions.Count - 1)
         {
             return;
         }
 
-        var column = HistoryHeaderGrid.ColumnDefinitions[_activeHistoryColumnResizeIndex];
-        var delta = e.GetPosition(HistoryHeaderGrid).X - _activeHistoryColumnResizeStartX;
-        var minWidth = Math.Max(0d, column.MinWidth);
-        var nextWidth = Math.Max(minWidth, _activeHistoryColumnResizeStartWidth + delta);
-        column.Width = new GridLength(nextWidth, GridUnitType.Pixel);
+        var startWidths = _activeHistoryColumnResizeStartWidths;
+        if (startWidths == null || startWidths.Length != HistoryHeaderGrid.ColumnDefinitions.Count)
+            return;
+
+        var boundary = _activeHistoryColumnResizeIndex;
+        var requestedDelta = e.GetPosition(HistoryHeaderGrid).X - _activeHistoryColumnResizeStartX;
+        var widths = (double[])startWidths.Clone();
+
+        if (requestedDelta > 0)
+        {
+            var available = 0d;
+            for (var index = boundary + 1; index < widths.Length; index++)
+                available += Math.Max(0, widths[index] - HistoryHeaderGrid.ColumnDefinitions[index].MinWidth);
+            var applied = Math.Min(requestedDelta, available);
+            widths[boundary] += applied;
+            ShrinkColumns(widths, boundary + 1, widths.Length, 1, applied);
+        }
+        else if (requestedDelta < 0)
+        {
+            var requested = -requestedDelta;
+            var available = 0d;
+            for (var index = boundary; index >= 0; index--)
+                available += Math.Max(0, widths[index] - HistoryHeaderGrid.ColumnDefinitions[index].MinWidth);
+            var applied = Math.Min(requested, available);
+            widths[boundary + 1] += applied;
+            ShrinkColumns(widths, boundary, -1, -1, applied);
+        }
+
+        for (var index = 0; index < widths.Length; index++)
+            HistoryHeaderGrid.ColumnDefinitions[index].Width = new GridLength(widths[index], GridUnitType.Pixel);
         e.Handled = true;
     }
 
@@ -255,6 +298,29 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ShrinkColumns(double[] widths, int start, int stop, int step, double amount)
+    {
+        for (var index = start; index != stop && amount > 0; index += step)
+        {
+            var minimum = Math.Max(0, HistoryHeaderGrid.ColumnDefinitions[index].MinWidth);
+            var reduction = Math.Min(amount, Math.Max(0, widths[index] - minimum));
+            widths[index] -= reduction;
+            amount -= reduction;
+        }
+    }
+
+    private void SyncCommitColumnWidths()
+    {
+        if (HistoryHeaderGrid.ColumnDefinitions.Count < 5)
+            return;
+
+        CommitListBox.GraphWidth = HistoryHeaderGrid.ColumnDefinitions[0].ActualWidth;
+        CommitListBox.SubjectWidth = HistoryHeaderGrid.ColumnDefinitions[1].ActualWidth;
+        CommitListBox.HashWidth = HistoryHeaderGrid.ColumnDefinitions[2].ActualWidth;
+        CommitListBox.AuthorWidth = HistoryHeaderGrid.ColumnDefinitions[3].ActualWidth;
+        CommitListBox.DateWidth = HistoryHeaderGrid.ColumnDefinitions[4].ActualWidth;
+    }
+
     private double GetEffectiveColumnWidth(int columnIndex, ColumnDefinition column)
     {
         if (column.ActualWidth > 0d)
@@ -270,7 +336,7 @@ public partial class MainWindow : Window
         _activeHistoryColumnResizeHandle = null;
         _activeHistoryColumnResizeIndex = -1;
         _activeHistoryColumnResizeStartX = 0d;
-        _activeHistoryColumnResizeStartWidth = 0d;
+        _activeHistoryColumnResizeStartWidths = null;
     }
 
     public override void Render(DrawingContext context)
