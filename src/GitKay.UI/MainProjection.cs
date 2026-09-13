@@ -40,6 +40,16 @@ public sealed class DiffPresentationModeProjection {
     public string Label { get; }
 }
 
+public sealed class ThemeModeProjection {
+    public ThemeModeProjection(string key, string label) {
+        Key = key;
+        Label = label;
+    }
+
+    public string Key { get; }
+    public string Label { get; }
+}
+
 public sealed class DiffContextLineCountProjection {
     public DiffContextLineCountProjection(int count) {
         Count = count;
@@ -86,6 +96,13 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         new DiffPresentationModeProjection("old", "Old"),
     };
 
+    public ObservableCollection<ThemeModeProjection> ThemeModes { get; } = new()
+    {
+        new ThemeModeProjection("system", "System"),
+        new ThemeModeProjection("light", "Light"),
+        new ThemeModeProjection("dark", "Dark"),
+    };
+
     public ObservableCollection<DiffContextLineCountProjection> DiffContextLineCounts { get; } = new()
     {
         new DiffContextLineCountProjection(0),
@@ -128,6 +145,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private IBrush _diffSearchStatusBackground = Brushes.Transparent;
     [ObservableProperty] private DiffPresentationModeProjection? _selectedDiffPresentationMode;
     [ObservableProperty] private DiffContextLineCountProjection? _selectedDiffContextLineCount;
+    [ObservableProperty] private ThemeModeProjection? _selectedThemeMode;
     [ObservableProperty] private string _selectedDiffPresentationModeLabel = "Diff";
     [ObservableProperty] private bool _isCommitDetailsExpanded;
     [ObservableProperty] private bool _isDiffFileTreeMode;
@@ -206,6 +224,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public MainProjection() {
         SelectedDiffPresentationMode = DiffPresentationModes[0];
         SelectedDiffContextLineCount = DiffContextLineCounts.First(option => option.Count == DiffContextLineCount);
+        SelectedThemeMode = ThemeModes[0];
     }
 
     public void ApplySettings(AppSettings settings) {
@@ -232,6 +251,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             SelectedDiffPresentationMode =
                 DiffPresentationModes.FirstOrDefault(mode => mode.Key == normalized.DiffPresentationModeKey)
                 ?? DiffPresentationModes.First();
+            SelectedThemeMode =
+                ThemeModes.FirstOrDefault(mode => mode.Key == normalized.ThemeMode)
+                ?? ThemeModes.First();
         }
         finally {
             _suppressDiffPresentationDispatch = false;
@@ -253,6 +275,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             CommitRowMetaFontSize = CommitRowMetaFontSize,
             CommitRowBadgeFontSize = CommitRowBadgeFontSize,
             SearchDebounceSeconds = SearchDebounceSeconds,
+            ThemeMode = SelectedThemeMode?.Key ?? AppSettings.DefaultThemeMode,
         };
     }
 
@@ -974,6 +997,16 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         var startedAtTicks = Stopwatch.GetTimestamp();
         LogTiming($"search result click hash={value.FullHash} summary={value.MatchSummary}");
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSelectCommit(value.FullHash, startedAtTicks));
+    }
+
+    partial void OnSelectedThemeModeChanged(ThemeModeProjection? value) {
+        if (Avalonia.Application.Current is { } application) {
+            application.RequestedThemeVariant = value?.Key switch {
+                "light" => Avalonia.Styling.ThemeVariant.Light,
+                "dark" => Avalonia.Styling.ThemeVariant.Dark,
+                _ => Avalonia.Styling.ThemeVariant.Default,
+            };
+        }
     }
 
     partial void OnSelectedDiffPresentationModeChanged(DiffPresentationModeProjection? value) {

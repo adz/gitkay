@@ -32,7 +32,8 @@ public sealed class AppSettingsStore {
                 commitRowTextFontSize: document.CommitRowTextFontSize,
                 commitRowMetaFontSize: document.CommitRowMetaFontSize,
                 commitRowBadgeFontSize: document.CommitRowBadgeFontSize,
-                searchDebounceSeconds: document.SearchDebounceSeconds).Normalize();
+                searchDebounceSeconds: document.SearchDebounceSeconds,
+                themeMode: document.ThemeMode).Normalize();
         }
         catch {
             return AppSettings.Default;
@@ -58,7 +59,8 @@ public sealed class AppSettingsStore {
                 normalized.CommitRowTextFontSize,
                 normalized.CommitRowMetaFontSize,
                 normalized.CommitRowBadgeFontSize,
-                normalized.SearchDebounceSeconds);
+                normalized.SearchDebounceSeconds,
+                normalized.ThemeMode);
 
             var json = GitKayJson.SerializeSettings(document);
             File.WriteAllText(_settingsPath, json);

@@ -12,6 +12,7 @@ public sealed record AppSettings {
     public const int DefaultDiffContextLines = 3;
     public const string DefaultDiffPresentationModeKey = "diff";
     public const double DefaultSearchDebounceSeconds = 0.5;
+    public const string DefaultThemeMode = "system";
 
     public bool ShowBranchRefs { get; init; }
 
@@ -33,6 +34,9 @@ public sealed record AppSettings {
 
     public double SearchDebounceSeconds { get; init; } = DefaultSearchDebounceSeconds;
 
+    /// <summary>"system", "light", or "dark".</summary>
+    public string ThemeMode { get; init; } = DefaultThemeMode;
+
     public static AppSettings Default { get; } = new();
 
     public static AppSettings Create(
@@ -45,7 +49,8 @@ public sealed record AppSettings {
         double commitRowTextFontSize = DefaultCommitRowTextFontSize,
         double commitRowMetaFontSize = DefaultCommitRowMetaFontSize,
         double commitRowBadgeFontSize = DefaultCommitRowBadgeFontSize,
-        double searchDebounceSeconds = DefaultSearchDebounceSeconds) {
+        double searchDebounceSeconds = DefaultSearchDebounceSeconds,
+        string themeMode = DefaultThemeMode) {
         return new AppSettings {
             ShowBranchRefs = showBranchRefs,
             ShowStashes = showStashes,
@@ -57,6 +62,7 @@ public sealed record AppSettings {
             CommitRowMetaFontSize = commitRowMetaFontSize,
             CommitRowBadgeFontSize = commitRowBadgeFontSize,
             SearchDebounceSeconds = searchDebounceSeconds,
+            ThemeMode = themeMode,
         };
     }
 
@@ -73,6 +79,7 @@ public sealed record AppSettings {
             CommitRowMetaFontSize = NormalizeFontSize(CommitRowMetaFontSize, DefaultCommitRowMetaFontSize),
             CommitRowBadgeFontSize = NormalizeFontSize(CommitRowBadgeFontSize, DefaultCommitRowBadgeFontSize),
             SearchDebounceSeconds = Math.Max(0d, SearchDebounceSeconds),
+            ThemeMode = NormalizeThemeMode(ThemeMode),
         };
     }
 
@@ -110,6 +117,14 @@ public sealed record AppSettings {
             "new" => "new",
             "old" => "old",
             _ => null,
+        };
+    }
+
+    private static string NormalizeThemeMode(string? value) {
+        return value?.Trim().ToLowerInvariant() switch {
+            "light" => "light",
+            "dark" => "dark",
+            _ => DefaultThemeMode,
         };
     }
 

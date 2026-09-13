@@ -26,12 +26,37 @@
         </StackPanel>
 
         <TabControl>
+            <TabItem Header="General">
+                <ScrollViewer>
+                    <StackPanel Spacing="12" Margin="0,8,0,0">
+                        <TextBlock Text="Application-wide preferences."
+                                   Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
+
+                        <GroupBox Header="Appearance">
+                            <Border Padding="12">
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <TextBlock Text="Theme"
+                                               Foreground="{DynamicResource GitKayTextBrush}"
+                                               VerticalAlignment="Center" />
+                                    <ComboBox Width="150"
+                                              ItemsSource="{Binding ThemeModes}"
+                                              SelectedItem="{Binding SelectedThemeMode}">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="local:ThemeModeProjection">
+                                                <TextBlock Text="{Binding Label}" />
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                </StackPanel>
+                            </Border>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
             <TabItem Header="History">
                 <ScrollViewer>
                     <StackPanel Spacing="12" Margin="0,8,0,0">
-                        <TextBlock Text="History pane"
-                                   FontSize="18"
-                                   FontWeight="SemiBold" />
                         <TextBlock Text="Controls for the commit history view."
                                    Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
 
@@ -64,9 +89,6 @@
             <TabItem Header="Commit">
                 <ScrollViewer>
                     <StackPanel Spacing="12" Margin="0,8,0,0">
-                        <TextBlock Text="Commit pane"
-                                   FontSize="18"
-                                   FontWeight="SemiBold" />
                         <TextBlock Text="Typography used by the commit list and commit header."
                                    Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
 
@@ -120,9 +142,6 @@
             <TabItem Header="Diff">
                 <ScrollViewer>
                     <StackPanel Spacing="12" Margin="0,8,0,0">
-                        <TextBlock Text="Diff pane"
-                                   FontSize="18"
-                                   FontWeight="SemiBold" />
                         <TextBlock Text="Presentation and search behavior for the diff view."
                                    Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
 
