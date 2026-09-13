@@ -86,8 +86,8 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource
     private const double LineHeight = 20;
     private const double HunkHeight = 28;
     private const double GapHeight = 40;
-    private const double FileHeight = 48;
-    private const double FileCardTop = 10;
+    private const double FileHeight = 50;
+    private const double FileCardTop = 12;
     private const double FileChevronWidth = 32;
     private const int HeaderChevronAction = 100;
     private const int HeaderContextAction = 101;
@@ -656,13 +656,13 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource
         var card = FileCardRect(y);
         // Soft file headers: a faint card edge and a secondary-coloured path, so code stays the focus.
         var selected = ReferenceEquals(header, SelectedItem);
-        using (context.PushOpacity(selected ? 1 : 0.55))
+        // No outline: a faint band marks the file; selection tints it.
+        using (context.PushOpacity(selected ? 1 : 0.7))
         {
-            var border = new Pen(ThemeBrush("GitKayBorderBrush", HunkBrush), 1);
             var fill = selected
                 ? ThemeBrush("GitKaySelectionBrush", SelectionBrush)
-                : ThemeBrush("GitKaySurfaceBrush", Brushes.Transparent);
-            context.DrawRectangle(fill, border, card, 6, 6);
+                : ThemeBrush("GitKaySurfaceBrush", StickySurfaceFallback);
+            context.DrawRectangle(fill, null, card, 6, 6);
         }
 
         var secondary = ThemeBrush("GitKayMutedTextBrush", HunkBrush);
@@ -702,7 +702,10 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource
                 DrawPlain(context, "Loading…", toggle.Right + 6, centerY - 7, 11, ThemeBrush("GitKayMutedTextBrush", HunkBrush));
         }
 
-        DrawDiffStat(context, file, card.Right - 12, centerY);
+        // Size blocks stay grey until the header is hovered or selected; the +N −M numbers carry the detail.
+        using (context.PushOpacity(selected || _hoveredRowIndex == index ? 1 : 0.35))
+            DrawDiffStat(context, file, card.Right - 12, centerY, blocksOnly: true);
+        DrawDiffStat(context, file, card.Right - 12, centerY, blocksOnly: false);
     }
 
     private bool IsHeaderPartActive(int index, int action, out bool pressed)
@@ -741,7 +744,9 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource
     }
 
     /// <summary>"+N −M" followed by five blocks sized to the change ratio, right-aligned at <paramref name="right"/>.</summary>
-    private void DrawDiffStat(DrawingContext context, DiffFileProjection file, double right, double centerY)
+    private int _hoveredRowIndex = -1;
+
+    private void DrawDiffStat(DrawingContext context, DiffFileProjection file, double right, double centerY, bool blocksOnly)
     {
         if (!file.IsLoaded) return;
         const double block = 8, spacing = 2;
@@ -752,10 +757,14 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource
         var (green, red) = DiffStatBar.Blocks(file.AddedLines, file.RemovedLines);
 
         var x = right - (5 * block + 4 * spacing);
-        for (var i = 0; i < 5; i++)
+        if (blocksOnly)
         {
-            var brush = i < green ? added : i < green + red ? removed : neutral;
-            context.DrawRectangle(brush, null, new Rect(x + i * (block + spacing), centerY - block / 2, block, block), 2, 2);
+            for (var i = 0; i < 5; i++)
+            {
+                var blockBrush = i < green ? added : i < green + red ? removed : neutral;
+                context.DrawRectangle(blockBrush, null, new Rect(x + i * (block + spacing), centerY - block / 2, block, block), 2, 2);
+            }
+            return;
         }
 
         x -= 8;
@@ -926,14 +935,16 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource
         var gutter = line.IsAdded ? ThemeBrush("GitKayAddedGutterBrush", Brushes.Transparent)
             : line.IsRemoved ? ThemeBrush("GitKayRemovedGutterBrush", Brushes.Transparent)
             : ThemeBrush("GitKayGutterBrush", Brushes.Transparent);
-        context.FillRectangle(gutter, new Rect(0, y, 56, LineHeight - 1));
+        context.FillRectangle(gutter, new Rect(0, y, 50, LineHeight - 1));
         var lineNumber = line.IsRemoved ? line.OldLineNoText : line.NewLineNoText;
-        DrawLineNumber(context, lineNumber, 4, y, ThemeBrush("GitKayMutedTextBrush", line.LineNumberForeground));
-        DrawPlain(context, line.Prefix, 44, y + 2, 12, (line.IsAdded ? ThemeBrush("GitKayAddedAccentBrush", line.PrefixForeground) : line.IsRemoved ? ThemeBrush("GitKayRemovedAccentBrush", line.PrefixForeground) : ThemeBrush("GitKayMutedTextBrush", line.PrefixForeground)));
-        using (context.PushClip(new Rect(60, y, Math.Max(0, Bounds.Width - 60), LineHeight)))
+        DrawLineNumber(context, lineNumber, 2, y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
+        // The +/- marker only appears on changed lines, in a narrow column.
+        if (line.IsAdded || line.IsRemoved)
+            DrawPlain(context, line.Prefix, 41, y + 2, 12, line.IsAdded ? ThemeBrush("GitKayAddedAccentBrush", line.PrefixForeground) : ThemeBrush("GitKayRemovedAccentBrush", line.PrefixForeground));
+        using (context.PushClip(new Rect(54, y, Math.Max(0, Bounds.Width - 54), LineHeight)))
         {
-            DrawFindMatches(context, line.Content, 60, y);
-            DrawCode(context, line.Content, 60, y + 2, ThemeBrush("GitKayTextBrush", line.Foreground));
+            DrawFindMatches(context, line.Content, 54, y);
+            DrawCode(context, line.Content, 54, y + 2, ThemeBrush("GitKayTextBrush", line.Foreground));
         }
     }
 
@@ -948,7 +959,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource
             : line.IsRemoved ? ThemeBrush("GitKayRemovedGutterBrush", Brushes.Transparent)
             : ThemeBrush("GitKayGutterBrush", Brushes.Transparent);
         context.FillRectangle(gutter, new Rect(0, y, 48, LineHeight - 1));
-        DrawLineNumber(context, lineNumber, 8, y, ThemeBrush("GitKayMutedTextBrush", line.LineNumberForeground));
+        DrawLineNumber(context, lineNumber, 8, y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
         using (context.PushClip(new Rect(52, y, Math.Max(0, Bounds.Width - 52), LineHeight)))
         {
             DrawFindMatches(context, content, 52, y);
@@ -974,14 +985,14 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource
 
         DrawIntralineHighlights(context, line.OldContent, line.NewContent, 56, middle + 57, y);
 
-        DrawLineNumber(context, line.OldLineNoText, 8, y, ThemeBrush("GitKayMutedTextBrush", line.LineNumberForeground));
+        DrawLineNumber(context, line.OldLineNoText, 8, y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
         using (context.PushClip(new Rect(56, y, Math.Max(0, middle - 64), LineHeight)))
         {
             DrawFindMatches(context, line.OldContent, 56, y);
             DrawCode(context, line.OldContent, 56, y + 2, ThemeBrush("GitKayTextBrush", line.Foreground));
         }
 
-        DrawLineNumber(context, line.NewLineNoText, middle + 9, y, ThemeBrush("GitKayMutedTextBrush", line.LineNumberForeground));
+        DrawLineNumber(context, line.NewLineNoText, middle + 9, y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
         using (context.PushClip(new Rect(middle + 57, y, Math.Max(0, Bounds.Width - middle - 57), LineHeight)))
         {
             DrawFindMatches(context, line.NewContent, middle + 57, y);
@@ -1082,6 +1093,8 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource
         var changedWidth = Layout(text.Substring(start, length), 12, Brushes.Transparent, false).Width;
         context.FillRectangle(brush, new Rect(x + prefixWidth, y, changedWidth, LineHeight - 1));
     }
+
+    private static readonly IBrush LineNumberFallback = new SolidColorBrush(Color.FromRgb(110, 118, 129)).ToImmutable();
 
     private void DrawLineNumber(DrawingContext context, string text, double x, double y, IBrush foreground)
     {
@@ -1247,6 +1260,15 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource
             return;
         }
 
+        var hoveredRow = RowAt(e.GetPosition(this), out _);
+        if (hoveredRow != _hoveredRowIndex)
+        {
+            var headerChanged = (uint)hoveredRow < (uint)_rows.Length && _rows[hoveredRow] is DiffFileHeaderProjection
+                                || (uint)_hoveredRowIndex < (uint)_rows.Length && _rows[_hoveredRowIndex] is DiffFileHeaderProjection;
+            _hoveredRowIndex = hoveredRow;
+            if (headerChanged) InvalidateVisual();
+        }
+
         var hit = GapActionAt(e.GetPosition(this));
         if (hit == _hoveredGapAction) return;
         _hoveredGapAction = hit;
@@ -1343,7 +1365,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource
     {
         "side-by-side" => side == 0 ? 56 : Bounds.Width / 2 + 57,
         "new" or "old" => 52,
-        _ => 60,
+        _ => 54,
     };
 
     private string TextFor(DiffLineProjection line, int side) => Mode switch

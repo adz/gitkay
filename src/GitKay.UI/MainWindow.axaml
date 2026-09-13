@@ -12,8 +12,8 @@
 
     <DockPanel>
 
-        <Border DockPanel.Dock="Bottom" Background="{DynamicResource GitKayStatusBrush}" BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="0,1,0,0" Padding="6,3">
-            <TextBlock Text="{Binding Status}" Foreground="{DynamicResource GitKaySecondaryTextBrush}" FontSize="12" />
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource GitKayWindowBrush}" BorderBrush="{DynamicResource GitKayHairlineBrush}" BorderThickness="0,1,0,0" Padding="8,3" IsVisible="{Binding IsStatusVisible}">
+            <TextBlock Text="{Binding Status}" Foreground="{DynamicResource GitKaySecondaryTextBrush}" FontSize="11" />
         </Border>
 
         <Grid>
@@ -21,16 +21,14 @@
               RowDefinitions="3*,6,7*"
               MinHeight="0">
             <Border Grid.Row="0"
-                    Background="{DynamicResource GitKayWindowBrush}"
-                    BorderBrush="{DynamicResource GitKayBorderBrush}"
-                    BorderThickness="0,0,0,1">
+                    Background="{DynamicResource GitKayWindowBrush}">
                 <Grid MinHeight="0"
                       RowDefinitions="Auto,24,*"
                       Grid.IsSharedSizeScope="True">
                     <!-- Commit search above the history; the hamburger holds the app menu. -->
                     <Border Grid.Row="0"
-                            Background="{DynamicResource GitKayRaisedBrush}"
-                            BorderBrush="{DynamicResource GitKayBorderBrush}"
+                            Background="{DynamicResource GitKayWindowBrush}"
+                            BorderBrush="{DynamicResource GitKayHairlineBrush}"
                             BorderThickness="0,0,0,1"
                             Padding="6,4">
                         <Grid RowDefinitions="Auto,Auto">
@@ -152,7 +150,7 @@
                         </Grid>
 
                         <!-- Advanced search: edits the same query as prefixed terms. -->
-                        <Grid Grid.Row="1" IsVisible="{Binding IsAdvancedSearchExpanded}"
+                        <Grid Grid.Row="1" Classes="fadeIn" IsVisible="{Binding IsAdvancedSearchExpanded}"
                               Margin="40,8,6,4"
                               ColumnDefinitions="Auto,*,Auto,*,Auto,*,Auto"
                               RowDefinitions="Auto,Auto,Auto"
@@ -196,8 +194,8 @@
 
 
                     <Border Grid.Row="1"
-                            Background="{DynamicResource GitKayRaisedBrush}"
-                            BorderBrush="{DynamicResource GitKayBorderBrush}"
+                            Background="{DynamicResource GitKayWindowBrush}"
+                            BorderBrush="{DynamicResource GitKayHairlineBrush}"
                             BorderThickness="0,0,0,1">
                         <Grid x:Name="HistoryHeaderGrid"
                               Width="{Binding #CommitListBox.Bounds.Width}">
@@ -209,25 +207,25 @@
                                 <ColumnDefinition Width="110" MinWidth="90" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" Margin="6,0" VerticalAlignment="Center" Background="Transparent" Tag="message" ContextRequested="OnHistoryHeaderContextRequested">
-                                <TextBlock Text="COMMIT" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="10" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <TextBlock Text="COMMIT" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="10" LetterSpacing="0.6" VerticalAlignment="Center" />
                                 <Button Classes="funnel" IsVisible="{Binding HasCommitFilter}" Command="{Binding ClearColumnFilterCommand}" CommandParameter="message" ToolTip.Tip="Commit filter active — click to clear">
                                     <PathIcon Width="9" Height="9" Data="M1,2 H15 L9.5,8.5 V14 L6.5,12.5 V8.5 Z" Foreground="{DynamicResource GitKayAccentBrush}" />
                                 </Button>
                             </StackPanel>
                             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" Margin="6,0" VerticalAlignment="Center" Background="Transparent" Tag="hash" ContextRequested="OnHistoryHeaderContextRequested">
-                                <TextBlock Text="HASH" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="10" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <TextBlock Text="HASH" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="10" LetterSpacing="0.6" VerticalAlignment="Center" />
                                 <Button Classes="funnel" IsVisible="{Binding HasHashFilter}" Command="{Binding ClearColumnFilterCommand}" CommandParameter="hash" ToolTip.Tip="Hash filter active — click to clear">
                                     <PathIcon Width="9" Height="9" Data="M1,2 H15 L9.5,8.5 V14 L6.5,12.5 V8.5 Z" Foreground="{DynamicResource GitKayAccentBrush}" />
                                 </Button>
                             </StackPanel>
                             <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="4" Margin="6,0" VerticalAlignment="Center" Background="Transparent" Tag="author" ContextRequested="OnHistoryHeaderContextRequested">
-                                <TextBlock Text="AUTHOR" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="10" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <TextBlock Text="AUTHOR" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="10" LetterSpacing="0.6" VerticalAlignment="Center" />
                                 <Button Classes="funnel" IsVisible="{Binding HasAuthorFilter}" Command="{Binding ClearColumnFilterCommand}" CommandParameter="author" ToolTip.Tip="Author filter active — click to clear">
                                     <PathIcon Width="9" Height="9" Data="M1,2 H15 L9.5,8.5 V14 L6.5,12.5 V8.5 Z" Foreground="{DynamicResource GitKayAccentBrush}" />
                                 </Button>
                             </StackPanel>
                             <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="4" Margin="6,0" VerticalAlignment="Center" Background="Transparent" Tag="date" ContextRequested="OnHistoryHeaderContextRequested">
-                                <TextBlock Text="DATE" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="10" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <TextBlock Text="DATE" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="10" LetterSpacing="0.6" VerticalAlignment="Center" />
                                 <Button Classes="funnel" IsVisible="{Binding HasDateFilter}" Command="{Binding ClearColumnFilterCommand}" CommandParameter="date" ToolTip.Tip="Date filter active — click to clear">
                                     <PathIcon Width="9" Height="9" Data="M1,2 H15 L9.5,8.5 V14 L6.5,12.5 V8.5 Z" Foreground="{DynamicResource GitKayAccentBrush}" />
                                 </Button>
@@ -280,11 +278,11 @@
                 </Grid>
             </Border>
 
+            <Border Grid.Row="1" Height="1" VerticalAlignment="Center" Background="{DynamicResource GitKayHairlineBrush}" IsHitTestVisible="False" />
             <GridSplitter Grid.Row="1"
                           Height="6"
                           HorizontalAlignment="Stretch"
                           VerticalAlignment="Stretch"
-                          Background="{DynamicResource GitKayBorderBrush}"
                           ResizeDirection="Rows"
                           ResizeBehavior="PreviousAndNext" />
 
@@ -292,9 +290,9 @@
                   RowDefinitions="Auto,*"
                   MinHeight="0">
                 <Border Grid.Row="0"
-                        Background="{DynamicResource GitKaySurfaceBrush}"
-                        BorderBrush="{DynamicResource GitKayBorderBrush}"
-                        BorderThickness="0,1"
+                        Background="{DynamicResource GitKayWindowBrush}"
+                        BorderBrush="{DynamicResource GitKayHairlineBrush}"
+                        BorderThickness="0,0,0,1"
                         Padding="6,4">
                     <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto"
                           ColumnSpacing="6">
@@ -323,7 +321,7 @@
                               ColumnSpacing="8"
                               VerticalAlignment="Center">
                             <SelectableTextBlock Text="{Binding SelectedCommit.Hash}"
-                                                 Foreground="{DynamicResource GitKayAccentBrush}"
+                                                 Foreground="{DynamicResource GitKayMutedTextBrush}"
                                                  FontFamily="{x:Static local:FontStacks.Mono}"
                                                  FontSize="12"
                                                  VerticalAlignment="Center" />
@@ -331,7 +329,7 @@
                                        Text="{Binding SelectedCommit.Subject}"
                                        Foreground="{DynamicResource GitKayTextBrush}"
                                        FontSize="13"
-                                       FontWeight="SemiBold"
+                                       FontWeight="Normal"
                                        TextTrimming="CharacterEllipsis"
                                        TextWrapping="NoWrap"
                                        VerticalAlignment="Center" />
@@ -433,13 +431,14 @@
                     <Border x:Name="FilesPaneFocus" Grid.Column="2" IsHitTestVisible="False" Background="{DynamicResource GitKayWindowBrush}" Opacity="0" ZIndex="10">
                         <Border.Transitions><Transitions><DoubleTransition Property="Opacity" Duration="0:0:0.12" /></Transitions></Border.Transitions>
                     </Border>
-                    <Border Grid.Column="0" Background="{DynamicResource GitKayWindowBrush}" BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="0,1,0,0">
+                    <Border Grid.Column="0" Background="{DynamicResource GitKayWindowBrush}">
                         <DockPanel>
                         <!-- Commit details show within the diff column only; the file list keeps its layout. -->
                         <Border DockPanel.Dock="Top"
                                 Padding="12,8,12,10"
+                                Classes="fadeIn"
                                 Background="{DynamicResource GitKaySurfaceBrush}"
-                                BorderBrush="{DynamicResource GitKayBorderBrush}"
+                                BorderBrush="{DynamicResource GitKayHairlineBrush}"
                                 BorderThickness="0,0,0,1"
                                 IsVisible="{Binding IsCommitDetailsExpanded}">
                             <Grid ColumnDefinitions="Auto,*"
@@ -450,7 +449,7 @@
                                 <TextBlock Grid.Row="1" Text="Commit" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="11" />
                                 <SelectableTextBlock Grid.Row="1" Grid.Column="1"
                                                      Text="{Binding SelectedCommit.FullHash}"
-                                                     Foreground="{DynamicResource GitKayAccentBrush}"
+                                                     Foreground="{DynamicResource GitKaySecondaryTextBrush}"
                                                      FontFamily="{x:Static local:FontStacks.Mono}" FontSize="11" />
 
                                 <TextBlock Grid.Row="2" Text="Parents · children" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="11" VerticalAlignment="Center" />
@@ -497,11 +496,9 @@
                                     </ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="local:CommitRefProjection">
-                                            <Border Background="{Binding Background}"
-                                                    BorderBrush="{Binding BorderBrush}"
-                                                    BorderThickness="1" CornerRadius="3"
-                                                    Padding="5,1" Margin="0,0,3,0">
-                                                <TextBlock Text="{Binding Text}" Foreground="{Binding Foreground}" FontSize="10" FontWeight="SemiBold" />
+                                            <Border Classes="refPill" Classes.remote="{Binding IsRemote}" Classes.tag="{Binding IsTag}" Classes.stash="{Binding IsStash}"
+                                                    CornerRadius="8" Padding="6,1" Margin="0,0,4,0">
+                                                <TextBlock Text="{Binding Text}" FontSize="11" />
                                             </Border>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -543,18 +540,16 @@
                         </DockPanel>
                     </Border>
 
+                    <Border Grid.Column="1" Width="1" HorizontalAlignment="Center" Background="{DynamicResource GitKayHairlineBrush}" IsHitTestVisible="False" />
                     <GridSplitter Grid.Column="1"
                                   HorizontalAlignment="Stretch"
                                   VerticalAlignment="Stretch"
-                                  Background="{DynamicResource GitKayBorderBrush}"
                                   ResizeDirection="Columns"
                                   ResizeBehavior="PreviousAndNext" />
 
                     <Border Grid.Column="2"
                             MinWidth="200"
                             Background="{DynamicResource GitKaySurfaceBrush}"
-                            BorderBrush="{DynamicResource GitKayBorderBrush}"
-                            BorderThickness="1,1,0,0"
                             Padding="8">
                         <DockPanel>
                             <Border DockPanel.Dock="Top" Classes="segmentGroup" HorizontalAlignment="Left" Margin="2,0,0,8">
@@ -611,6 +606,12 @@
                                     <Style Selector="ListBoxItem:pointerover">
                                         <Setter Property="Background" Value="{DynamicResource GitKayHoverBrush}" />
                                     </Style>
+                                        <Style Selector="local|DiffStatBar.rowStat">
+                                            <Setter Property="Opacity" Value="0.35" />
+                                        </Style>
+                                        <Style Selector="ListBoxItem:pointerover local|DiffStatBar.rowStat, ListBoxItem:selected local|DiffStatBar.rowStat">
+                                            <Setter Property="Opacity" Value="1" />
+                                        </Style>
                                         <Style Selector="TextBlock.pathMatch">
                                             <Setter Property="TextDecorations">
                                                 <TextDecorationCollection>
@@ -663,19 +664,19 @@
                                         </Border>
                                     </DataTemplate>
                                     <DataTemplate x:DataType="local:DiffFileProjection">
-                                        <Border Padding="8,6"
+                                        <Border Padding="8,4"
                                                 Background="Transparent"
                                                 BorderThickness="0">
                                             <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="7" ToolTip.Tip="{Binding ChangeToolTip}" Margin="{Binding ListIndent}">
                                                 <Border Classes="fileChange"
                                                         Width="14" Height="14" CornerRadius="3"
-                                                        BorderThickness="1"
+                                                        BorderThickness="0"
                                                         VerticalAlignment="Center"
                                                         Classes.added="{Binding IsAddedFile}"
                                                         Classes.deleted="{Binding IsDeletedFile}"
                                                         Classes.modified="{Binding IsModifiedFile}">
                                                     <TextBlock Text="{Binding ChangeGlyph}"
-                                                               FontSize="10" FontWeight="Bold"
+                                                               FontSize="12" FontWeight="SemiBold"
                                                                HorizontalAlignment="Center" VerticalAlignment="Center" />
                                                 </Border>
                                                 <TextBlock Grid.Column="1"
@@ -686,7 +687,7 @@
                                                            TextWrapping="NoWrap"
                                                            TextTrimming="CharacterEllipsis"
                                                            VerticalAlignment="Center" />
-                                                <local:DiffStatBar Grid.Column="3"
+                                                <local:DiffStatBar Grid.Column="3" Classes="rowStat"
                                                                    Added="{Binding AddedLines}"
                                                                    Removed="{Binding RemovedLines}"
                                                                    IsKnown="{Binding IsLoaded}"
@@ -704,7 +705,7 @@
         </Grid>
 
         <!-- Palette: commands (Ctrl+Shift+P or :), refs and commits (Ctrl+G), changed files (Ctrl+P). -->
-        <Border IsVisible="{Binding IsPaletteOpen}"
+        <Border IsVisible="{Binding IsPaletteOpen}" Classes="fadeIn"
                 Background="#33000000"
                 ZIndex="40"
                 PointerPressed="OnPaletteBackdropPressed">
@@ -757,7 +758,7 @@
         </Border>
 
         <!-- Keyboard shortcut sheet: ? or F1. -->
-        <Border IsVisible="{Binding IsShortcutHelpOpen}"
+        <Border IsVisible="{Binding IsShortcutHelpOpen}" Classes="fadeIn"
                 Background="#66000000"
                 ZIndex="30"
                 PointerPressed="OnShortcutHelpBackdropPressed">

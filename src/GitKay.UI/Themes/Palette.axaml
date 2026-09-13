@@ -40,6 +40,17 @@
             <SolidColorBrush x:Key="GitKayLane7Brush" Color="#FFFF00" />
             <SolidColorBrush x:Key="GitKayLane8Brush" Color="#90EE90" />
             <SolidColorBrush x:Key="GitKayLane9Brush" Color="#ADD8E6" />
+            <!-- Visual refresh: hairlines, muted ref pills, quieter numbers -->
+            <SolidColorBrush x:Key="GitKayHairlineBrush" Color="#21262D" />
+            <SolidColorBrush x:Key="GitKayLineNumberBrush" Color="#6E7681" />
+            <SolidColorBrush x:Key="GitKayRefBranchBackground" Color="#1A2F4A" />
+            <SolidColorBrush x:Key="GitKayRefBranchForeground" Color="#79B8FF" />
+            <SolidColorBrush x:Key="GitKayRefRemoteBackground" Color="#262C34" />
+            <SolidColorBrush x:Key="GitKayRefRemoteForeground" Color="#9DA7B3" />
+            <SolidColorBrush x:Key="GitKayRefTagBackground" Color="#33290F" />
+            <SolidColorBrush x:Key="GitKayRefTagForeground" Color="#D9A93C" />
+            <SolidColorBrush x:Key="GitKayRefStashBackground" Color="#262C34" />
+            <SolidColorBrush x:Key="GitKayRefStashForeground" Color="#8B949E" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="Light">
             <!-- GitHub Primer light -->
@@ -56,13 +67,13 @@
             <SolidColorBrush x:Key="GitKayMutedTextBrush" Color="#6E7781" />
             <SolidColorBrush x:Key="GitKayAccentBrush" Color="#0969DA" />
             <SolidColorBrush x:Key="GitKayAccentMutedBrush" Color="#DDF4FF" />
-            <SolidColorBrush x:Key="GitKayAddedBrush" Color="#E6FFEC" />
-            <SolidColorBrush x:Key="GitKayRemovedBrush" Color="#FFEBE9" />
+            <SolidColorBrush x:Key="GitKayAddedBrush" Color="#EFFBF2" />
+            <SolidColorBrush x:Key="GitKayRemovedBrush" Color="#FFF3F2" />
             <SolidColorBrush x:Key="GitKayAddedStrongBrush" Color="#ABF2BC" />
             <SolidColorBrush x:Key="GitKayRemovedStrongBrush" Color="#66FF8182" />
             <SolidColorBrush x:Key="GitKayAddedGutterBrush" Color="#CCFFD8" />
             <SolidColorBrush x:Key="GitKayRemovedGutterBrush" Color="#FFD7D5" />
-            <SolidColorBrush x:Key="GitKayHunkBrush" Color="#DDF4FF" />
+            <SolidColorBrush x:Key="GitKayHunkBrush" Color="#F3F8FD" />
             <SolidColorBrush x:Key="GitKayDiffStatNeutralBrush" Color="#D8DEE4" />
             <SolidColorBrush x:Key="GitKayAddedAccentBrush" Color="#1A7F37" />
             <SolidColorBrush x:Key="GitKayRemovedAccentBrush" Color="#CF222E" />
@@ -83,6 +94,16 @@
             <SolidColorBrush x:Key="GitKayLane7Brush" Color="#9A6700" />
             <SolidColorBrush x:Key="GitKayLane8Brush" Color="#2DA44E" />
             <SolidColorBrush x:Key="GitKayLane9Brush" Color="#3192AA" />
+            <SolidColorBrush x:Key="GitKayHairlineBrush" Color="#EAEEF2" />
+            <SolidColorBrush x:Key="GitKayLineNumberBrush" Color="#8C959F" />
+            <SolidColorBrush x:Key="GitKayRefBranchBackground" Color="#E7F1FC" />
+            <SolidColorBrush x:Key="GitKayRefBranchForeground" Color="#0B5CAD" />
+            <SolidColorBrush x:Key="GitKayRefRemoteBackground" Color="#EFF2F5" />
+            <SolidColorBrush x:Key="GitKayRefRemoteForeground" Color="#59636E" />
+            <SolidColorBrush x:Key="GitKayRefTagBackground" Color="#FDF5DC" />
+            <SolidColorBrush x:Key="GitKayRefTagForeground" Color="#7D5A00" />
+            <SolidColorBrush x:Key="GitKayRefStashBackground" Color="#EFF2F5" />
+            <SolidColorBrush x:Key="GitKayRefStashForeground" Color="#6E7781" />
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 </ResourceDictionary>

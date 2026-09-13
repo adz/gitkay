@@ -30,7 +30,7 @@
         <Setter Property="Width" Value="30" />
         <Setter Property="Height" Value="24" />
         <Setter Property="Padding" Value="0" />
-        <Setter Property="CornerRadius" Value="3" />
+        <Setter Property="CornerRadius" Value="4" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -47,7 +47,9 @@
         <Setter Property="Opacity" Value="1" />
     </Style>
     <Style Selector="Button.segment.selected /template/ ContentPresenter#PART_ContentPresenter">
-        <Setter Property="Background" Value="{DynamicResource GitKaySelectionBrush}" />
+        <Setter Property="Background" Value="{DynamicResource GitKayHoverBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GitKayAccentBrush}" />
+        <Setter Property="BorderThickness" Value="0,0,0,2" />
     </Style>
     <Style Selector="Button.segment.text, ToggleButton.segment.text">
         <Setter Property="Width" Value="NaN" />
@@ -57,7 +59,7 @@
         <Setter Property="Width" Value="30" />
         <Setter Property="Height" Value="24" />
         <Setter Property="Padding" Value="0" />
-        <Setter Property="CornerRadius" Value="3" />
+        <Setter Property="CornerRadius" Value="4" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -74,7 +76,9 @@
         <Setter Property="Opacity" Value="1" />
     </Style>
     <Style Selector="ToggleButton.segment:checked /template/ ContentPresenter#PART_ContentPresenter">
-        <Setter Property="Background" Value="{DynamicResource GitKaySelectionBrush}" />
+        <Setter Property="Background" Value="{DynamicResource GitKayHoverBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GitKayAccentBrush}" />
+        <Setter Property="BorderThickness" Value="0,0,0,2" />
         <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
     </Style>
     <Style Selector="Button.inline, Button.funnel">
@@ -84,7 +88,7 @@
         <Setter Property="Padding" Value="0" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
-        <Setter Property="CornerRadius" Value="3" />
+        <Setter Property="CornerRadius" Value="4" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
@@ -95,7 +99,7 @@
         <Setter Property="Padding" Value="0" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
-        <Setter Property="CornerRadius" Value="3" />
+        <Setter Property="CornerRadius" Value="4" />
         <Setter Property="Opacity" Value="0.65" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -142,11 +146,51 @@
         <Setter Property="Background" Value="{DynamicResource GitKayHoverBrush}" />
         <Setter Property="Foreground" Value="{DynamicResource GitKayAccentBrush}" />
     </Style>
+    <!-- Splitters: invisible until hovered; a hairline behind them marks the edge. -->
+    <Style Selector="GridSplitter">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Transitions">
+            <Transitions><BrushTransition Property="Background" Duration="0:0:0.1" /></Transitions>
+        </Setter>
+    </Style>
+    <Style Selector="GridSplitter:pointerover">
+        <Setter Property="Background" Value="{DynamicResource GitKayBorderBrush}" />
+    </Style>
+
+    <!-- Gentle motion: hover and selection backgrounds ease; panels and overlays fade in. -->
+    <Style Selector="ListBoxItem /template/ ContentPresenter#PART_ContentPresenter, Button /template/ ContentPresenter#PART_ContentPresenter, ToggleButton /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Transitions">
+            <Transitions><BrushTransition Property="Background" Duration="0:0:0.08" /></Transitions>
+        </Setter>
+    </Style>
+    <Style Selector=":is(Control).fadeIn[IsVisible=True]">
+        <Style.Animations>
+            <Animation Duration="0:0:0.1" FillMode="Forward">
+                <KeyFrame Cue="0%"><Setter Property="Opacity" Value="0" /></KeyFrame>
+                <KeyFrame Cue="100%"><Setter Property="Opacity" Value="1" /></KeyFrame>
+            </Animation>
+        </Style.Animations>
+    </Style>
+
+    <!-- Muted ref pills (commit details); the commit list draws the same colours. -->
+    <Style Selector="Border.refPill">
+        <Setter Property="Background" Value="{DynamicResource GitKayRefBranchBackground}" />
+    </Style>
+    <Style Selector="Border.refPill > TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource GitKayRefBranchForeground}" />
+    </Style>
+    <Style Selector="Border.refPill.remote"><Setter Property="Background" Value="{DynamicResource GitKayRefRemoteBackground}" /></Style>
+    <Style Selector="Border.refPill.remote > TextBlock"><Setter Property="Foreground" Value="{DynamicResource GitKayRefRemoteForeground}" /></Style>
+    <Style Selector="Border.refPill.tag"><Setter Property="Background" Value="{DynamicResource GitKayRefTagBackground}" /></Style>
+    <Style Selector="Border.refPill.tag > TextBlock"><Setter Property="Foreground" Value="{DynamicResource GitKayRefTagForeground}" /></Style>
+    <Style Selector="Border.refPill.stash"><Setter Property="Background" Value="{DynamicResource GitKayRefStashBackground}" /></Style>
+    <Style Selector="Border.refPill.stash > TextBlock"><Setter Property="Foreground" Value="{DynamicResource GitKayRefStashForeground}" /></Style>
+
     <!-- Segment groups carry no outline: only the selected segment is tinted, which keeps bars quiet. -->
     <!-- Ctrl-held shortcut hints. -->
     <Style Selector="Border.keyHint">
         <Setter Property="Background" Value="{DynamicResource GitKayAccentBrush}" />
-        <Setter Property="CornerRadius" Value="3" />
+        <Setter Property="CornerRadius" Value="4" />
         <Setter Property="Padding" Value="5,1" />
         <Setter Property="ZIndex" Value="50" />
         <Setter Property="IsHitTestVisible" Value="False" />

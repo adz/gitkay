@@ -34,7 +34,7 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource
     public ScrollViewer? OverviewScrollViewer => _scrollViewer;
     public event EventHandler? OverviewChanged;
 
-    private const double RowHeight = 20;
+    private const double RowHeight = 22;
     private const double LaneWidth = 9;
     private static readonly Typeface TextTypeface = new(FontStacks.Resolve(AppSettings.DefaultCommitRowFontFamily));
     private static readonly Typeface MonoTypeface = new(FontStacks.Resolve(AppSettings.DefaultCommitRowMonoFontFamily));
@@ -244,30 +244,30 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource
         {
             var badgeWidth = DrawBadge(context, badge, badgeX, y);
             if (highlight != null)
-                Underline(context, badge.Text, highlight.Ref, badgeX + 5, y + RowHeight - 3, 11, TextTypeface, highlight, underline);
+                Underline(context, badge.Text, highlight.Ref, badgeX + 6, y + RowHeight - 3, 11, TextTypeface, highlight, underline);
             badgeX += badgeWidth;
         }
 
         using (context.PushClip(new Rect(badgeX, y, Math.Max(0, hashX - badgeX - 3), RowHeight)))
         {
-            DrawText(context, commit.Subject, badgeX, y + 2, 13, subjectBrush, textTypeface);
+            DrawText(context, commit.Subject, badgeX, y + 3, 13, subjectBrush, textTypeface);
             if (highlight != null) Underline(context, commit.Subject, highlight.Subject, badgeX, y + RowHeight - 2, 13, textTypeface, highlight, underline);
         }
         using (context.PushClip(new Rect(hashX, y, hashWidth, RowHeight)))
         {
-            DrawText(context, commit.Hash, hashX + 2, y + 3, 12, mutedBrush, monoTypeface);
+            DrawText(context, commit.Hash, hashX + 2, y + 4, 12, mutedBrush, monoTypeface);
             if (highlight != null) Underline(context, commit.Hash, highlight.Hash, hashX + 2, y + RowHeight - 2, 12, monoTypeface, highlight, underline);
         }
         using (context.PushClip(new Rect(authorX, y, authorWidth, RowHeight)))
         {
-            DrawText(context, commit.Author, authorX + 2, y + 3, 12, metaBrush, textTypeface);
+            DrawText(context, commit.Author, authorX + 2, y + 4, 12, mutedBrush, textTypeface);
             if (highlight != null) Underline(context, commit.Author, highlight.Author, authorX + 2, y + RowHeight - 2, 12, textTypeface, highlight, underline);
         }
 
         using (context.PushClip(new Rect(dateX, y, dateWidth, RowHeight)))
         {
             var date = Layout(commit.Date, 12, mutedBrush, textTypeface);
-            context.DrawText(date, new Point(Math.Max(dateX + 2, dateX + dateWidth - date.Width - 4), y + 3));
+            context.DrawText(date, new Point(Math.Max(dateX + 2, dateX + dateWidth - date.Width - 4), y + 4));
         }
     }
 
@@ -325,13 +325,31 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource
         context.DrawEllipse(brush, null, new Rect(cx - 3, centerY - 3, 6, 6));
     }
 
+    private static readonly (IBrush Background, IBrush Foreground)[] RefPillFallbacks =
+    {
+        (new SolidColorBrush(Color.FromRgb(0x1A, 0x2F, 0x4A)).ToImmutable(), new SolidColorBrush(Color.FromRgb(0x79, 0xB8, 0xFF)).ToImmutable()),
+        (new SolidColorBrush(Color.FromRgb(0x26, 0x2C, 0x34)).ToImmutable(), new SolidColorBrush(Color.FromRgb(0x9D, 0xA7, 0xB3)).ToImmutable()),
+        (new SolidColorBrush(Color.FromRgb(0x33, 0x29, 0x0F)).ToImmutable(), new SolidColorBrush(Color.FromRgb(0xD9, 0xA9, 0x3C)).ToImmutable()),
+        (new SolidColorBrush(Color.FromRgb(0x26, 0x2C, 0x34)).ToImmutable(), new SolidColorBrush(Color.FromRgb(0x8B, 0x94, 0x9E)).ToImmutable()),
+    };
+
+    /// <summary>Muted, borderless ref pills tinted by kind (branch, remote, tag, stash).</summary>
     private double DrawBadge(DrawingContext context, CommitRefProjection badge, double x, double y)
     {
-        var text = Layout(badge.Text, 11, badge.Foreground, TextTypeface);
-        var width = text.Width + 10;
-        context.DrawRectangle(badge.Background, new Pen(badge.BorderBrush, 1), new Rect(x, y + 2, width, 16), 2, 2);
-        context.DrawText(text, new Point(x + 5, y + 3));
-        return width + 3;
+        var (key, index) = badge.Kind switch
+        {
+            CommitRefKind.Remote => ("Remote", 1),
+            CommitRefKind.Tag => ("Tag", 2),
+            CommitRefKind.Stash => ("Stash", 3),
+            _ => ("Branch", 0),
+        };
+        var background = ThemeBrush($"GitKayRef{key}Background", RefPillFallbacks[index].Background);
+        var foreground = ThemeBrush($"GitKayRef{key}Foreground", RefPillFallbacks[index].Foreground);
+        var text = Layout(badge.Text, 11, foreground, TextTypeface);
+        var width = text.Width + 12;
+        context.DrawRectangle(background, null, new Rect(x, y + 3, width, 16), 8, 8);
+        context.DrawText(text, new Point(x + 6, y + 4));
+        return width + 4;
     }
 
     private void DrawText(DrawingContext context, string text, double x, double y, double size, IBrush brush, Typeface typeface) =>
@@ -391,9 +409,9 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource
         var badgeX = graphWidth + 5;
         foreach (var badge in commit.RefBadges)
         {
-            var width = Layout(badge.Text, 11, badge.Foreground, TextTypeface).Width + 10;
+            var width = Layout(badge.Text, 11, badge.Foreground, TextTypeface).Width + 12;
             if (point.X >= badgeX && point.X < badgeX + width) return ("ref", badge.Text);
-            badgeX += width + 3;
+            badgeX += width + 4;
         }
 
         var authorWidth = Math.Min(EffectiveWidth(AuthorWidth, 110) - 2, Layout(commit.Author, 12, MetaBrush, TextTypeface).Width);

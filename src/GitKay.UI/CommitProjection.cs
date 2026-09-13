@@ -259,6 +259,8 @@ public sealed class CommitRefProjection
     public CommitRefKind Kind { get; }
     public bool IsCurrentHead { get; }
     public bool IsTag => Kind == CommitRefKind.Tag;
+    public bool IsRemote => Kind == CommitRefKind.Remote;
+    public bool IsStash => Kind == CommitRefKind.Stash;
     public bool IsNotTag => !IsTag;
     public IBrush Background { get; }
     public IBrush BorderBrush { get; }

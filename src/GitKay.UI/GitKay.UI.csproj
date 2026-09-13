@@ -39,7 +39,12 @@
   <ItemGroup>
     <ProjectReference Include="..\GitKay.Core\GitKay.Core.fsproj" />
     <ProjectReference Include="..\GitKay.Serialization\GitKay.Serialization.fsproj" />
-    <ProjectReference Include="..\..\..\..\Elmish.Avalonia.Glue\main\src\Elmish.Avalonia.Glue\Elmish.Avalonia.Glue.fsproj" />
-    <ProjectReference Include="..\..\..\..\Elmish.Avalonia.Glue\main\src\Elmish.Glue.Core\Elmish.Glue.Core.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseLocalGlue)' == 'true'">
+    <ProjectReference Include="$(GlueSourceRoot)src\Elmish.Avalonia.Glue\Elmish.Avalonia.Glue.fsproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalGlue)' != 'true'">
+    <PackageReference Include="Elmish.Avalonia.Glue" Version="$(ElmishGlueVersion)" />
   </ItemGroup>
 </Project>

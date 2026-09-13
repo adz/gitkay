@@ -95,6 +95,11 @@ public partial class MainProjection
     /// <summary>An explicit jump to a file (file list, Ctrl+P): the diff puts its header at the top.</summary>
     public event Action<DiffFileProjection>? FileJumpRequested;
 
+    /// <summary>The status bar only appears for errors, progress and notices — not for "Loaded N commits".</summary>
+    public bool IsStatusVisible => !string.IsNullOrWhiteSpace(Status) && !Status.StartsWith("Loaded", StringComparison.Ordinal);
+
+    partial void OnStatusChanged(string value) => OnPropertyChanged(nameof(IsStatusVisible));
+
     /// <summary>Pointing at a pane makes it the target for keyboard shortcuts (on by default).</summary>
     [ObservableProperty] private bool _hoverToFocus = true;
 
