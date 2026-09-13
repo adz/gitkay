@@ -137,7 +137,7 @@ public partial class App : Application {
                 uiStateStore.SaveSearchHistory(projection.RecentSearches);
                 uiStateStore.SaveViewPreferences(projection.CaptureViewPreferences());
                 ((IDisposable)host).Dispose();
-                ((IDisposable)GitKay.Core.App.runtime).Dispose();
+                GitKay.Core.App.stopRuntime();
             };
 
         }

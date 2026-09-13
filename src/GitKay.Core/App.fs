@@ -9,9 +9,12 @@ open GitKay.Core.Models
 
 module App =
 
-    /// Shared cancellation lifetime for every Axial-backed Cmd this program issues. Disposed by
-    /// the host alongside the ElmishHostConnection so no flow outlives the window.
+    /// Shared cancellation lifetime for every Axial-backed Cmd this program issues.
     let runtime = new AxialElmishRuntime()
+
+    /// Tears down the runtime. Call alongside disposing the ElmishHostConnection so no flow
+    /// outlives the window.
+    let stopRuntime () = (runtime :> IDisposable).Dispose()
 
     let private selectionJob = AxialLatestSlot(runtime)
     let private diffJob = AxialLatestSlot(runtime)
