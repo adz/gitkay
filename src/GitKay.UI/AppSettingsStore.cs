@@ -4,23 +4,18 @@ using GitKay.Serialization;
 
 namespace GitKay.UI;
 
-public sealed class AppSettingsStore
-{
+public sealed class AppSettingsStore {
     private readonly string _settingsPath;
 
-    public AppSettingsStore(string? settingsPath = null)
-    {
+    public AppSettingsStore(string? settingsPath = null) {
         _settingsPath = settingsPath ?? GetDefaultSettingsPath();
     }
 
     public string SettingsPath => _settingsPath;
 
-    public AppSettings Load()
-    {
-        try
-        {
-            if (!File.Exists(_settingsPath))
-            {
+    public AppSettings Load() {
+        try {
+            if (!File.Exists(_settingsPath)) {
                 return AppSettings.Default;
             }
 
@@ -39,21 +34,17 @@ public sealed class AppSettingsStore
                 commitRowBadgeFontSize: document.CommitRowBadgeFontSize,
                 searchDebounceSeconds: document.SearchDebounceSeconds).Normalize();
         }
-        catch
-        {
+        catch {
             return AppSettings.Default;
         }
     }
 
-    public void Save(AppSettings settings)
-    {
-        try
-        {
+    public void Save(AppSettings settings) {
+        try {
             var normalized = settings.Normalize();
             var directory = Path.GetDirectoryName(_settingsPath);
 
-            if (!string.IsNullOrWhiteSpace(directory))
-            {
+            if (!string.IsNullOrWhiteSpace(directory)) {
                 Directory.CreateDirectory(directory);
             }
 
@@ -72,17 +63,14 @@ public sealed class AppSettingsStore
             var json = GitKayJson.SerializeSettings(document);
             File.WriteAllText(_settingsPath, json);
         }
-        catch
-        {
+        catch {
         }
     }
 
-    public static string GetDefaultSettingsPath()
-    {
+    public static string GetDefaultSettingsPath() {
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
 
-        if (string.IsNullOrWhiteSpace(appData))
-        {
+        if (string.IsNullOrWhiteSpace(appData)) {
             appData = Path.GetTempPath();
         }
 

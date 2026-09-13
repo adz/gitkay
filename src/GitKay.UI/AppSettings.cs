@@ -3,8 +3,7 @@ using System.Collections.Generic;
 
 namespace GitKay.UI;
 
-public sealed record AppSettings
-{
+public sealed record AppSettings {
     public const string DefaultCommitRowFontFamily = "Helvetica,Arial,Liberation Sans,Noto Sans,sans-serif";
     public const string DefaultCommitRowMonoFontFamily = "Courier,Courier New,Liberation Mono,Monospace";
     public const double DefaultCommitRowTextFontSize = 13;
@@ -46,10 +45,8 @@ public sealed record AppSettings
         double commitRowTextFontSize = DefaultCommitRowTextFontSize,
         double commitRowMetaFontSize = DefaultCommitRowMetaFontSize,
         double commitRowBadgeFontSize = DefaultCommitRowBadgeFontSize,
-        double searchDebounceSeconds = DefaultSearchDebounceSeconds)
-    {
-        return new AppSettings
-        {
+        double searchDebounceSeconds = DefaultSearchDebounceSeconds) {
+        return new AppSettings {
             ShowBranchRefs = showBranchRefs,
             ShowStashes = showStashes,
             DiffContextLines = diffContextLines,
@@ -63,13 +60,11 @@ public sealed record AppSettings
         };
     }
 
-    public AppSettings Normalize()
-    {
+    public AppSettings Normalize() {
         var normalizedDiffPresentationModeKey =
             NormalizeDiffPresentationModeKey(DiffPresentationModeKey) ?? DefaultDiffPresentationModeKey;
 
-        return this with
-        {
+        return this with {
             DiffContextLines = Math.Max(0, DiffContextLines),
             DiffPresentationModeKey = normalizedDiffPresentationModeKey,
             CommitRowFontFamily = NormalizeFontFamily(CommitRowFontFamily, DefaultCommitRowFontFamily),
@@ -81,43 +76,35 @@ public sealed record AppSettings
         };
     }
 
-    public string[] ToStartupArgs()
-    {
+    public string[] ToStartupArgs() {
         var normalized = Normalize();
         var args = new List<string>();
 
-        if (normalized.ShowBranchRefs)
-        {
+        if (normalized.ShowBranchRefs) {
             args.Add("--show-branch-refs");
         }
 
-        if (normalized.ShowStashes)
-        {
+        if (normalized.ShowStashes) {
             args.Add("--show-stashes");
         }
 
-        if (normalized.DiffContextLines != DefaultDiffContextLines)
-        {
+        if (normalized.DiffContextLines != DefaultDiffContextLines) {
             args.Add($"--diff-context={normalized.DiffContextLines}");
         }
 
-        if (!string.Equals(normalized.DiffPresentationModeKey, DefaultDiffPresentationModeKey, StringComparison.Ordinal))
-        {
+        if (!string.Equals(normalized.DiffPresentationModeKey, DefaultDiffPresentationModeKey, StringComparison.Ordinal)) {
             args.Add($"--diff-presentation={normalized.DiffPresentationModeKey}");
         }
 
         return args.ToArray();
     }
 
-    private static string? NormalizeDiffPresentationModeKey(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
+    private static string? NormalizeDiffPresentationModeKey(string? value) {
+        if (string.IsNullOrWhiteSpace(value)) {
             return null;
         }
 
-        return value.Trim().ToLowerInvariant() switch
-        {
+        return value.Trim().ToLowerInvariant() switch {
             "diff" => "diff",
             "side-by-side" => "side-by-side",
             "new" => "new",
@@ -126,13 +113,11 @@ public sealed record AppSettings
         };
     }
 
-    private static string NormalizeFontFamily(string? value, string fallback)
-    {
+    private static string NormalizeFontFamily(string? value, string fallback) {
         return string.IsNullOrWhiteSpace(value) ? fallback : value;
     }
 
-    private static double NormalizeFontSize(double value, double fallback)
-    {
+    private static double NormalizeFontSize(double value, double fallback) {
         return double.IsFinite(value) && value > 0d ? value : fallback;
     }
 }

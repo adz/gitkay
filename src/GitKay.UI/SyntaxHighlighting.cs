@@ -7,8 +7,7 @@ using Avalonia.Media;
 
 namespace GitKay.UI;
 
-internal static class SyntaxHighlighting
-{
+internal static class SyntaxHighlighting {
     private const int MaxTokenizedLineLength = 240;
 
     private static readonly Regex HunkHeaderRegex = new(
@@ -42,20 +41,16 @@ internal static class SyntaxHighlighting
     public static IBrush GetHunkMarkerBrush() => HunkMarkerBrush;
     public static IBrush GetHunkRangeBrush() => HunkRangeBrush;
 
-    public static InlineCollection BuildCodeInlines(string text, IBrush baseForeground, string? searchQuery = null)
-    {
+    public static InlineCollection BuildCodeInlines(string text, IBrush baseForeground, string? searchQuery = null) {
         var collection = new InlineCollection();
 
-        if (string.IsNullOrEmpty(text))
-        {
+        if (string.IsNullOrEmpty(text)) {
             return collection;
         }
 
-        if (!string.IsNullOrWhiteSpace(searchQuery))
-        {
+        if (!string.IsNullOrWhiteSpace(searchQuery)) {
             var index = text.IndexOf(searchQuery, StringComparison.OrdinalIgnoreCase);
-            if (index >= 0)
-            {
+            if (index >= 0) {
                 AppendSegment(collection, text[..index], baseForeground);
                 AppendSearchMatch(collection, text.Substring(index, searchQuery.Length));
                 AppendSegment(collection, text[(index + searchQuery.Length)..], baseForeground);
@@ -67,18 +62,15 @@ internal static class SyntaxHighlighting
         return collection;
     }
 
-    public static InlineCollection BuildHunkHeaderInlines(string header)
-    {
+    public static InlineCollection BuildHunkHeaderInlines(string header) {
         var collection = new InlineCollection();
 
-        if (string.IsNullOrEmpty(header))
-        {
+        if (string.IsNullOrEmpty(header)) {
             return collection;
         }
 
         var match = HunkHeaderRegex.Match(header);
-        if (!match.Success)
-        {
+        if (!match.Success) {
             collection.Add(new Run { Text = header, Foreground = HunkMarkerBrush });
             return collection;
         }
@@ -92,23 +84,19 @@ internal static class SyntaxHighlighting
         collection.Add(new Run { Text = match.Groups[4].Value, Foreground = HunkMarkerBrush, FontWeight = FontWeight.SemiBold });
 
         var tail = match.Groups[5].Value;
-        if (!string.IsNullOrEmpty(tail))
-        {
+        if (!string.IsNullOrEmpty(tail)) {
             collection.Add(new Run { Text = tail, Foreground = CommentBrush });
         }
 
         return collection;
     }
 
-    private static void AppendSearchMatch(InlineCollection collection, string text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
+    private static void AppendSearchMatch(InlineCollection collection, string text) {
+        if (string.IsNullOrEmpty(text)) {
             return;
         }
 
-        collection.Add(new Run
-        {
+        collection.Add(new Run {
             Text = text,
             Foreground = DiffSearchPresentation.MatchForeground,
             FontWeight = DiffSearchPresentation.MatchFontWeight,
@@ -116,31 +104,25 @@ internal static class SyntaxHighlighting
         });
     }
 
-    private static void AppendTokenizedSegment(InlineCollection collection, string text, IBrush baseForeground)
-    {
+    private static void AppendTokenizedSegment(InlineCollection collection, string text, IBrush baseForeground) {
         var tokens = Tokenize(text);
-        
-        if (tokens.Count == 1 && tokens[0].Kind == HighlightKind.Plain)
-        {
+
+        if (tokens.Count == 1 && tokens[0].Kind == HighlightKind.Plain) {
             collection.Add(new Run { Text = text, Foreground = baseForeground });
             return;
         }
 
-        foreach (var token in tokens)
-        {
+        foreach (var token in tokens) {
             collection.Add(CreateRun(token, baseForeground));
         }
     }
 
-    private static void AppendSegment(InlineCollection collection, string text, IBrush baseForeground)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
+    private static void AppendSegment(InlineCollection collection, string text, IBrush baseForeground) {
+        if (string.IsNullOrEmpty(text)) {
             return;
         }
 
-        if (text.Length > MaxTokenizedLineLength)
-        {
+        if (text.Length > MaxTokenizedLineLength) {
             collection.Add(new Run { Text = text, Foreground = baseForeground });
             return;
         }
@@ -148,13 +130,10 @@ internal static class SyntaxHighlighting
         AppendTokenizedSegment(collection, text, baseForeground);
     }
 
-    private static Run CreateRun(HighlightToken token, IBrush baseForeground)
-    {
-        return new Run
-        {
+    private static Run CreateRun(HighlightToken token, IBrush baseForeground) {
+        return new Run {
             Text = token.Text,
-            Foreground = token.Kind switch
-            {
+            Foreground = token.Kind switch {
                 HighlightKind.Keyword => KeywordBrush,
                 HighlightKind.String => StringBrush,
                 HighlightKind.Number => NumberBrush,
@@ -170,25 +149,19 @@ internal static class SyntaxHighlighting
     private const int MaxCacheSize = 2000;
 
     /// <summary>Benchmark hook: measures cold tokenization.</summary>
-    internal static void ClearTokenCache()
-    {
-        lock (TokenCacheLock)
-        {
+    internal static void ClearTokenCache() {
+        lock (TokenCacheLock) {
             TokenCache.Clear();
         }
     }
 
-    internal static IReadOnlyList<HighlightToken> Tokenize(string text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
+    internal static IReadOnlyList<HighlightToken> Tokenize(string text) {
+        if (string.IsNullOrEmpty(text)) {
             return Array.Empty<HighlightToken>();
         }
 
-        lock (TokenCacheLock)
-        {
-            if (TokenCache.TryGetValue(text, out var cached))
-            {
+        lock (TokenCacheLock) {
+            if (TokenCache.TryGetValue(text, out var cached)) {
                 return cached;
             }
         }
@@ -196,49 +169,42 @@ internal static class SyntaxHighlighting
         var tokens = new List<HighlightToken>();
         var index = 0;
 
-        while (index < text.Length)
-        {
+        while (index < text.Length) {
             var current = text[index];
 
-            if (char.IsWhiteSpace(current))
-            {
+            if (char.IsWhiteSpace(current)) {
                 var start = index;
                 index = ConsumeWhile(text, index, char.IsWhiteSpace);
                 tokens.Add(new HighlightToken(text[start..index], HighlightKind.Plain));
                 continue;
             }
 
-            if (TryConsumeLineComment(text, index, out var commentLength))
-            {
+            if (TryConsumeLineComment(text, index, out var commentLength)) {
                 tokens.Add(new HighlightToken(text[index..(index + commentLength)], HighlightKind.Comment));
                 index += commentLength;
                 continue;
             }
 
-            if (TryConsumeBlockComment(text, index, out commentLength))
-            {
+            if (TryConsumeBlockComment(text, index, out commentLength)) {
                 tokens.Add(new HighlightToken(text[index..(index + commentLength)], HighlightKind.Comment));
                 index += commentLength;
                 continue;
             }
 
-            if (TryConsumeString(text, index, out var stringLength))
-            {
+            if (TryConsumeString(text, index, out var stringLength)) {
                 tokens.Add(new HighlightToken(text[index..(index + stringLength)], HighlightKind.String));
                 index += stringLength;
                 continue;
             }
 
-            if (char.IsDigit(current))
-            {
+            if (char.IsDigit(current)) {
                 var start = index;
                 index = ConsumeNumber(text, index);
                 tokens.Add(new HighlightToken(text[start..index], HighlightKind.Number));
                 continue;
             }
 
-            if (IsIdentifierStart(current))
-            {
+            if (IsIdentifierStart(current)) {
                 var start = index;
                 index = ConsumeIdentifier(text, index);
                 var word = text[start..index];
@@ -248,16 +214,14 @@ internal static class SyntaxHighlighting
 
             // Group non-token characters together as Plain
             var plainStart = index;
-            while (index < text.Length)
-            {
+            while (index < text.Length) {
                 var next = text[index];
                 if (char.IsWhiteSpace(next) ||
                     IsIdentifierStart(next) ||
                     char.IsDigit(next) ||
                     (next == '/' && index + 1 < text.Length && (text[index + 1] == '/' || text[index + 1] == '*')) ||
                     next == '#' ||
-                    next == '"' || next == '\'' || next == '`')
-                {
+                    next == '"' || next == '\'' || next == '`') {
                     break;
                 }
                 index++;
@@ -265,8 +229,7 @@ internal static class SyntaxHighlighting
 
             // A comment marker that is not at a valid comment boundary still belongs to plain
             // text. Ensure this branch always consumes at least one character.
-            if (index == plainStart)
-            {
+            if (index == plainStart) {
                 index++;
             }
 
@@ -274,18 +237,14 @@ internal static class SyntaxHighlighting
         }
 
         // Merge adjacent tokens of the same kind
-        if (tokens.Count > 1)
-        {
+        if (tokens.Count > 1) {
             var merged = new List<HighlightToken>();
             var currentToken = tokens[0];
-            for (int i = 1; i < tokens.Count; i++)
-            {
-                if (tokens[i].Kind == currentToken.Kind)
-                {
+            for (int i = 1; i < tokens.Count; i++) {
+                if (tokens[i].Kind == currentToken.Kind) {
                     currentToken = new HighlightToken(currentToken.Text + tokens[i].Text, currentToken.Kind);
                 }
-                else
-                {
+                else {
                     merged.Add(currentToken);
                     currentToken = tokens[i];
                 }
@@ -295,10 +254,8 @@ internal static class SyntaxHighlighting
         }
 
         var result = tokens.AsReadOnly();
-        lock (TokenCacheLock)
-        {
-            if (TokenCache.Count >= MaxCacheSize)
-            {
+        lock (TokenCacheLock) {
+            if (TokenCache.Count >= MaxCacheSize) {
                 TokenCache.Clear();
             }
             TokenCache[text] = result;
@@ -307,31 +264,25 @@ internal static class SyntaxHighlighting
         return result;
     }
 
-    private static HighlightKind ClassifyIdentifier(string word)
-    {
-        if (Keywords.Contains(word))
-        {
+    private static HighlightKind ClassifyIdentifier(string word) {
+        if (Keywords.Contains(word)) {
             return HighlightKind.Keyword;
         }
 
-        if (word.Length > 1 && char.IsUpper(word[0]) && word.All(char.IsLetterOrDigit))
-        {
+        if (word.Length > 1 && char.IsUpper(word[0]) && word.All(char.IsLetterOrDigit)) {
             return HighlightKind.TypeName;
         }
 
         return HighlightKind.Plain;
     }
 
-    private static bool TryConsumeLineComment(string text, int index, out int length)
-    {
-        if (index + 1 < text.Length && text[index] == '/' && text[index + 1] == '/' && IsCommentBoundary(text, index))
-        {
+    private static bool TryConsumeLineComment(string text, int index, out int length) {
+        if (index + 1 < text.Length && text[index] == '/' && text[index + 1] == '/' && IsCommentBoundary(text, index)) {
             length = text.Length - index;
             return true;
         }
 
-        if (text[index] == '#' && IsCommentBoundary(text, index))
-        {
+        if (text[index] == '#' && IsCommentBoundary(text, index)) {
             length = text.Length - index;
             return true;
         }
@@ -340,17 +291,14 @@ internal static class SyntaxHighlighting
         return false;
     }
 
-    private static bool TryConsumeBlockComment(string text, int index, out int length)
-    {
-        if (index + 1 >= text.Length || text[index] != '/' || text[index + 1] != '*')
-        {
+    private static bool TryConsumeBlockComment(string text, int index, out int length) {
+        if (index + 1 >= text.Length || text[index] != '/' || text[index + 1] != '*') {
             length = 0;
             return false;
         }
 
         var end = text.IndexOf("*/", index + 2, StringComparison.Ordinal);
-        if (end < 0)
-        {
+        if (end < 0) {
             length = text.Length - index;
             return true;
         }
@@ -359,26 +307,21 @@ internal static class SyntaxHighlighting
         return true;
     }
 
-    private static bool TryConsumeString(string text, int index, out int length)
-    {
+    private static bool TryConsumeString(string text, int index, out int length) {
         var quote = text[index];
-        if (quote is not ('"' or '\'' or '`'))
-        {
+        if (quote is not ('"' or '\'' or '`')) {
             length = 0;
             return false;
         }
 
         var cursor = index + 1;
-        while (cursor < text.Length)
-        {
-            if (text[cursor] == '\\')
-            {
+        while (cursor < text.Length) {
+            if (text[cursor] == '\\') {
                 cursor += 2;
                 continue;
             }
 
-            if (text[cursor] == quote)
-            {
+            if (text[cursor] == quote) {
                 length = cursor - index + 1;
                 return true;
             }
@@ -390,21 +333,17 @@ internal static class SyntaxHighlighting
         return true;
     }
 
-    private static int ConsumeNumber(string text, int index)
-    {
+    private static int ConsumeNumber(string text, int index) {
         return ConsumeWhile(text, index, c => char.IsDigit(c) || c is '.' or '_' or 'x' or 'X' or 'b' or 'B' or 'e' or 'E' or '+' or '-');
     }
 
-    private static int ConsumeIdentifier(string text, int index)
-    {
+    private static int ConsumeIdentifier(string text, int index) {
         return ConsumeWhile(text, index, IsIdentifierPart);
     }
 
-    private static int ConsumeWhile(string text, int index, Func<char, bool> predicate)
-    {
+    private static int ConsumeWhile(string text, int index, Func<char, bool> predicate) {
         var cursor = index;
-        while (cursor < text.Length && predicate(text[cursor]))
-        {
+        while (cursor < text.Length && predicate(text[cursor])) {
             cursor++;
         }
 
@@ -421,8 +360,7 @@ internal static class SyntaxHighlighting
         index == 0 || char.IsWhiteSpace(text[index - 1]);
 }
 
-internal enum HighlightKind
-{
+internal enum HighlightKind {
     Plain,
     Keyword,
     String,

@@ -10,8 +10,7 @@ using GitKay.Core;
 
 namespace GitKay.UI;
 
-public partial class CommitProjection : ObservableObject, IProjection<Graph.CommitGraphInfo>, IDispatchTarget<GitKay.Core.App.Msg>
-{
+public partial class CommitProjection : ObservableObject, IProjection<Graph.CommitGraphInfo>, IDispatchTarget<GitKay.Core.App.Msg> {
     private System.Action<GitKay.Core.App.Msg>? _dispatch;
 
     public void SetDispatch(System.Action<GitKay.Core.App.Msg> dispatch) => _dispatch = dispatch;
@@ -55,15 +54,13 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     public ObservableCollection<CommitRefProjection> RefBadges { get; } = new();
     private GitKay.Core.Models.CommitRef[] _refs = Array.Empty<GitKay.Core.Models.CommitRef>();
 
-    public void Update(Graph.CommitGraphInfo info)
-    {
+    public void Update(Graph.CommitGraphInfo info) {
         var commit = info.Commit;
 
         if (FullHash == commit.Hash
             && Lane == info.Lane
             && _refs.Length == commit.Refs.Length
-            && _refs.SequenceEqual(commit.Refs))
-        {
+            && _refs.SequenceEqual(commit.Refs)) {
             return;
         }
 
@@ -88,8 +85,7 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
             info.Segments,
             m => $"{m.Lane}-{m.TargetLane}-{m.IsCommit}",
             vm => vm.Key,
-            segment =>
-            {
+            segment => {
                 var projection = new SegmentProjection();
                 projection.Update(segment);
                 return projection;
@@ -97,13 +93,11 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         );
     }
 
-    public void ApplySearchMatch(GitKay.Core.GitSearch.Result? result)
-    {
+    public void ApplySearchMatch(GitKay.Core.GitSearch.Result? result) {
         HasSearchMatch = result != null;
         SearchMatchSummary = result?.MatchSummary ?? "";
 
-        if (result != null)
-        {
+        if (result != null) {
             var kinds = new HashSet<string>(result.MatchKinds, StringComparer.OrdinalIgnoreCase);
             HasHashMatch = kinds.Contains("hash");
             HasSubjectMatch = kinds.Contains("message");
@@ -113,8 +107,7 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
             HasDiffMatch = kinds.Contains("path") || kinds.Contains("text");
             PathMatchCount = result.MatchedPaths.Length;
         }
-        else
-        {
+        else {
             HasHashMatch = false;
             HasSubjectMatch = false;
             HasAuthorMatch = false;
@@ -133,8 +126,7 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     partial void OnShowBranchRefsChanged(bool value) => UpdateRefBadges();
     partial void OnShowStashesChanged(bool value) => UpdateRefBadges();
 
-    private void UpdateRefBadges()
-    {
+    private void UpdateRefBadges() {
         var visibleRefs = _refs
             .Where(ShouldDisplayRef)
             .OrderBy(refItem => refItem.Kind == GitKay.Core.Models.CommitRefKind.Tag ? 0 : 1)
@@ -143,43 +135,36 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
             .ThenBy(refItem => refItem.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        if (RefBadges.Count == visibleRefs.Length)
-        {
+        if (RefBadges.Count == visibleRefs.Length) {
             var isSame = true;
-            for (int i = 0; i < visibleRefs.Length; i++)
-            {
-                if (RefBadges[i].Text != visibleRefs[i].Name || (int)RefBadges[i].Kind != (int)visibleRefs[i].Kind)
-                {
+            for (int i = 0; i < visibleRefs.Length; i++) {
+                if (RefBadges[i].Text != visibleRefs[i].Name || (int)RefBadges[i].Kind != (int)visibleRefs[i].Kind) {
                     isSame = false;
                     break;
                 }
             }
 
-            if (isSame)
-            {
+            if (isSame) {
                 return;
             }
         }
 
         RefBadges.Clear();
 
-        foreach (var badge in visibleRefs.Select(CreateRefBadge))
-        {
+        foreach (var badge in visibleRefs.Select(CreateRefBadge)) {
             RefBadges.Add(badge);
         }
 
         HasRefBadges = RefBadges.Count > 0;
     }
 
-    private static string FormatRefsSummary(System.Collections.Generic.IEnumerable<GitKay.Core.Models.CommitRef> refs)
-    {
+    private static string FormatRefsSummary(System.Collections.Generic.IEnumerable<GitKay.Core.Models.CommitRef> refs) {
         var visibleRefs = refs.Select(reference => reference.Name).Take(3).ToArray();
         var summary = string.Join(" · ", visibleRefs);
 
         var totalCount = refs.Count();
 
-        if (totalCount > visibleRefs.Length)
-        {
+        if (totalCount > visibleRefs.Length) {
             var remainingCount = totalCount - visibleRefs.Length;
             summary = string.IsNullOrEmpty(summary) ? $"+{remainingCount}" : $"{summary} +{remainingCount}";
         }
@@ -187,10 +172,8 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         return summary;
     }
 
-    private bool ShouldDisplayRef(GitKay.Core.Models.CommitRef reference)
-    {
-        return reference.Kind switch
-        {
+    private bool ShouldDisplayRef(GitKay.Core.Models.CommitRef reference) {
+        return reference.Kind switch {
             GitKay.Core.Models.CommitRefKind.Tag => true,
             GitKay.Core.Models.CommitRefKind.Stash => ShowStashes,
             GitKay.Core.Models.CommitRefKind.Branch => ShowBranchRefs || reference.IsCurrentHead,
@@ -199,10 +182,8 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         };
     }
 
-    private static CommitRefProjection CreateRefBadge(GitKay.Core.Models.CommitRef reference)
-    {
-        return reference.Kind switch
-        {
+    private static CommitRefProjection CreateRefBadge(GitKay.Core.Models.CommitRef reference) {
+        return reference.Kind switch {
             GitKay.Core.Models.CommitRefKind.Branch => new CommitRefProjection(reference.Name, CommitRefKind.Branch),
             GitKay.Core.Models.CommitRefKind.Remote => new CommitRefProjection(reference.Name, CommitRefKind.Remote),
             GitKay.Core.Models.CommitRefKind.Tag => new CommitRefProjection(reference.Name, CommitRefKind.Tag),
@@ -212,16 +193,14 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     }
 }
 
-public enum CommitRefKind
-{
+public enum CommitRefKind {
     Branch = 0,
     Remote = 1,
     Tag = 2,
     Stash = 3,
 }
 
-public sealed class CommitRefProjection
-{
+public sealed class CommitRefProjection {
     private static readonly IBrush BranchBackground = new SolidColorBrush(Color.FromRgb(0x00, 0xff, 0x00));
     private static readonly IBrush BranchBorder = Brushes.Black;
     private static readonly IBrush BranchForeground = Brushes.Black;
@@ -235,14 +214,12 @@ public sealed class CommitRefProjection
     private static readonly IBrush StashBorder = Brushes.Black;
     private static readonly IBrush StashForeground = Brushes.Black;
 
-    public CommitRefProjection(string text, CommitRefKind kind)
-    {
+    public CommitRefProjection(string text, CommitRefKind kind) {
         Text = text;
         Kind = kind;
         IsCurrentHead = false;
 
-        var styles = kind switch
-        {
+        var styles = kind switch {
             CommitRefKind.Branch => (BranchBackground, BranchBorder, BranchForeground),
             CommitRefKind.Remote => (RemoteBackground, RemoteBorder, RemoteForeground),
             CommitRefKind.Tag => (TagBackground, TagBorder, TagForeground),
@@ -267,16 +244,14 @@ public sealed class CommitRefProjection
     public IBrush Foreground { get; }
 }
 
-public partial class SegmentProjection : ObservableObject, IProjection<Graph.LaneSegment>
-{
+public partial class SegmentProjection : ObservableObject, IProjection<Graph.LaneSegment> {
     [ObservableProperty] private int _lane;
     [ObservableProperty] private int _targetLane;
     [ObservableProperty] private bool _isCommit;
     [ObservableProperty] private int _color;
     [ObservableProperty] private string _key = "";
 
-    public void Update(Graph.LaneSegment segment)
-    {
+    public void Update(Graph.LaneSegment segment) {
         Lane = segment.Lane;
         TargetLane = segment.TargetLane;
         IsCommit = segment.IsCommit;
