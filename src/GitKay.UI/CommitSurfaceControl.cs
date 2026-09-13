@@ -339,47 +339,6 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource {
         Focus();
         _lastContextPoint = e.GetPosition(this);
         SelectAt(_lastContextPoint.Y);
-
-        // Branch badges and author names act as links: a click filters to them.
-        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed && LinkAt(_lastContextPoint) is { } link) {
-            FilterRequested?.Invoke(link.Field, link.Value);
-            e.Handled = true;
-        }
-    }
-
-    protected override void OnPointerMoved(PointerEventArgs e) {
-        base.OnPointerMoved(e);
-        var overLink = LinkAt(e.GetPosition(this)) != null;
-        if (overLink != _overLink) {
-            _overLink = overLink;
-            Cursor = overLink ? new Cursor(StandardCursorType.Hand) : Cursor.Default;
-        }
-    }
-
-    private bool _overLink;
-
-    /// <summary>The ref badge or author name under a point, if any.</summary>
-    private (string Field, string Value)? LinkAt(Point point) {
-        if (_rows.Length == 0 || point.Y < 0) return null;
-        var index = (int)(point.Y / RowHeight);
-        if (index >= _rows.Length) return null;
-        var commit = _rows[index];
-
-        var graphWidth = EffectiveWidth(GraphWidth, 48);
-        var hashX = graphWidth + EffectiveWidth(SubjectWidth, 120);
-        var authorX = hashX + EffectiveWidth(HashWidth, 54);
-        var badgeX = graphWidth + 5;
-        foreach (var badge in commit.RefBadges) {
-            var width = Layout(badge.Text, 11, badge.Foreground, TextTypeface).Width + 12;
-            if (point.X >= badgeX && point.X < badgeX + width) return ("ref", badge.Text);
-            badgeX += width + 4;
-        }
-
-        var authorWidth = Math.Min(EffectiveWidth(AuthorWidth, 110) - 2, Layout(commit.Author, 12, MetaBrush, TextTypeface).Width);
-        if (point.X >= authorX + 2 && point.X < authorX + 2 + authorWidth && !string.IsNullOrEmpty(commit.Author))
-            return ("author", commit.Author);
-
-        return null;
     }
 
     private void OnCommitContextRequested(object? sender, ContextRequestedEventArgs e) {
