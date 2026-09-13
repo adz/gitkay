@@ -4,19 +4,15 @@ using Avalonia.Input;
 
 namespace GitKay.UI;
 
-internal static class MainWindowNavigation
-{
-    public static bool TryGetListNavigationDelta(Key key, KeyModifiers modifiers, out int delta)
-    {
+internal static class MainWindowNavigation {
+    public static bool TryGetListNavigationDelta(Key key, KeyModifiers modifiers, out int delta) {
         delta = 0;
 
-        if (modifiers != KeyModifiers.None)
-        {
+        if (modifiers != KeyModifiers.None) {
             return false;
         }
 
-        switch (key)
-        {
+        switch (key) {
             case Key.J:
             case Key.Down:
                 delta = 1;
@@ -30,16 +26,13 @@ internal static class MainWindowNavigation
         }
     }
 
-    public static bool TryMoveSelection(ListBox listBox, int delta)
-    {
-        if (delta == 0)
-        {
+    public static bool TryMoveSelection(ListBox listBox, int delta) {
+        if (delta == 0) {
             return false;
         }
 
         var itemCount = listBox.Items.Count;
-        if (itemCount <= 0)
-        {
+        if (itemCount <= 0) {
             return false;
         }
 
@@ -48,40 +41,33 @@ internal static class MainWindowNavigation
 
         // Folder rows in the changed-files tree aren't selectable; step over them.
         var step = Math.Sign(delta);
-        while (nextIndex >= 0 && nextIndex < itemCount && listBox.Items[nextIndex] is DiffFileFolderRow)
-        {
+        while (nextIndex >= 0 && nextIndex < itemCount && listBox.Items[nextIndex] is DiffFileFolderRow) {
             nextIndex += step;
         }
 
-        if (nextIndex < 0 || nextIndex >= itemCount)
-        {
+        if (nextIndex < 0 || nextIndex >= itemCount) {
             return false;
         }
 
-        if (nextIndex < 0 || nextIndex == selectedIndex)
-        {
+        if (nextIndex < 0 || nextIndex == selectedIndex) {
             return false;
         }
 
         listBox.SelectedIndex = nextIndex;
 
-        if (listBox.Items[nextIndex] is { } item)
-        {
+        if (listBox.Items[nextIndex] is { } item) {
             listBox.ScrollIntoView(item);
         }
 
         return true;
     }
 
-    internal static int GetNextIndex(int selectedIndex, int itemCount, int delta)
-    {
-        if (itemCount <= 0)
-        {
+    internal static int GetNextIndex(int selectedIndex, int itemCount, int delta) {
+        if (itemCount <= 0) {
             return -1;
         }
 
-        if (selectedIndex < 0)
-        {
+        if (selectedIndex < 0) {
             return delta > 0 ? 0 : itemCount - 1;
         }
 

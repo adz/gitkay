@@ -9,8 +9,7 @@ using Avalonia.VisualTree;
 
 namespace GitKay.UI;
 
-public class GraphRowControl : Control
-{
+public class GraphRowControl : Control {
     private const double CommitMarkerBaselineOffset = 1.5;
     private const double DotRadius = 3;
 
@@ -23,15 +22,11 @@ public class GraphRowControl : Control
     private IEnumerable<SegmentProjection>? _segments;
     private INotifyCollectionChanged? _segmentsCollection;
     private SegmentProjection[] _cachedSegments = Array.Empty<SegmentProjection>();
-    public IEnumerable<SegmentProjection>? Segments
-    {
+    public IEnumerable<SegmentProjection>? Segments {
         get => _segments;
-        set
-        {
-            if (ReferenceEquals(_segments, value))
-            {
-                if (_segmentsCollection is null && value is not null)
-                {
+        set {
+            if (ReferenceEquals(_segments, value)) {
+                if (_segmentsCollection is null && value is not null) {
                     AttachSegmentsCollection(value);
                     UpdateCachedSegments();
                     InvalidateVisual();
@@ -51,8 +46,7 @@ public class GraphRowControl : Control
     public static readonly StyledProperty<int> CommitLaneProperty =
         AvaloniaProperty.Register<GraphRowControl, int>(nameof(CommitLane));
 
-    public int CommitLane
-    {
+    public int CommitLane {
         get => GetValue(CommitLaneProperty);
         set => SetValue(CommitLaneProperty, value);
     }
@@ -60,69 +54,55 @@ public class GraphRowControl : Control
     public static readonly StyledProperty<bool> ShowConnectorLineProperty =
         AvaloniaProperty.Register<GraphRowControl, bool>(nameof(ShowConnectorLine));
 
-    public bool ShowConnectorLine
-    {
+    public bool ShowConnectorLine {
         get => GetValue(ShowConnectorLineProperty);
         set => SetValue(ShowConnectorLineProperty, value);
     }
 
-    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
-    {
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e) {
         base.OnAttachedToVisualTree(e);
 
-        if (_segments is not null && _segmentsCollection is null)
-        {
+        if (_segments is not null && _segmentsCollection is null) {
             AttachSegmentsCollection(_segments);
             UpdateCachedSegments();
         }
     }
 
-    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
-    {
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e) {
         DetachSegmentsCollection();
         base.OnDetachedFromVisualTree(e);
     }
 
-    private void AttachSegmentsCollection(IEnumerable<SegmentProjection>? segments)
-    {
-        if (segments is INotifyCollectionChanged collection)
-        {
+    private void AttachSegmentsCollection(IEnumerable<SegmentProjection>? segments) {
+        if (segments is INotifyCollectionChanged collection) {
             _segmentsCollection = collection;
             _segmentsCollection.CollectionChanged += OnSegmentsCollectionChanged;
         }
-        else
-        {
+        else {
             _segmentsCollection = null;
         }
     }
 
-    private void DetachSegmentsCollection()
-    {
-        if (_segmentsCollection is not null)
-        {
+    private void DetachSegmentsCollection() {
+        if (_segmentsCollection is not null) {
             _segmentsCollection.CollectionChanged -= OnSegmentsCollectionChanged;
             _segmentsCollection = null;
         }
     }
 
-    private void OnSegmentsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
-    {
+    private void OnSegmentsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) {
         UpdateCachedSegments();
         InvalidateVisual();
     }
 
-    private void UpdateCachedSegments()
-    {
-        if (_segments is SegmentProjection[] array)
-        {
+    private void UpdateCachedSegments() {
+        if (_segments is SegmentProjection[] array) {
             _cachedSegments = array;
             return;
         }
 
-        if (_segments is ICollection<SegmentProjection> collection)
-        {
-            if (collection.Count == 0)
-            {
+        if (_segments is ICollection<SegmentProjection> collection) {
+            if (collection.Count == 0) {
                 _cachedSegments = Array.Empty<SegmentProjection>();
                 return;
             }
@@ -147,8 +127,7 @@ public class GraphRowControl : Control
     internal static double GetCommitMarkerCenterY(double rowHeight)
         => Math.Round(rowHeight / 2.0 + CommitMarkerBaselineOffset);
 
-    public override void Render(DrawingContext context)
-    {
+    public override void Render(DrawingContext context) {
         double laneWidth = 9;
         double rowHeight = Bounds.Height;
         double commitMarkerCenterY = GetCommitMarkerCenterY(rowHeight);
@@ -156,10 +135,8 @@ public class GraphRowControl : Control
         var segments = _cachedSegments;
         SegmentProjection? firstCommitSegment = null;
 
-        for (int i = 0; i < segments.Length; i++)
-        {
-            if (segments[i].IsCommit)
-            {
+        for (int i = 0; i < segments.Length; i++) {
+            if (segments[i].IsCommit) {
                 firstCommitSegment = segments[i];
                 break;
             }
@@ -175,12 +152,10 @@ public class GraphRowControl : Control
                 ? LanePens[firstCommitSegment.Color % LanePens.Length]
                 : LanePens[CommitLane % LanePens.Length];
 
-        for (int i = 0; i < segments.Length; i++)
-        {
+        for (int i = 0; i < segments.Length; i++) {
             var segment = segments[i];
 
-            if (segment.IsCommit)
-            {
+            if (segment.IsCommit) {
                 continue;
             }
 
@@ -189,18 +164,15 @@ public class GraphRowControl : Control
             context.DrawLine(pen, new Point(x, 0), new Point(x, rowHeight));
         }
 
-        if (firstCommitSegment != null)
-        {
+        if (firstCommitSegment != null) {
             var commitLaneX = (firstCommitSegment.Lane + 1) * laneWidth;
 
             context.DrawLine(commitPen, new Point(commitLaneX, 0), new Point(commitLaneX, commitMarkerCenterY));
 
-            for (int i = 0; i < segments.Length; i++)
-            {
+            for (int i = 0; i < segments.Length; i++) {
                 var segment = segments[i];
 
-                if (!segment.IsCommit)
-                {
+                if (!segment.IsCommit) {
                     continue;
                 }
 
@@ -208,13 +180,11 @@ public class GraphRowControl : Control
                 context.DrawLine(commitPen, new Point(commitLaneX, commitMarkerCenterY), new Point(targetX, rowHeight));
             }
 
-            if (ShowConnectorLine)
-            {
+            if (ShowConnectorLine) {
                 var connectorStartX = commitLaneX + DotRadius;
                 var connectorEndX = Math.Max(connectorStartX, Bounds.Width - 1);
 
-                if (connectorEndX > connectorStartX)
-                {
+                if (connectorEndX > connectorStartX) {
                     context.DrawLine(
                         commitPen,
                         new Point(connectorStartX, commitMarkerCenterY),

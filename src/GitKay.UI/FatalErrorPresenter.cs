@@ -11,18 +11,15 @@ using Avalonia.Threading;
 
 namespace GitKay.UI;
 
-public static class FatalErrorPresenter
-{
+public static class FatalErrorPresenter {
     private static IClassicDesktopStyleApplicationLifetime? _desktopLifetime;
     private static int _handlersAttached;
     private static int _fatalDialogShown;
 
-    public static void Initialize(IClassicDesktopStyleApplicationLifetime desktopLifetime)
-    {
+    public static void Initialize(IClassicDesktopStyleApplicationLifetime desktopLifetime) {
         _desktopLifetime = desktopLifetime;
 
-        if (Interlocked.Exchange(ref _handlersAttached, 1) != 0)
-        {
+        if (Interlocked.Exchange(ref _handlersAttached, 1) != 0) {
             return;
         }
 
@@ -31,12 +28,10 @@ public static class FatalErrorPresenter
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
     }
 
-    public static void ShowStartupFailure(IClassicDesktopStyleApplicationLifetime desktopLifetime, Exception exception)
-    {
+    public static void ShowStartupFailure(IClassicDesktopStyleApplicationLifetime desktopLifetime, Exception exception) {
         _desktopLifetime = desktopLifetime;
 
-        if (Interlocked.Exchange(ref _fatalDialogShown, 1) != 0)
-        {
+        if (Interlocked.Exchange(ref _fatalDialogShown, 1) != 0) {
             return;
         }
 
@@ -48,8 +43,7 @@ public static class FatalErrorPresenter
         desktopLifetime.MainWindow = dialog;
     }
 
-    public static string BuildDetails(string heading, Exception exception)
-    {
+    public static string BuildDetails(string heading, Exception exception) {
         var builder = new StringBuilder();
         builder.AppendLine(heading);
         builder.AppendLine();
@@ -60,23 +54,19 @@ public static class FatalErrorPresenter
         return builder.ToString();
     }
 
-    private static void OnDispatcherUnhandledException(object? sender, DispatcherUnhandledExceptionEventArgs e)
-    {
+    private static void OnDispatcherUnhandledException(object? sender, DispatcherUnhandledExceptionEventArgs e) {
         e.Handled = true;
         ReportFatalError("GitKay hit an unrecoverable UI error.", e.Exception);
     }
 
-    private static void OnAppDomainUnhandledException(object? sender, UnhandledExceptionEventArgs e)
-    {
+    private static void OnAppDomainUnhandledException(object? sender, UnhandledExceptionEventArgs e) {
         var exception = e.ExceptionObject as Exception ?? new Exception(e.ExceptionObject?.ToString() ?? "Unknown fatal error");
         ReportFatalError("GitKay hit an unrecoverable background error.", exception);
     }
 
-    private static void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
-    {
+    private static void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e) {
         e.SetObserved();
-        if (IsIgnorablePlatformError(e.Exception))
-        {
+        if (IsIgnorablePlatformError(e.Exception)) {
             // Avalonia's Linux integration fires D-Bus calls (accessibility, input method, portals) without
             // awaiting them; on sessions where a service isn't running they fail harmlessly.
             System.Diagnostics.Trace.WriteLine($"[platform] ignored unobserved D-Bus error: {e.Exception.GetBaseException().Message}");
@@ -87,95 +77,76 @@ public static class FatalErrorPresenter
     }
 
     /// <summary>True when every inner exception is a D-Bus protocol error from the desktop platform layer.</summary>
-    internal static bool IsIgnorablePlatformError(AggregateException exception)
-    {
+    internal static bool IsIgnorablePlatformError(AggregateException exception) {
         var inner = exception.Flatten().InnerExceptions;
         return inner.Count > 0
             && inner.All(error => error.GetType().FullName?.StartsWith("Tmds.DBus", StringComparison.Ordinal) == true);
     }
 
-    private static void ReportFatalError(string heading, Exception exception)
-    {
+    private static void ReportFatalError(string heading, Exception exception) {
         PersistCrashDetails(heading, exception);
 
-        if (Interlocked.Exchange(ref _fatalDialogShown, 1) != 0)
-        {
+        if (Interlocked.Exchange(ref _fatalDialogShown, 1) != 0) {
             return;
         }
 
         var desktopLifetime = _desktopLifetime;
-        if (desktopLifetime == null)
-        {
+        if (desktopLifetime == null) {
             WriteFallbackError(heading, exception);
             return;
         }
 
         var details = BuildDetails(heading, exception);
 
-        try
-        {
+        try {
             Dispatcher.UIThread.Post(() => _ = ShowFatalDialogAsync(desktopLifetime, heading, details));
         }
-        catch
-        {
+        catch {
             WriteFallbackError(heading, exception);
         }
     }
 
-    private static async Task ShowFatalDialogAsync(IClassicDesktopStyleApplicationLifetime desktopLifetime, string heading, string details)
-    {
-        try
-        {
+    private static async Task ShowFatalDialogAsync(IClassicDesktopStyleApplicationLifetime desktopLifetime, string heading, string details) {
+        try {
             var dialog = new FatalErrorDialog(heading, details);
             dialog.Closed += (_, _) => desktopLifetime.Shutdown(1);
 
             var owner = desktopLifetime.MainWindow;
-            if (owner != null)
-            {
+            if (owner != null) {
                 await dialog.ShowDialog(owner);
             }
-            else
-            {
+            else {
                 desktopLifetime.MainWindow = dialog;
                 dialog.Show();
             }
         }
-        catch (Exception ex)
-        {
+        catch (Exception ex) {
             WriteFallbackError("GitKay could not display the fatal error dialog.", ex);
         }
     }
 
-    private static void PersistCrashDetails(string heading, Exception exception)
-    {
+    private static void PersistCrashDetails(string heading, Exception exception) {
         var details = BuildDetails(heading, exception);
-        try
-        {
+        try {
             Trace.WriteLine(details);
             Trace.Flush();
         }
-        catch
-        {
+        catch {
         }
 
-        try
-        {
+        try {
             var path = Path.Combine(Path.GetTempPath(), "gitkay-crash.log");
             File.WriteAllText(path, details);
         }
-        catch
-        {
+        catch {
         }
     }
 
-    private static void WriteFallbackError(string heading, Exception exception)
-    {
-        try
-        {
+    private static void WriteFallbackError(string heading, Exception exception) {
+        try {
             Console.Error.WriteLine(BuildDetails(heading, exception));
         }
-        catch
-        {
+        catch {
         }
     }
 }

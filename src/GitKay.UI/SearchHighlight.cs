@@ -9,16 +9,13 @@ namespace GitKay.UI;
 /// The applied commit search, split by what each part should underline: commit headline, hash, author and ref
 /// names, file paths and changed lines. One source for the dotted underline used everywhere.
 /// </summary>
-public sealed class SearchHighlight
-{
+public sealed class SearchHighlight {
     private readonly Dictionary<string, Regex?> _regexes = new(StringComparer.Ordinal);
 
-    public SearchHighlight(string query, string modeKey, bool useRegex)
-    {
+    public SearchHighlight(string query, string modeKey, bool useRegex) {
         UseRegex = useRegex;
         var terms = GitKay.Core.GitSearch.parseQuery(GitKay.Core.GitSearch.parseMode(modeKey), query);
-        foreach (var term in terms)
-        {
+        foreach (var term in terms) {
             var field = term.Field;
             if (field.IsCommitInfo || field.IsMessage) Subject.Add(term.Text);
             if (field.IsCommitInfo || field.IsHash) Hash.Add(term.Text);
@@ -40,20 +37,16 @@ public sealed class SearchHighlight
     public bool IsEmpty => Subject.Count + Hash.Count + Ref.Count + Author.Count + Path.Count + Line.Count == 0;
 
     /// <summary>Every (start, length) span of <paramref name="text"/> matched by any of <paramref name="terms"/>.</summary>
-    public IEnumerable<(int Start, int Length)> Matches(IReadOnlyList<string> terms, string? text)
-    {
+    public IEnumerable<(int Start, int Length)> Matches(IReadOnlyList<string> terms, string? text) {
         if (string.IsNullOrEmpty(text) || terms.Count == 0) yield break;
-        foreach (var term in terms)
-        {
+        foreach (var term in terms) {
             if (string.IsNullOrEmpty(term)) continue;
-            if (UseRegex)
-            {
+            if (UseRegex) {
                 if (Compile(term) is not { } regex) continue;
                 foreach (Match match in regex.Matches(text))
                     if (match.Length > 0) yield return (match.Index, match.Length);
             }
-            else
-            {
+            else {
                 for (var index = text.IndexOf(term, StringComparison.OrdinalIgnoreCase); index >= 0;
                      index = text.IndexOf(term, index + term.Length, StringComparison.OrdinalIgnoreCase))
                     yield return (index, term.Length);
@@ -61,16 +54,13 @@ public sealed class SearchHighlight
         }
     }
 
-    private Regex? Compile(string pattern)
-    {
+    private Regex? Compile(string pattern) {
         if (_regexes.TryGetValue(pattern, out var cached)) return cached;
         Regex? regex;
-        try
-        {
+        try {
             regex = new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50));
         }
-        catch (ArgumentException)
-        {
+        catch (ArgumentException) {
             regex = null;
         }
 

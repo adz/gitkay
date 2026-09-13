@@ -5,8 +5,7 @@ using Avalonia.Media;
 namespace GitKay.UI;
 
 /// <summary>Compact GitHub-style change-size indicator: five blocks split by added/removed ratio.</summary>
-public sealed class DiffStatBar : Control
-{
+public sealed class DiffStatBar : Control {
     private static readonly IBrush AddedFallback = new SolidColorBrush(Color.FromRgb(63, 185, 80)).ToImmutable();
     private static readonly IBrush RemovedFallback = new SolidColorBrush(Color.FromRgb(248, 81, 73)).ToImmutable();
     private static readonly IBrush NeutralFallback = new SolidColorBrush(Color.FromRgb(48, 54, 61)).ToImmutable();
@@ -29,8 +28,7 @@ public sealed class DiffStatBar : Control
         new(5 * BlockSize + 4 * Spacing, BlockSize);
 
     /// <summary>Returns (green, red) block counts out of five, scaled like GitHub for small changes.</summary>
-    public static (int Green, int Red) Blocks(int added, int removed)
-    {
+    public static (int Green, int Red) Blocks(int added, int removed) {
         var total = added + removed;
         if (total == 0) return (0, 0);
         var filled = System.Math.Min(5, total);
@@ -41,15 +39,13 @@ public sealed class DiffStatBar : Control
         return (System.Math.Max(0, green), System.Math.Max(0, red));
     }
 
-    public override void Render(DrawingContext context)
-    {
+    public override void Render(DrawingContext context) {
         var added = Brush("GitKayAddedAccentBrush", AddedFallback);
         var removed = Brush("GitKayRemovedAccentBrush", RemovedFallback);
         var neutral = Brush("GitKayDiffStatNeutralBrush", NeutralFallback);
         var (green, red) = IsKnown ? Blocks(Added, Removed) : (0, 0);
         var y = (Bounds.Height - BlockSize) / 2;
-        for (var i = 0; i < 5; i++)
-        {
+        for (var i = 0; i < 5; i++) {
             var brush = i < green ? added : i < green + red ? removed : neutral;
             context.DrawRectangle(brush, null, new Rect(i * (BlockSize + Spacing), y, BlockSize, BlockSize), 1.5, 1.5);
         }

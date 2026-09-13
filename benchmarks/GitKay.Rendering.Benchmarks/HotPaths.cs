@@ -14,10 +14,8 @@ using Microsoft.FSharp.Core;
 /// Hot-path benchmarks against a real repository: history, graph, commit selection, context expansion,
 /// UI projection and tokenization. Usage: hotpaths [repoPath] [label]
 /// </summary>
-internal static class HotPaths
-{
-    public static void Run(string[] args)
-    {
+internal static class HotPaths {
+    public static void Run(string[] args) {
         var repo = args.ElementAtOrDefault(0) ?? "/home/adam/projects/Axial/main";
         var label = args.ElementAtOrDefault(1) ?? "run";
         var results = new List<string>();
@@ -43,11 +41,9 @@ internal static class HotPaths
 
         Measure(Report, "graph.calculateLanes", 60, () => Graph.calculateLanes(history));
 
-        foreach (var (name, target) in new[] { ("medium", medium), ("large", large), ("huge", huge) })
-        {
+        foreach (var (name, target) in new[] { ("medium", medium), ("large", large), ("huge", huge) }) {
             var iterations = name == "huge" ? 6 : 15;
-            Measure(Report, $"select.cold({name})", iterations, () =>
-            {
+            Measure(Report, $"select.cold({name})", iterations, () => {
                 var fresh = GitService.environment(repo);
                 Unwrap(Flow.run(fresh, GitService.fetchDiffFileList(target.hash)));
                 return Unwrap(Flow.run(fresh, GitService.fetchDiff(3, target.hash)));
@@ -55,10 +51,8 @@ internal static class HotPaths
         }
 
         // As the app does on selection: file list and diff start concurrently in a fresh environment.
-        foreach (var (name, target) in new[] { ("medium", medium), ("large", large), ("huge", huge) })
-        {
-            Measure(Report, $"select.app({name})", name == "huge" ? 6 : 15, () =>
-            {
+        foreach (var (name, target) in new[] { ("medium", medium), ("large", large), ("huge", huge) }) {
+            Measure(Report, $"select.app({name})", name == "huge" ? 6 : 15, () => {
                 var fresh = GitService.environment(repo);
                 var list = System.Threading.Tasks.Task.Run(() => Unwrap(Flow.run(fresh, GitService.fetchDiffFileList(target.hash))));
                 var diff = System.Threading.Tasks.Task.Run(() => Unwrap(Flow.run(fresh, GitService.fetchDiff(3, target.hash))));
@@ -81,14 +75,12 @@ internal static class HotPaths
 
         // UI projection: selecting the large and huge commits (a new projection each time; updates are diffed).
         var (baseModel, _) = App.init(Array.Empty<string>()).ToValueTuple();
-        foreach (var (name, target) in new[] { ("large", large), ("huge", huge) })
-        {
+        foreach (var (name, target) in new[] { ("large", large), ("huge", huge) }) {
             var files = Unwrap(Flow.run(env, GitService.fetchDiffFileList(target.hash)));
             var diff = Unwrap(Flow.run(env, GitService.fetchDiff(3, target.hash)));
             var model = WithSelection(baseModel, target.hash, files, diff);
             var rows = 0;
-            Measure(Report, $"projection.update({name})", name == "huge" ? 8 : 20, () =>
-            {
+            Measure(Report, $"projection.update({name})", name == "huge" ? 8 : 20, () => {
                 var projection = new MainProjection();
                 projection.Update(model);
                 rows = projection.SelectedDiffRows.Count;
@@ -98,8 +90,7 @@ internal static class HotPaths
         }
 
         var lines = largeDiff.SelectMany(f => f.Hunks).SelectMany(h => h.Lines).Select(l => l.Content).Where(t => t.Length > 0).ToArray();
-        Measure(Report, $"tokenize.cold({lines.Length} lines)", 30, () =>
-        {
+        Measure(Report, $"tokenize.cold({lines.Length} lines)", 30, () => {
             SyntaxHighlighting.ClearTokenCache();
             var count = 0;
             foreach (var line in lines) count += SyntaxHighlighting.Tokenize(line).Count;
@@ -122,14 +113,12 @@ internal static class HotPaths
     private static T Unwrap<T>(Exit<T, GitError> exit) =>
         exit.IsSuccess ? ((Exit<T, GitError>.Success)exit).Item : throw new InvalidOperationException(exit.ToString());
 
-    private static void Measure<T>(Action<string> report, string name, int iterations, Func<T> action)
-    {
+    private static void Measure<T>(Action<string> report, string name, int iterations, Func<T> action) {
         for (var i = 0; i < Math.Max(2, iterations / 5); i++) action();
         GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
         var samples = new double[iterations];
         var allocatedBefore = GC.GetTotalAllocatedBytes(true);
-        for (var i = 0; i < iterations; i++)
-        {
+        for (var i = 0; i < iterations; i++) {
             var started = Stopwatch.GetTimestamp();
             GC.KeepAlive(action());
             samples[i] = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
@@ -143,10 +132,8 @@ internal static class HotPaths
 }
 
 /// <summary>Headless MainWindow interaction benchmarks: file list mode switch and splitter drag. Usage: ui [repoPath] [hash] [label]</summary>
-internal static class UiInteractions
-{
-    public static void Run(string[] args)
-    {
+internal static class UiInteractions {
+    public static void Run(string[] args) {
         var repo = args.ElementAtOrDefault(0) ?? "/home/adam/projects/Axial/main";
         var hash = args.ElementAtOrDefault(1) ?? "48db7ad8";
         var label = args.ElementAtOrDefault(2) ?? "run";
@@ -169,8 +156,7 @@ internal static class UiInteractions
         projection.Update(model);
         Pump(window);
         Console.WriteLine($"# ui label={label} files={files.Length} rows={projection.SelectedDiffRows.Count}");
-        if (label.StartsWith("screenshot", StringComparison.Ordinal))
-        {
+        if (label.StartsWith("screenshot", StringComparison.Ordinal)) {
             var pathDiff = label.Contains("pathdiff");
             var searchText = pathDiff ? "path:DiffSurface Typeface" : "font";
             var searchMode = pathDiff ? GitSearch.Mode.Diff : GitSearch.Mode.Commit;
@@ -187,14 +173,12 @@ internal static class UiInteractions
             if (label.Contains("dark")) Avalonia.Application.Current!.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Dark;
             if (label.Contains("light")) Avalonia.Application.Current!.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Light;
             Pump(window);
-            if (label.Contains("scrolled"))
-            {
+            if (label.Contains("scrolled")) {
                 var diffScroll = Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.ScrollViewer>(window, "DiffRowsScrollViewer")!;
                 diffScroll.Offset = new Avalonia.Vector(0, 1150);
                 Pump(window);
             }
-            if (label.Contains("selection"))
-            {
+            if (label.Contains("selection")) {
                 var diffSurface = Avalonia.Controls.NameScopeExtensions.Find<DiffSurfaceControl>(window, "DiffRowsListBox")!;
                 var first = diffSurface.FirstLineRowIndex(2);
                 var last = diffSurface.FirstLineRowIndex(4);
@@ -210,8 +194,7 @@ internal static class UiInteractions
             return;
         }
 
-        if (label == "gap-selection-probe")
-        {
+        if (label == "gap-selection-probe") {
             var diffSurface = Avalonia.Controls.NameScopeExtensions.Find<DiffSurfaceControl>(window, "DiffRowsListBox")!;
             var rowsBefore = projection.SelectedDiffRows.ToList();
             var gapIndex = rowsBefore.FindIndex(r => r is DiffGapProjection && rowsBefore.IndexOf(r) > 20);
@@ -231,8 +214,7 @@ internal static class UiInteractions
             return;
         }
 
-        if (label == "hover-probe")
-        {
+        if (label == "hover-probe") {
             window.Activate();
             Avalonia.Controls.Control Find(string name) => Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.Control>(window, name)!;
             Avalonia.Point Center(string name) { var c = Find(name); return Avalonia.VisualExtensions.TranslatePoint(c, new Avalonia.Point(c.Bounds.Width / 2, Math.Min(c.Bounds.Height / 2, 200)), window)!.Value; }
@@ -255,16 +237,14 @@ internal static class UiInteractions
             return;
         }
 
-        if (label == "click-probe")
-        {
+        if (label == "click-probe") {
             var diffSurface = Avalonia.Controls.NameScopeExtensions.Find<DiffSurfaceControl>(window, "DiffRowsListBox")!;
             var scroll = Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.ScrollViewer>(window, "DiffRowsScrollViewer")!;
             Pump(window);
             var failures = new List<string>();
             var rows = projection.SelectedDiffRows.ToArray();
             var viewportTop = Avalonia.VisualExtensions.TranslatePoint(scroll, new Avalonia.Point(0, 0), window)!.Value;
-            for (var y = 6.0; y < scroll.Viewport.Height - 4; y += 20)
-            {
+            for (var y = 6.0; y < scroll.Viewport.Height - 4; y += 20) {
                 var point = new Avalonia.Point(viewportTop.X + 400, viewportTop.Y + y);
                 var docY = scroll.Offset.Y + y;
                 projection.SelectedDiffRow = null;
@@ -283,8 +263,7 @@ internal static class UiInteractions
             return;
         }
 
-        if (label == "enter-probe")
-        {
+        if (label == "enter-probe") {
             var diffSurface = Avalonia.Controls.NameScopeExtensions.Find<DiffSurfaceControl>(window, "DiffRowsListBox")!;
             var file = projection.SelectedDiffFiles[0];
             projection.SelectedDiffRow = file.Header;
@@ -296,8 +275,7 @@ internal static class UiInteractions
             Press(Avalonia.Input.Key.Enter);
             Console.WriteLine($"after second Enter: collapsed={file.IsCollapsed} rows={projection.SelectedDiffRows.Count}");
             var gap = projection.SelectedDiffRows.OfType<DiffGapProjection>().FirstOrDefault();
-            if (gap != null)
-            {
+            if (gap != null) {
                 projection.SelectedDiffRow = gap;
                 Pump(window);
                 var dispatched = new List<string>();
@@ -308,8 +286,7 @@ internal static class UiInteractions
             return;
         }
 
-        if (label == "ctrl-probe")
-        {
+        if (label == "ctrl-probe") {
             window.Activate();
             CommitListBoxFocus(window);
             Avalonia.Headless.HeadlessWindowExtensions.KeyPress(window, Avalonia.Input.Key.LeftCtrl, Avalonia.Input.RawInputModifiers.Control, Avalonia.Input.PhysicalKey.ControlLeft, null);
@@ -326,20 +303,16 @@ internal static class UiInteractions
             return;
         }
 
-        if (label == "profile-drag")
-        {
+        if (label == "profile-drag") {
             var dragGrid = Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.Grid>(window, "DiffSplitGrid")!;
-            for (var i = 0; i < 60; i++)
-            {
+            for (var i = 0; i < 60; i++) {
                 dragGrid.ColumnDefinitions[2].Width = new Avalonia.Controls.GridLength(220 + (i % 20) * 12);
                 Pump(window);
             }
             return;
         }
-        if (label == "fonts")
-        {
-            foreach (var family in new[] { "Inter", "Segoe UI", "Arial", "sans-serif", "Inter,Segoe UI,Arial,sans-serif", "$Default", "SF Mono,Menlo,Consolas,Liberation Mono,Noto Sans Mono,monospace", "Cascadia Code,Consolas,Monospace", "Helvetica,Arial,Liberation Sans,Noto Sans,sans-serif" })
-            {
+        if (label == "fonts") {
+            foreach (var family in new[] { "Inter", "Segoe UI", "Arial", "sans-serif", "Inter,Segoe UI,Arial,sans-serif", "$Default", "SF Mono,Menlo,Consolas,Liberation Mono,Noto Sans Mono,monospace", "Cascadia Code,Consolas,Monospace", "Helvetica,Arial,Liberation Sans,Noto Sans,sans-serif" }) {
                 var typeface = new Avalonia.Media.Typeface(new Avalonia.Media.FontFamily(family));
                 var t0 = Stopwatch.GetTimestamp();
                 var found = false;
@@ -351,11 +324,9 @@ internal static class UiInteractions
                 Console.WriteLine($"  textblock font: {text}");
             return;
         }
-        if (label == "profile-drag")
-        {
+        if (label == "profile-drag") {
             var dragGrid = Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.Grid>(window, "DiffSplitGrid")!;
-            for (var i = 0; i < 60; i++)
-            {
+            for (var i = 0; i < 60; i++) {
                 dragGrid.ColumnDefinitions[2].Width = new Avalonia.Controls.GridLength(220 + (i % 20) * 12);
                 Pump(window);
             }
@@ -364,16 +335,14 @@ internal static class UiInteractions
         int Count<T>() => Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window).OfType<T>().Count();
         Console.WriteLine($"  realized: ListBoxItem={Count<Avalonia.Controls.ListBoxItem>()} DiffStatBar={Count<DiffStatBar>()} TextBlock={Count<Avalonia.Controls.TextBlock>()} visuals={Count<Avalonia.Visual>()}");
 
-        Measure($"filelist.toggle(tree<->patch)", 10, () =>
-        {
+        Measure($"filelist.toggle(tree<->patch)", 10, () => {
             projection.IsDiffFileTreeMode = !projection.IsDiffFileTreeMode;
             Pump(window);
         });
 
         var grid = Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.Grid>(window, "DiffSplitGrid")!;
         var width = 220.0;
-        Measure("splitter.drag(step)", 40, () =>
-        {
+        Measure("splitter.drag(step)", 40, () => {
             width = width >= 600 ? 220 : width + 12;
             grid.ColumnDefinitions[2].Width = new Avalonia.Controls.GridLength(width);
             Pump(window);
@@ -385,8 +354,7 @@ internal static class UiInteractions
     private static void CommitListBoxFocus(Avalonia.Controls.Window window) =>
         Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.Control>(window, "CommitListBox")!.Focus();
 
-    private static void Pump(Avalonia.Controls.Window window)
-    {
+    private static void Pump(Avalonia.Controls.Window window) {
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
         window.UpdateLayout();
         using var frame = Avalonia.Headless.HeadlessWindowExtensions.CaptureRenderedFrame(window);
@@ -396,12 +364,10 @@ internal static class UiInteractions
     private static T Unwrap<T>(Exit<T, GitError> exit) =>
         exit.IsSuccess ? ((Exit<T, GitError>.Success)exit).Item : throw new InvalidOperationException(exit.ToString());
 
-    private static void Measure(string name, int iterations, Action action)
-    {
+    private static void Measure(string name, int iterations, Action action) {
         for (var i = 0; i < 3; i++) action();
         var samples = new double[iterations];
-        for (var i = 0; i < iterations; i++)
-        {
+        for (var i = 0; i < iterations; i++) {
             var started = Stopwatch.GetTimestamp();
             action();
             samples[i] = Stopwatch.GetElapsedTime(started).TotalMilliseconds;

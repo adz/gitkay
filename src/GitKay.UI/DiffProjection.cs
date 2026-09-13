@@ -13,27 +13,22 @@ namespace GitKay.UI;
 
 public readonly record struct DiffFileKey(string OldPath, string NewPath);
 
-public interface IDiffRowProjection
-{
+public interface IDiffRowProjection {
 }
 
-internal static class DiffSearchPresentation
-{
+internal static class DiffSearchPresentation {
     public static readonly IBrush MatchBackground = new SolidColorBrush(Color.FromArgb(34, 215, 186, 125));
     public static readonly IBrush MatchBorderBrush = new SolidColorBrush(Color.FromArgb(220, 215, 186, 125));
     public static readonly IBrush MatchForeground = new SolidColorBrush(Color.FromRgb(215, 186, 125));
     public static readonly FontWeight MatchFontWeight = FontWeight.SemiBold;
 
-    public static (string Prefix, string Match, string Suffix, bool HasMatch) Split(string value, string query)
-    {
-        if (string.IsNullOrWhiteSpace(query))
-        {
+    public static (string Prefix, string Match, string Suffix, bool HasMatch) Split(string value, string query) {
+        if (string.IsNullOrWhiteSpace(query)) {
             return (value, "", "", false);
         }
 
         var index = value.IndexOf(query, StringComparison.OrdinalIgnoreCase);
-        if (index < 0)
-        {
+        if (index < 0) {
             return (value, "", "", false);
         }
 
@@ -44,10 +39,8 @@ internal static class DiffSearchPresentation
     }
 }
 
-public partial class DiffFileProjection : ObservableObject
-{
-    public DiffFileProjection(GitKay.Core.GitService.DiffFileSummary summary)
-    {
+public partial class DiffFileProjection : ObservableObject {
+    public DiffFileProjection(GitKay.Core.GitService.DiffFileSummary summary) {
         Key = new DiffFileKey(summary.OldPath, summary.NewPath);
         DisplayPath = summary.DisplayPath;
         ListLabel = summary.DisplayPath;
@@ -101,14 +94,12 @@ public partial class DiffFileProjection : ObservableObject
     private GitKay.Core.Models.FileDiff? _content;
     private GitKay.Core.App.FileExpansion? _expansion;
 
-    public void UpdateSummary(GitKay.Core.GitService.DiffFileSummary summary)
-    {
+    public void UpdateSummary(GitKay.Core.GitService.DiffFileSummary summary) {
         DisplayPath = summary.DisplayPath;
         Header.UpdateDisplayPath(summary.DisplayPath);
     }
 
-    public void ApplyContent(GitKay.Core.Models.FileDiff file, GitKay.Core.App.FileExpansion? expansion = null)
-    {
+    public void ApplyContent(GitKay.Core.Models.FileDiff file, GitKay.Core.App.FileExpansion? expansion = null) {
         _content = file;
         var lines = file.Hunks.SelectMany(hunk => hunk.Lines).ToArray();
         AddedLines = lines.Count(line => line.Type.IsAdded);
@@ -120,24 +111,20 @@ public partial class DiffFileProjection : ObservableObject
     }
 
     /// <summary>Re-projects this file for new expansion state. Returns false when nothing changed.</summary>
-    public bool ApplyExpansion(GitKay.Core.App.FileExpansion? expansion)
-    {
-        if (ReferenceEquals(_expansion, expansion) || Equals(_expansion, expansion))
-        {
+    public bool ApplyExpansion(GitKay.Core.App.FileExpansion? expansion) {
+        if (ReferenceEquals(_expansion, expansion) || Equals(_expansion, expansion)) {
             return false;
         }
 
         _expansion = expansion;
-        if (_content != null)
-        {
+        if (_content != null) {
             Project();
         }
 
         return true;
     }
 
-    public void ClearContent()
-    {
+    public void ClearContent() {
         _content = null;
         _expansion = null;
         AddedLines = 0;
@@ -148,22 +135,18 @@ public partial class DiffFileProjection : ObservableObject
         ClearSearchState();
     }
 
-    private void Project()
-    {
+    private void Project() {
         _blocks.Clear();
         Hunks.Clear();
-        if (_content == null)
-        {
+        if (_content == null) {
             return;
         }
 
         var fullContext = _expansion?.FullContext;
         var revealed = _expansion?.Revealed ?? FSharpList<GitKay.Core.DiffExpansion.LineRange>.Empty;
         var isLoading = _expansion?.PendingRequestId != null;
-        foreach (var block in GitKay.Core.DiffExpansion.project(_content, fullContext, revealed))
-        {
-            switch (block)
-            {
+        foreach (var block in GitKay.Core.DiffExpansion.project(_content, fullContext, revealed)) {
+            switch (block) {
                 case GitKay.Core.DiffExpansion.DiffBlock.HunkBlock hunkBlock:
                     var hunk = new DiffHunkProjection(hunkBlock.Item);
                     Hunks.Add(hunk);
@@ -176,11 +159,9 @@ public partial class DiffFileProjection : ObservableObject
         }
     }
 
-    public void ApplySearchState(string query, string scopeKey)
-    {
+    public void ApplySearchState(string query, string scopeKey) {
         var normalizedQuery = query.Trim();
-        if (string.IsNullOrWhiteSpace(normalizedQuery))
-        {
+        if (string.IsNullOrWhiteSpace(normalizedQuery)) {
             ClearSearchState(scopeKey);
             return;
         }
@@ -195,22 +176,16 @@ public partial class DiffFileProjection : ObservableObject
                 || ContainsIgnoreCase(DisplayPath, normalizedQuery));
 
         var textMatch = false;
-        if (searchText && IsLoaded)
-        {
-            foreach (var hunk in Hunks)
-            {
-                foreach (var line in hunk.Lines)
-                {
+        if (searchText && IsLoaded) {
+            foreach (var hunk in Hunks) {
+                foreach (var line in hunk.Lines) {
                     textMatch |= line.ApplySearchState(normalizedQuery, true);
                 }
             }
         }
-        else
-        {
-            foreach (var hunk in Hunks)
-            {
-                foreach (var line in hunk.Lines)
-                {
+        else {
+            foreach (var hunk in Hunks) {
+                foreach (var line in hunk.Lines) {
                     line.ApplySearchState(normalizedQuery, false);
                 }
             }
@@ -224,8 +199,7 @@ public partial class DiffFileProjection : ObservableObject
         Header.ApplySearchState(normalizedQuery, pathMatch, textMatch, SearchMatchSummary);
     }
 
-    private void ClearSearchState(string scopeKey)
-    {
+    private void ClearSearchState(string scopeKey) {
         HasSearchMatch = false;
         IsPathSearchMatch = false;
         SearchMatchSummary = "";
@@ -239,22 +213,18 @@ public partial class DiffFileProjection : ObservableObject
         Header.ClearSearchState();
 
         var searchText = scopeKey is "all" or "text";
-        foreach (var hunk in Hunks)
-        {
-            foreach (var line in hunk.Lines)
-            {
+        foreach (var hunk in Hunks) {
+            foreach (var line in hunk.Lines) {
                 line.ApplySearchState("", searchText);
             }
         }
     }
 
-    private void ClearSearchState()
-    {
+    private void ClearSearchState() {
         ClearSearchState("all");
     }
 
-    private void UpdateSearchHighlight(string query, bool pathMatch, bool hasSearchMatch)
-    {
+    private void UpdateSearchHighlight(string query, bool pathMatch, bool hasSearchMatch) {
         RowBackground = hasSearchMatch
             ? DiffSearchPresentation.MatchBackground
             : Brushes.Transparent;
@@ -262,8 +232,7 @@ public partial class DiffFileProjection : ObservableObject
             ? DiffSearchPresentation.MatchBorderBrush
             : Brushes.Transparent;
 
-        if (pathMatch)
-        {
+        if (pathMatch) {
             var (prefix, match, suffix, _) = DiffSearchPresentation.Split(DisplayPath, query);
             MatchPrefix = prefix;
             MatchText = match;
@@ -271,8 +240,7 @@ public partial class DiffFileProjection : ObservableObject
             MatchForeground = DiffSearchPresentation.MatchForeground;
             MatchFontWeight = DiffSearchPresentation.MatchFontWeight;
         }
-        else
-        {
+        else {
             MatchPrefix = DisplayPath;
             MatchText = "";
             MatchSuffix = "";
@@ -284,17 +252,14 @@ public partial class DiffFileProjection : ObservableObject
     private static bool ContainsIgnoreCase(string value, string query) =>
         value.Contains(query, StringComparison.OrdinalIgnoreCase);
 
-    private static string BuildSearchSummary(bool pathMatch, bool textMatch)
-    {
+    private static string BuildSearchSummary(bool pathMatch, bool textMatch) {
         var parts = new System.Collections.Generic.List<string>();
 
-        if (pathMatch)
-        {
+        if (pathMatch) {
             parts.Add("path");
         }
 
-        if (textMatch)
-        {
+        if (textMatch) {
             parts.Add("text");
         }
 
@@ -303,10 +268,8 @@ public partial class DiffFileProjection : ObservableObject
 }
 
 /// <summary>A folder row in the changed-files tree; single-child folder chains are merged into one row.</summary>
-public sealed partial class DiffFileFolderRow : ObservableObject
-{
-    public DiffFileFolderRow(string name, string path, int depth, bool isExpanded)
-    {
+public sealed partial class DiffFileFolderRow : ObservableObject {
+    public DiffFileFolderRow(string name, string path, int depth, bool isExpanded) {
         Name = name;
         Path = path;
         Indent = new Avalonia.Thickness(depth * DiffFileTree.IndentWidth, 0, 0, 0);
@@ -320,23 +283,18 @@ public sealed partial class DiffFileFolderRow : ObservableObject
 }
 
 /// <summary>Builds the flattened changed-files rows for patch (flat) and tree (folder) modes.</summary>
-public static class DiffFileTree
-{
+public static class DiffFileTree {
     public const double IndentWidth = 14;
 
-    private sealed class Node
-    {
+    private sealed class Node {
         public readonly SortedDictionary<string, Node> Folders = new(StringComparer.OrdinalIgnoreCase);
         public readonly List<(string Name, DiffFileProjection File)> Files = new();
     }
 
-    public static List<object> BuildRows(IEnumerable<DiffFileProjection> files, bool treeMode, ISet<string> collapsedFolders)
-    {
+    public static List<object> BuildRows(IEnumerable<DiffFileProjection> files, bool treeMode, ISet<string> collapsedFolders) {
         var rows = new List<object>();
-        if (!treeMode)
-        {
-            foreach (var file in files)
-            {
+        if (!treeMode) {
+            foreach (var file in files) {
                 file.ListLabel = file.DisplayPath;
                 file.ListIndent = default;
                 rows.Add(file);
@@ -345,13 +303,11 @@ public static class DiffFileTree
         }
 
         var root = new Node();
-        foreach (var file in files)
-        {
+        foreach (var file in files) {
             var path = file.Key.NewPath == "/dev/null" ? file.Key.OldPath : file.Key.NewPath;
             var parts = path.Split('/');
             var node = root;
-            for (var i = 0; i < parts.Length - 1; i++)
-            {
+            for (var i = 0; i < parts.Length - 1; i++) {
                 if (!node.Folders.TryGetValue(parts[i], out var child))
                     node.Folders[parts[i]] = child = new Node();
                 node = child;
@@ -359,15 +315,12 @@ public static class DiffFileTree
             node.Files.Add((parts[^1], file));
         }
 
-        void Emit(Node node, string prefix, int depth)
-        {
-            foreach (var (folderName, folder) in node.Folders)
-            {
+        void Emit(Node node, string prefix, int depth) {
+            foreach (var (folderName, folder) in node.Folders) {
                 // Merge chains of folders that contain only one folder, like GitHub ("dev-docs/releases").
                 var name = folderName;
                 var current = folder;
-                while (current.Files.Count == 0 && current.Folders.Count == 1)
-                {
+                while (current.Files.Count == 0 && current.Folders.Count == 1) {
                     var only = current.Folders.First();
                     name = $"{name}/{only.Key}";
                     current = only.Value;
@@ -379,8 +332,7 @@ public static class DiffFileTree
                 if (expanded) Emit(current, path, depth + 1);
             }
 
-            foreach (var (name, file) in node.Files.OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase))
-            {
+            foreach (var (name, file) in node.Files.OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)) {
                 file.ListLabel = name;
                 file.ListIndent = new Avalonia.Thickness(depth * IndentWidth, 0, 0, 0);
                 rows.Add(file);
@@ -392,10 +344,8 @@ public static class DiffFileTree
     }
 }
 
-public sealed partial class DiffFileHeaderProjection : ObservableObject, IDiffRowProjection
-{
-    public DiffFileHeaderProjection(DiffFileProjection file)
-    {
+public sealed partial class DiffFileHeaderProjection : ObservableObject, IDiffRowProjection {
+    public DiffFileHeaderProjection(DiffFileProjection file) {
         File = file;
         DisplayPath = file.DisplayPath;
     }
@@ -414,8 +364,7 @@ public sealed partial class DiffFileHeaderProjection : ObservableObject, IDiffRo
 
     public void UpdateDisplayPath(string displayPath) => DisplayPath = displayPath;
 
-    public void ApplySearchState(string query, bool pathMatch, bool textMatch, string searchMatchSummary)
-    {
+    public void ApplySearchState(string query, bool pathMatch, bool textMatch, string searchMatchSummary) {
         HasSearchMatch = pathMatch || textMatch;
         SearchMatchSummary = HasSearchMatch ? searchMatchSummary : "";
         RowBackground = HasSearchMatch
@@ -425,8 +374,7 @@ public sealed partial class DiffFileHeaderProjection : ObservableObject, IDiffRo
             ? DiffSearchPresentation.MatchBorderBrush
             : Brushes.Transparent;
 
-        if (pathMatch)
-        {
+        if (pathMatch) {
             var (prefix, match, suffix, _) = DiffSearchPresentation.Split(DisplayPath, query);
             MatchPrefix = prefix;
             MatchText = match;
@@ -434,8 +382,7 @@ public sealed partial class DiffFileHeaderProjection : ObservableObject, IDiffRo
             MatchForeground = DiffSearchPresentation.MatchForeground;
             MatchFontWeight = DiffSearchPresentation.MatchFontWeight;
         }
-        else
-        {
+        else {
             MatchPrefix = DisplayPath;
             MatchText = "";
             MatchSuffix = "";
@@ -444,8 +391,7 @@ public sealed partial class DiffFileHeaderProjection : ObservableObject, IDiffRo
         }
     }
 
-    public void ClearSearchState()
-    {
+    public void ClearSearchState() {
         HasSearchMatch = false;
         SearchMatchSummary = "";
         RowBackground = Brushes.Transparent;
@@ -462,10 +408,8 @@ public readonly record struct DiffGapExpansionRequest(
     GitKay.Core.DiffExpansion.DiffGap Gap,
     GitKay.Core.DiffExpansion.ExpandDirection Direction);
 
-public sealed class DiffGapProjection : IDiffRowProjection
-{
-    public DiffGapProjection(GitKay.Core.DiffExpansion.DiffGap gap, bool isLoading = false)
-    {
+public sealed class DiffGapProjection : IDiffRowProjection {
+    public DiffGapProjection(GitKay.Core.DiffExpansion.DiffGap gap, bool isLoading = false) {
         Gap = gap;
         IsLoading = isLoading;
         Directions = GitKay.Core.DiffExpansion.availableDirections(gap).ToArray();
@@ -480,20 +424,17 @@ public sealed class DiffGapProjection : IDiffRowProjection
 
     public string Label => HiddenLineCount is { } count ? $"⋯  {count} hidden lines" : "⋯  more lines";
 
-    public string ActionLabel(GitKay.Core.DiffExpansion.ExpandDirection direction)
-    {
+    public string ActionLabel(GitKay.Core.DiffExpansion.ExpandDirection direction) {
         if (direction.IsDown) return $"↓  Show {GitKay.Core.DiffExpansion.StepLines} lines";
         if (direction.IsUp) return $"↑  Show {GitKay.Core.DiffExpansion.StepLines} lines";
         return HiddenLineCount is { } count ? $"↕  Show all {count}" : "↕  Show all";
     }
 }
 
-public sealed class DiffHunkHeaderProjection : IDiffRowProjection
-{
+public sealed class DiffHunkHeaderProjection : IDiffRowProjection {
     private InlineCollection? _headerInlines;
 
-    public DiffHunkHeaderProjection(DiffHunkProjection hunk)
-    {
+    public DiffHunkHeaderProjection(DiffHunkProjection hunk) {
         Header = hunk.Header;
     }
 
@@ -501,10 +442,8 @@ public sealed class DiffHunkHeaderProjection : IDiffRowProjection
     public InlineCollection HeaderInlines => _headerInlines ??= SyntaxHighlighting.BuildHunkHeaderInlines(Header);
 }
 
-public sealed class DiffHunkProjection
-{
-    public DiffHunkProjection(GitKay.Core.Models.DiffHunk hunk)
-    {
+public sealed class DiffHunkProjection {
+    public DiffHunkProjection(GitKay.Core.Models.DiffHunk hunk) {
         Header = hunk.Header;
         Lines = new ObservableCollection<DiffLineProjection>(hunk.Lines.Select(line => new DiffLineProjection(line)));
     }
@@ -513,8 +452,7 @@ public sealed class DiffHunkProjection
     public ObservableCollection<DiffLineProjection> Lines { get; }
 }
 
-public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
-{
+public partial class DiffLineProjection : ObservableObject, IDiffRowProjection {
     private static readonly IBrush AddedBackground = new SolidColorBrush(Color.FromArgb(72, 31, 108, 56));
     private static readonly IBrush RemovedBackground = new SolidColorBrush(Color.FromArgb(78, 128, 46, 46));
     private static readonly IBrush ContextBackground = Brushes.Transparent;
@@ -527,8 +465,7 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
     private static readonly IBrush LineNumberForegroundBrush = new SolidColorBrush(Color.FromRgb(150, 150, 150));
     private static readonly IBrush EmptySideBackground = Brushes.Transparent;
 
-    public DiffLineProjection(GitKay.Core.Models.DiffLine line)
-    {
+    public DiffLineProjection(GitKay.Core.Models.DiffLine line) {
         var isAdded = line.Type.Equals(DiffLineType.Added);
         var isRemoved = line.Type.Equals(DiffLineType.Removed);
         var isContext = line.Type.Equals(DiffLineType.Context);
@@ -566,8 +503,7 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
         MatchForeground = DiffSearchPresentation.MatchForeground;
     }
 
-    private DiffLineProjection(DiffLineProjection removedLine, DiffLineProjection addedLine)
-    {
+    private DiffLineProjection(DiffLineProjection removedLine, DiffLineProjection addedLine) {
         OldLineNo = removedLine.OldLineNo;
         NewLineNo = addedLine.NewLineNo;
         OldLineNoText = removedLine.OldLineNoText;
@@ -626,11 +562,9 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
     private static string FormatLineNumber(FSharpOption<int>? lineNumber) =>
         lineNumber is null ? "" : lineNumber.Value.ToString();
 
-    public bool ApplySearchState(string query, bool searchTextEnabled)
-    {
+    public bool ApplySearchState(string query, bool searchTextEnabled) {
         var normalizedQuery = query.Trim();
-        if (_searchQuery == normalizedQuery && _searchTextEnabled == searchTextEnabled)
-        {
+        if (_searchQuery == normalizedQuery && _searchTextEnabled == searchTextEnabled) {
             return IsSearchMatch;
         }
 
@@ -647,8 +581,7 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
             ? DiffSearchPresentation.MatchBorderBrush
             : Brushes.Transparent;
 
-        if (isSearchMatch)
-        {
+        if (isSearchMatch) {
             var (prefix, match, suffix, _) = DiffSearchPresentation.Split(Content, _searchQuery);
             MatchPrefix = prefix;
             MatchText = match;
@@ -656,8 +589,7 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
             MatchForeground = DiffSearchPresentation.MatchForeground;
             MatchFontWeight = DiffSearchPresentation.MatchFontWeight;
         }
-        else
-        {
+        else {
             MatchPrefix = Content;
             MatchText = "";
             MatchSuffix = "";
@@ -676,22 +608,17 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection
     }
 }
 
-internal static class DiffFormatting
-{
-    public static string BuildDisplayPath(string oldPath, string newPath)
-    {
-        if (oldPath == "/dev/null")
-        {
+internal static class DiffFormatting {
+    public static string BuildDisplayPath(string oldPath, string newPath) {
+        if (oldPath == "/dev/null") {
             return $"{newPath} (new file)";
         }
 
-        if (newPath == "/dev/null")
-        {
+        if (newPath == "/dev/null") {
             return $"{oldPath} (deleted)";
         }
 
-        if (oldPath == newPath)
-        {
+        if (oldPath == newPath) {
             return newPath;
         }
 

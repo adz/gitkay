@@ -10,34 +10,27 @@ using GitKay.Core;
 
 namespace GitKay.UI;
 
-public partial class App : Application
-{
+public partial class App : Application {
     public static string[] StartupArgs { get; set; } = Array.Empty<string>();
     private static Exception? _startupInitializationFailure;
 
-    public override void Initialize()
-    {
-        try
-        {
+    public override void Initialize() {
+        try {
             AvaloniaXamlLoader.Load(this);
 #if DEBUG
             this.AttachDeveloperTools();
 #endif
         }
-        catch (Exception ex)
-        {
+        catch (Exception ex) {
             _startupInitializationFailure = ex;
         }
     }
 
-    public override void OnFrameworkInitializationCompleted()
-    {
-        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
-        {
+    public override void OnFrameworkInitializationCompleted() {
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop) {
             FatalErrorPresenter.Initialize(desktop);
 
-            if (_startupInitializationFailure != null)
-            {
+            if (_startupInitializationFailure != null) {
                 FatalErrorPresenter.ShowStartupFailure(desktop, _startupInitializationFailure);
                 _startupInitializationFailure = null;
                 base.OnFrameworkInitializationCompleted();
@@ -50,12 +43,9 @@ public partial class App : Application
         base.OnFrameworkInitializationCompleted();
     }
 
-    private async Task InitializeAppAsync(IClassicDesktopStyleApplicationLifetime desktop)
-    {
-        try
-        {
-            var (persistedSettings, persistedUiState, repoKey) = await Task.Run(() =>
-            {
+    private async Task InitializeAppAsync(IClassicDesktopStyleApplicationLifetime desktop) {
+        try {
+            var (persistedSettings, persistedUiState, repoKey) = await Task.Run(() => {
                 var settingsStore = new AppSettingsStore();
                 var uiStateStore = new AppUiStateStore();
                 return (settingsStore.Load(), uiStateStore.Load(), GitService.tryDiscoverRepositoryPath());
@@ -66,8 +56,7 @@ public partial class App : Application
             var currentUiState = persistedUiState;
             var startupArgs = persistedSettings.ToStartupArgs();
 
-            if (StartupArgs.Length > 0)
-            {
+            if (StartupArgs.Length > 0) {
                 var mergedArgs = new string[startupArgs.Length + StartupArgs.Length];
                 startupArgs.CopyTo(mergedArgs, 0);
                 StartupArgs.CopyTo(mergedArgs, startupArgs.Length);
@@ -75,13 +64,11 @@ public partial class App : Application
             }
 
             var mainWindow = new MainWindow();
-            if (persistedUiState.WindowWidth.HasValue)
-            {
+            if (persistedUiState.WindowWidth.HasValue) {
                 mainWindow.Width = persistedUiState.WindowWidth.Value;
             }
 
-            if (persistedUiState.WindowHeight.HasValue)
-            {
+            if (persistedUiState.WindowHeight.HasValue) {
                 mainWindow.Height = persistedUiState.WindowHeight.Value;
             }
 
@@ -109,14 +96,11 @@ public partial class App : Application
                 nameof(MainProjection.SearchDebounceSeconds),
             };
 
-            projection.PropertyChanged += (_, e) =>
-            {
-                if (string.IsNullOrWhiteSpace(e.PropertyName) || !persistedPropertyNames.Contains(e.PropertyName))
-                {
+            projection.PropertyChanged += (_, e) => {
+                if (string.IsNullOrWhiteSpace(e.PropertyName) || !persistedPropertyNames.Contains(e.PropertyName)) {
                     if (!string.Equals(e.PropertyName, nameof(MainProjection.SelectedCommit), StringComparison.Ordinal)
                         || string.IsNullOrWhiteSpace(repoKey)
-                        || projection.SelectedCommit == null)
-                    {
+                        || projection.SelectedCommit == null) {
                         return;
                     }
 
@@ -141,10 +125,8 @@ public partial class App : Application
                 dispatch => projection.SetDispatch(dispatch)
             );
 
-            desktop.Exit += (s, e) =>
-            {
-                if (!string.IsNullOrWhiteSpace(repoKey) && projection.SelectedCommit != null)
-                {
+            desktop.Exit += (s, e) => {
+                if (!string.IsNullOrWhiteSpace(repoKey) && projection.SelectedCommit != null) {
                     currentUiState = currentUiState.WithRepoSelection(repoKey, projection.SelectedCommit.FullHash);
                 }
 
@@ -155,11 +137,11 @@ public partial class App : Application
                 uiStateStore.SaveSearchHistory(projection.RecentSearches);
                 uiStateStore.SaveViewPreferences(projection.CaptureViewPreferences());
                 ((IDisposable)host).Dispose();
+                GitKay.Core.App.stopRuntime();
             };
 
         }
-        catch (Exception ex)
-        {
+        catch (Exception ex) {
             FatalErrorPresenter.ShowStartupFailure(desktop, ex);
         }
     }

@@ -2,6 +2,8 @@ namespace GitKay.Core
 
 open System
 open System.Collections.Concurrent
+open System.Collections.Generic
+open System.Threading.Tasks
 open System.Text.RegularExpressions
 open Axial
 open Axial.Console
@@ -68,8 +70,13 @@ module GitService =
         // silently discarded every cached entry.
         let diff = ConcurrentDictionary<string, DiffCacheEntry>()
         let fileContent = ConcurrentDictionary<DiffFileContentCacheKey, FileDiff>()
-        let diffGates = ConcurrentDictionary<string, obj>()
-        member internal _.DiffGates = diffGates
+        // Single-flight in-flight diff loads, keyed by commit hash. The lock only guards the dictionary
+        // decision (join the existing fiber or register a new one); the load itself runs as a forked
+        // fiber, so a joiner waits without blocking a thread and can observe cancellation.
+        let diffLoadsGate = obj ()
+        let diffLoads = Dictionary<string, Fiber<GitError, DiffCacheEntry>>()
+        member internal _.DiffLoadsGate = diffLoadsGate
+        member internal _.DiffLoads = diffLoads
         member internal _.Diff = diff
         member internal _.FileContent = fileContent
 
@@ -204,25 +211,60 @@ module GitService =
                 }
         }
 
+    let private loadDiffCacheEntryFlow (repoPath: string) (hash: string) : Flow<GitEnv, GitError, DiffCacheEntry> =
+        // LibGit2Sharp's Diff.Compare has no cancellation hook: an interrupted joiner stops waiting, but
+        // the load itself still runs to completion in the background. axial-allow-discarded-cancellation
+        Flow.fromTaskResult (fun _ -> Task.Run(fun () -> loadDiffCacheEntry repoPath hash))
+
+    /// Registers `candidate` as the in-flight load for `hash`, or hands back a load already in flight.
+    /// Atomic: exactly one caller's fiber is ever registered for a given hash at a time.
+    let private claimDiffLoad (cache: GitCache) (hash: string) (candidate: Fiber<GitError, DiffCacheEntry>) =
+        lock cache.DiffLoadsGate (fun () ->
+            match cache.DiffLoads.TryGetValue hash with
+            | true, existing -> existing, false
+            | false, _ ->
+                cache.DiffLoads.[hash] <- candidate
+                candidate, true)
+
+    let private releaseDiffLoad (cache: GitCache) (hash: string) (fiber: Fiber<GitError, DiffCacheEntry>) =
+        lock cache.DiffLoadsGate (fun () ->
+            match cache.DiffLoads.TryGetValue hash with
+            | true, current when obj.ReferenceEquals(current, fiber) -> cache.DiffLoads.Remove hash |> ignore
+            | _ -> ())
+
     let private getDiffCacheEntry (hash: string) : Flow<GitEnv, GitError, DiffCacheEntry * bool> =
         flow {
             let! env = Flow.env
-            match env.Cache.Diff.TryGetValue hash with
-            | true, entry -> return (entry, true)
-            | false, _ ->
+
+            match env.Cache.Diff.TryGetValue hash |> Result.fromTry with
+            | Ok entry -> return entry, true
+            | Error () ->
                 // Single-flight per commit: selection loads the file list and diff concurrently, and both
-                // would otherwise run rename detection for the same commit at once.
-                let gate = env.Cache.DiffGates.GetOrAdd(hash, fun _ -> obj ())
-                let! entry, cached =
-                    lock gate (fun () ->
-                        match env.Cache.Diff.TryGetValue hash with
-                        | true, entry -> Ok(entry, true)
-                        | false, _ ->
-                            loadDiffCacheEntry env.RepoPath hash
-                            |> Result.map (fun entry ->
-                                env.Cache.Diff.TryAdd(hash, entry) |> ignore
-                                entry, false))
-                return (entry, cached)
+                // would otherwise run rename detection for the same commit at once. The load itself runs
+                // as a forked fiber rather than under a lock, so a joiner waits without blocking a thread.
+                let! candidate = Flow.fork (loadDiffCacheEntryFlow env.RepoPath hash)
+                let fiber, started = claimDiffLoad env.Cache hash candidate
+
+                if not started then
+                    let! _ = Flow.interrupt candidate
+                    ()
+
+                // Observed manually (mirroring Flow.join) rather than joined, so a failure still runs the
+                // cleanup below before the original outcome is re-raised - joining directly would
+                // short-circuit past it and leave a permanently-failed fiber cached for this hash.
+                fiber.Metadata.Observed <- true
+                // Deliberate: a joiner's own cancellation must not interrupt a fiber other, still-waiting
+                // joiners depend on. This only observes the shared fiber's own outcome. axial-allow-discarded-cancellation
+                let! exit = Flow.fromTask (fun _ -> fiber.ExitTask)
+
+                if started then
+                    releaseDiffLoad env.Cache hash fiber
+
+                match exit with
+                | Exit.Success entry ->
+                    env.Cache.Diff.TryAdd(hash, entry) |> ignore
+                    return entry, not started
+                | Exit.Failure cause -> return! Flow.ofExit (Exit.Failure cause)
         }
 
     let private tryBlob (commit: LibGit2Sharp.Commit) (path: string) =

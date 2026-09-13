@@ -16,8 +16,7 @@ namespace GitKay.UI;
 
 internal readonly record struct DiffSearchStatusStyle(IBrush Foreground, IBrush Background);
 
-internal static class DiffSearchStatusBrushes
-{
+internal static class DiffSearchStatusBrushes {
     public static readonly DiffSearchStatusStyle Pending = new(
         new SolidColorBrush(Color.FromRgb(242, 201, 125)),
         new SolidColorBrush(Color.FromArgb(36, 90, 66, 20)));
@@ -31,10 +30,8 @@ internal static class DiffSearchStatusBrushes
         new SolidColorBrush(Color.FromArgb(28, 76, 58, 18)));
 }
 
-public sealed class DiffPresentationModeProjection
-{
-    public DiffPresentationModeProjection(string key, string label)
-    {
+public sealed class DiffPresentationModeProjection {
+    public DiffPresentationModeProjection(string key, string label) {
         Key = key;
         Label = label;
     }
@@ -43,10 +40,18 @@ public sealed class DiffPresentationModeProjection
     public string Label { get; }
 }
 
-public sealed class DiffContextLineCountProjection
-{
-    public DiffContextLineCountProjection(int count)
-    {
+public sealed class ThemeModeProjection {
+    public ThemeModeProjection(string key, string label) {
+        Key = key;
+        Label = label;
+    }
+
+    public string Key { get; }
+    public string Label { get; }
+}
+
+public sealed class DiffContextLineCountProjection {
+    public DiffContextLineCountProjection(int count) {
         Count = count;
         Label = count == 1 ? "1 line" : $"{count} lines";
     }
@@ -55,8 +60,7 @@ public sealed class DiffContextLineCountProjection
     public string Label { get; }
 }
 
-public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.App.Model, GitKay.Core.App.Msg>
-{
+public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.App.Model, GitKay.Core.App.Msg> {
     private readonly long _createdAtTicks = Stopwatch.GetTimestamp();
     private bool _firstPaintLogged;
     private bool _suppressSelectionDispatch;
@@ -90,6 +94,13 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         new DiffPresentationModeProjection("side-by-side", "Side-by-side"),
         new DiffPresentationModeProjection("new", "New"),
         new DiffPresentationModeProjection("old", "Old"),
+    };
+
+    public ObservableCollection<ThemeModeProjection> ThemeModes { get; } = new()
+    {
+        new ThemeModeProjection("system", "System"),
+        new ThemeModeProjection("light", "Light"),
+        new ThemeModeProjection("dark", "Dark"),
     };
 
     public ObservableCollection<DiffContextLineCountProjection> DiffContextLineCounts { get; } = new()
@@ -134,6 +145,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private IBrush _diffSearchStatusBackground = Brushes.Transparent;
     [ObservableProperty] private DiffPresentationModeProjection? _selectedDiffPresentationMode;
     [ObservableProperty] private DiffContextLineCountProjection? _selectedDiffContextLineCount;
+    [ObservableProperty] private ThemeModeProjection? _selectedThemeMode;
     [ObservableProperty] private string _selectedDiffPresentationModeLabel = "Diff";
     [ObservableProperty] private bool _isCommitDetailsExpanded;
     [ObservableProperty] private bool _isDiffFileTreeMode;
@@ -189,13 +201,10 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     /// List selection follows the selected file only. Folder rows are never selected — clicking one toggles it
     /// (<see cref="ToggleDiffFolderCommand"/>) — so a collapsed folder can always be clicked open again.
     /// </summary>
-    public object? SelectedDiffFileListRow
-    {
+    public object? SelectedDiffFileListRow {
         get => SelectedDiffFile;
-        set
-        {
-            if (value is DiffFileProjection file)
-            {
+        set {
+            if (value is DiffFileProjection file) {
                 SelectedDiffFile = file;
                 FileJumpRequested?.Invoke(file);
             }
@@ -212,14 +221,13 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public FontFamily CommitRowFont => FontStacks.Resolve(CommitRowFontFamily);
     public FontFamily CommitRowMonoFont => FontStacks.Resolve(CommitRowMonoFontFamily);
 
-    public MainProjection()
-    {
+    public MainProjection() {
         SelectedDiffPresentationMode = DiffPresentationModes[0];
         SelectedDiffContextLineCount = DiffContextLineCounts.First(option => option.Count == DiffContextLineCount);
+        SelectedThemeMode = ThemeModes[0];
     }
 
-    public void ApplySettings(AppSettings settings)
-    {
+    public void ApplySettings(AppSettings settings) {
         var normalized = settings.Normalize();
 
         _suppressShowBranchRefsDispatch = true;
@@ -227,8 +235,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         _suppressDiffContextDispatch = true;
         _suppressDiffPresentationDispatch = true;
 
-        try
-        {
+        try {
             ShowBranchRefs = normalized.ShowBranchRefs;
             ShowStashes = normalized.ShowStashes;
             CommitRowFontFamily = normalized.CommitRowFontFamily;
@@ -244,9 +251,11 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             SelectedDiffPresentationMode =
                 DiffPresentationModes.FirstOrDefault(mode => mode.Key == normalized.DiffPresentationModeKey)
                 ?? DiffPresentationModes.First();
+            SelectedThemeMode =
+                ThemeModes.FirstOrDefault(mode => mode.Key == normalized.ThemeMode)
+                ?? ThemeModes.First();
         }
-        finally
-        {
+        finally {
             _suppressDiffPresentationDispatch = false;
             _suppressDiffContextDispatch = false;
             _suppressShowStashesDispatch = false;
@@ -254,10 +263,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
     }
 
-    public AppSettings CaptureSettings()
-    {
-        return new AppSettings
-        {
+    public AppSettings CaptureSettings() {
+        return new AppSettings {
             ShowBranchRefs = ShowBranchRefs,
             ShowStashes = ShowStashes,
             DiffContextLines = DiffContextLineCount,
@@ -268,64 +275,53 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             CommitRowMetaFontSize = CommitRowMetaFontSize,
             CommitRowBadgeFontSize = CommitRowBadgeFontSize,
             SearchDebounceSeconds = SearchDebounceSeconds,
+            ThemeMode = SelectedThemeMode?.Key ?? AppSettings.DefaultThemeMode,
         };
     }
 
-    private static void LogTiming(string message)
-    {
+    private static void LogTiming(string message) {
         var line = $"[timing] {message}";
         Trace.WriteLine(line);
     }
 
-    partial void OnCommitRowFontFamilyChanged(string value)
-    {
+    partial void OnCommitRowFontFamilyChanged(string value) {
         OnPropertyChanged(nameof(CommitRowFont));
     }
 
-    partial void OnCommitRowMonoFontFamilyChanged(string value)
-    {
+    partial void OnCommitRowMonoFontFamilyChanged(string value) {
         OnPropertyChanged(nameof(CommitRowMonoFont));
     }
 
-    public void Update(GitKay.Core.App.Model model)
-    {
+    public void Update(GitKay.Core.App.Model model) {
         var startedAtTicks = Stopwatch.GetTimestamp();
         Status = model.Status;
         IsInitialLoading = model.Commits.IsEmpty && !model.Status.StartsWith("Error", StringComparison.OrdinalIgnoreCase);
-        if (ShowBranchRefs != model.ShowBranchRefs)
-        {
+        if (ShowBranchRefs != model.ShowBranchRefs) {
             _suppressShowBranchRefsDispatch = true;
-            try
-            {
+            try {
                 ShowBranchRefs = model.ShowBranchRefs;
             }
-            finally
-            {
+            finally {
                 _suppressShowBranchRefsDispatch = false;
             }
         }
 
-        if (ShowStashes != model.ShowStashes)
-        {
+        if (ShowStashes != model.ShowStashes) {
             _suppressShowStashesDispatch = true;
-            try
-            {
+            try {
                 ShowStashes = model.ShowStashes;
             }
-            finally
-            {
+            finally {
                 _suppressShowStashesDispatch = false;
             }
         }
 
-        if (model.StartupShowOnlyMatches && !_startupFilterApplied)
-        {
+        if (model.StartupShowOnlyMatches && !_startupFilterApplied) {
             _startupFilterApplied = true;
             ShowOnlySearchMatches = true;
         }
 
-        if (SearchUseRegex != model.SearchUseRegex)
-        {
+        if (SearchUseRegex != model.SearchUseRegex) {
             _suppressSearchDispatch = true;
             try { SearchUseRegex = model.SearchUseRegex; } finally { _suppressSearchDispatch = false; }
         }
@@ -343,33 +339,26 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         LogTiming($"ui projection elapsed={elapsed.TotalMilliseconds:F1}ms commits={model.Commits.Length} searchResults={SearchResults.Count} diffFiles={SelectedDiffFiles.Count} diffRows={SelectedDiffRows.Count}");
     }
 
-    private void UpdateSearchState(GitKay.Core.App.Model model)
-    {
+    private void UpdateSearchState(GitKay.Core.App.Model model) {
         var searchResultsSource = model.SearchResults != null ? (object?)model.SearchResults.Value : null;
 
-        if (!string.Equals(SearchQuery, model.SearchQuery, StringComparison.Ordinal))
-        {
+        if (!string.Equals(SearchQuery, model.SearchQuery, StringComparison.Ordinal)) {
             _suppressSearchDispatch = true;
-            try
-            {
+            try {
                 SearchQuery = model.SearchQuery;
             }
-            finally
-            {
+            finally {
                 _suppressSearchDispatch = false;
             }
         }
 
         var selectedScope = SearchScopes.FirstOrDefault(scope => scope.Key == model.SearchScopeKey) ?? SearchScopes.FirstOrDefault();
-        if (!ReferenceEquals(SelectedSearchScope, selectedScope))
-        {
+        if (!ReferenceEquals(SelectedSearchScope, selectedScope)) {
             _suppressSearchDispatch = true;
-            try
-            {
+            try {
                 SelectedSearchScope = selectedScope;
             }
-            finally
-            {
+            finally {
                 _suppressSearchDispatch = false;
             }
         }
@@ -378,17 +367,14 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             !string.IsNullOrWhiteSpace(model.SearchQuery)
             || model.SearchResults != null;
 
-        if (shouldAutoOpenSearchPanel)
-        {
+        if (shouldAutoOpenSearchPanel) {
             IsSearchPanelExpanded = true;
         }
 
         var searchResultsChanged = !ReferenceEquals(_searchResultsSource, searchResultsSource);
 
-        if (model.SearchResults == null)
-        {
-            if (SearchResults.Count > 0 || _searchResultsSource != null)
-            {
+        if (model.SearchResults == null) {
+            if (SearchResults.Count > 0 || _searchResultsSource != null) {
                 SyncSelectedSearchResult(null);
                 SearchResults.Clear();
             }
@@ -399,14 +385,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             return;
         }
 
-        if (searchResultsChanged)
-        {
+        if (searchResultsChanged) {
             var previousSelectedSearchHash = SelectedSearchResult?.FullHash ?? _selectedSearchResultHash;
             SyncSelectedSearchResult(null);
             SearchResults.Clear();
 
-            foreach (var result in model.SearchResults.Value)
-            {
+            foreach (var result in model.SearchResults.Value) {
                 var projection = new SearchResultProjection();
                 projection.Update(result);
                 SearchResults.Add(projection);
@@ -420,8 +404,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
     }
 
-    private void UpdateDiffState(GitKay.Core.App.Model model)
-    {
+    private void UpdateDiffState(GitKay.Core.App.Model model) {
         var selectedDiffHash =
             model.SelectedCommitHash != null
             && model.SelectedDiffHash != null
@@ -450,11 +433,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             !string.Equals(_selectedDiffHash, selectedDiffHash, StringComparison.Ordinal)
             || !ReferenceEquals(_selectedDiffFilesSource, selectedDiffFilesSource);
 
-        if (selectedDiffHash == null)
-        {
+        if (selectedDiffHash == null) {
             SaveCommitViewState();
-            if (SelectedDiffFiles.Count > 0 || SelectedDiffRows.Count > 0 || _selectedDiffHash != null)
-            {
+            if (SelectedDiffFiles.Count > 0 || SelectedDiffRows.Count > 0 || _selectedDiffHash != null) {
                 SyncSelectedDiffSelection(null);
                 SelectedDiffFiles.Clear();
                 SelectedDiffRows.Clear();
@@ -471,22 +452,19 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             return;
         }
 
-        if (diffCollectionChanged)
-        {
+        if (diffCollectionChanged) {
             SaveCommitViewState();
             var previousSelectedDiffFileKey = SelectedDiffFile?.Key;
 
             SyncSelectedDiffSelection(null);
             SelectedDiffRows.Clear();
 
-            if (model.SelectedDiffFiles != null)
-            {
+            if (model.SelectedDiffFiles != null) {
                 SyncSelectedDiffFiles(model.SelectedDiffFiles.Value, true);
             }
 
             var restored = RestoreCommitViewState(selectedDiffHash);
-            if (restored?.SelectedFile is { } restoredFile && SelectedDiffFiles.Any(file => file.Key == restoredFile))
-            {
+            if (restored?.SelectedFile is { } restoredFile && SelectedDiffFiles.Any(file => file.Key == restoredFile)) {
                 previousSelectedDiffFileKey = restoredFile;
                 if (model.SelectedDiffFileKey == null || !MatchesKey(restoredFile, model.SelectedDiffFileKey.Value))
                     _dispatch?.Invoke(GitKay.Core.App.Msg.NewSelectDiffFile(selectedDiffHash, restoredFile.OldPath, restoredFile.NewPath));
@@ -495,8 +473,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             _selectedDiffHash = selectedDiffHash;
             _selectedDiffFilesSource = selectedDiffFilesSource;
 
-            if (model.SelectedDiff != null)
-            {
+            if (model.SelectedDiff != null) {
                 SyncSelectedDiffFileContents(model.SelectedDiff.Value, model.DiffExpansions);
             }
 
@@ -510,8 +487,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             _selectedDiffFileKey = selectedDiffFile?.Key;
         }
 
-        if (model.SelectedDiffFiles != null)
-        {
+        if (model.SelectedDiffFiles != null) {
             var selectedDiffFile = ResolveSelectedDiffFile(model, _selectedDiffFileKey);
             var selectedDiffFileKey = selectedDiffFile?.Key;
             // A context expansion temporarily publishes no content while its replacement
@@ -520,52 +496,44 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                                      && !ReferenceEquals(_selectedDiffFileSource, selectedDiffContentSource);
             var selectionChanged = !Nullable.Equals(_selectedDiffFileKey, selectedDiffFileKey);
 
-            if (diffContentChanged)
-            {
+            if (diffContentChanged) {
                 SyncSelectedDiffFileContents(model.SelectedDiff!.Value, model.DiffExpansions);
                 RenderSelectedDiffRows();
                 _selectedDiffFileSource = selectedDiffContentSource;
                 _diffExpansionsSource = model.DiffExpansions;
             }
-            else if (!ReferenceEquals(_diffExpansionsSource, model.DiffExpansions))
-            {
+            else if (!ReferenceEquals(_diffExpansionsSource, model.DiffExpansions)) {
                 // Expansion is file-scoped: only files whose expansion state changed re-project.
                 _diffExpansionsSource = model.DiffExpansions;
-                if (SyncSelectedDiffExpansions(model.DiffExpansions))
-                {
+                if (SyncSelectedDiffExpansions(model.DiffExpansions)) {
                     RenderSelectedDiffRows();
                     diffContentChanged = true;
                 }
             }
 
-            if (selectionChanged || diffContentChanged || searchStateChanged)
-            {
+            if (selectionChanged || diffContentChanged || searchStateChanged) {
                 SyncSelectedDiffSelection(selectedDiffFile);
                 _selectedDiffFileKey = selectedDiffFileKey;
             }
 
             RefreshDiffSearchState(model, searchQuery, searchStateChanged, diffContentChanged, true);
         }
-        else
-        {
+        else {
             RefreshDiffSearchState(model, searchQuery, searchStateChanged, diffCollectionChanged, false);
         }
 
         _diffSearchQuery = searchQuery;
         _diffSearchScopeKey = diffSearchScopeKey;
 
-        if (_revealSearchMatchInDiff && model.SelectedDiff != null && SelectedDiffRows.Any(row => row is DiffLineProjection))
-        {
+        if (_revealSearchMatchInDiff && model.SelectedDiff != null && SelectedDiffRows.Any(row => row is DiffLineProjection)) {
             _revealSearchMatchInDiff = false;
             SelectedDiffRow = null;
             StepDiffFind(+1);
         }
     }
 
-    private void UpdateDiffContextState(GitKay.Core.App.Model model)
-    {
-        if (DiffContextLineCount != model.DiffContextLines)
-        {
+    private void UpdateDiffContextState(GitKay.Core.App.Model model) {
+        if (DiffContextLineCount != model.DiffContextLines) {
             DiffContextLineCount = model.DiffContextLines;
         }
 
@@ -573,35 +541,28 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             DiffContextLineCounts.FirstOrDefault(option => option.Count == model.DiffContextLines)
             ?? DiffContextLineCounts.FirstOrDefault();
 
-        if (!ReferenceEquals(SelectedDiffContextLineCount, selectedContextLineCount))
-        {
+        if (!ReferenceEquals(SelectedDiffContextLineCount, selectedContextLineCount)) {
             _suppressDiffContextDispatch = true;
-            try
-            {
+            try {
                 SelectedDiffContextLineCount = selectedContextLineCount;
             }
-            finally
-            {
+            finally {
                 _suppressDiffContextDispatch = false;
             }
         }
     }
 
-    private void UpdateDiffPresentationState(GitKay.Core.App.Model model)
-    {
+    private void UpdateDiffPresentationState(GitKay.Core.App.Model model) {
         var selectedPresentationMode =
             DiffPresentationModes.FirstOrDefault(mode => mode.Key == model.DiffPresentationModeKey)
             ?? DiffPresentationModes.First();
 
-        if (!ReferenceEquals(SelectedDiffPresentationMode, selectedPresentationMode))
-        {
+        if (!ReferenceEquals(SelectedDiffPresentationMode, selectedPresentationMode)) {
             _suppressDiffPresentationDispatch = true;
-            try
-            {
+            try {
                 SelectedDiffPresentationMode = selectedPresentationMode;
             }
-            finally
-            {
+            finally {
                 _suppressDiffPresentationDispatch = false;
             }
         }
@@ -612,10 +573,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         string searchQuery,
         bool searchStateChanged,
         bool diffContentChanged,
-        bool hasSelectedDiff)
-    {
-        if (string.IsNullOrWhiteSpace(searchQuery))
-        {
+        bool hasSelectedDiff) {
+        if (string.IsNullOrWhiteSpace(searchQuery)) {
             CancelDiffSearchDebounce();
             _pendingDiffSearchQuery = null;
             _pendingDiffSearchScopeKey = null;
@@ -623,42 +582,35 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             IsDiffSearchPending = false;
             SetDiffSearchStatus("", Brushes.Transparent, Brushes.Transparent);
 
-            if (hasSelectedDiff)
-            {
+            if (hasSelectedDiff) {
                 ClearSearchStateToSelectedDiff(DiffHighlightFor(model).ScopeKey);
             }
 
             return;
         }
 
-        if (searchStateChanged)
-        {
+        if (searchStateChanged) {
             StartDiffSearchDebounce(model, searchQuery);
             return;
         }
 
-        if (TryApplyPendingDiffSearch(model, searchQuery, hasSelectedDiff))
-        {
+        if (TryApplyPendingDiffSearch(model, searchQuery, hasSelectedDiff)) {
             return;
         }
 
-        if (hasSelectedDiff && diffContentChanged && !IsDiffSearchPending)
-        {
+        if (hasSelectedDiff && diffContentChanged && !IsDiffSearchPending) {
             ApplySearchStateToSelectedDiff(searchQuery, DiffHighlightFor(model).ScopeKey);
             SetDiffSearchAppliedStatus(searchQuery);
         }
-        else if (IsDiffSearchPending)
-        {
+        else if (IsDiffSearchPending) {
             SetDiffSearchPendingStatus(searchQuery);
         }
-        else if (SelectedDiffFiles.Count > 0)
-        {
+        else if (SelectedDiffFiles.Count > 0) {
             SetDiffSearchAppliedStatus(searchQuery);
         }
     }
 
-    private void StartDiffSearchDebounce(GitKay.Core.App.Model model, string searchQuery)
-    {
+    private void StartDiffSearchDebounce(GitKay.Core.App.Model model, string searchQuery) {
         CancelDiffSearchDebounce();
 
         _pendingDiffSearchQuery = searchQuery;
@@ -666,41 +618,34 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         _pendingDiffSearchReadyAtTicks = Stopwatch.GetTimestamp() + SecondsToStopwatchTicks(SearchDebounceSeconds);
         IsDiffSearchPending = true;
 
-        if (SelectedDiffFiles.Count > 0)
-        {
+        if (SelectedDiffFiles.Count > 0) {
             ClearSearchStateToSelectedDiff(DiffHighlightFor(model).ScopeKey);
         }
 
         SetDiffSearchPendingStatus(searchQuery);
 
-        if (SearchDebounceSeconds > 0d)
-        {
+        if (SearchDebounceSeconds > 0d) {
             ScheduleDiffSearchDebounce();
         }
 
         _ = TryApplyPendingDiffSearch(model, searchQuery, true);
     }
 
-    private bool TryApplyPendingDiffSearch(GitKay.Core.App.Model model, string searchQuery, bool hasSelectedDiff)
-    {
-        if (!IsDiffSearchPending || _pendingDiffSearchQuery == null || _pendingDiffSearchScopeKey == null)
-        {
+    private bool TryApplyPendingDiffSearch(GitKay.Core.App.Model model, string searchQuery, bool hasSelectedDiff) {
+        if (!IsDiffSearchPending || _pendingDiffSearchQuery == null || _pendingDiffSearchScopeKey == null) {
             return false;
         }
 
         if (!string.Equals(_pendingDiffSearchQuery, searchQuery, StringComparison.Ordinal)
-            || !string.Equals(_pendingDiffSearchScopeKey, DiffHighlightFor(model).ScopeKey, StringComparison.Ordinal))
-        {
+            || !string.Equals(_pendingDiffSearchScopeKey, DiffHighlightFor(model).ScopeKey, StringComparison.Ordinal)) {
             return false;
         }
 
-        if (Stopwatch.GetTimestamp() < _pendingDiffSearchReadyAtTicks)
-        {
+        if (Stopwatch.GetTimestamp() < _pendingDiffSearchReadyAtTicks) {
             return false;
         }
 
-        if (!hasSelectedDiff || SelectedDiffFiles.Count == 0)
-        {
+        if (!hasSelectedDiff || SelectedDiffFiles.Count == 0) {
             SetDiffSearchPendingStatus(searchQuery);
             return false;
         }
@@ -716,16 +661,14 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         return true;
     }
 
-    private void SetDiffSearchPendingStatus(string searchQuery)
-    {
+    private void SetDiffSearchPendingStatus(string searchQuery) {
         SetDiffSearchStatus(
             $"Searching diff for \"{searchQuery}\"...",
             DiffSearchStatusBrushes.Pending.Foreground,
             DiffSearchStatusBrushes.Pending.Background);
     }
 
-    private void SetDiffSearchAppliedStatus(string searchQuery)
-    {
+    private void SetDiffSearchAppliedStatus(string searchQuery) {
         var fileMatchCount = SelectedDiffFiles.Count(file => file.HasSearchMatch);
         var lineMatchCount = SelectedDiffFiles.Sum(
             file => file.Hunks.Sum(hunk => hunk.Lines.Count(line => line.IsSearchMatch)));
@@ -743,34 +686,27 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         SetDiffSearchStatus(statusText, statusBrushes.Foreground, statusBrushes.Background);
     }
 
-    private void SetDiffSearchStatus(string text, IBrush foreground, IBrush background)
-    {
+    private void SetDiffSearchStatus(string text, IBrush foreground, IBrush background) {
         DiffSearchStatusText = text;
         DiffSearchStatusForeground = foreground;
         DiffSearchStatusBackground = background;
         HasDiffSearchStatus = !string.IsNullOrWhiteSpace(text);
     }
 
-    private void ClearSearchStateToSelectedDiff(string scopeKey)
-    {
-        foreach (var file in SelectedDiffFiles)
-        {
+    private void ClearSearchStateToSelectedDiff(string scopeKey) {
+        foreach (var file in SelectedDiffFiles) {
             file.ApplySearchState("", scopeKey);
         }
     }
 
-    private void ApplySearchStateToSelectedDiff(string query, string scopeKey)
-    {
-        foreach (var file in SelectedDiffFiles)
-        {
+    private void ApplySearchStateToSelectedDiff(string query, string scopeKey) {
+        foreach (var file in SelectedDiffFiles) {
             file.ApplySearchState(query, scopeKey);
         }
     }
 
-    private void ScheduleDiffSearchDebounce()
-    {
-        if (string.IsNullOrWhiteSpace(_pendingDiffSearchQuery))
-        {
+    private void ScheduleDiffSearchDebounce() {
+        if (string.IsNullOrWhiteSpace(_pendingDiffSearchQuery)) {
             return;
         }
 
@@ -780,26 +716,20 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         _ = DebounceDiffSearchAsync(cancellation, TimeSpan.FromSeconds(Math.Max(0d, SearchDebounceSeconds)));
     }
 
-    private async Task DebounceDiffSearchAsync(CancellationTokenSource cancellation, TimeSpan delay)
-    {
-        try
-        {
+    private async Task DebounceDiffSearchAsync(CancellationTokenSource cancellation, TimeSpan delay) {
+        try {
             await Task.Delay(delay, cancellation.Token);
 
-            if (cancellation.IsCancellationRequested || !ReferenceEquals(_diffSearchDebounceCancellation, cancellation))
-            {
+            if (cancellation.IsCancellationRequested || !ReferenceEquals(_diffSearchDebounceCancellation, cancellation)) {
                 return;
             }
 
             _dispatch?.Invoke(GitKay.Core.App.Msg.NoOp);
         }
-        catch (OperationCanceledException)
-        {
+        catch (OperationCanceledException) {
         }
-        finally
-        {
-            if (ReferenceEquals(_diffSearchDebounceCancellation, cancellation))
-            {
+        finally {
+            if (ReferenceEquals(_diffSearchDebounceCancellation, cancellation)) {
                 _diffSearchDebounceCancellation = null;
             }
 
@@ -807,10 +737,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
     }
 
-    private void CancelDiffSearchDebounce()
-    {
-        if (_diffSearchDebounceCancellation == null)
-        {
+    private void CancelDiffSearchDebounce() {
+        if (_diffSearchDebounceCancellation == null) {
             return;
         }
 
@@ -826,14 +754,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private static string FormatSearchCount(int count, string singularLabel) =>
         count == 1 ? $"1 {singularLabel}" : $"{count} {singularLabel}s";
 
-    private void UpdateCommits(GitKay.Core.App.Model model)
-    {
+    private void UpdateCommits(GitKay.Core.App.Model model) {
         var searchResultsSource = model.SearchResults != null ? (object?)model.SearchResults.Value : null;
         var commitsChanged = !ReferenceEquals(_commitsSource, model.Commits);
         var searchResultsChanged = !ReferenceEquals(_commitSearchResultsSource, searchResultsSource);
 
-        if (commitsChanged)
-        {
+        if (commitsChanged) {
             Commits.SyncWith(
                 model.Commits,
                 m => m.Commit.Hash,
@@ -847,8 +773,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
         // While a new search runs, keep the previous matches instead of flashing every commit back.
         var searchPending = model.SearchStartedAtTicks != null && model.SearchResults == null;
-        if ((commitsChanged || searchResultsChanged) && !searchPending)
-        {
+        if ((commitsChanged || searchResultsChanged) && !searchPending) {
             ApplyCommitSearchMatches(model.SearchResults?.Value);
             _commitSearchResultsSource = searchResultsSource;
         }
@@ -856,10 +781,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         IsCommitSearchActive = !string.IsNullOrWhiteSpace(model.SearchQuery) && (model.SearchResults != null || searchPending);
     }
 
-    private void ApplyRefVisibility()
-    {
-        foreach (var commit in Commits)
-        {
+    private void ApplyRefVisibility() {
+        foreach (var commit in Commits) {
             commit.ShowBranchRefs = ShowBranchRefs;
             commit.ShowStashes = ShowStashes;
         }
@@ -870,8 +793,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private sealed record CommitViewState(DiffFileKey? SelectedFile, HashSet<DiffFileKey> CollapsedFiles, HashSet<string> CollapsedFolders);
     private readonly Dictionary<string, CommitViewState> _commitViewStates = new(StringComparer.Ordinal);
 
-    private void SaveCommitViewState()
-    {
+    private void SaveCommitViewState() {
         if (_selectedDiffHash == null || SelectedDiffFiles.Count == 0) return;
         _commitViewStates[_selectedDiffHash] = new CommitViewState(
             SelectedDiffFile?.Key,
@@ -880,11 +802,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         if (_commitViewStates.Count > 500) _commitViewStates.Remove(_commitViewStates.Keys.First());
     }
 
-    private CommitViewState? RestoreCommitViewState(string hash)
-    {
+    private CommitViewState? RestoreCommitViewState(string hash) {
         _commitViewStates.TryGetValue(hash, out var state);
-        foreach (var file in SelectedDiffFiles)
-        {
+        foreach (var file in SelectedDiffFiles) {
             // File projections are reused across commits by path, so collapse state is always reset here.
             file.IsCollapsed = state?.CollapsedFiles.Contains(file.Key) == true;
         }
@@ -895,16 +815,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         return state;
     }
 
-    private void UpdateCommitRelations(GitKay.Core.App.Model model)
-    {
-        if (!ReferenceEquals(_childrenSource, model.Commits))
-        {
+    private void UpdateCommitRelations(GitKay.Core.App.Model model) {
+        if (!ReferenceEquals(_childrenSource, model.Commits)) {
             _childrenSource = model.Commits;
             _childrenByParent = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-            foreach (var info in model.Commits)
-            {
-                foreach (var parent in info.Commit.Parents)
-                {
+            foreach (var info in model.Commits) {
+                foreach (var parent in info.Commit.Parents) {
                     if (!_childrenByParent.TryGetValue(parent, out var childHashes))
                         _childrenByParent[parent] = childHashes = new List<string>();
                     childHashes.Add(info.Commit.Hash);
@@ -922,85 +838,67 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         SyncLinks(SelectedCommitChildren, children);
     }
 
-    private void SyncLinks(ObservableCollection<CommitLinkProjection> target, IReadOnlyList<string> hashes)
-    {
+    private void SyncLinks(ObservableCollection<CommitLinkProjection> target, IReadOnlyList<string> hashes) {
         if (target.Select(link => link.FullHash).SequenceEqual(hashes, StringComparer.Ordinal)) return;
         target.Clear();
-        foreach (var hash in hashes)
-        {
+        foreach (var hash in hashes) {
             var commit = Commits.FirstOrDefault(candidate => candidate.FullHash == hash);
             target.Add(new CommitLinkProjection(hash, commit?.Subject ?? "(not in loaded history)"));
         }
     }
 
     [RelayCommand]
-    private void GoToCommit(string? hash)
-    {
+    private void GoToCommit(string? hash) {
         var commit = hash == null ? null : Commits.FirstOrDefault(candidate => candidate.FullHash == hash);
         if (commit != null) SelectedCommit = commit;
     }
 
     /// <summary>p: first parent (Shift+P: second parent of a merge); c: first child.</summary>
-    public void GoToParent(int index)
-    {
+    public void GoToParent(int index) {
         if (index < SelectedCommitParents.Count) GoToCommit(SelectedCommitParents[index].FullHash);
     }
 
-    public void GoToChild()
-    {
+    public void GoToChild() {
         if (SelectedCommitChildren.Count > 0) GoToCommit(SelectedCommitChildren[0].FullHash);
     }
 
-    private void UpdateSelectedCommit(GitKay.Core.App.Model model)
-    {
+    private void UpdateSelectedCommit(GitKay.Core.App.Model model) {
         CommitProjection? selectedCommit = null;
 
-        if (model.SelectedCommitHash != null)
-        {
+        if (model.SelectedCommitHash != null) {
             var hash = model.SelectedCommitHash.Value;
-            foreach (var commit in Commits)
-            {
-                if (commit.FullHash == hash)
-                {
+            foreach (var commit in Commits) {
+                if (commit.FullHash == hash) {
                     selectedCommit = commit;
                     break;
                 }
             }
         }
 
-        if (selectedCommit != null)
-        {
+        if (selectedCommit != null) {
             _suppressSelectionDispatch = true;
-            try
-            {
+            try {
                 SelectedCommit = selectedCommit;
             }
-            finally
-            {
+            finally {
                 _suppressSelectionDispatch = false;
             }
         }
-        else if (SelectedCommit != null)
-        {
+        else if (SelectedCommit != null) {
             _suppressSelectionDispatch = true;
-            try
-            {
+            try {
                 SelectedCommit = null;
             }
-            finally
-            {
+            finally {
                 _suppressSelectionDispatch = false;
             }
         }
     }
 
-    private SearchResultProjection? ResolveSelectedSearchResult(string? previousSelectedSearchHash)
-    {
-        if (previousSelectedSearchHash != null)
-        {
+    private SearchResultProjection? ResolveSelectedSearchResult(string? previousSelectedSearchHash) {
+        if (previousSelectedSearchHash != null) {
             var selectedSearchResult = SearchResults.FirstOrDefault(result => result.FullHash == previousSelectedSearchHash);
-            if (selectedSearchResult != null)
-            {
+            if (selectedSearchResult != null) {
                 return selectedSearchResult;
             }
         }
@@ -1010,15 +908,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     private Action<GitKay.Core.App.Msg>? _dispatch;
 
-    public void SetDispatch(Action<GitKay.Core.App.Msg> dispatch)
-    {
+    public void SetDispatch(Action<GitKay.Core.App.Msg> dispatch) {
         _dispatch = dispatch;
     }
 
-    public void LogFirstPaint()
-    {
-        if (_firstPaintLogged)
-        {
+    public void LogFirstPaint() {
+        if (_firstPaintLogged) {
             return;
         }
 
@@ -1027,26 +922,21 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         LogTiming($"first paint elapsed={firstPaintElapsed.TotalMilliseconds:F1}ms");
     }
 
-    partial void OnSelectedCommitChanged(CommitProjection? value)
-    {
-        if (_suppressSelectionDispatch)
-        {
+    partial void OnSelectedCommitChanged(CommitProjection? value) {
+        if (_suppressSelectionDispatch) {
             return;
         }
 
-        if (value != null)
-        {
+        if (value != null) {
             var startedAtTicks = Stopwatch.GetTimestamp();
             LogTiming($"commit click hash={value.FullHash}");
             _dispatch?.Invoke(GitKay.Core.App.Msg.NewSelectCommit(value.FullHash, startedAtTicks));
         }
     }
 
-    partial void OnSearchQueryChanged(string value)
-    {
+    partial void OnSearchQueryChanged(string value) {
         RaiseAdvancedFieldsChanged();
-        if (_suppressSearchDispatch)
-        {
+        if (_suppressSearchDispatch) {
             return;
         }
 
@@ -1054,32 +944,26 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         ScheduleSearchDebounce();
     }
 
-    partial void OnShowStashesChanged(bool value)
-    {
+    partial void OnShowStashesChanged(bool value) {
         ApplyRefVisibility();
-        if (_suppressShowStashesDispatch)
-        {
+        if (_suppressShowStashesDispatch) {
             return;
         }
 
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetShowStashes(value));
     }
 
-    partial void OnShowBranchRefsChanged(bool value)
-    {
+    partial void OnShowBranchRefsChanged(bool value) {
         ApplyRefVisibility();
-        if (_suppressShowBranchRefsDispatch)
-        {
+        if (_suppressShowBranchRefsDispatch) {
             return;
         }
 
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetShowBranchRefs(value));
     }
 
-    partial void OnSelectedDiffContextLineCountChanged(DiffContextLineCountProjection? value)
-    {
-        if (_suppressDiffContextDispatch || value == null)
-        {
+    partial void OnSelectedDiffContextLineCountChanged(DiffContextLineCountProjection? value) {
+        if (_suppressDiffContextDispatch || value == null) {
             return;
         }
 
@@ -1087,14 +971,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetDiffContextLines(value.Count));
     }
 
-    partial void OnSelectedSearchScopeChanged(SearchScopeProjection? value)
-    {
+    partial void OnSelectedSearchScopeChanged(SearchScopeProjection? value) {
         SearchPlaceholder = value?.Placeholder ?? SearchPlaceholder;
         OnPropertyChanged(nameof(IsCommitSearchMode));
         OnPropertyChanged(nameof(IsPathSearchMode));
         OnPropertyChanged(nameof(IsDiffSearchMode));
-        if (_suppressSearchDispatch || value == null)
-        {
+        if (_suppressSearchDispatch || value == null) {
             return;
         }
 
@@ -1102,15 +984,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         ScheduleSearchDebounce();
     }
 
-    partial void OnSelectedSearchResultChanged(SearchResultProjection? value)
-    {
-        if (_suppressSearchSelectionDispatch)
-        {
+    partial void OnSelectedSearchResultChanged(SearchResultProjection? value) {
+        if (_suppressSearchSelectionDispatch) {
             return;
         }
 
-        if (value == null)
-        {
+        if (value == null) {
             return;
         }
 
@@ -1120,8 +999,17 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSelectCommit(value.FullHash, startedAtTicks));
     }
 
-    partial void OnSelectedDiffPresentationModeChanged(DiffPresentationModeProjection? value)
-    {
+    partial void OnSelectedThemeModeChanged(ThemeModeProjection? value) {
+        if (Avalonia.Application.Current is { } application) {
+            application.RequestedThemeVariant = value?.Key switch {
+                "light" => Avalonia.Styling.ThemeVariant.Light,
+                "dark" => Avalonia.Styling.ThemeVariant.Dark,
+                _ => Avalonia.Styling.ThemeVariant.Default,
+            };
+        }
+    }
+
+    partial void OnSelectedDiffPresentationModeChanged(DiffPresentationModeProjection? value) {
         SelectedDiffPresentationModeLabel = value?.Label ?? "Diff";
         OnPropertyChanged(nameof(IsUnifiedDiffMode));
         OnPropertyChanged(nameof(IsSideBySideDiffMode));
@@ -1129,26 +1017,22 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         OnPropertyChanged(nameof(IsOldDiffMode));
         RenderSelectedDiffRows();
 
-        if (_suppressDiffPresentationDispatch || value == null)
-        {
+        if (_suppressDiffPresentationDispatch || value == null) {
             return;
         }
 
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetDiffPresentationMode(value.Key));
     }
 
-    partial void OnSelectedDiffFileChanged(DiffFileProjection? value)
-    {
+    partial void OnSelectedDiffFileChanged(DiffFileProjection? value) {
         OnPropertyChanged(nameof(SelectedDiffFileListRow));
-        if (_suppressDiffSelectionSync)
-        {
+        if (_suppressDiffSelectionSync) {
             return;
         }
 
         SyncSelectedDiffSelection(value);
 
-        if (value == null || SelectedCommit == null)
-        {
+        if (value == null || SelectedCommit == null) {
             return;
         }
 
@@ -1156,15 +1040,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSelectDiffFile(SelectedCommit.FullHash, value.Key.OldPath, value.Key.NewPath));
     }
 
-    partial void OnSelectedDiffRowChanged(IDiffRowProjection? value)
-    {
-        if (_suppressDiffSelectionSync)
-        {
+    partial void OnSelectedDiffRowChanged(IDiffRowProjection? value) {
+        if (_suppressDiffSelectionSync) {
             return;
         }
 
-        if (value is DiffFileHeaderProjection fileHeader)
-        {
+        if (value is DiffFileHeaderProjection fileHeader) {
             SyncSelectedDiffSelection(fileHeader.File);
         }
     }
@@ -1180,14 +1061,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     partial void OnCommitSearchStatusTextChanged(string value) => OnPropertyChanged(nameof(HasSearchNavigation));
 
-    partial void OnCommitFindUseRegexChanged(bool value)
-    {
+    partial void OnCommitFindUseRegexChanged(bool value) {
         SelectedDiffRow = null;
         StepDiffFind(+1);
     }
 
-    partial void OnCommitFindQueryChanged(string value)
-    {
+    partial void OnCommitFindQueryChanged(string value) {
         UpdateCommitFindPlaceholder();
         // Incremental, like a browser: typing jumps to the first match in the selected commit's diff.
         SelectedDiffRow = null;
@@ -1195,14 +1074,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     }
 
     /// <summary>Moves the diff selection to the next or previous row containing the find text, wrapping.</summary>
-    private void StepDiffFind(int direction)
-    {
+    private void StepDiffFind(int direction) {
         // Your own find text wins; an empty box borrows the commit search's diff term without writing to the box.
         var ownQuery = CommitFindQuery.Trim();
         var borrowed = string.IsNullOrWhiteSpace(ownQuery);
         var query = borrowed ? CommitSearchDiffTerm.Trim() : ownQuery;
-        if (string.IsNullOrWhiteSpace(query))
-        {
+        if (string.IsNullOrWhiteSpace(query)) {
             CommitFindStatusText = "";
             return;
         }
@@ -1211,8 +1088,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         var matcher = GitKay.Core.GitSearch.matcher(useRegex, query);
         var matches = SelectedDiffRows.Where(row => row is DiffLineProjection && RowMatchesFindQuery(row, text => matcher.Invoke(text))
                                                     || !borrowed && RowMatchesFindQuery(row, text => matcher.Invoke(text))).ToList();
-        if (matches.Count == 0)
-        {
+        if (matches.Count == 0) {
             CommitFindStatusText = "No matches";
             return;
         }
@@ -1227,8 +1103,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     partial void OnCommitSearchDiffTermChanged(string value) => UpdateCommitFindPlaceholder();
 
-    private void UpdateCommitFindPlaceholder()
-    {
+    private void UpdateCommitFindPlaceholder() {
         var term = CommitSearchDiffTerm.Trim();
         CommitFindPlaceholder = term.Length > 0
             ? $"Enter steps through “{term}”"
@@ -1236,36 +1111,29 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         if (string.IsNullOrWhiteSpace(CommitFindQuery) && term.Length == 0) CommitFindStatusText = "";
     }
 
-    private static string PathTermFor(GitKay.Core.App.Model model)
-    {
-        foreach (var term in GitKay.Core.GitSearch.parseQuery(GitKay.Core.GitSearch.parseMode(model.SearchScopeKey), model.SearchQuery))
-        {
+    private static string PathTermFor(GitKay.Core.App.Model model) {
+        foreach (var term in GitKay.Core.GitSearch.parseQuery(GitKay.Core.GitSearch.parseMode(model.SearchScopeKey), model.SearchQuery)) {
             if (term.Field.IsChangedPath) return term.Text;
         }
 
         return "";
     }
 
-    private static string DiffTermFor(GitKay.Core.App.Model model)
-    {
-        foreach (var term in GitKay.Core.GitSearch.parseQuery(GitKay.Core.GitSearch.parseMode(model.SearchScopeKey), model.SearchQuery))
-        {
+    private static string DiffTermFor(GitKay.Core.App.Model model) {
+        foreach (var term in GitKay.Core.GitSearch.parseQuery(GitKay.Core.GitSearch.parseMode(model.SearchScopeKey), model.SearchQuery)) {
             if (term.Field.IsChangedLine) return term.Text;
         }
 
         return "";
     }
 
-    private static (string Query, string ScopeKey) DiffHighlightFor(GitKay.Core.App.Model model)
-    {
+    private static (string Query, string ScopeKey) DiffHighlightFor(GitKay.Core.App.Model model) {
         var terms = GitKay.Core.GitSearch.parseQuery(GitKay.Core.GitSearch.parseMode(model.SearchScopeKey), model.SearchQuery);
-        foreach (var term in terms)
-        {
+        foreach (var term in terms) {
             if (term.Field.IsChangedLine) return (term.Text, "text");
         }
 
-        foreach (var term in terms)
-        {
+        foreach (var term in terms) {
             if (term.Field.IsChangedPath) return (term.Text, "path");
         }
 
@@ -1275,14 +1143,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private GitKay.Core.GitSearch.Mode CurrentSearchMode => GitKay.Core.GitSearch.parseMode(SelectedSearchScope?.Key ?? "commit");
 
     [RelayCommand]
-    private void SetSearchMode(string key)
-    {
+    private void SetSearchMode(string key) {
         var scope = SearchScopes.FirstOrDefault(candidate => candidate.Key == key);
         if (scope != null) SelectedSearchScope = scope;
     }
 
-    partial void OnSearchUseRegexChanged(bool value)
-    {
+    partial void OnSearchUseRegexChanged(bool value) {
         if (_suppressSearchDispatch) return;
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetSearchRegex(value));
         ScheduleSearchDebounce();
@@ -1293,12 +1159,10 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private string GetFieldText(GitKay.Core.GitSearch.Field field) =>
         string.Join(" ", GitKay.Core.GitSearch.parseQuery(CurrentSearchMode, SearchQuery).Where(term => term.Field.Equals(field)).Select(term => term.Text));
 
-    private void SetFieldText(GitKay.Core.GitSearch.Field field, string? value)
-    {
+    private void SetFieldText(GitKay.Core.GitSearch.Field field, string? value) {
         var mode = CurrentSearchMode;
         var terms = GitKay.Core.GitSearch.parseQuery(mode, SearchQuery).Where(term => !term.Field.Equals(field)).ToList();
-        if (!string.IsNullOrWhiteSpace(value))
-        {
+        if (!string.IsNullOrWhiteSpace(value)) {
             // Advanced inputs are always explicit fields, so a value with spaces stays one quoted term.
             terms.Add(new GitKay.Core.GitSearch.Term(field, value.Trim()));
         }
@@ -1321,11 +1185,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public bool HasHashFilter => !string.IsNullOrEmpty(AdvancedHash);
     public bool HasDateFilter => !string.IsNullOrEmpty(AdvancedAfter) || !string.IsNullOrEmpty(AdvancedBefore);
 
-    private void RaiseAdvancedFieldsChanged()
-    {
+    private void RaiseAdvancedFieldsChanged() {
         foreach (var name in new[] { nameof(AdvancedMessage), nameof(AdvancedAuthor), nameof(AdvancedHash), nameof(AdvancedRef), nameof(AdvancedPath),
-                     nameof(AdvancedDiff), nameof(AdvancedAfter), nameof(AdvancedBefore), nameof(HasAuthorFilter), nameof(HasCommitFilter), nameof(HasHashFilter), nameof(HasDateFilter) })
-        {
+                     nameof(AdvancedDiff), nameof(AdvancedAfter), nameof(AdvancedBefore), nameof(HasAuthorFilter), nameof(HasCommitFilter), nameof(HasHashFilter), nameof(HasDateFilter) }) {
             OnPropertyChanged(name);
         }
     }
@@ -1336,10 +1198,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     // ----- Column filters: right-click actions add a field term and switch to showing only matches. -----
 
     /// <summary>Adds or replaces a field filter (e.g. "author", "Jane") and runs the search showing only matches.</summary>
-    public void ApplyColumnFilter(string field, string value)
-    {
-        var parsed = field switch
-        {
+    public void ApplyColumnFilter(string field, string value) {
+        var parsed = field switch {
             "author" => GitKay.Core.GitSearch.Field.Author,
             "message" => GitKay.Core.GitSearch.Field.Message,
             "hash" => GitKay.Core.GitSearch.Field.Hash,
@@ -1354,10 +1214,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     }
 
     [RelayCommand]
-    private void ClearColumnFilter(string field)
-    {
-        switch (field)
-        {
+    private void ClearColumnFilter(string field) {
+        switch (field) {
             case "author": AdvancedAuthor = ""; break;
             case "hash": AdvancedHash = ""; break;
             case "date": AdvancedAfter = ""; AdvancedBefore = ""; break;
@@ -1373,16 +1231,14 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     // ----- Recent searches, shown under the search box while typing (like JetBrains). -----
 
-    public void LoadRecentSearches(IEnumerable<string> searches)
-    {
+    public void LoadRecentSearches(IEnumerable<string> searches) {
         _recentSearches.Clear();
         _recentSearches.AddRange(searches.Where(s => !string.IsNullOrWhiteSpace(s)).Distinct(StringComparer.Ordinal).Take(MaxRecentSearches));
     }
 
     public IReadOnlyList<string> RecentSearches => _recentSearches;
 
-    private void RememberSearch(string query)
-    {
+    private void RememberSearch(string query) {
         var trimmed = query.Trim();
         if (string.IsNullOrWhiteSpace(trimmed)) return;
         _recentSearches.RemoveAll(existing => string.Equals(existing, trimmed, StringComparison.Ordinal));
@@ -1392,22 +1248,19 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     }
 
     /// <summary>Refreshes the recent-search suggestions for the current text; opens them when any match.</summary>
-    public void UpdateRecentSearchMatches(bool open)
-    {
+    public void UpdateRecentSearchMatches(bool open) {
         var text = SearchQuery.Trim();
         RecentSearchMatches.Clear();
         foreach (var recent in _recentSearches.Where(recent =>
                      !string.Equals(recent, text, StringComparison.Ordinal)
-                     && (text.Length == 0 || recent.Contains(text, StringComparison.OrdinalIgnoreCase))).Take(8))
-        {
+                     && (text.Length == 0 || recent.Contains(text, StringComparison.OrdinalIgnoreCase))).Take(8)) {
             RecentSearchMatches.Add(recent);
         }
 
         IsRecentSearchesOpen = open && RecentSearchMatches.Count > 0;
     }
 
-    public void ApplyRecentSearch(string query)
-    {
+    public void ApplyRecentSearch(string query) {
         IsRecentSearchesOpen = false;
         SearchQuery = query;
         Search();
@@ -1422,24 +1275,20 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     /// (still searching, or the text just changed), the first match is selected as soon as they arrive.
     /// </summary>
     [RelayCommand]
-    private void SearchOrNextCommit()
-    {
+    private void SearchOrNextCommit() {
         var query = SearchQuery.Trim();
-        if (string.IsNullOrWhiteSpace(query))
-        {
+        if (string.IsNullOrWhiteSpace(query)) {
             return;
         }
 
         var resultsAreCurrent = string.Equals(_lastRunSearchQuery, query, StringComparison.Ordinal);
-        if (resultsAreCurrent && !_modelSearchPending)
-        {
+        if (resultsAreCurrent && !_modelSearchPending) {
             StepCommitMatch(+1);
             return;
         }
 
         _jumpToMatchWhenResultsArrive = true;
-        if (!(resultsAreCurrent && _modelSearchPending && string.Equals(_modelSearchQuery.Trim(), query, StringComparison.Ordinal)))
-        {
+        if (!(resultsAreCurrent && _modelSearchPending && string.Equals(_modelSearchQuery.Trim(), query, StringComparison.Ordinal))) {
             Search();
         }
     }
@@ -1451,21 +1300,17 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private void FindPreviousCommit() => StepCommitMatch(-1);
 
     /// <summary>Selects the next or previous matching commit in history order, wrapping.</summary>
-    private void StepCommitMatch(int direction)
-    {
-        if (Commits.Count == 0)
-        {
+    private void StepCommitMatch(int direction) {
+        if (Commits.Count == 0) {
             return;
         }
 
         var count = Commits.Count;
         var current = SelectedCommit == null ? -1 : Commits.IndexOf(SelectedCommit);
         var start = current >= 0 ? current : direction > 0 ? -1 : count;
-        for (var step = 1; step <= count; step++)
-        {
+        for (var step = 1; step <= count; step++) {
             var index = ((start + direction * step) % count + count) % count;
-            if (Commits[index].HasSearchMatch)
-            {
+            if (Commits[index].HasSearchMatch) {
                 // Land on the change: once this commit's diff loads, select its first match.
                 _revealSearchMatchInDiff = !string.IsNullOrWhiteSpace(CommitFindQuery) || !string.IsNullOrWhiteSpace(CommitSearchDiffTerm);
                 SelectedCommit = Commits[index];
@@ -1474,17 +1319,14 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
     }
 
-    private void UpdateCommitSearchStatus(GitKay.Core.App.Model model)
-    {
+    private void UpdateCommitSearchStatus(GitKay.Core.App.Model model) {
         // Only an applied search (with results) highlights the diff, so half-typed text doesn't flicker there.
-        if (model.SearchResults != null || string.IsNullOrWhiteSpace(model.SearchQuery))
-        {
+        if (model.SearchResults != null || string.IsNullOrWhiteSpace(model.SearchQuery)) {
             var term = string.IsNullOrWhiteSpace(model.SearchQuery) ? "" : DiffTermFor(model);
             CommitSearchDiffTerm = term;
             CommitSearchPathTerm = string.IsNullOrWhiteSpace(model.SearchQuery) ? "" : PathTermFor(model);
             var highlightKey = $"{model.SearchScopeKey}\u0001{model.SearchUseRegex}\u0001{model.SearchQuery}";
-            if (!string.Equals(_commitSearchHighlightKey, highlightKey, StringComparison.Ordinal))
-            {
+            if (!string.Equals(_commitSearchHighlightKey, highlightKey, StringComparison.Ordinal)) {
                 _commitSearchHighlightKey = highlightKey;
                 CommitSearchHighlight = string.IsNullOrWhiteSpace(model.SearchQuery)
                     ? null
@@ -1495,43 +1337,36 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
         _modelSearchPending = model.SearchStartedAtTicks != null;
         _modelSearchQuery = model.SearchQuery;
-        if (_jumpToMatchWhenResultsArrive && !_modelSearchPending && model.SearchResults != null)
-        {
+        if (_jumpToMatchWhenResultsArrive && !_modelSearchPending && model.SearchResults != null) {
             _jumpToMatchWhenResultsArrive = false;
             // Selecting dispatches SelectCommit; the status position updates on the next model update.
             StepCommitMatch(+1);
         }
 
-        if (string.IsNullOrWhiteSpace(model.SearchQuery))
-        {
+        if (string.IsNullOrWhiteSpace(model.SearchQuery)) {
             CommitSearchStatusText = "";
             return;
         }
 
-        if (model.SearchStartedAtTicks != null)
-        {
+        if (model.SearchStartedAtTicks != null) {
             CommitSearchStatusText = "Searching…";
             return;
         }
 
-        if (model.SearchResults == null)
-        {
+        if (model.SearchResults == null) {
             CommitSearchStatusText = "";
             return;
         }
 
         var matches = model.SearchResults.Value.Length;
-        if (matches == 0)
-        {
+        if (matches == 0) {
             CommitSearchStatusText = "No matches";
             return;
         }
 
         var position = 0;
-        if (SelectedCommit is { HasSearchMatch: true })
-        {
-            foreach (var commit in Commits)
-            {
+        if (SelectedCommit is { HasSearchMatch: true }) {
+            foreach (var commit in Commits) {
                 if (commit.HasSearchMatch) position++;
                 if (ReferenceEquals(commit, SelectedCommit)) break;
             }
@@ -1543,8 +1378,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public void RereadRefs() => _dispatch?.Invoke(GitKay.Core.App.Msg.RereadRefs);
 
     [RelayCommand]
-    private void SetDiffPresentationMode(string key)
-    {
+    private void SetDiffPresentationMode(string key) {
         var mode = DiffPresentationModes.FirstOrDefault(candidate => candidate.Key == key);
         if (mode != null) SelectedDiffPresentationMode = mode;
     }
@@ -1558,8 +1392,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public bool IsOldDiffMode => SelectedDiffPresentationMode?.Key == "old";
 
     [RelayCommand]
-    private void Search()
-    {
+    private void Search() {
         CancelSearchDebounce();
         var query = SearchQuery;
         var scopeKey = SelectedSearchScope?.Key ?? "commit";
@@ -1571,23 +1404,19 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     }
 
     [RelayCommand]
-    private void ClearSearch()
-    {
+    private void ClearSearch() {
         CancelSearchDebounce();
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetSearchQuery(""));
         _lastRunSearchQuery = null;
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewRunSearch("", SelectedSearchScope?.Key ?? "commit", Stopwatch.GetTimestamp()));
     }
 
-    partial void OnIsSearchPanelExpandedChanged(bool value)
-    {
+    partial void OnIsSearchPanelExpandedChanged(bool value) {
         // No-op for now
     }
 
-    private void ScheduleSearchDebounce()
-    {
-        if (string.IsNullOrWhiteSpace(SearchQuery))
-        {
+    private void ScheduleSearchDebounce() {
+        if (string.IsNullOrWhiteSpace(SearchQuery)) {
             CancelSearchDebounce();
             return;
         }
@@ -1600,20 +1429,16 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         _ = DebounceSearchAsync(cancellation, TimeSpan.FromSeconds(Math.Max(0d, SearchDebounceSeconds)));
     }
 
-    private async Task DebounceSearchAsync(CancellationTokenSource cancellation, TimeSpan delay)
-    {
-        try
-        {
+    private async Task DebounceSearchAsync(CancellationTokenSource cancellation, TimeSpan delay) {
+        try {
             await Task.Delay(delay, cancellation.Token);
 
-            if (cancellation.IsCancellationRequested || !ReferenceEquals(_searchDebounceCancellation, cancellation))
-            {
+            if (cancellation.IsCancellationRequested || !ReferenceEquals(_searchDebounceCancellation, cancellation)) {
                 return;
             }
 
             var query = SearchQuery;
-            if (string.IsNullOrWhiteSpace(query))
-            {
+            if (string.IsNullOrWhiteSpace(query)) {
                 return;
             }
 
@@ -1622,13 +1447,10 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             var startedAtTicks = Stopwatch.GetTimestamp();
             _dispatch?.Invoke(GitKay.Core.App.Msg.NewRunSearch(query, scopeKey, startedAtTicks));
         }
-        catch (OperationCanceledException)
-        {
+        catch (OperationCanceledException) {
         }
-        finally
-        {
-            if (ReferenceEquals(_searchDebounceCancellation, cancellation))
-            {
+        finally {
+            if (ReferenceEquals(_searchDebounceCancellation, cancellation)) {
                 _searchDebounceCancellation = null;
             }
 
@@ -1636,10 +1458,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
     }
 
-    private void CancelSearchDebounce()
-    {
-        if (_searchDebounceCancellation == null)
-        {
+    private void CancelSearchDebounce() {
+        if (_searchDebounceCancellation == null) {
             return;
         }
 
@@ -1647,24 +1467,19 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         _searchDebounceCancellation = null;
     }
 
-    private void SyncSelectedDiffFiles(IReadOnlyList<GitKay.Core.GitService.DiffFileSummary> summaries, bool clearContent)
-    {
+    private void SyncSelectedDiffFiles(IReadOnlyList<GitKay.Core.GitService.DiffFileSummary> summaries, bool clearContent) {
         var existingByKey = SelectedDiffFiles.ToDictionary(file => file.Key);
 
         SelectedDiffFiles.Clear();
-        foreach (var summary in summaries)
-        {
+        foreach (var summary in summaries) {
             var key = new DiffFileKey(summary.OldPath, summary.NewPath);
 
-            if (!existingByKey.TryGetValue(key, out var fileProjection))
-            {
+            if (!existingByKey.TryGetValue(key, out var fileProjection)) {
                 fileProjection = new DiffFileProjection(summary);
             }
-            else
-            {
+            else {
                 fileProjection.UpdateSummary(summary);
-                if (clearContent)
-                {
+                if (clearContent) {
                     fileProjection.ClearContent();
                 }
             }
@@ -1682,18 +1497,15 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private void SetDiffFileListMode(string mode) => IsDiffFileTreeMode = mode == "tree";
 
     [RelayCommand]
-    private void ToggleDiffFolder(DiffFileFolderRow folder)
-    {
-        if (!_collapsedDiffFolders.Remove(folder.Path))
-        {
+    private void ToggleDiffFolder(DiffFileFolderRow folder) {
+        if (!_collapsedDiffFolders.Remove(folder.Path)) {
             _collapsedDiffFolders.Add(folder.Path);
         }
 
         RebuildDiffFileListRows();
     }
 
-    private void RebuildDiffFileListRows()
-    {
+    private void RebuildDiffFileListRows() {
         var rows = DiffFileTree.BuildRows(SelectedDiffFiles, IsDiffFileTreeMode, _collapsedDiffFolders);
         DiffFileListRows.Clear();
         DiffFileListRows.AddRange(rows);
@@ -1703,24 +1515,19 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private static bool MatchesKey(DiffFileKey uiKey, GitKay.Core.GitService.DiffFileKey coreKey) =>
         uiKey.OldPath == coreKey.OldPath && uiKey.NewPath == coreKey.NewPath;
 
-    private DiffFileProjection? ResolveSelectedDiffFile(GitKay.Core.App.Model model, DiffFileKey? previousSelectedDiffFileKey)
-    {
-        if (model.SelectedDiffFileKey != null)
-        {
+    private DiffFileProjection? ResolveSelectedDiffFile(GitKay.Core.App.Model model, DiffFileKey? previousSelectedDiffFileKey) {
+        if (model.SelectedDiffFileKey != null) {
             var key = model.SelectedDiffFileKey.Value;
             var selectedDiffFile = SelectedDiffFiles.FirstOrDefault(file => MatchesKey(file.Key, key));
-            if (selectedDiffFile != null)
-            {
+            if (selectedDiffFile != null) {
                 return selectedDiffFile;
             }
         }
 
-        if (previousSelectedDiffFileKey != null)
-        {
+        if (previousSelectedDiffFileKey != null) {
             var key = previousSelectedDiffFileKey.Value;
             var selectedDiffFile = SelectedDiffFiles.FirstOrDefault(file => file.Key == key);
-            if (selectedDiffFile != null)
-            {
+            if (selectedDiffFile != null) {
                 return selectedDiffFile;
             }
         }
@@ -1730,21 +1537,17 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     private static GitKay.Core.App.FileExpansion? FindExpansion(
         Microsoft.FSharp.Collections.FSharpMap<GitKay.Core.GitService.DiffFileKey, GitKay.Core.App.FileExpansion>? expansions,
-        DiffFileKey key)
-    {
+        DiffFileKey key) {
         if (expansions == null) return null;
         var found = expansions.TryFind(new GitKay.Core.GitService.DiffFileKey(key.OldPath, key.NewPath));
         return found == null ? null : found.Value;
     }
 
     private bool SyncSelectedDiffExpansions(
-        Microsoft.FSharp.Collections.FSharpMap<GitKay.Core.GitService.DiffFileKey, GitKay.Core.App.FileExpansion> expansions)
-    {
+        Microsoft.FSharp.Collections.FSharpMap<GitKay.Core.GitService.DiffFileKey, GitKay.Core.App.FileExpansion> expansions) {
         var changed = false;
-        foreach (var fileProjection in SelectedDiffFiles)
-        {
-            if (fileProjection.IsLoaded)
-            {
+        foreach (var fileProjection in SelectedDiffFiles) {
+            if (fileProjection.IsLoaded) {
                 changed |= fileProjection.ApplyExpansion(FindExpansion(expansions, fileProjection.Key));
             }
         }
@@ -1754,72 +1557,56 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     private void SyncSelectedDiffFileContents(
         IReadOnlyList<GitKay.Core.Models.FileDiff> files,
-        Microsoft.FSharp.Collections.FSharpMap<GitKay.Core.GitService.DiffFileKey, GitKay.Core.App.FileExpansion>? expansions = null)
-    {
+        Microsoft.FSharp.Collections.FSharpMap<GitKay.Core.GitService.DiffFileKey, GitKay.Core.App.FileExpansion>? expansions = null) {
         var filesByKey = files.ToDictionary(
             file => new DiffFileKey(file.OldPath, file.NewPath),
             file => file);
 
-        foreach (var fileProjection in SelectedDiffFiles)
-        {
-            if (filesByKey.TryGetValue(fileProjection.Key, out var loadedFile))
-            {
+        foreach (var fileProjection in SelectedDiffFiles) {
+            if (filesByKey.TryGetValue(fileProjection.Key, out var loadedFile)) {
                 fileProjection.ApplyContent(loadedFile, FindExpansion(expansions, fileProjection.Key));
             }
-            else
-            {
+            else {
                 fileProjection.ClearContent();
             }
         }
     }
 
-    private void ApplyCommitSearchMatches(IEnumerable<GitKay.Core.GitSearch.Result>? results)
-    {
+    private void ApplyCommitSearchMatches(IEnumerable<GitKay.Core.GitSearch.Result>? results) {
         var resultsByHash = results?.ToDictionary(result => result.Commit.Hash);
 
-        foreach (var commit in Commits)
-        {
-            if (resultsByHash != null && resultsByHash.TryGetValue(commit.FullHash, out var result))
-            {
+        foreach (var commit in Commits) {
+            if (resultsByHash != null && resultsByHash.TryGetValue(commit.FullHash, out var result)) {
                 commit.ApplySearchMatch(result);
             }
-            else
-            {
+            else {
                 commit.ApplySearchMatch(null);
             }
         }
     }
 
-    private void SyncSelectedSearchResult(SearchResultProjection? selectedSearchResult)
-    {
+    private void SyncSelectedSearchResult(SearchResultProjection? selectedSearchResult) {
         _suppressSearchSelectionDispatch = true;
-        try
-        {
+        try {
             SelectedSearchResult = selectedSearchResult;
         }
-        finally
-        {
+        finally {
             _suppressSearchSelectionDispatch = false;
         }
     }
 
-    private void RenderSelectedDiffRows()
-    {
+    private void RenderSelectedDiffRows() {
         var rows = new List<IDiffRowProjection>();
 
-        foreach (var file in SelectedDiffFiles)
-        {
+        foreach (var file in SelectedDiffFiles) {
             rows.Add(file.Header);
 
-            if (!file.IsLoaded || file.IsCollapsed)
-            {
+            if (!file.IsLoaded || file.IsCollapsed) {
                 continue;
             }
 
-            foreach (var block in file.Blocks)
-            {
-                if (block is DiffGapProjection gap)
-                {
+            foreach (var block in file.Blocks) {
+                if (block is DiffGapProjection gap) {
                     gap.HeaderText = null;
                     rows.Add(gap);
                     continue;
@@ -1828,8 +1615,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                 if (block is not DiffHunkProjection hunk)
                     continue;
 
-                if (IsSideBySideDiffMode)
-                {
+                if (IsSideBySideDiffMode) {
                     AddHunkHeader(rows, hunk);
                     AddSideBySideDiffRowsToList(rows, hunk.Lines);
                     continue;
@@ -1854,36 +1640,29 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     }
 
     [RelayCommand]
-    private void ToggleDiffFileCollapsed(DiffFileProjection file)
-    {
+    private void ToggleDiffFileCollapsed(DiffFileProjection file) {
         file.IsCollapsed = !file.IsCollapsed;
         RenderSelectedDiffRows();
     }
 
     [RelayCommand]
-    private void ToggleDiffFileContext(DiffFileProjection file)
-    {
-        if (_selectedDiffHash == null)
-        {
+    private void ToggleDiffFileContext(DiffFileProjection file) {
+        if (_selectedDiffHash == null) {
             return;
         }
 
         var key = new GitKay.Core.GitService.DiffFileKey(file.Key.OldPath, file.Key.NewPath);
-        if (file.HasHiddenContext)
-        {
+        if (file.HasHiddenContext) {
             _dispatch?.Invoke(GitKay.Core.App.Msg.NewExpandDiffFile(_selectedDiffHash, key, Stopwatch.GetTimestamp()));
         }
-        else if (file.HasRevealedContext)
-        {
+        else if (file.HasRevealedContext) {
             _dispatch?.Invoke(GitKay.Core.App.Msg.NewCollapseDiffFileContext(_selectedDiffHash, key));
         }
     }
 
     [RelayCommand]
-    private void ExpandDiffGap(DiffGapExpansionRequest request)
-    {
-        if (_selectedDiffHash == null)
-        {
+    private void ExpandDiffGap(DiffGapExpansionRequest request) {
+        if (_selectedDiffHash == null) {
             return;
         }
 
@@ -1894,22 +1673,18 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             Stopwatch.GetTimestamp()));
     }
 
-    private static void AddHunkHeader(List<IDiffRowProjection> rows, DiffHunkProjection hunk)
-    {
+    private static void AddHunkHeader(List<IDiffRowProjection> rows, DiffHunkProjection hunk) {
         if (rows.Count > 0 && rows[^1] is DiffGapProjection gap)
             gap.HeaderText = hunk.Header;
         else
             rows.Add(new DiffHunkHeaderProjection(hunk));
     }
 
-    private void AddSideBySideDiffRowsToList(List<IDiffRowProjection> target, ObservableCollection<DiffLineProjection> lines)
-    {
+    private void AddSideBySideDiffRowsToList(List<IDiffRowProjection> target, ObservableCollection<DiffLineProjection> lines) {
         var index = 0;
-        while (index < lines.Count)
-        {
+        while (index < lines.Count) {
             var line = lines[index];
-            if (line.IsRemoved && index + 1 < lines.Count && lines[index + 1].IsAdded)
-            {
+            if (line.IsRemoved && index + 1 < lines.Count && lines[index + 1].IsAdded) {
                 target.Add(DiffLineProjection.CreateSideBySidePair(line, lines[index + 1]));
                 index += 2;
                 continue;
@@ -1920,23 +1695,19 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
     }
 
-    private void SyncSelectedDiffSelection(DiffFileProjection? selectedDiffFile)
-    {
+    private void SyncSelectedDiffSelection(DiffFileProjection? selectedDiffFile) {
         _suppressDiffSelectionSync = true;
-        try
-        {
+        try {
             SelectedDiffFile = selectedDiffFile;
             SelectedDiffRow = selectedDiffFile?.Header;
         }
-        finally
-        {
+        finally {
             _suppressDiffSelectionSync = false;
         }
     }
 
     private static bool RowMatchesFindQuery(IDiffRowProjection row, Func<string, bool> matches) =>
-        row switch
-        {
+        row switch {
             DiffFileHeaderProjection fileHeader => matches(fileHeader.DisplayPath),
             DiffHunkHeaderProjection hunkHeader => matches(hunkHeader.Header),
             DiffLineProjection line => matches(line.Content),

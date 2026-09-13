@@ -10,8 +10,7 @@ using Avalonia.Threading;
 
 namespace GitKay.UI;
 
-public partial class MainWindow : Window
-{
+public partial class MainWindow : Window {
     private MainProjection? _projection;
     private readonly System.Collections.Generic.Dictionary<string, double> _diffScrollOffsets = new(StringComparer.Ordinal);
     private string? _diffScrollCommit;
@@ -21,8 +20,7 @@ public partial class MainWindow : Window
     private double _activeHistoryColumnResizeStartX;
     private double[]? _activeHistoryColumnResizeStartWidths;
 
-    public MainWindow()
-    {
+    public MainWindow() {
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
         CommitListBox.AddHandler(InputElement.KeyDownEvent, OnMainListBoxKeyDown, RoutingStrategies.Tunnel);
@@ -36,6 +34,7 @@ public partial class MainWindow : Window
         DiffRowsScrollViewer.PointerEntered += (_, _) => OnPaneHovered(Pane.Diff);
         DiffFilesListBox.PointerEntered += (_, _) => OnPaneHovered(Pane.Files);
         Deactivated += (_, _) => HideCtrlHints();
+        Loaded += (_, _) => CommitListBox.Focus();
         SearchBox.AddHandler(InputElement.KeyDownEvent, OnSearchBoxKeyDown, RoutingStrategies.Tunnel);
         PaletteBox.AddHandler(InputElement.KeyDownEvent, OnPaletteBoxKeyDown, RoutingStrategies.Tunnel);
         CommitFindBox.AddHandler(InputElement.KeyDownEvent, OnCommitFindBoxKeyDown, RoutingStrategies.Tunnel);
@@ -56,16 +55,13 @@ public partial class MainWindow : Window
         : Pane.None;
 
     /// <summary>Keyboard pane changes win over hover until the pointer next enters a pane.</summary>
-    private void FocusPaneFromKeyboard(Pane pane)
-    {
+    private void FocusPaneFromKeyboard(Pane pane) {
         _hoveredPane = Pane.None;
         FocusPane(pane);
     }
 
-    private void FocusPane(Pane pane)
-    {
-        if (pane == Pane.Files)
-        {
+    private void FocusPane(Pane pane) {
+        if (pane == Pane.Files) {
             // A ListBox doesn't take focus itself; its item containers do.
             var item = DiffFilesListBox.SelectedItem ?? DiffFilesListBox.Items.OfType<DiffFileProjection>().FirstOrDefault();
             if (item != null) DiffFilesListBox.ScrollIntoView(item);
@@ -81,8 +77,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Unfocused panes fade very slightly, so the pane keys go to stands out without extra chrome.</summary>
-    private void UpdatePaneFocusIndicator()
-    {
+    private void UpdatePaneFocusIndicator() {
         const double fade = 0.22;
         var pane = FocusedPane;
         CommitPaneFocus.Opacity = pane != Pane.None && pane != Pane.Commits ? fade : 0;
@@ -94,16 +89,14 @@ public partial class MainWindow : Window
 
     private Pane _hoveredPane = Pane.None;
 
-    private void OnPaneHovered(Pane pane)
-    {
+    private void OnPaneHovered(Pane pane) {
         _hoveredPane = pane;
         if (_projection is not { HoverToFocus: true } projection || projection.IsPaletteOpen || projection.IsShortcutHelpOpen) return;
         if (TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox) return;
         if (FocusedPane != pane) FocusPane(pane);
     }
 
-    internal static Pane? PaneInDirection(Pane from, Key key) => (from, key) switch
-    {
+    internal static Pane? PaneInDirection(Pane from, Key key) => (from, key) switch {
         (Pane.Commits, Key.J or Key.Down) => Pane.Diff,
         (Pane.Diff or Pane.Files, Key.K or Key.Up) => Pane.Commits,
         (Pane.Diff, Key.L or Key.Right) => Pane.Files,
@@ -112,18 +105,15 @@ public partial class MainWindow : Window
         _ => null,
     };
 
-    private bool TryHandlePaneNavigation(KeyEventArgs e)
-    {
+    private bool TryHandlePaneNavigation(KeyEventArgs e) {
         var from = FocusedPane;
 
-        if (e.KeyModifiers == KeyModifiers.Control && e.Key is Key.H or Key.J or Key.K or Key.L or Key.Left or Key.Right or Key.Up or Key.Down)
-        {
+        if (e.KeyModifiers == KeyModifiers.Control && e.Key is Key.H or Key.J or Key.K or Key.L or Key.Left or Key.Right or Key.Up or Key.Down) {
             if (PaneInDirection(from, e.Key) is { } target) FocusPaneFromKeyboard(target);
             return true;
         }
 
-        if (e.Key == Key.Tab && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift && from != Pane.None)
-        {
+        if (e.Key == Key.Tab && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift && from != Pane.None) {
             var order = new[] { Pane.Commits, Pane.Diff, Pane.Files };
             var index = Array.IndexOf(order, from);
             var step = e.KeyModifiers == KeyModifiers.Shift ? -1 : 1;
@@ -131,21 +121,18 @@ public partial class MainWindow : Window
             return true;
         }
 
-        if (e.KeyModifiers == KeyModifiers.Control && e.Key is Key.D1 or Key.D2 or Key.D3 or Key.NumPad1 or Key.NumPad2 or Key.NumPad3)
-        {
+        if (e.KeyModifiers == KeyModifiers.Control && e.Key is Key.D1 or Key.D2 or Key.D3 or Key.NumPad1 or Key.NumPad2 or Key.NumPad3) {
             FocusPaneFromKeyboard(e.Key switch { Key.D1 or Key.NumPad1 => Pane.Commits, Key.D2 or Key.NumPad2 => Pane.Diff, _ => Pane.Files });
             return true;
         }
 
-        if (e.KeyModifiers == KeyModifiers.None && e.Key == Key.Enter && from is Pane.Commits or Pane.Files)
-        {
+        if (e.KeyModifiers == KeyModifiers.None && e.Key == Key.Enter && from is Pane.Commits or Pane.Files) {
             FocusPaneFromKeyboard(Pane.Diff);
             return true;
         }
 
         // Esc clears a diff text selection first; the next Esc goes back to commits.
-        if (e.KeyModifiers == KeyModifiers.None && e.Key == Key.Escape && from is Pane.Diff or Pane.Files && !DiffRowsListBox.HasTextSelection)
-        {
+        if (e.KeyModifiers == KeyModifiers.None && e.Key == Key.Escape && from is Pane.Diff or Pane.Files && !DiffRowsListBox.HasTextSelection) {
             FocusPaneFromKeyboard(Pane.Commits);
             return true;
         }
@@ -160,8 +147,7 @@ public partial class MainWindow : Window
             ? _hoveredPane is Pane.Diff or Pane.Files
             : DiffRowsListBox.IsKeyboardFocusWithin || DiffFilesListBox.IsKeyboardFocusWithin || CommitFindBox.IsKeyboardFocusWithin;
 
-    private void OnShortcutHelpBackdropPressed(object? sender, PointerPressedEventArgs e)
-    {
+    private void OnShortcutHelpBackdropPressed(object? sender, PointerPressedEventArgs e) {
         if (_projection != null) _projection.IsShortcutHelpOpen = false;
         e.Handled = true;
     }
@@ -171,15 +157,13 @@ public partial class MainWindow : Window
     private int _ctrlHintGeneration;
     private bool _ctrlHintPending;
 
-    private void HideCtrlHints()
-    {
+    private void HideCtrlHints() {
         _ctrlHintPending = false;
         _ctrlHintGeneration++;
         if (_projection != null) _projection.IsCtrlHintsVisible = false;
     }
 
-    private async void ShowCtrlHintsAfterHold()
-    {
+    private async void ShowCtrlHintsAfterHold() {
         var generation = ++_ctrlHintGeneration;
         _ctrlHintPending = true;
         await System.Threading.Tasks.Task.Delay(400);
@@ -191,8 +175,7 @@ public partial class MainWindow : Window
 
     private int _ctrlReleaseGeneration;
 
-    private async void OnWindowKeyUp(object? sender, KeyEventArgs e)
-    {
+    private async void OnWindowKeyUp(object? sender, KeyEventArgs e) {
         if (e.Key is not (Key.LeftCtrl or Key.RightCtrl)) return;
         // X11 auto-repeat can deliver a held key as release+press pairs; only a release that isn't
         // immediately followed by another Ctrl press counts.
@@ -201,10 +184,8 @@ public partial class MainWindow : Window
         if (release == _ctrlReleaseGeneration) HideCtrlHints();
     }
 
-    private void OnWindowKeyDown(object? sender, KeyEventArgs e)
-    {
-        if (e.Key is Key.LeftCtrl or Key.RightCtrl)
-        {
+    private void OnWindowKeyDown(object? sender, KeyEventArgs e) {
+        if (e.Key is Key.LeftCtrl or Key.RightCtrl) {
             _ctrlReleaseGeneration++;
             // Held modifiers auto-repeat on some systems: only the first press starts the wait.
             if (_projection is { IsCtrlHintsVisible: false } && !_ctrlHintPending) ShowCtrlHintsAfterHold();
@@ -218,8 +199,7 @@ public partial class MainWindow : Window
         if (_projection?.IsPaletteOpen == true) return;
 
         // Pane jumps, palette and history work everywhere, including from the search boxes.
-        if (e.KeyModifiers == KeyModifiers.Control && e.Key is Key.D1 or Key.D2 or Key.D3 or Key.NumPad1 or Key.NumPad2 or Key.NumPad3)
-        {
+        if (e.KeyModifiers == KeyModifiers.Control && e.Key is Key.D1 or Key.D2 or Key.D3 or Key.NumPad1 or Key.NumPad2 or Key.NumPad3) {
             FocusPaneFromKeyboard(e.Key is Key.D1 or Key.NumPad1 ? Pane.Commits : e.Key is Key.D2 or Key.NumPad2 ? Pane.Diff : Pane.Files);
             e.Handled = true;
             return;
@@ -228,55 +208,46 @@ public partial class MainWindow : Window
         if (e.Key == Key.P && e.KeyModifiers == ctrlShift) { OpenPalette(PaletteMode.Commands); e.Handled = true; return; }
         if (e.Key == Key.P && e.KeyModifiers == KeyModifiers.Control) { OpenPalette(PaletteMode.Files); e.Handled = true; return; }
         if (e.Key == Key.G && e.KeyModifiers == KeyModifiers.Control) { OpenPalette(PaletteMode.Refs); e.Handled = true; return; }
-        if (e.Key is Key.Left or Key.Right && e.KeyModifiers == KeyModifiers.Alt)
-        {
+        if (e.Key is Key.Left or Key.Right && e.KeyModifiers == KeyModifiers.Alt) {
             (e.Key == Key.Left ? _projection?.GoBackCommand : _projection?.GoForwardCommand)?.Execute(null);
             e.Handled = true;
             return;
         }
 
-        if (!typingInTextBox)
-        {
+        if (!typingInTextBox) {
             if (e.Key == Key.OemSemicolon && e.KeyModifiers == KeyModifiers.Shift) { OpenPalette(PaletteMode.Commands); e.Handled = true; return; }
-            if (e.Key is Key.O or Key.I && e.KeyModifiers == KeyModifiers.Control)
-            {
+            if (e.Key is Key.O or Key.I && e.KeyModifiers == KeyModifiers.Control) {
                 (e.Key == Key.O ? _projection?.GoBackCommand : _projection?.GoForwardCommand)?.Execute(null);
                 e.Handled = true;
                 return;
             }
-            if (e.Key == Key.Y && e.KeyModifiers == KeyModifiers.None && FocusedPane == Pane.Diff && DiffRowsListBox.HasTextSelection)
-            {
+            if (e.Key == Key.Y && e.KeyModifiers == KeyModifiers.None && FocusedPane == Pane.Diff && DiffRowsListBox.HasTextSelection) {
                 DiffRowsListBox.CopySelection();
                 e.Handled = true;
                 return;
             }
-            if (e.Key == Key.Y && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift && FocusedPane != Pane.None)
-            {
+            if (e.Key == Key.Y && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift && FocusedPane != Pane.None) {
                 OnWindowCommandRequested(e.KeyModifiers == KeyModifiers.Shift ? "copy-subject" : "copy-hash");
                 e.Handled = true;
                 return;
             }
         }
 
-        if (!typingInTextBox && !(_projection?.IsShortcutHelpOpen ?? false) && TryHandlePaneNavigation(e))
-        {
+        if (!typingInTextBox && !(_projection?.IsShortcutHelpOpen ?? false) && TryHandlePaneNavigation(e)) {
             e.Handled = true;
             return;
         }
 
         // ? (shift+/) or F1 toggles the shortcut sheet; Esc closes it.
-        if (_projection is { } help)
-        {
+        if (_projection is { } help) {
             var questionMark = e.Key == Key.Oem2 && e.KeyModifiers == KeyModifiers.Shift && !typingInTextBox;
-            if (e.Key == Key.F1 || questionMark)
-            {
+            if (e.Key == Key.F1 || questionMark) {
                 help.IsShortcutHelpOpen = !help.IsShortcutHelpOpen;
                 e.Handled = true;
                 return;
             }
 
-            if (help.IsShortcutHelpOpen && e.Key == Key.Escape)
-            {
+            if (help.IsShortcutHelpOpen && e.Key == Key.Escape) {
                 help.IsShortcutHelpOpen = false;
                 e.Handled = true;
                 return;
@@ -295,37 +266,30 @@ public partial class MainWindow : Window
 
     private void OnSearchBoxGotFocus(object? sender, FocusChangedEventArgs e) => _projection?.UpdateRecentSearchMatches(true);
 
-    private void OnSearchBoxLostFocus(object? sender, RoutedEventArgs e)
-    {
+    private void OnSearchBoxLostFocus(object? sender, RoutedEventArgs e) {
         // Delay so a click on a recent search lands before the popup closes.
-        DispatcherTimer.RunOnce(() =>
-        {
+        DispatcherTimer.RunOnce(() => {
             if (_projection != null && !SearchBox.IsKeyboardFocusWithin) _projection.IsRecentSearchesOpen = false;
         }, TimeSpan.FromMilliseconds(180));
     }
 
-    private void OnSearchBoxTextChanged(object? sender, TextChangedEventArgs e)
-    {
+    private void OnSearchBoxTextChanged(object? sender, TextChangedEventArgs e) {
         if (SearchBox.IsKeyboardFocusWithin) _projection?.UpdateRecentSearchMatches(true);
     }
 
-    private void OnRecentSearchPointerReleased(object? sender, PointerReleasedEventArgs e)
-    {
-        if (RecentSearchesList.SelectedItem is string recent)
-        {
+    private void OnRecentSearchPointerReleased(object? sender, PointerReleasedEventArgs e) {
+        if (RecentSearchesList.SelectedItem is string recent) {
             _projection?.ApplyRecentSearch(recent);
             SearchBox.Focus();
             SearchBox.CaretIndex = SearchBox.Text?.Length ?? 0;
         }
     }
 
-    private void OnSearchBoxKeyDown(object? sender, KeyEventArgs e)
-    {
+    private void OnSearchBoxKeyDown(object? sender, KeyEventArgs e) {
         if (_projection is not { } projection) return;
         var popupOpen = projection.IsRecentSearchesOpen && projection.RecentSearchMatches.Count > 0;
 
-        switch (e.Key)
-        {
+        switch (e.Key) {
             case Key.Down or Key.Up when popupOpen:
                 var count = projection.RecentSearchMatches.Count;
                 var index = RecentSearchesList.SelectedIndex;
@@ -358,8 +322,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnCommitFindBoxKeyDown(object? sender, KeyEventArgs e)
-    {
+    private void OnCommitFindBoxKeyDown(object? sender, KeyEventArgs e) {
         if (e.Key != Key.Escape || _projection is not { } projection) return;
         projection.CommitFindQuery = "";
         FocusDiffPane();
@@ -368,11 +331,9 @@ public partial class MainWindow : Window
 
     // ----- Column filters -----
 
-    private void OnCommitFilterRequested(string field, string? value)
-    {
+    private void OnCommitFilterRequested(string field, string? value) {
         if (_projection is not { } projection) return;
-        if (value != null)
-        {
+        if (value != null) {
             projection.ApplyColumnFilter(field, value);
             return;
         }
@@ -385,28 +346,23 @@ public partial class MainWindow : Window
         SearchBox.CaretIndex = projection.SearchQuery.Length;
     }
 
-    private void OnDiffFolderPointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (sender is Control { DataContext: DiffFileFolderRow folder } && _projection != null)
-        {
+    private void OnDiffFolderPointerPressed(object? sender, PointerPressedEventArgs e) {
+        if (sender is Control { DataContext: DiffFileFolderRow folder } && _projection != null) {
             _projection.ToggleDiffFolderCommand.Execute(folder);
             e.Handled = true;
         }
     }
 
-    private void OnHistoryHeaderContextRequested(object? sender, ContextRequestedEventArgs e)
-    {
+    private void OnHistoryHeaderContextRequested(object? sender, ContextRequestedEventArgs e) {
         if (sender is not Control { Tag: string column } header || _projection is not { } projection) return;
         var menu = new ContextMenu();
-        void Add(string title, Action action)
-        {
+        void Add(string title, Action action) {
             var item = new MenuItem { Header = title };
             item.Click += (_, _) => action();
             menu.Items.Add(item);
         }
 
-        switch (column)
-        {
+        switch (column) {
             case "message": Add("Filter by message…", () => OnCommitFilterRequested("message", null)); Add("Filter by branch / tag…", () => OnCommitFilterRequested("ref", null)); break;
             case "hash": Add("Filter by hash…", () => OnCommitFilterRequested("hash", null)); break;
             case "author": Add("Filter by author…", () => OnCommitFilterRequested("author", null)); break;
@@ -420,27 +376,22 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    private async void OnSettingsMenuItemClick(object? sender, RoutedEventArgs e)
-    {
-        var settingsWindow = new SettingsWindow
-        {
+    private async void OnSettingsMenuItemClick(object? sender, RoutedEventArgs e) {
+        var settingsWindow = new SettingsWindow {
             DataContext = DataContext,
         };
 
         await settingsWindow.ShowDialog(this);
     }
 
-    private void OnDataContextChanged(object? sender, EventArgs e)
-    {
-        if (_projection != null)
-        {
+    private void OnDataContextChanged(object? sender, EventArgs e) {
+        if (_projection != null) {
             _projection.PropertyChanged -= OnProjectionPropertyChanged;
         }
 
         _projection = DataContext as MainProjection;
 
-        if (_projection != null)
-        {
+        if (_projection != null) {
             _projection.PropertyChanged += OnProjectionPropertyChanged;
             _projection.WindowCommandRequested += OnWindowCommandRequested;
             _projection.FileJumpRequested += file =>
@@ -450,34 +401,29 @@ public partial class MainWindow : Window
 
     // ----- Palette -----
 
-    private void OpenPalette(PaletteMode mode)
-    {
+    private void OpenPalette(PaletteMode mode) {
         if (_projection == null) return;
         _projection.OpenPalette(mode);
         Dispatcher.UIThread.Post(() => { PaletteBox.Focus(); PaletteBox.CaretIndex = PaletteBox.Text?.Length ?? 0; }, DispatcherPriority.Loaded);
     }
 
-    private void ClosePalette()
-    {
+    private void ClosePalette() {
         _projection?.ClosePalette();
         FocusPane(Pane.Commits);
     }
 
-    private void OnPaletteBackdropPressed(object? sender, PointerPressedEventArgs e)
-    {
+    private void OnPaletteBackdropPressed(object? sender, PointerPressedEventArgs e) {
         ClosePalette();
         e.Handled = true;
     }
 
     private void OnPalettePanelPressed(object? sender, PointerPressedEventArgs e) => e.Handled = true;
 
-    private void OnPaletteListPointerReleased(object? sender, PointerReleasedEventArgs e)
-    {
+    private void OnPaletteListPointerReleased(object? sender, PointerReleasedEventArgs e) {
         if (PaletteList.SelectedItem is PaletteItem item) RunPalette(item);
     }
 
-    private void RunPalette(PaletteItem? item = null)
-    {
+    private void RunPalette(PaletteItem? item = null) {
         if (_projection == null) return;
         var mode = _projection.PaletteMode;
         _projection.RunPaletteItem(item);
@@ -488,11 +434,9 @@ public partial class MainWindow : Window
             Dispatcher.UIThread.Post(() => PaletteBox.Focus(), DispatcherPriority.Loaded);
     }
 
-    private void OnPaletteBoxKeyDown(object? sender, KeyEventArgs e)
-    {
+    private void OnPaletteBoxKeyDown(object? sender, KeyEventArgs e) {
         if (_projection is not { IsPaletteOpen: true } projection) return;
-        switch (e.Key)
-        {
+        switch (e.Key) {
             case Key.Down: projection.MovePaletteSelection(1); break;
             case Key.Up: projection.MovePaletteSelection(-1); break;
             case Key.PageDown: projection.MovePaletteSelection(10); break;
@@ -508,10 +452,8 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    private async void OnWindowCommandRequested(string command)
-    {
-        switch (command)
-        {
+    private async void OnWindowCommandRequested(string command) {
+        switch (command) {
             case "settings":
                 OnSettingsMenuItemClick(this, new RoutedEventArgs());
                 break;
@@ -530,10 +472,8 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnProjectionPropertyChanged(object? sender, PropertyChangedEventArgs e)
-    {
-        if (e.PropertyName == nameof(MainProjection.SelectedCommit) && _projection != null)
-        {
+    private void OnProjectionPropertyChanged(object? sender, PropertyChangedEventArgs e) {
+        if (e.PropertyName == nameof(MainProjection.SelectedCommit) && _projection != null) {
             // Remember where the diff was scrolled for the commit we're leaving; restore it when returning.
             if (_diffScrollCommit != null) _diffScrollOffsets[_diffScrollCommit] = DiffRowsListBox.CurrentScrollOffset;
             _diffScrollCommit = _projection.SelectedCommit?.FullHash;
@@ -541,18 +481,14 @@ public partial class MainWindow : Window
                 DiffRowsListBox.RestoreScrollOffsetWhenReady(offset);
         }
 
-        if (e.PropertyName == nameof(MainProjection.IsSearchPanelExpanded))
-        {
+        if (e.PropertyName == nameof(MainProjection.IsSearchPanelExpanded)) {
             var currentProjection = _projection;
-            if (currentProjection == null || !currentProjection.IsSearchPanelExpanded)
-            {
+            if (currentProjection == null || !currentProjection.IsSearchPanelExpanded) {
                 return;
             }
 
-            Dispatcher.UIThread.Post(() =>
-            {
-                if (!ReferenceEquals(_projection, currentProjection) || !currentProjection.IsSearchPanelExpanded)
-                {
+            Dispatcher.UIThread.Post(() => {
+                if (!ReferenceEquals(_projection, currentProjection) || !currentProjection.IsSearchPanelExpanded) {
                     return;
                 }
 
@@ -568,14 +504,12 @@ public partial class MainWindow : Window
             && e.PropertyName != nameof(MainProjection.SelectedDiffFile)
             && e.PropertyName != nameof(MainProjection.SelectedDiffRow)
             && e.PropertyName != nameof(MainProjection.SelectedDiffFiles)
-            && e.PropertyName != nameof(MainProjection.IsSearchPanelExpanded))
-        {
+            && e.PropertyName != nameof(MainProjection.IsSearchPanelExpanded)) {
             return;
         }
 
         var projection = _projection;
-        if (projection == null)
-        {
+        if (projection == null) {
             return;
         }
 
@@ -583,26 +517,21 @@ public partial class MainWindow : Window
         var shouldScrollFile = e.PropertyName == nameof(MainProjection.SelectedDiffFile);
         var shouldScrollDiff = e.PropertyName is nameof(MainProjection.SelectedDiffFile) or nameof(MainProjection.SelectedDiffRow);
 
-        Dispatcher.UIThread.Post(() =>
-        {
-            if (!ReferenceEquals(_projection, projection))
-            {
+        Dispatcher.UIThread.Post(() => {
+            if (!ReferenceEquals(_projection, projection)) {
                 return;
             }
 
-            if (shouldScrollCommit && projection.SelectedCommit != null)
-            {
+            if (shouldScrollCommit && projection.SelectedCommit != null) {
                 CommitListBox.ScrollIntoView(projection.SelectedCommit);
             }
 
-            if (shouldScrollFile && projection.SelectedDiffFile != null)
-            {
+            if (shouldScrollFile && projection.SelectedDiffFile != null) {
                 DiffFilesListBox.ScrollIntoView(projection.SelectedDiffFile);
             }
 
             var target = projection.SelectedDiffRow ?? projection.SelectedDiffFile?.Header;
-            if (shouldScrollDiff && target != null)
-            {
+            if (shouldScrollDiff && target != null) {
                 // Keyboard movement only brings rows into view; explicit file jumps are handled by FileJumpRequested.
                 DiffRowsListBox.ScrollIntoView(target);
             }
@@ -612,28 +541,23 @@ public partial class MainWindow : Window
             if (!typing
                 && !CommitListBox.IsKeyboardFocusWithin
                 && !DiffRowsListBox.IsKeyboardFocusWithin
-                && !DiffFilesListBox.IsKeyboardFocusWithin)
-            {
+                && !DiffFilesListBox.IsKeyboardFocusWithin) {
                 DiffRowsListBox.Focus();
             }
         }, DispatcherPriority.Loaded);
     }
 
-    private void OnCommitScrollPointerPressed(object? sender, PointerPressedEventArgs e)
-    {
+    private void OnCommitScrollPointerPressed(object? sender, PointerPressedEventArgs e) {
         CommitListBox.Focus();
         CommitListBox.SelectAt(e.GetPosition(CommitListBox).Y);
     }
 
-    private void OnDiffModeButtonContextRequested(object? sender, ContextRequestedEventArgs e)
-    {
+    private void OnDiffModeButtonContextRequested(object? sender, ContextRequestedEventArgs e) {
         if (_projection is not { } projection) return;
         var menu = new ContextMenu();
         var context = new MenuItem { Header = "Context lines" };
-        foreach (var count in projection.DiffContextLineCounts)
-        {
-            var item = new MenuItem
-            {
+        foreach (var count in projection.DiffContextLineCounts) {
+            var item = new MenuItem {
                 Header = count.Label,
                 ToggleType = MenuItemToggleType.Radio,
                 IsChecked = ReferenceEquals(count, projection.SelectedDiffContextLineCount),
@@ -646,23 +570,19 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    private void OnDiffRowsListBoxGotFocus(object? sender, FocusChangedEventArgs e)
-    {
+    private void OnDiffRowsListBoxGotFocus(object? sender, FocusChangedEventArgs e) {
         _lastDiffPaneFocus = DiffRowsListBox;
     }
 
-    private void OnDiffFilesListBoxGotFocus(object? sender, FocusChangedEventArgs e)
-    {
+    private void OnDiffFilesListBoxGotFocus(object? sender, FocusChangedEventArgs e) {
         _lastDiffPaneFocus = DiffFilesListBox;
     }
 
-    private void OnMainListBoxKeyDown(object? sender, KeyEventArgs e)
-    {
+    private void OnMainListBoxKeyDown(object? sender, KeyEventArgs e) {
         if (sender is not ListBox && sender is not DiffSurfaceControl && sender is not CommitSurfaceControl)
             return;
 
-        if (MainWindowNavigation.TryGetListNavigationDelta(e.Key, e.KeyModifiers, out var delta))
-        {
+        if (MainWindowNavigation.TryGetListNavigationDelta(e.Key, e.KeyModifiers, out var delta)) {
             if (sender is ListBox listBox)
                 MainWindowNavigation.TryMoveSelection(listBox, delta);
             else if (sender is DiffSurfaceControl diffSurface)
@@ -673,22 +593,19 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (TryHandleVimKey(sender, e))
-        {
+        if (TryHandleVimKey(sender, e)) {
             e.Handled = true;
             return;
         }
 
-        if (ReferenceEquals(sender, CommitListBox) && e.Key == Key.Right && e.KeyModifiers == KeyModifiers.None)
-        {
+        if (ReferenceEquals(sender, CommitListBox) && e.Key == Key.Right && e.KeyModifiers == KeyModifiers.None) {
             FocusDiffPane();
             e.Handled = true;
             return;
         }
 
         if ((ReferenceEquals(sender, DiffRowsListBox) || ReferenceEquals(sender, DiffFilesListBox))
-            && e.Key == Key.Left && e.KeyModifiers == KeyModifiers.None)
-        {
+            && e.Key == Key.Left && e.KeyModifiers == KeyModifiers.None) {
             CommitListBox.Focus();
             e.Handled = true;
         }
@@ -700,40 +617,34 @@ public partial class MainWindow : Window
     /// Common vim motions: gg / G (top, bottom), Ctrl+D / Ctrl+U (half page), n / N (next / previous match),
     /// ]c / [c (next / previous hunk in the diff). j / k and h / l are handled with the arrow keys.
     /// </summary>
-    private bool TryHandleVimKey(object? sender, KeyEventArgs e)
-    {
+    private bool TryHandleVimKey(object? sender, KeyEventArgs e) {
         var shift = e.KeyModifiers == KeyModifiers.Shift;
         var none = e.KeyModifiers == KeyModifiers.None;
         var ctrl = e.KeyModifiers == KeyModifiers.Control;
         var prefix = _pendingVimPrefix;
         _pendingVimPrefix = null;
 
-        void Move(int delta)
-        {
-            switch (sender)
-            {
+        void Move(int delta) {
+            switch (sender) {
                 case CommitSurfaceControl commits: commits.MoveSelection(delta); break;
                 case DiffSurfaceControl diff: diff.MoveSelection(delta); break;
                 case ListBox list: MainWindowNavigation.TryMoveSelection(list, delta); break;
             }
         }
 
-        int HalfPage() => sender switch
-        {
+        int HalfPage() => sender switch {
             CommitSurfaceControl commits => Math.Max(1, commits.ViewportRowCount / 2),
             DiffSurfaceControl diff => Math.Max(1, diff.ViewportRowCount / 2),
             _ => 10,
         };
 
         if (prefix == Key.G && none && e.Key == Key.G) { Move(int.MinValue / 2); return true; }
-        if (prefix is Key.OemCloseBrackets or Key.OemOpenBrackets && none && e.Key == Key.C && sender is DiffSurfaceControl hunks)
-        {
+        if (prefix is Key.OemCloseBrackets or Key.OemOpenBrackets && none && e.Key == Key.C && sender is DiffSurfaceControl hunks) {
             hunks.MoveToHunk(prefix == Key.OemCloseBrackets ? 1 : -1);
             return true;
         }
 
-        switch (e.Key)
-        {
+        switch (e.Key) {
             case Key.G when none: _pendingVimPrefix = Key.G; return true;
             case Key.G when shift: Move(int.MaxValue / 2); return true;
             case Key.OemCloseBrackets or Key.OemOpenBrackets when none && sender is DiffSurfaceControl: _pendingVimPrefix = e.Key; return true;
@@ -757,26 +668,22 @@ public partial class MainWindow : Window
         }
     }
 
-    private void FocusDiffPane()
-    {
+    private void FocusDiffPane() {
         var target = _lastDiffPaneFocus;
 
-        if (target == null || !target.IsVisible)
-        {
+        if (target == null || !target.IsVisible) {
             target = DiffRowsListBox;
         }
 
         target.Focus();
     }
 
-    private void OnHistoryColumnResizePointerPressed(object? sender, PointerPressedEventArgs e)
-    {
+    private void OnHistoryColumnResizePointerPressed(object? sender, PointerPressedEventArgs e) {
         if (sender is not Control handle
             || handle.Tag is not string tag
             || !int.TryParse(tag, out var columnIndex)
             || columnIndex < 0
-            || columnIndex >= HistoryHeaderGrid.ColumnDefinitions.Count)
-        {
+            || columnIndex >= HistoryHeaderGrid.ColumnDefinitions.Count) {
             return;
         }
 
@@ -795,13 +702,11 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    private void OnHistoryColumnResizePointerMoved(object? sender, PointerEventArgs e)
-    {
+    private void OnHistoryColumnResizePointerMoved(object? sender, PointerEventArgs e) {
         if (_activeHistoryColumnResizeHandle == null
             || !ReferenceEquals(sender, _activeHistoryColumnResizeHandle)
             || _activeHistoryColumnResizeIndex < 0
-            || _activeHistoryColumnResizeIndex >= HistoryHeaderGrid.ColumnDefinitions.Count - 1)
-        {
+            || _activeHistoryColumnResizeIndex >= HistoryHeaderGrid.ColumnDefinitions.Count - 1) {
             return;
         }
 
@@ -813,8 +718,7 @@ public partial class MainWindow : Window
         var requestedDelta = e.GetPosition(HistoryHeaderGrid).X - _activeHistoryColumnResizeStartX;
         var widths = (double[])startWidths.Clone();
 
-        if (requestedDelta > 0)
-        {
+        if (requestedDelta > 0) {
             var available = 0d;
             for (var index = boundary + 1; index < widths.Length; index++)
                 available += Math.Max(0, widths[index] - HistoryHeaderGrid.ColumnDefinitions[index].MinWidth);
@@ -822,8 +726,7 @@ public partial class MainWindow : Window
             widths[boundary] += applied;
             ShrinkColumns(widths, boundary + 1, widths.Length, 1, applied);
         }
-        else if (requestedDelta < 0)
-        {
+        else if (requestedDelta < 0) {
             var requested = -requestedDelta;
             var available = 0d;
             for (var index = boundary; index >= 0; index--)
@@ -838,28 +741,22 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    private void OnHistoryColumnResizePointerReleased(object? sender, PointerReleasedEventArgs e)
-    {
-        if (ReferenceEquals(sender, _activeHistoryColumnResizeHandle))
-        {
+    private void OnHistoryColumnResizePointerReleased(object? sender, PointerReleasedEventArgs e) {
+        if (ReferenceEquals(sender, _activeHistoryColumnResizeHandle)) {
             e.Pointer.Capture(null);
             ClearHistoryColumnResize();
             e.Handled = true;
         }
     }
 
-    private void OnHistoryColumnResizePointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
-    {
-        if (ReferenceEquals(sender, _activeHistoryColumnResizeHandle))
-        {
+    private void OnHistoryColumnResizePointerCaptureLost(object? sender, PointerCaptureLostEventArgs e) {
+        if (ReferenceEquals(sender, _activeHistoryColumnResizeHandle)) {
             ClearHistoryColumnResize();
         }
     }
 
-    private void ShrinkColumns(double[] widths, int start, int stop, int step, double amount)
-    {
-        for (var index = start; index != stop && amount > 0; index += step)
-        {
+    private void ShrinkColumns(double[] widths, int start, int stop, int step, double amount) {
+        for (var index = start; index != stop && amount > 0; index += step) {
             var minimum = Math.Max(0, HistoryHeaderGrid.ColumnDefinitions[index].MinWidth);
             var reduction = Math.Min(amount, Math.Max(0, widths[index] - minimum));
             widths[index] -= reduction;
@@ -867,8 +764,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void SyncCommitColumnWidths()
-    {
+    private void SyncCommitColumnWidths() {
         if (HistoryHeaderGrid.ColumnDefinitions.Count < 5)
             return;
 
@@ -879,18 +775,15 @@ public partial class MainWindow : Window
         CommitListBox.DateWidth = HistoryHeaderGrid.ColumnDefinitions[4].ActualWidth;
     }
 
-    private double GetEffectiveColumnWidth(int columnIndex, ColumnDefinition column)
-    {
-        if (column.ActualWidth > 0d)
-        {
+    private double GetEffectiveColumnWidth(int columnIndex, ColumnDefinition column) {
+        if (column.ActualWidth > 0d) {
             return column.ActualWidth;
         }
 
         return column.Width.IsAbsolute ? column.Width.Value : HistoryHeaderGrid.Bounds.Width / HistoryHeaderGrid.ColumnDefinitions.Count;
     }
 
-    private void ClearHistoryColumnResize()
-    {
+    private void ClearHistoryColumnResize() {
         _activeHistoryColumnResizeHandle = null;
         _activeHistoryColumnResizeIndex = -1;
         _activeHistoryColumnResizeStartX = 0d;
@@ -898,14 +791,12 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Captures the current splitter positions and history column widths for persistence.</summary>
-    public UiLayoutState CaptureLayout()
-    {
+    public UiLayoutState CaptureLayout() {
         var top = MainSplitGrid.RowDefinitions[0].ActualHeight;
         var bottom = MainSplitGrid.RowDefinitions[2].ActualHeight;
         var columns = HistoryHeaderGrid.ColumnDefinitions;
         double? Width(int index) => columns[index].ActualWidth > 0 ? columns[index].ActualWidth : null;
-        return new UiLayoutState
-        {
+        return new UiLayoutState {
             HistoryPaneRatio = top + bottom > 0 ? top / (top + bottom) : null,
             FileListWidth = DiffSplitGrid.ColumnDefinitions[2].ActualWidth > 0 ? DiffSplitGrid.ColumnDefinitions[2].ActualWidth : null,
             GraphColumnWidth = Width(0),
@@ -916,11 +807,9 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Restores persisted layout; the subject column stays proportional so it absorbs window resizes.</summary>
-    public void ApplyLayout(UiLayoutState layout)
-    {
+    public void ApplyLayout(UiLayoutState layout) {
         layout = layout.Normalize();
-        if (layout.HistoryPaneRatio is { } ratio)
-        {
+        if (layout.HistoryPaneRatio is { } ratio) {
             MainSplitGrid.RowDefinitions[0].Height = new GridLength(ratio, GridUnitType.Star);
             MainSplitGrid.RowDefinitions[2].Height = new GridLength(1 - ratio, GridUnitType.Star);
         }
@@ -929,8 +818,7 @@ public partial class MainWindow : Window
             DiffSplitGrid.ColumnDefinitions[2].Width = new GridLength(Math.Max(DiffSplitGrid.ColumnDefinitions[2].MinWidth, fileListWidth), GridUnitType.Pixel);
 
         var columns = HistoryHeaderGrid.ColumnDefinitions;
-        void Restore(int index, double? width)
-        {
+        void Restore(int index, double? width) {
             if (width is { } value)
                 columns[index].Width = new GridLength(Math.Max(columns[index].MinWidth, value), GridUnitType.Pixel);
         }
@@ -942,12 +830,10 @@ public partial class MainWindow : Window
         columns[1].Width = new GridLength(1, GridUnitType.Star);
     }
 
-    public override void Render(DrawingContext context)
-    {
+    public override void Render(DrawingContext context) {
         base.Render(context);
 
-        if (DataContext is MainProjection projection)
-        {
+        if (DataContext is MainProjection projection) {
             projection.LogFirstPaint();
         }
     }

@@ -16,7 +16,8 @@ type AppSettingsDocument
         commitRowTextFontSize: double,
         commitRowMetaFontSize: double,
         commitRowBadgeFontSize: double,
-        searchDebounceSeconds: double
+        searchDebounceSeconds: double,
+        themeMode: string
     ) =
     member _.ShowBranchRefs = showBranchRefs
     member _.ShowStashes = showStashes
@@ -28,6 +29,7 @@ type AppSettingsDocument
     member _.CommitRowMetaFontSize = commitRowMetaFontSize
     member _.CommitRowBadgeFontSize = commitRowBadgeFontSize
     member _.SearchDebounceSeconds = searchDebounceSeconds
+    member _.ThemeMode = themeMode
 
 /// Persisted splitter positions and history column widths; each value is absent until the user changes it.
 [<AllowNullLiteral>]
@@ -72,6 +74,7 @@ type private AppSettingsWire = {
     CommitRowMetaFontSize: double option
     CommitRowBadgeFontSize: double option
     SearchDebounceSeconds: double option
+    ThemeMode: string option
 }
 
 type private RepoStateWire = { LastSelectedCommitHash: string option }
@@ -100,6 +103,7 @@ module private Defaults =
     let commitRowMetaFontSize = 12.0
     let commitRowBadgeFontSize = 11.0
     let searchDebounceSeconds = 0.5
+    let themeMode = "system"
 
 [<RequireQualifiedAccess>]
 module private Codecs =
@@ -115,12 +119,13 @@ module private Codecs =
             fieldAs "CommitRowMetaFontSize" _.CommitRowMetaFontSize
             fieldAs "CommitRowBadgeFontSize" _.CommitRowBadgeFontSize
             fieldAs "SearchDebounceSeconds" _.SearchDebounceSeconds
-            construct (fun showBranchRefs showStashes diffContextLines diffPresentationModeKey commitRowFontFamily commitRowMonoFontFamily commitRowTextFontSize commitRowMetaFontSize commitRowBadgeFontSize searchDebounceSeconds ->
+            fieldAs "ThemeMode" _.ThemeMode
+            construct (fun showBranchRefs showStashes diffContextLines diffPresentationModeKey commitRowFontFamily commitRowMonoFontFamily commitRowTextFontSize commitRowMetaFontSize commitRowBadgeFontSize searchDebounceSeconds themeMode ->
                 { ShowBranchRefs = showBranchRefs; ShowStashes = showStashes; DiffContextLines = diffContextLines
                   DiffPresentationModeKey = diffPresentationModeKey; CommitRowFontFamily = commitRowFontFamily
                   CommitRowMonoFontFamily = commitRowMonoFontFamily; CommitRowTextFontSize = commitRowTextFontSize
                   CommitRowMetaFontSize = commitRowMetaFontSize; CommitRowBadgeFontSize = commitRowBadgeFontSize
-                  SearchDebounceSeconds = searchDebounceSeconds })
+                  SearchDebounceSeconds = searchDebounceSeconds; ThemeMode = themeMode })
         }
         |> Json.compile
 
@@ -163,7 +168,8 @@ module private Conversion =
             wire.CommitRowTextFontSize |> Option.defaultValue Defaults.commitRowTextFontSize,
             wire.CommitRowMetaFontSize |> Option.defaultValue Defaults.commitRowMetaFontSize,
             wire.CommitRowBadgeFontSize |> Option.defaultValue Defaults.commitRowBadgeFontSize,
-            wire.SearchDebounceSeconds |> Option.defaultValue Defaults.searchDebounceSeconds)
+            wire.SearchDebounceSeconds |> Option.defaultValue Defaults.searchDebounceSeconds,
+            wire.ThemeMode |> Option.defaultValue Defaults.themeMode)
 
     let settingsWire (document: AppSettingsDocument) = {
         ShowBranchRefs = Some document.ShowBranchRefs; ShowStashes = Some document.ShowStashes
@@ -171,6 +177,7 @@ module private Conversion =
         CommitRowFontFamily = Option.ofObj document.CommitRowFontFamily; CommitRowMonoFontFamily = Option.ofObj document.CommitRowMonoFontFamily
         CommitRowTextFontSize = Some document.CommitRowTextFontSize; CommitRowMetaFontSize = Some document.CommitRowMetaFontSize
         CommitRowBadgeFontSize = Some document.CommitRowBadgeFontSize; SearchDebounceSeconds = Some document.SearchDebounceSeconds
+        ThemeMode = Option.ofObj document.ThemeMode
     }
 
     let uiStateDocument (wire: AppUiStateWire) =
@@ -235,6 +242,7 @@ type GitKayJson =
                 CommitRowMetaFontSize = double "CommitRowMetaFontSize"
                 CommitRowBadgeFontSize = double "CommitRowBadgeFontSize"
                 SearchDebounceSeconds = double "SearchDebounceSeconds"
+                ThemeMode = string "ThemeMode"
             }
 
     static member SerializeUiState(windowWidth: Nullable<double>, windowHeight: Nullable<double>, repoSelections: seq<KeyValuePair<string, string>>, layout: UiLayoutDocument) =

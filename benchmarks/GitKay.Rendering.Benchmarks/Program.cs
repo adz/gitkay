@@ -10,8 +10,7 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using GitKay.UI;
 
-if (args.FirstOrDefault() == "ui")
-{
+if (args.FirstOrDefault() == "ui") {
     // The real application styles and Skia text shaping, so layout and rendering costs are representative.
     AppBuilder.Configure<GitKay.UI.App>()
         .UseSkia()
@@ -26,8 +25,7 @@ AppBuilder.Configure<BenchmarkApp>()
     .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = true })
     .SetupWithoutStarting();
 
-if (args.FirstOrDefault() == "hotpaths")
-{
+if (args.FirstOrDefault() == "hotpaths") {
     HotPaths.Run(args.Skip(1).ToArray());
     return;
 }
@@ -50,14 +48,12 @@ Run("token-per-layout", 0);
 Run("styled-line-layout", 1);
 Run("plain-line-layout", 2);
 
-void Run(string name, int strategy)
-{
+void Run(string name, int strategy) {
     for (var warmup = 0; warmup < 20; warmup++) RenderFrame(warmup * 11, strategy);
     GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
     var before = GC.GetAllocatedBytesForCurrentThread();
     var samples = new double[frames];
-    for (var frame = 0; frame < frames; frame++)
-    {
+    for (var frame = 0; frame < frames; frame++) {
         var started = Stopwatch.GetTimestamp();
         RenderFrame((frame * 17) % Math.Max(1, lines.Length - visibleLines), strategy);
         samples[frame] = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
@@ -68,31 +64,24 @@ void Run(string name, int strategy)
     double Percentile(double p) => samples[Math.Min(samples.Length - 1, (int)Math.Ceiling(samples.Length * p) - 1)];
 }
 
-void RenderFrame(int first, int strategy)
-{
+void RenderFrame(int first, int strategy) {
     using var context = bitmap.CreateDrawingContext();
     context.FillRectangle(Brushes.Black, new Rect(0, 0, 1400, visibleLines * 18));
-    for (var row = 0; row < visibleLines; row++)
-    {
+    for (var row = 0; row < visibleLines; row++) {
         var text = lines[(first + row) % lines.Length];
         var x = 0d;
-        if (strategy == 0)
-        {
-            foreach (var token in SyntaxHighlighting.Tokenize(text))
-            {
+        if (strategy == 0) {
+            foreach (var token in SyntaxHighlighting.Tokenize(text)) {
                 var layout = new FormattedText(token.Text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, typeface, 12, Brushes.White);
                 context.DrawText(layout, new Point(x, row * 18));
                 x += layout.Width;
             }
         }
-        else
-        {
+        else {
             var layout = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, typeface, 12, Brushes.White);
-            if (strategy == 1)
-            {
+            if (strategy == 1) {
                 var offset = 0;
-                foreach (var token in SyntaxHighlighting.Tokenize(text))
-                {
+                foreach (var token in SyntaxHighlighting.Tokenize(text)) {
                     if (token.Kind != HighlightKind.Plain)
                         layout.SetForegroundBrush(Brushes.CornflowerBlue, offset, token.Text.Length);
                     offset += token.Text.Length;
