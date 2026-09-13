@@ -1,6 +1,7 @@
 namespace GitKay.Core
 
 open System
+open Reified
 
 /// Startup argument parsing and normalization. This module is pure: it performs no Git or host effects.
 module GitStartup =
@@ -238,22 +239,22 @@ module GitStartup =
                     match tryConsumeValue args index "--diff-context" "diff context line count" false with
                     | Error err -> Error err
                     | Ok (value, nextIndex) ->
-                        match Int32.TryParse value with
-                        | true, parsed ->
+                        match Parse.int value with
+                        | Ok parsed ->
                             diffContextLines <- max 0 parsed
                             index <- nextIndex
                             loop ()
-                        | false, _ ->
+                        | Error _ ->
                             Error ("Invalid diff context line count: " + value)
                 | arg when arg.StartsWith("--diff-context=") ->
                     let value = arg.Substring("--diff-context=".Length)
 
-                    match Int32.TryParse value with
-                    | true, parsed ->
+                    match Parse.int value with
+                    | Ok parsed ->
                         diffContextLines <- max 0 parsed
                         index <- index + 1
                         loop ()
-                    | false, _ ->
+                    | Error _ ->
                         Error ("Invalid diff context line count: " + value)
                 | "--diff-presentation" ->
                     match tryConsumeValue args index "--diff-presentation" "diff presentation mode" false with
