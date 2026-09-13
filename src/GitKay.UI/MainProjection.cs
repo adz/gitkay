@@ -174,6 +174,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private string _commitFindPlaceholder = "Find in diff  (Ctrl+F or /)";
     private bool _revealSearchMatchInDiff;
     private string? _commitSearchHighlightKey;
+    private bool _startupFilterApplied;
     private string? _lastRunSearchQuery;
 
     public ObservableCollection<CommitProjection> Commits { get; } = new();
@@ -315,6 +316,18 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             {
                 _suppressShowStashesDispatch = false;
             }
+        }
+
+        if (model.StartupShowOnlyMatches && !_startupFilterApplied)
+        {
+            _startupFilterApplied = true;
+            ShowOnlySearchMatches = true;
+        }
+
+        if (SearchUseRegex != model.SearchUseRegex)
+        {
+            _suppressSearchDispatch = true;
+            try { SearchUseRegex = model.SearchUseRegex; } finally { _suppressSearchDispatch = false; }
         }
 
         UpdateDiffContextState(model);

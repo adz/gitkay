@@ -655,7 +655,7 @@ summary Another line
         | _ -> Flow.ok [ sampleFile "docs/readme.md" "docs/readme.md" [ { Type = Models.Removed; Content = "old docs"; OldLineNo = Some 1; NewLineNo = None } ] ]
 
     let private search mode useRegex query =
-        match runFlow "" (GitSearch.searchCommitsWithDiffLoader (searchCommits ()) mode useRegex query searchDiffLoader) with
+        match runFlow "" (GitSearch.searchCommitsWithDiffLoader DateTimeOffset.Now (searchCommits ()) mode useRegex query searchDiffLoader) with
         | Error err -> failwith (GitError.describe err)
         | Ok results -> results
 
@@ -951,6 +951,7 @@ module AppTests =
     let private emptyModel : App.Model =
         {
             StartupSelection = App.NoStartupSelection
+            StartupShowOnlyMatches = false
             GitEnv = GitService.environment ""
             Status = ""
             StartupTargets = []
@@ -2776,3 +2777,88 @@ module StartupSelectionTests =
         test <@ partial.SelectedCommitHash = Some a.Hash && partial.StartupSelection = App.SelectionFound b.Hash @>
         let full, _ = App.update (App.Msg.HistoryLoaded(true, Ok [ a; b ])) partial
         test <@ full.SelectedCommitHash = Some b.Hash && full.StartupSelection = App.NoStartupSelection @>
+
+
+module CliTests =
+
+    let private parse args = match GitStartup.parseStartupOptions args with Ok o -> o | Error e -> failwith e
+
+    [<Fact>]
+    let ``ranges, excludes and several tips should become targets`` () =
+        test <@ (parse [| "main"; "topic" |]).StartupTargets = [ GitStartup.Revision "main"; GitStartup.Revision "topic" ] @>
+        test <@ (parse [| "v1..main" |]).StartupTargets = [ GitStartup.Revision "main"; GitStartup.Exclude "v1" ] @>
+        test <@ (parse [| "a...b" |]).StartupTargets = [ GitStartup.Revision "a"; GitStartup.Revision "b"; GitStartup.ExcludeMergeBase("a", "b") ] @>
+        test <@ (parse [| "main"; "^old" |]).StartupTargets = [ GitStartup.Revision "main"; GitStartup.Exclude "old" ] @>
+        test <@ (parse [| "..main" |]).StartupTargets = [ GitStartup.Revision "main"; GitStartup.Exclude "HEAD" ] @>
+        test <@ (parse [| "abc1234"; "def5678" |]).SelectedCommitHash = None @>
+
+    [<Fact>]
+    let ``paths after double dash should limit history`` () =
+        let options = parse [| "main"; "--"; "src/"; "README.md" |]
+        test <@ options.StartupTargets = [ GitStartup.Revision "main"; GitStartup.Path "src/"; GitStartup.Path "README.md" ] @>
+
+    [<Fact>]
+    let ``git log filters should become search prefixes and limit the list`` () =
+        let options = parse [| "--author=Jane Doe"; "--grep"; "fix"; "--since=2.weeks.ago"; "--until"; "2026-01-01"; "-Sneedle" |]
+        test <@ options.SearchQuery = "author:\"Jane Doe\" message:fix after:2.weeks.ago before:2026-01-01 diff:needle" @>
+        test <@ options.ShowOnlyMatches && not options.SearchUseRegex @>
+        let regex = parse [| "-G"; "find\\w+" |]
+        test <@ regex.SearchQuery = "diff:find\\w+" && regex.SearchUseRegex @>
+
+    [<Fact>]
+    let ``relative dates should parse against a given now`` () =
+        let now = DateTimeOffset(2026, 9, 13, 12, 0, 0, TimeSpan.Zero)
+        let expect days = Some(now.AddDays(-days).ToUnixTimeSeconds())
+        let parsed text = GitSearch.tryParseDate now text
+        let twoWeeks, threeDays, yesterday, nonsense = parsed "2.weeks.ago", parsed "3 days ago", parsed "yesterday", parsed "nonsense"
+        let e14, e3, e1 = expect 14.0, expect 3.0, expect 1.0
+        test <@ twoWeeks = e14 && threeDays = e3 && yesterday = e1 && nonsense = None @>
+
+    [<Fact>]
+    let ``history should honour ranges, excludes and paths`` () =
+        let root = Path.Combine(Path.GetTempPath(), "gitkay-cli-" + Guid.NewGuid().ToString("N"))
+        Repository.Init root |> ignore
+        try
+            use repo = new Repository(root)
+            let signature = Signature("T", "t@x", DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero))
+            let commit (file: string) (content: string) =
+                File.WriteAllText(Path.Combine(root, file), content)
+                Commands.Stage(repo, file)
+                repo.Commit(file + content, signature, signature)
+            let c1 = commit "a.txt" "1"
+            let c2 = commit "b.txt" "2"
+            let c3 = commit "a.txt" "3"
+            repo.ApplyTag("v1", c1.Sha) |> ignore
+            let history targets =
+                match Flow.run (GitService.environment root) (GitService.fetchHistory None false targets) |> Exit.toResult with
+                | Ok commits -> commits |> List.map (fun c -> c.Hash)
+                | Error e -> failwith (GitError.describe e)
+            test <@ history (GitStartup.revisionTargets "v1..HEAD") = [ c3.Sha; c2.Sha ] @>
+            test <@ history [ GitStartup.Revision "HEAD"; GitStartup.Exclude c2.Sha ] = [ c3.Sha ] @>
+            test <@ history [ GitStartup.Path "a.txt" ] = [ c3.Sha; c1.Sha ] @>
+        finally
+            try Directory.Delete(root, true) with _ -> ()
+
+    [<Fact>]
+    let ``too-short revisions should fail cleanly rather than crash the history load`` () =
+        let root = Path.Combine(Path.GetTempPath(), "gitkay-short-" + Guid.NewGuid().ToString("N"))
+        Repository.Init root |> ignore
+        try
+            use repo = new Repository(root)
+            let signature = Signature("T", "t@x", DateTimeOffset.Now)
+            File.WriteAllText(Path.Combine(root, "a.txt"), "1")
+            Commands.Stage(repo, "a.txt")
+            repo.Commit("one", signature, signature) |> ignore
+            match Flow.run (GitService.environment root) (GitService.fetchHistory None false [ GitStartup.Revision "ab" ]) with
+            | Exit.Failure(Cause.Fail _) -> ()
+            | other -> failwithf "expected a clean failure, got %A" other
+        finally
+            try Directory.Delete(root, true) with _ -> ()
+
+    [<Fact>]
+    let ``unresolvable command line revisions should fall back to the normal history`` () =
+        let model0, _ = App.init [| "ab"; "--"; "src/" |]
+        let next, _ = App.update (App.Msg.HistoryLoaded(false, Error (GitError.InvalidRevision "ab"))) model0
+        test <@ next.StartupTargets = [ GitStartup.Path "src/" ] @>
+        test <@ next.Status = "No commit found for 'ab'" @>
+

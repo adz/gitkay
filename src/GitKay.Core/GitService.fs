@@ -319,15 +319,45 @@ module GitService =
                 |> requireNotNull GitError.CommitterIdentityMissing
         }
 
+    let private tryCommit (repo: Repository) (revision: string) =
+        try
+            match repo.Lookup(revision) with
+            | :? LibGit2Sharp.Commit as commit -> Some commit
+            | :? TagAnnotation as tag -> match tag.Target with :? LibGit2Sharp.Commit as commit -> Some commit | _ -> None
+            | _ -> None
+        with _ ->
+            None
+
+    /// Commits hidden by ^X, A..B and A...B.
+    let private resolveExclusions (repo: Repository) (targets: StartupTarget list) =
+        targets
+        |> Result.traverse (fun target ->
+            match target with
+            | StartupTarget.Exclude revision ->
+                match tryCommit repo revision with
+                | Some commit -> Ok [ box commit ]
+                | None -> Error(GitError.RevisionNotFound revision)
+            | StartupTarget.ExcludeMergeBase(left, right) ->
+                match tryCommit repo left, tryCommit repo right with
+                | Some a, Some b -> Ok(match repo.ObjectDatabase.FindMergeBase(a, b) with null -> [] | mergeBase -> [ box mergeBase ])
+                | None, _ -> Error(GitError.RevisionNotFound left)
+                | _, None -> Error(GitError.RevisionNotFound right)
+            | _ -> Ok [])
+        |> Result.map List.concat
+
     let private resolveStartupTargets (includeStashes: bool) (repo: Repository) (targets: StartupTarget list) =
         let hasAll = targets |> List.exists ((=) StartupTarget.All)
+        let tips = targets |> List.filter (function StartupTarget.Exclude _ | StartupTarget.ExcludeMergeBase _ | StartupTarget.Path _ -> false | _ -> true)
 
-        if hasAll || List.isEmpty targets then
+        if hasAll || List.isEmpty tips then
             Ok (box (History.defaultRoots includeStashes repo))
         else
             let resolveTarget target =
                 match target with
-                | StartupTarget.All ->
+                | StartupTarget.All
+                | StartupTarget.Exclude _
+                | StartupTarget.ExcludeMergeBase _
+                | StartupTarget.Path _ ->
                     Ok []
                 | StartupTarget.Branch name ->
                     repo.Branches.[name] |> requireNotNull (GitError.BranchNotFound name)
@@ -342,23 +372,12 @@ module GitService =
                     match repo.Branches.[name] |> Option.ofObj with
                     | Some branch -> Ok [ box branch.Reference ]
                     | None ->
-                        result {
-                            try
-                                let! obj =
-                                    repo.Lookup(name) |> requireNotNull (GitError.RevisionNotFound name)
+                        // Lookup throws for too-short or ambiguous ids; tryCommit turns that into "not found".
+                        match tryCommit repo name with
+                        | Some commit -> Ok [ box commit ]
+                        | None -> Error(GitError.RevisionNotFound name)
 
-                                match obj with
-                                | :? LibGit2Sharp.Commit as c -> return [ box c ]
-                                | :? TagAnnotation as t -> 
-                                    match t.Target with
-                                    | :? LibGit2Sharp.Commit as c -> return [ box c ]
-                                    | _ -> return! Error (GitError.TagDoesNotPointToCommit name)
-                                | _ -> return [ box obj ]
-                            with _ ->
-                                return! Error (GitError.InvalidRevision name)
-                        }
-
-            targets
+            tips
             |> Result.traverse resolveTarget
             |> Result.map (List.concat >> box)
 
@@ -389,14 +408,24 @@ module GitService =
             let! env = Flow.env
             use repo = new Repository(env.RepoPath)
             let! roots = resolveStartupTargets includeStashes repo targets
+            let! exclusions = resolveExclusions repo targets
+            let paths = targets |> List.choose (function StartupTarget.Path path -> Some path | _ -> None)
             
             let refsByCommit = History.commitRefs includeStashes repo
             let filter = CommitFilter()
             filter.IncludeReachableFrom <- roots
+            if not exclusions.IsEmpty then filter.ExcludeReachableFrom <- box exclusions
             filter.SortBy <- CommitSortStrategies.Topological ||| CommitSortStrategies.Time
 
+            // -- <paths>: keep commits whose change against their first parent touches a path.
+            let touchesPaths (commit: LibGit2Sharp.Commit) =
+                paths.IsEmpty
+                || (let parentTree = commit.Parents |> Seq.tryHead |> Option.map _.Tree |> Option.toObj
+                    use changes = repo.Diff.Compare<TreeChanges>(parentTree, commit.Tree, paths, ExplicitPathsOptions(ShouldFailOnUnmatchedPath = false), CompareOptions(Similarity = SimilarityOptions.None))
+                    changes.Count > 0)
+
             let query = repo.Commits.QueryBy(filter)
-            let distinctQuery = query |> Seq.distinctBy (fun commit -> commit.Sha)
+            let distinctQuery = query |> Seq.distinctBy (fun commit -> commit.Sha) |> Seq.filter touchesPaths
             let limitedQuery =
                 match limit with
                 | Some n -> distinctQuery |> Seq.truncate n
@@ -468,7 +497,10 @@ module GitService =
         fetchDiffFileContent fullContextLines hash oldPath newPath
 
     let searchCommits (contextLines: int) (commits: Models.Commit list) (mode: GitSearch.Mode) (useRegex: bool) (query: string) : Flow<GitEnv, GitError, GitSearch.Result list> =
-        GitSearch.searchCommitsWithDiffLoader commits mode useRegex query (fun hash -> fetchDiff contextLines hash)
+        flow {
+            let! now = Clock.now
+            return! GitSearch.searchCommitsWithDiffLoader now commits mode useRegex query (fun hash -> fetchDiff contextLines hash)
+        }
 
     let fetchFileBlame (revision: string) (path: string) : Flow<GitEnv, GitError, Map<int, BlameInfo>> =
         flow {

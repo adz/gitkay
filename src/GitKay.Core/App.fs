@@ -41,6 +41,8 @@ module App =
     type Model =
         {
             StartupSelection: StartupSelection
+            /// Command-line filters (--author, --grep, ...) ask the list to show only matching commits.
+            StartupShowOnlyMatches: bool
             GitEnv: GitService.GitEnv
             Status: string
             StartupTargets: GitStartup.StartupTarget list
@@ -294,6 +296,7 @@ module App =
         | Error err ->
             {
                 StartupSelection = NoStartupSelection
+                StartupShowOnlyMatches = false
                 GitEnv = gitEnv
                 Status = "Error: " + err
                 StartupTargets = []
@@ -325,6 +328,7 @@ module App =
                         match startupOptions.SelectedCommitHash with
                         | Some revision -> ResolvingSelection revision
                         | None -> NoStartupSelection
+                    StartupShowOnlyMatches = startupOptions.ShowOnlyMatches
                     GitEnv = gitEnv
                     Status = "Loading history..."
                     StartupTargets = startupOptions.StartupTargets
@@ -334,7 +338,7 @@ module App =
                     DiffPresentationModeKey = startupOptions.DiffPresentationModeKey
                     SearchQuery = startupOptions.SearchQuery
                     SearchScopeKey = startupOptions.SearchScopeKey
-                    SearchUseRegex = false
+                    SearchUseRegex = startupOptions.SearchUseRegex
                     SelectedCommitHash = startupOptions.SelectedCommitHash
                     SearchResults = None
                     Commits = []
@@ -409,7 +413,11 @@ module App =
                 searchJob.Cancel()
                 let graphInfo = Graph.calculateLanes commits
                 let nextModel, historyCmd = historyLoadSelection model graphInfo
-                let nextModel = { nextModel with HasFullHistory = true } |> applyStartupSelectionNotice true
+                let pathNote =
+                    match model.StartupTargets |> List.choose (function GitStartup.StartupTarget.Path path -> Some path | _ -> None) with
+                    | [] -> ""
+                    | paths -> " touching " + String.Join(", ", paths)
+                let nextModel = { nextModel with HasFullHistory = true; Status = nextModel.Status + pathNote } |> applyStartupSelectionNotice true
                 let searchQuery = nextModel.SearchQuery.Trim()
 
                 if String.IsNullOrWhiteSpace searchQuery then
@@ -445,6 +453,24 @@ module App =
                         }
 
                     searchModel, Cmd.batch [ historyCmd; loadFullCmd; startSearchLoad model.GitEnv searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey model.SearchUseRegex startedAtTicks ]
+        | HistoryLoaded (_, Error err) when model.Commits.IsEmpty
+                                            && model.StartupTargets |> List.exists (function GitStartup.StartupTarget.Path _ | GitStartup.StartupTarget.All -> false | _ -> true) ->
+            // Command-line revisions that don't resolve: fall back to the normal history (keeping any paths) and say so.
+            let described =
+                model.StartupTargets
+                |> List.choose (function
+                    | GitStartup.StartupTarget.Revision r | GitStartup.StartupTarget.Branch r | GitStartup.StartupTarget.Sha r
+                    | GitStartup.StartupTarget.Tag r | GitStartup.StartupTarget.Exclude r -> Some r
+                    | GitStartup.StartupTarget.ExcludeMergeBase(a, b) -> Some $"{a}...{b}"
+                    | _ -> None)
+                |> String.concat " "
+            let fallbackTargets = model.StartupTargets |> List.filter (function GitStartup.StartupTarget.Path _ -> true | _ -> false)
+            let nextModel =
+                { model with
+                    StartupTargets = fallbackTargets
+                    StartupSelection = SelectionNotFound described
+                    Status = $"No commit found for '{described}'" }
+            nextModel, loadHistory model.GitEnv (Some historyLimit) model.ShowStashes fallbackTargets
         | HistoryLoaded (_, Error err) ->
             searchJob.Cancel()
             { model with Status = "Error: " + GitError.describe err; SearchResults = None; SearchStartedAtTicks = None }, Cmd.none

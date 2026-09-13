@@ -139,10 +139,28 @@ module GitSearch =
         else
             fun value -> containsIgnoreCase value text
 
-    let private tryParseDate (text: string) =
-        match DateTimeOffset.TryParse(text, Globalization.CultureInfo.InvariantCulture, Globalization.DateTimeStyles.AssumeLocal) with
-        | true, date -> Some(date.ToUnixTimeSeconds())
-        | _ -> None
+    /// Absolute dates, or git-style relative ones: "2 weeks ago", "3.days.ago", "yesterday".
+    let tryParseDate (now: DateTimeOffset) (text: string) =
+        let normalized = text.Trim().ToLowerInvariant().Replace('.', ' ').Replace('_', ' ')
+        let relative = Regex.Match(normalized, @"^(\d+)\s*(second|minute|hour|day|week|month|year)s?(\s+ago)?$")
+        if normalized = "yesterday" then
+            Some(now.AddDays(-1.0).ToUnixTimeSeconds())
+        elif relative.Success then
+            let amount = float (int relative.Groups.[1].Value)
+            let date =
+                match relative.Groups.[2].Value with
+                | "second" -> now.AddSeconds(-amount)
+                | "minute" -> now.AddMinutes(-amount)
+                | "hour" -> now.AddHours(-amount)
+                | "day" -> now.AddDays(-amount)
+                | "week" -> now.AddDays(-7.0 * amount)
+                | "month" -> now.AddMonths(-(int amount))
+                | _ -> now.AddYears(-(int amount))
+            Some(date.ToUnixTimeSeconds())
+        else
+            match DateTimeOffset.TryParse(text, Globalization.CultureInfo.InvariantCulture, Globalization.DateTimeStyles.AssumeLocal) with
+            | true, date -> Some(date.ToUnixTimeSeconds())
+            | _ -> None
 
     let private buildDisplayPath oldPath newPath =
         if oldPath = newPath then newPath
@@ -154,6 +172,7 @@ module GitSearch =
 
     /// Searches commits: every term must match. Diffs load only for commits whose metadata terms already matched.
     let searchCommitsWithDiffLoader
+        (now: DateTimeOffset)
         (commits: Models.Commit list)
         (mode: Mode)
         (useRegex: bool)
@@ -205,8 +224,8 @@ module GitSearch =
                                 let refs = refMatches ()
                                 if not refs.IsEmpty then addKind "ref"; matchedRefs.AddRange refs
                                 not refs.IsEmpty
-                            | After -> tryParseDate term.Text |> Option.forall (fun date -> commit.Timestamp >= date)
-                            | Before -> tryParseDate term.Text |> Option.forall (fun date -> commit.Timestamp < date)
+                            | After -> tryParseDate now term.Text |> Option.forall (fun date -> commit.Timestamp >= date)
+                            | Before -> tryParseDate now term.Text |> Option.forall (fun date -> commit.Timestamp < date)
                             | ChangedPath
                             | ChangedLine -> true)
 
