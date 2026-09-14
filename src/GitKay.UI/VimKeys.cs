@@ -40,6 +40,9 @@ internal sealed class ListBoxVimHost(ListBox list, IVimCommands commands) : Vim.
     public int Side => 0;
     public bool HasSelection => false;
     public int HalfPageRows => 10;
+    public int PageRows => 20;
+    public void FocusScreenRow(Vim.VimScreenRow row, int offset) { }
+    public void ScrollRows(int delta) { }
     public void SetCaret(int column) { }
     public void SwitchSide(int column) { }
     public void MoveRows(int delta) => MainWindowNavigation.TryMoveSelection(list, delta);

@@ -40,7 +40,7 @@ module SelfTest =
         [ check "vim keys interpret and render actions" (fun () ->
               let context: Vim.KeyContext =
                   { Pane = Vim.VimPane.Diff; LineText = "call(first.second, third)"; Caret = 11; OtherSideText = null
-                    Side = 0; HasSelection = false; HalfPageRows = 10 }
+                    Side = 0; HasSelection = false; HalfPageRows = 10; PageRows = 20 }
               let press symbol : Vim.KeyStroke = { Name = "?"; Symbol = symbol; Control = false; Shift = false; Alt = false }
               let mutable state = Vim.initial
               let rendered = Collections.Generic.List<string>()

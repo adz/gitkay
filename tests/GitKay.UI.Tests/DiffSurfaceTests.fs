@@ -275,3 +275,30 @@ module DiffSurfaceTests =
 
             fixture.Surface.GoToLine 21
             test <@ Object.ReferenceEquals(fixture.Surface.SelectedItem, fixture.Line 0 20) @>)
+
+    [<Fact>]
+    let ``H M L focus screen rows and Ctrl+E scrolls without moving the focus`` () =
+        Headless.run (fun () ->
+            use fixture = new DiffFixture "diff"
+            fixture.Surface.Focus() |> ignore
+            let focusedTop () =
+                let row = fixture.Surface.SelectedItem
+                fixture.ViewportTop row
+            let rowBottomFits () = focusedTop () + fixture.Surface.RowHeightAt(1) <= 300.0 + 0.5
+
+            fixture.Press(Key.H, RawInputModifiers.Shift, "H")
+            let top = focusedTop ()
+            fixture.Press(Key.L, RawInputModifiers.Shift, "L")
+            let bottom = focusedTop ()
+            let bottomFits = rowBottomFits ()
+            fixture.Press(Key.M, RawInputModifiers.Shift, "M")
+            let middle = focusedTop ()
+            test <@ top >= 0.0 && top < 40.0 && bottom > 200.0 && bottomFits && middle > top && middle < bottom @>
+
+            let focused = fixture.Surface.SelectedItem
+            let offsetBefore = fixture.Scroller.Offset.Y
+            fixture.Press(Key.E, RawInputModifiers.Control)
+            let scrolled = fixture.Scroller.Offset.Y > offsetBefore
+            let kept = Object.ReferenceEquals(fixture.Surface.SelectedItem, focused)
+            test <@ scrolled && kept @>)
+

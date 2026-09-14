@@ -23,6 +23,12 @@ module Vim =
         | Center = 1
         | Bottom = 2
 
+    /// <summary>A place on screen for H / M / L.</summary>
+    type VimScreenRow =
+        | Top = 0
+        | Middle = 1
+        | Bottom = 2
+
     /// <summary>One key press, independent of the UI toolkit.</summary>
     /// <param name="Name">The physical key's name, e.g. "J", "D4", "Escape", "Left", "Home".</param>
     /// <param name="Symbol">The character the key typed with the current layout and Shift, e.g. "j", "J", "$"; null when none.</param>
@@ -46,6 +52,8 @@ module Vim =
         abstract Side: int
         abstract HasSelection: bool
         abstract HalfPageRows: int
+        /// <summary>How many rows fit on screen, for PageUp / PageDown.</summary>
+        abstract PageRows: int
         abstract SetCaret: column: int -> unit
         abstract SwitchSide: column: int -> unit
         abstract MoveRows: delta: int -> unit
@@ -53,6 +61,10 @@ module Vim =
         abstract GoToPosition: position: int -> unit
         abstract MoveToHunk: direction: int -> unit
         abstract ScrollFocus: position: VimScroll -> unit
+        /// <summary>Focuses the row at the top, middle or bottom of the screen; offset counts rows inwards from that edge.</summary>
+        abstract FocusScreenRow: row: VimScreenRow * offset: int -> unit
+        /// <summary>Scrolls by whole rows without moving the focus, unless the focused row would leave the screen.</summary>
+        abstract ScrollRows: delta: int -> unit
         abstract ToggleVisual: linewise: bool -> unit
         /// <summary>Clears a selection or visual mode; false when there was nothing to clear.</summary>
         abstract CancelSelection: unit -> bool
@@ -79,6 +91,8 @@ module Vim =
         | GoToPosition of position: int
         | MoveToHunk of direction: int
         | ScrollFocus of position: VimScroll
+        | FocusScreenRow of row: VimScreenRow * offset: int
+        | ScrollRows of delta: int
         | ToggleVisual of linewise: bool
         | CancelSelection
         | CopySelection
@@ -99,6 +113,8 @@ module Vim =
             | GoToPosition position -> $"GoToPosition {position}"
             | MoveToHunk direction -> $"MoveToHunk {direction}"
             | ScrollFocus position -> $"ScrollFocus {int position}"
+            | FocusScreenRow(row, offset) -> $"FocusScreenRow {int row} {offset}"
+            | ScrollRows delta -> $"ScrollRows {delta}"
             | ToggleVisual linewise -> if linewise then "ToggleVisual lines" else "ToggleVisual characters"
             | CancelSelection -> "CancelSelection"
             | CopySelection -> "CopySelection"
@@ -143,7 +159,8 @@ module Vim =
           OtherSideText: string
           Side: int
           HasSelection: bool
-          HalfPageRows: int }
+          HalfPageRows: int
+          PageRows: int }
 
     let contextOf (host: IVimHost) =
         { Pane = host.Pane
@@ -152,7 +169,8 @@ module Vim =
           OtherSideText = host.OtherSideText
           Side = host.Side
           HasSelection = host.HasSelection
-          HalfPageRows = host.HalfPageRows }
+          HalfPageRows = host.HalfPageRows
+          PageRows = host.PageRows }
 
     // ----- Pure text functions over one line -----
 
@@ -504,11 +522,20 @@ module Vim =
                         handled cleared [ MoveRows(max 1 context.HalfPageRows) ]
                     | "U", _ when stroke.Control && not stroke.Shift && not stroke.Alt ->
                         handled cleared [ MoveRows(-(max 1 context.HalfPageRows)) ]
+                    | ("PageDown" | "PageUp"), _ when plain && not stroke.Shift ->
+                        let rows = count * max 1 context.PageRows
+                        handled cleared [ MoveRows(if stroke.Name = "PageDown" then rows else -rows) ]
+                    | ("E" | "Y"), _ when stroke.Control && not stroke.Shift && not stroke.Alt && context.Pane <> VimPane.Files ->
+                        handled cleared [ ScrollRows(if stroke.Name = "E" then count else -count) ]
                     | _ when not plain -> unhandled cleared
                     | _, ("j" | "k") -> handled cleared [ MoveRows(if symbol = "j" then count else -count) ]
                     | _, "g" -> handled { state with Pending = Prefix 'g' } []
                     | _, "G" -> handled cleared [ (if lineCount > 0 then GoToPosition lineCount else MoveToEdge true) ]
                     | _, "z" when context.Pane <> VimPane.Files -> handled { state with Pending = Prefix 'z' } []
+                    // H / L take a count as rows in from the screen's edge (3H is the third row from the top).
+                    | _, "H" when context.Pane <> VimPane.Files -> handled cleared [ FocusScreenRow(VimScreenRow.Top, count - 1) ]
+                    | _, "M" when context.Pane <> VimPane.Files -> handled cleared [ FocusScreenRow(VimScreenRow.Middle, 0) ]
+                    | _, "L" when context.Pane <> VimPane.Files -> handled cleared [ FocusScreenRow(VimScreenRow.Bottom, count - 1) ]
                     | _, ("]" | "[") when context.Pane = VimPane.Diff -> handled { state with Pending = Prefix symbol[0] } []
                     | _, ("n" | "N") -> handled cleared (List.replicate count (FindNext(symbol = "n")))
                     | _, ("p" | "P") -> handled cleared [ GoToParent(if symbol = "P" then 1 else 0) ]
@@ -570,6 +597,8 @@ module Vim =
         | GoToPosition position -> host.GoToPosition position
         | MoveToHunk direction -> host.MoveToHunk direction
         | ScrollFocus position -> host.ScrollFocus position
+        | FocusScreenRow(row, offset) -> host.FocusScreenRow(row, offset)
+        | ScrollRows delta -> host.ScrollRows delta
         | ToggleVisual linewise -> host.ToggleVisual linewise
         | CancelSelection -> host.CancelSelection() |> ignore
         | CopySelection -> host.CopySelection()

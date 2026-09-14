@@ -493,6 +493,40 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
     void GitKay.Core.Vim.IVimHost.GoToPosition(int position) => SelectPosition(position);
     void GitKay.Core.Vim.IVimHost.MoveToHunk(int direction) { }
     void GitKay.Core.Vim.IVimHost.ScrollFocus(GitKay.Core.Vim.VimScroll position) => ScrollSelectionTo(position);
+    int GitKay.Core.Vim.IVimHost.PageRows => Math.Max(1, ViewportRowCount - 2);
+
+    void GitKay.Core.Vim.IVimHost.FocusScreenRow(GitKay.Core.Vim.VimScreenRow row, int offset) {
+        EnsureRows();
+        if (_scrollViewer == null || _rows.Length == 0) return;
+        var (first, last) = VisibleRows(_scrollViewer.Offset.Y);
+        var target = row switch {
+            GitKay.Core.Vim.VimScreenRow.Top => Math.Min(last, first + offset),
+            GitKay.Core.Vim.VimScreenRow.Bottom => Math.Max(first, last - offset),
+            _ => (first + last) / 2,
+        };
+        SelectPosition(target + 1);
+    }
+
+    void GitKay.Core.Vim.IVimHost.ScrollRows(int delta) {
+        EnsureRows();
+        if (_scrollViewer == null || _rows.Length == 0) return;
+        var maximum = Math.Max(0, _rows.Length * RowHeight - _scrollViewer.Viewport.Height);
+        var top = Math.Floor(_scrollViewer.Offset.Y / RowHeight) + delta;
+        var offset = Math.Clamp(top * RowHeight, 0, maximum);
+        _scrollViewer.Offset = _scrollViewer.Offset.WithY(offset);
+        // Like vim, the selection stays put until scrolling would take it off screen.
+        var (first, last) = VisibleRows(offset);
+        var current = (_keyboardSelection ?? SelectedItem) is { } item ? Array.IndexOf(_rows, item) : -1;
+        if (current >= 0 && (current < first || current > last)) SelectPosition((current < first ? first : last) + 1);
+    }
+
+    /// <summary>The first and last rows wholly inside the viewport at a scroll offset.</summary>
+    private (int First, int Last) VisibleRows(double offset) {
+        var first = (int)Math.Ceiling(offset / RowHeight - 0.01);
+        var last = (int)Math.Floor((offset + _scrollViewer!.Viewport.Height) / RowHeight + 0.01) - 1;
+        first = Math.Clamp(first, 0, _rows.Length - 1);
+        return (first, Math.Clamp(last, first, _rows.Length - 1));
+    }
     void GitKay.Core.Vim.IVimHost.ToggleVisual(bool linewise) { }
     bool GitKay.Core.Vim.IVimHost.CancelSelection() => false;
     void GitKay.Core.Vim.IVimHost.CopySelection() { }

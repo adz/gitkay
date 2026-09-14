@@ -14,7 +14,8 @@ let private diffContext caret =
       OtherSideText = null
       Side = 0
       HasSelection = false
-      HalfPageRows = 10 }
+      HalfPageRows = 10
+      PageRows = 25 }
 
 let private paneContext pane = { diffContext 0 with Pane = pane; LineText = null }
 
@@ -23,6 +24,7 @@ let private key (text: string) =
     match text with
     | "Escape" | "Left" | "Right" | "Up" | "Down" | "Home" | "End" | "LeftShift" ->
         { Name = text; Symbol = null; Control = false; Shift = false; Alt = false }
+    | "PageUp" | "PageDown" -> { Name = text; Symbol = null; Control = false; Shift = false; Alt = false }
     | _ when text.StartsWith "C-" ->
         { Name = text.Substring(2).ToUpperInvariant(); Symbol = null; Control = true; Shift = false; Alt = false }
     | _ -> { Name = "?"; Symbol = text; Control = false; Shift = System.Char.IsUpper text[0]; Alt = false }
@@ -180,6 +182,9 @@ type private RecordingHost() =
         member _.Side = 0
         member _.HasSelection = false
         member _.HalfPageRows = 10
+        member _.PageRows = 25
+        member this.FocusScreenRow(row, offset) = this.Calls.Add $"screen {int row} {offset}"
+        member this.ScrollRows delta = this.Calls.Add $"scroll rows {delta}"
         member this.SetCaret column = this.Calls.Add $"caret {column}"
         member this.SwitchSide column = this.Calls.Add $"side {column}"
         member this.MoveRows delta = this.Calls.Add $"rows {delta}"
@@ -209,4 +214,17 @@ let ``a session keeps pending keys between presses and applies actions to the ho
     let calls = List.ofSeq host.Calls
     test <@ consumedY && waiting && consumedE && idle @>
     test <@ calls = [ "copy 0 4 False"; "caret 0" ] @>
+
+[<Fact>]
+let ``page keys, screen rows and one-row scrolling`` () =
+    let commits = paneContext VimPane.Commits
+    test <@ actions commits [ "PageDown" ] = [ "MoveRows 25" ] @>
+    test <@ actions commits [ "2"; "PageUp" ] = [ "MoveRows -50" ] @>
+    test <@ actions commits [ "H" ] = [ "FocusScreenRow 0 0" ] @>
+    test <@ actions commits [ "3"; "L" ] = [ "FocusScreenRow 2 2" ] @>
+    test <@ actions (diffContext 0) [ "M" ] = [ "FocusScreenRow 1 0" ] @>
+    test <@ actions commits [ "C-e" ] = [ "ScrollRows 1" ] @>
+    test <@ actions (diffContext 0) [ "4"; "C-y" ] = [ "ScrollRows -4" ] @>
+    let _, consumed, _ = run (paneContext VimPane.Files) [ "C-e" ]
+    test <@ not consumed @>
 

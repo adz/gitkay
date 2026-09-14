@@ -1008,6 +1008,18 @@
                             <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Scroll so the focused row sits at the centre / top / bottom" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
                         </Grid>
                         <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="PageUp / PageDown" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="A screen of commits or diff rows down / up (the files list moves 20)" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="H / M / L" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Focus the top / middle / bottom row on screen (3H: third from the top)" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Ctrl+E / Ctrl+Y" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Scroll one row down / up; the focus stays unless it would leave the screen" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
                             <TextBlock Text="f / F / t / T  x · ; / ," FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Jump to (f) or just before (t) the next x on the line, backwards with Shift; ; repeats, , reverses" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
                         </Grid>

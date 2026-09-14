@@ -1711,6 +1711,47 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     void GitKay.Core.Vim.IVimHost.ScrollFocus(GitKay.Core.Vim.VimScroll position) => ScrollSelectionTo(position);
 
+    int GitKay.Core.Vim.IVimHost.PageRows => Math.Max(1, ViewportRowCount - 2);
+
+    void GitKay.Core.Vim.IVimHost.FocusScreenRow(GitKay.Core.Vim.VimScreenRow row, int offset) {
+        if (_scrollViewer == null || _rows.Length == 0) return;
+        var (first, last) = FullyVisibleRows();
+        var index = row switch {
+            GitKay.Core.Vim.VimScreenRow.Top => Math.Min(last, first + offset),
+            GitKay.Core.Vim.VimScreenRow.Bottom => Math.Max(first, last - offset),
+            _ => FindRow(_scrollViewer.Offset.Y + _scrollViewer.Viewport.Height / 2),
+        };
+        FocusRow(index);
+    }
+
+    void GitKay.Core.Vim.IVimHost.ScrollRows(int delta) {
+        if (_scrollViewer == null || _rows.Length == 0) return;
+        var top = Math.Clamp(FindRow(_scrollViewer.Offset.Y) + delta, 0, _rows.Length - 1);
+        var maximum = Math.Max(0, _tops[^1] - _scrollViewer.Viewport.Height);
+        _scrollViewer.Offset = _scrollViewer.Offset.WithY(Math.Min(_tops[top], maximum));
+        // Like vim, the focus stays put until scrolling would take it off screen.
+        var (first, last) = FullyVisibleRows(_scrollViewer.Offset.Y);
+        if (SelectedItem != null && Array.IndexOf(_rows, SelectedItem) is var focused && focused >= 0 && (focused < first || focused > last))
+            FocusRow(focused < first ? first : last);
+    }
+
+    /// <summary>The first and last rows wholly inside the viewport (or the partly visible ones when none fit).</summary>
+    private (int First, int Last) FullyVisibleRows(double? offset = null) {
+        var top = offset ?? _scrollViewer!.Offset.Y;
+        var bottom = top + _scrollViewer!.Viewport.Height;
+        var first = FindRow(top);
+        if (_tops[first] < top - 0.5 && first + 1 < _rows.Length) first++;
+        var last = FindRow(Math.Max(top, bottom - 1));
+        if (_tops[last + 1] > bottom + 0.5 && last > first) last--;
+        return (first, Math.Max(first, last));
+    }
+
+    private void FocusRow(int index) {
+        SelectedItem = _rows[index];
+        ScrollIntoView(_rows[index]);
+        if (_visualAnchorRow >= 0) UpdateVisualSelection(index);
+    }
+
     void GitKay.Core.Vim.IVimHost.ToggleVisual(bool linewise) => ToggleVisualMode(linewise);
 
     bool GitKay.Core.Vim.IVimHost.CancelSelection() {
