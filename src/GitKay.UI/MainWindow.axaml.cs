@@ -22,6 +22,7 @@ public partial class MainWindow : Window {
 
     public MainWindow() {
         InitializeComponent();
+        Icon = AppIcon.Window;
         DataContextChanged += OnDataContextChanged;
         CommitListBox.AddHandler(InputElement.KeyDownEvent, OnMainListBoxKeyDown, RoutingStrategies.Tunnel);
         CommitScrollViewer.AddHandler(InputElement.PointerPressedEvent, OnCommitScrollPointerPressed, RoutingStrategies.Tunnel);
@@ -39,6 +40,8 @@ public partial class MainWindow : Window {
         PaletteBox.AddHandler(InputElement.KeyDownEvent, OnPaletteBoxKeyDown, RoutingStrategies.Tunnel);
         CommitFindBox.AddHandler(InputElement.KeyDownEvent, OnCommitFindBoxKeyDown, RoutingStrategies.Tunnel);
         CommitListBox.FilterRequested += OnCommitFilterRequested;
+        CommitListBox.BranchOperationRequested += (operation, branch) => RunGitOperation(GitOperations.ForBranch(operation, branch));
+        DiffRowsListBox.TextCopied += (_, lines) => { if (_projection != null) _projection.Status = lines == 1 ? "Copied 1 line" : $"Copied {lines} lines"; };
         AddHandler(InputElement.GotFocusEvent, (_, _) => UpdatePaneFocusIndicator(), RoutingStrategies.Bubble);
         AddHandler(InputElement.LostFocusEvent, (_, _) => Dispatcher.UIThread.Post(UpdatePaneFocusIndicator), RoutingStrategies.Bubble);
     }
@@ -126,6 +129,11 @@ public partial class MainWindow : Window {
             return true;
         }
 
+        if (e.KeyModifiers == KeyModifiers.None && e.Key == Key.Enter && from == Pane.Files && DiffFilesListBox.SelectedItem is RepoFileRow unchanged) {
+            _projection?.ShowWholeFile(FileTarget.From(unchanged));
+            return true;
+        }
+
         if (e.KeyModifiers == KeyModifiers.None && e.Key == Key.Enter && from is Pane.Commits or Pane.Files) {
             FocusPaneFromKeyboard(Pane.Diff);
             return true;
@@ -207,7 +215,9 @@ public partial class MainWindow : Window {
         var ctrlShift = KeyModifiers.Control | KeyModifiers.Shift;
         if (e.Key == Key.P && e.KeyModifiers == ctrlShift) { OpenPalette(PaletteMode.Commands); e.Handled = true; return; }
         if (e.Key == Key.P && e.KeyModifiers == KeyModifiers.Control) { OpenPalette(PaletteMode.Files); e.Handled = true; return; }
+        if (e.Key == Key.D && e.KeyModifiers == ctrlShift) { ShowDiagnostics(); e.Handled = true; return; }
         if (e.Key == Key.G && e.KeyModifiers == KeyModifiers.Control) { OpenPalette(PaletteMode.Refs); e.Handled = true; return; }
+        if (DiffZoomDirection(e) is { } zoom) { _projection?.ZoomDiff(zoom); e.Handled = true; return; }
         if (e.Key is Key.Left or Key.Right && e.KeyModifiers == KeyModifiers.Alt) {
             (e.Key == Key.Left ? _projection?.GoBackCommand : _projection?.GoForwardCommand)?.Execute(null);
             e.Handled = true;
@@ -346,6 +356,132 @@ public partial class MainWindow : Window {
         SearchBox.CaretIndex = projection.SearchQuery.Length;
     }
 
+    /// <summary>Ctrl with =/+ zooms in, - zooms out, 0 resets; applies to diff text only.</summary>
+    internal static int? DiffZoomDirection(KeyEventArgs e) {
+        if (!e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Alt)) return null;
+        return e.Key switch {
+            Key.OemPlus or Key.Add => 1,
+            Key.OemMinus or Key.Subtract => -1,
+            Key.D0 or Key.NumPad0 when !e.KeyModifiers.HasFlag(KeyModifiers.Shift) => 0,
+            _ => null,
+        };
+    }
+
+    private void OnZoomDiffMenuItemClick(object? sender, RoutedEventArgs e) {
+        if (sender is MenuItem { Tag: string tag } && int.TryParse(tag, out var direction)) _projection?.ZoomDiff(direction);
+    }
+
+    // ----- File actions: context menus on the file list and diff file headers, whole-file popup, VS Code. -----
+
+    private void AddFileMenuItems(ContextMenu menu, FileTarget target, int? line, bool includeSelect) {
+        if (_projection is not { } projection) return;
+        void Add(string header, Action action, string? gesture = null) {
+            var item = new MenuItem { Header = header };
+            if (gesture != null) item.InputGesture = KeyGesture.Parse(gesture);
+            item.Click += (_, _) => action();
+            menu.Items.Add(item);
+        }
+
+        if (includeSelect) Add("Select", () => projection.SelectFile(target));
+        Add("Copy full path", () => CopyToClipboard(projection.FullPath(target), "Copied full path"));
+        Add("Copy relative path", () => CopyToClipboard(target.Path, "Copied relative path"));
+        menu.Items.Add(new Separator());
+        Add("Show whole file", () => projection.ShowWholeFile(target));
+        Add("Filter history to this file", () => projection.FilterHistoryToFile(target));
+        if (projection.HasHistoryPathFilter) Add($"Clear file filter ({projection.HistoryPathFilter})", projection.ClearHistoryPathFilter);
+        Add(line is { } number ? $"Open in VS Code at line {number}" : "Open in VS Code", () => projection.OpenInVsCode(target, line));
+    }
+
+    private async void CopyToClipboard(string text, string status) {
+        if (Clipboard is not { } clipboard) return;
+        await clipboard.SetTextAsync(text);
+        if (_projection != null) _projection.Status = $"{status}: {text}";
+    }
+
+    private void OnDiffFilesContextRequested(object? sender, ContextRequestedEventArgs e) {
+        var row = (e.Source as Control)?.DataContext;
+        FileTarget? target = row switch {
+            DiffFileProjection file => FileTarget.From(file),
+            RepoFileRow unchanged => FileTarget.From(unchanged),
+            _ => null,
+        };
+        if (target == null) return;
+        var menu = new ContextMenu();
+        AddFileMenuItems(menu, target, null, includeSelect: true);
+        menu.Open(e.Source as Control ?? DiffFilesListBox);
+        e.Handled = true;
+    }
+
+    private void OnDiffFilesDoubleTapped(object? sender, TappedEventArgs e) {
+        if ((e.Source as Control)?.DataContext is RepoFileRow unchanged) _projection?.ShowWholeFile(FileTarget.From(unchanged));
+        else if ((e.Source as Control)?.DataContext is DiffFileProjection file) _projection?.ShowWholeFile(FileTarget.From(file));
+    }
+
+    private void OnDiffFileHeaderContextRequested(object? sender, DiffFileMenuEventArgs e) =>
+        AddFileMenuItems(e.Menu, FileTarget.From(e.File), e.LineNumber, includeSelect: e.LineNumber == null);
+
+    private void OpenWholeFile(FileTarget target) {
+        if (_projection is not { RepositoryPath: { } repo, SelectedCommit: { } commit } projection) return;
+        var window = new WholeFileWindow(projection, repo, commit.FullHash, commit.Hash, target);
+        window.Show(this);
+    }
+
+    // ----- Repositories and remotes -----
+
+    private void OnOpenRepositoryMenuItemClick(object? sender, RoutedEventArgs e) => OnWindowCommandRequested("open-repository");
+
+    private DiagnosticsWindow? _diagnosticsWindow;
+
+    private void OnDiagnosticsMenuItemClick(object? sender, RoutedEventArgs e) => ShowDiagnostics();
+
+    /// <summary>One diagnostics window, left open alongside the main window; asking again brings it forward.</summary>
+    private void ShowDiagnostics() {
+        if (_diagnosticsWindow is { } open) {
+            open.Activate();
+            return;
+        }
+
+        _diagnosticsWindow = new DiagnosticsWindow();
+        _diagnosticsWindow.Closed += (_, _) => _diagnosticsWindow = null;
+        _diagnosticsWindow.Show();
+    }
+
+    private void OnFetchAllMenuItemClick(object? sender, RoutedEventArgs e) => OnWindowCommandRequested("fetch-all");
+
+    private async System.Threading.Tasks.Task OpenRepositoryAsync() {
+        var folders = await StorageProvider.OpenFolderPickerAsync(new Avalonia.Platform.Storage.FolderPickerOpenOptions {
+            Title = "Open Git repository",
+            AllowMultiple = false,
+        });
+        if (folders.Count == 0 || Avalonia.Platform.Storage.StorageProviderExtensions.TryGetLocalPath(folders[0]) is not { } path || _projection is not { } projection) return;
+        if (!IsInsideRepository(path)) {
+            projection.Status = $"Not a Git repository: {path}";
+            return;
+        }
+
+        try {
+            ExternalTools.StartGitKay(path);
+            projection.Status = $"Opened {path} in a new window";
+        }
+        catch (Exception exception) {
+            projection.Status = $"Could not open {path}: {exception.Message}";
+        }
+    }
+
+    private static bool IsInsideRepository(string path) {
+        for (var directory = new System.IO.DirectoryInfo(path); directory != null; directory = directory.Parent)
+            if (LibGit2Sharp.Repository.IsValid(directory.FullName)) return true;
+        return false;
+    }
+
+    private void RunGitOperation(GitOperation operation) {
+        if (_projection is not { WorkingDirectory: { } directory } projection) return;
+        var window = new GitOperationWindow(operation, directory, succeeded => {
+            if (succeeded) projection.RereadRefs();
+        });
+        window.Show(this);
+    }
+
     private void OnDiffFolderPointerPressed(object? sender, PointerPressedEventArgs e) {
         if (sender is Control { DataContext: DiffFileFolderRow folder } && _projection != null) {
             _projection.ToggleDiffFolderCommand.Execute(folder);
@@ -394,6 +530,7 @@ public partial class MainWindow : Window {
         if (_projection != null) {
             _projection.PropertyChanged += OnProjectionPropertyChanged;
             _projection.WindowCommandRequested += OnWindowCommandRequested;
+            _projection.WholeFileRequested += OpenWholeFile;
             _projection.FileJumpRequested += file =>
                 Dispatcher.UIThread.Post(() => DiffRowsListBox.ScrollToTop(file.Header), DispatcherPriority.Background);
         }
@@ -464,6 +601,15 @@ public partial class MainWindow : Window {
             case "focus-find":
                 CommitFindBox.Focus();
                 CommitFindBox.SelectAll();
+                break;
+            case "open-repository":
+                await OpenRepositoryAsync();
+                break;
+            case "diagnostics":
+                ShowDiagnostics();
+                break;
+            case "fetch-all":
+                RunGitOperation(GitOperations.FetchAll());
                 break;
             case "copy-hash" or "copy-subject" when _projection?.SelectedCommit is { } commit && Clipboard is { } clipboard:
                 await clipboard.SetTextAsync(command == "copy-hash" ? commit.FullHash : commit.Subject);

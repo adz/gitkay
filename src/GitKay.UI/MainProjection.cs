@@ -202,8 +202,10 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     /// (<see cref="ToggleDiffFolderCommand"/>) — so a collapsed folder can always be clicked open again.
     /// </summary>
     public object? SelectedDiffFileListRow {
-        get => SelectedDiffFile;
+        get => (object?)_selectedRepoFileRow ?? SelectedDiffFile;
         set {
+            // Unchanged files have no diff to jump to; the list selects them and Enter or a double-click opens them.
+            _selectedRepoFileRow = value as RepoFileRow;
             if (value is DiffFileProjection file) {
                 SelectedDiffFile = file;
                 FileJumpRequested?.Invoke(file);
@@ -296,6 +298,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         var startedAtTicks = Stopwatch.GetTimestamp();
         Status = model.Status;
         IsInitialLoading = model.Commits.IsEmpty && !model.Status.StartsWith("Error", StringComparison.OrdinalIgnoreCase);
+        UpdateHistoryTargets(model.StartupTargets);
         if (ShowBranchRefs != model.ShowBranchRefs) {
             _suppressShowBranchRefsDispatch = true;
             try {
@@ -1488,28 +1491,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
 
         _collapsedDiffFolders.Clear();
+        _toggledAllFilesFolders.Clear();
         RebuildDiffFileListRows();
-    }
-
-    partial void OnIsDiffFileTreeModeChanged(bool value) => RebuildDiffFileListRows();
-
-    [RelayCommand]
-    private void SetDiffFileListMode(string mode) => IsDiffFileTreeMode = mode == "tree";
-
-    [RelayCommand]
-    private void ToggleDiffFolder(DiffFileFolderRow folder) {
-        if (!_collapsedDiffFolders.Remove(folder.Path)) {
-            _collapsedDiffFolders.Add(folder.Path);
-        }
-
-        RebuildDiffFileListRows();
-    }
-
-    private void RebuildDiffFileListRows() {
-        var rows = DiffFileTree.BuildRows(SelectedDiffFiles, IsDiffFileTreeMode, _collapsedDiffFolders);
-        DiffFileListRows.Clear();
-        DiffFileListRows.AddRange(rows);
-        OnPropertyChanged(nameof(SelectedDiffFileListRow));
     }
 
     private static bool MatchesKey(DiffFileKey uiKey, GitKay.Core.GitService.DiffFileKey coreKey) =>
@@ -1597,43 +1580,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     private void RenderSelectedDiffRows() {
         var rows = new List<IDiffRowProjection>();
-
-        foreach (var file in SelectedDiffFiles) {
-            rows.Add(file.Header);
-
-            if (!file.IsLoaded || file.IsCollapsed) {
-                continue;
-            }
-
-            foreach (var block in file.Blocks) {
-                if (block is DiffGapProjection gap) {
-                    gap.HeaderText = null;
-                    rows.Add(gap);
-                    continue;
-                }
-
-                if (block is not DiffHunkProjection hunk)
-                    continue;
-
-                if (IsSideBySideDiffMode) {
-                    AddHunkHeader(rows, hunk);
-                    AddSideBySideDiffRowsToList(rows, hunk.Lines);
-                    continue;
-                }
-
-                var visibleLines = IsNewDiffMode
-                    ? hunk.Lines.Where(line => !line.IsRemoved)
-                    : IsOldDiffMode
-                        ? hunk.Lines.Where(line => !line.IsAdded)
-                        : hunk.Lines;
-                var materializedLines = visibleLines.ToArray();
-                if (materializedLines.Length == 0)
-                    continue;
-
-                AddHunkHeader(rows, hunk);
-                rows.AddRange(materializedLines);
-            }
-        }
+        var mode = SelectedDiffPresentationMode?.Key ?? "diff";
+        foreach (var file in SelectedDiffFiles)
+            DiffRowBuilder.AppendFile(rows, file, mode);
 
         SelectedDiffRows.Clear();
         SelectedDiffRows.AddRange(rows);
@@ -1671,28 +1620,6 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             request.Gap,
             request.Direction,
             Stopwatch.GetTimestamp()));
-    }
-
-    private static void AddHunkHeader(List<IDiffRowProjection> rows, DiffHunkProjection hunk) {
-        if (rows.Count > 0 && rows[^1] is DiffGapProjection gap)
-            gap.HeaderText = hunk.Header;
-        else
-            rows.Add(new DiffHunkHeaderProjection(hunk));
-    }
-
-    private void AddSideBySideDiffRowsToList(List<IDiffRowProjection> target, ObservableCollection<DiffLineProjection> lines) {
-        var index = 0;
-        while (index < lines.Count) {
-            var line = lines[index];
-            if (line.IsRemoved && index + 1 < lines.Count && lines[index + 1].IsAdded) {
-                target.Add(DiffLineProjection.CreateSideBySidePair(line, lines[index + 1]));
-                index += 2;
-                continue;
-            }
-
-            target.Add(line);
-            index++;
-        }
     }
 
     private void SyncSelectedDiffSelection(DiffFileProjection? selectedDiffFile) {

@@ -74,6 +74,8 @@ module App =
         | RereadRefs
         | SetShowBranchRefs of bool
         | SetShowStashes of bool
+        /// Replaces the history's revisions and paths (all branches toggle, file filter) and reloads it.
+        | SetHistoryTargets of GitStartup.StartupTarget list
         | SetDiffContextLines of int
         | SetDiffPresentationMode of string
         | HistoryLoaded of isFull:bool * Result<Models.Commit list, GitError>
@@ -102,7 +104,7 @@ module App =
 
     let private loadHistory (env: GitService.GitEnv) (limit: int option) (includeStashes: bool) (targets: GitStartup.StartupTarget list) =
         let isFull = limit.IsNone
-        Cmd.OfFlow.ofFlow runtime env (GitService.fetchHistory limit includeStashes targets) (fun r -> HistoryLoaded(isFull, Ok r)) (fun ex -> HistoryLoaded (isFull, Error ex))
+        Cmd.OfFlow.ofFlow (if isFull then "history (full)" else $"history (first {limit.Value})") runtime env (GitService.fetchHistory limit includeStashes targets) (fun r -> HistoryLoaded(isFull, Ok r)) (fun ex -> HistoryLoaded (isFull, Error ex))
 
     let private historyLimit = 1000
 
@@ -132,6 +134,7 @@ module App =
 
     let private startDiffFilesLoad (env: GitService.GitEnv) (hash: string) (startedAtTicks: int64) =
         Cmd.OfFlow.ofFlowLatest
+            $"diff files {hash}"
             selectionJob
             env
             (loadDiffFilesFlow hash)
@@ -140,6 +143,7 @@ module App =
 
     let private startDiffLoad (env: GitService.GitEnv) (hash: string) (startedAtTicks: int64) (contextLines: int) =
         Cmd.OfFlow.ofFlowLatest
+            $"diff {hash}"
             diffJob
             env
             (loadDiffFlow contextLines hash)
@@ -148,6 +152,7 @@ module App =
 
     let private startSearchLoad (env: GitService.GitEnv) (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (useRegex: bool) (startedAtTicks: int64) =
         Cmd.OfFlow.ofFlowLatest
+            $"search [{scopeKey}] {query}"
             searchJob
             env
             (loadSearchResultsFlow contextLines commits query scopeKey useRegex)
@@ -162,6 +167,7 @@ module App =
             }
 
         Cmd.OfFlow.ofFlowLatest
+            $"full context {hash} {key.NewPath}"
             contextJobs.[key]
             env
             workflow
@@ -311,6 +317,10 @@ module App =
             },
             Cmd.none
         | Ok startupOptions ->
+            let startupOptions =
+                { startupOptions with
+                    StartupTargets =
+                        GitService.resolvePathArguments gitEnv.RepoPath Environment.CurrentDirectory startupOptions.StartupTargets } // axial-allow-effect: environment
             let model =
                 {
                     StartupSelection =
@@ -348,7 +358,7 @@ module App =
                 let resolveSelection =
                     match startupOptions.SelectedCommitHash with
                     | Some revision ->
-                        Cmd.OfFlow.ofFlow runtime gitEnv (GitService.resolveCommit revision)
+                        Cmd.OfFlow.ofFlow $"resolve {revision}" runtime gitEnv (GitService.resolveCommit revision)
                             (fun hash -> SelectionRevisionResolved(revision, Ok hash))
                             (fun err -> SelectionRevisionResolved(revision, Error err))
                     | None -> Cmd.none
@@ -361,6 +371,10 @@ module App =
             searchJob.Cancel()
             let nextModel = { model with Status = "Refreshing..."; HasFullHistory = false }
             nextModel, loadHistory model.GitEnv (Some historyLimit) model.ShowStashes model.StartupTargets
+        | SetHistoryTargets targets ->
+            searchJob.Cancel()
+            let nextModel = { model with StartupTargets = targets; Status = "Loading history..."; HasFullHistory = false }
+            nextModel, loadHistory model.GitEnv (Some historyLimit) model.ShowStashes targets
         | SetShowBranchRefs showBranchRefs ->
             { model with ShowBranchRefs = showBranchRefs }, Cmd.none
         | SetShowStashes showStashes ->
@@ -398,14 +412,26 @@ module App =
         | SetDiffPresentationMode diffPresentationModeKey ->
             { model with DiffPresentationModeKey = diffPresentationModeKey }, Cmd.none
         | HistoryLoaded (isFull, Ok commits) ->
-            if isFull || commits.Length < historyLimit then
+            // A path-limited first page scans a bounded number of commits, so few matches doesn't mean it's complete.
+            let hasPaths = model.StartupTargets |> List.exists (function GitStartup.StartupTarget.Path _ -> true | _ -> false)
+            if isFull || (not hasPaths && commits.Length < historyLimit) then
                 searchJob.Cancel()
                 let graphInfo = Graph.calculateLanes commits
                 let nextModel, historyCmd = historyLoadSelection model graphInfo
-                let pathNote =
-                    match model.StartupTargets |> List.choose (function GitStartup.StartupTarget.Path path -> Some path | _ -> None) with
+                // Say what the history is limited to, so a branch or path launch visibly differs from the full history.
+                let revisionNote =
+                    match model.StartupTargets |> List.choose (function
+                        | GitStartup.StartupTarget.Revision r | GitStartup.StartupTarget.Branch r
+                        | GitStartup.StartupTarget.Tag r | GitStartup.StartupTarget.Sha r -> Some r
+                        | GitStartup.StartupTarget.Exclude r -> Some("^" + r)
+                        | _ -> None) with
                     | [] -> ""
-                    | paths -> " touching " + String.Join(", ", paths)
+                    | revisions -> " from " + String.Join(" ", revisions)
+                let pathNote =
+                    revisionNote
+                    + match model.StartupTargets |> List.choose (function GitStartup.StartupTarget.Path path -> Some path | _ -> None) with
+                      | [] -> ""
+                      | paths -> " touching " + String.Join(", ", paths)
                 let nextModel = { nextModel with HasFullHistory = true; Status = nextModel.Status + pathNote } |> applyStartupSelectionNotice true
                 let searchQuery = nextModel.SearchQuery.Trim()
 
@@ -635,15 +661,15 @@ module App =
             | _ ->
                 model, Cmd.none
         | CreateTag (hash, name) ->
-            model, Cmd.OfFlow.ofFlow runtime model.GitEnv (GitService.createTag hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, Cmd.OfFlow.ofFlow "create tag" runtime model.GitEnv (GitService.createTag hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | CreateBranch (hash, name) ->
-            model, Cmd.OfFlow.ofFlow runtime model.GitEnv (GitService.createBranch hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, Cmd.OfFlow.ofFlow "create branch" runtime model.GitEnv (GitService.createBranch hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | CherryPick hash ->
-            model, Cmd.OfFlow.ofFlow runtime model.GitEnv (GitService.cherryPick hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, Cmd.OfFlow.ofFlow "cherry-pick" runtime model.GitEnv (GitService.cherryPick hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | ResetTo (hash, hard) ->
-            model, Cmd.OfFlow.ofFlow runtime model.GitEnv (GitService.resetTo hash hard) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, Cmd.OfFlow.ofFlow "reset" runtime model.GitEnv (GitService.resetTo hash hard) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | Revert hash ->
-            model, Cmd.OfFlow.ofFlow runtime model.GitEnv (GitService.revert hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, Cmd.OfFlow.ofFlow "revert" runtime model.GitEnv (GitService.revert hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | OperationResult (Ok _) ->
             model, Cmd.ofMsg RereadRefs
         | OperationResult (Error err) ->
@@ -667,5 +693,19 @@ module App =
         | NoOp ->
             model, Cmd.none
 
+    /// Records each message and its update time for crash and hang reports.
+    let private instrumentedUpdate msg model =
+        let name =
+            match msg with
+            | RereadRefs -> "RereadRefs"
+            | NoOp -> "NoOp"
+            | _ -> Diagnostics.messageTypeName (box msg)
+        let startedAt = Stopwatch.GetTimestamp()
+        Diagnostics.beginMessage name
+        try
+            update msg model
+        finally
+            Diagnostics.endMessage name startedAt
+
     let program (startupArgs: string array) =
-        Program.mkProgram (fun () -> init startupArgs) update (fun _ _ -> ())
+        Program.mkProgram (fun () -> init startupArgs) instrumentedUpdate (fun _ _ -> ())

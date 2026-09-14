@@ -29,6 +29,7 @@ public partial class App : Application {
     public override void OnFrameworkInitializationCompleted() {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop) {
             FatalErrorPresenter.Initialize(desktop);
+            DiagnosticsLog.StartHangWatchdog();
 
             if (_startupInitializationFailure != null) {
                 FatalErrorPresenter.ShowStartupFailure(desktop, _startupInitializationFailure);
@@ -74,7 +75,7 @@ public partial class App : Application {
 
             mainWindow.ApplyLayout(persistedUiState.Layout);
 
-            var projection = new MainProjection();
+            var projection = new MainProjection { RepositoryPath = repoKey };
             projection.ApplySettings(persistedSettings);
             projection.LoadRecentSearches(uiStateStore.LoadSearchHistory());
             projection.ApplyViewPreferences(uiStateStore.LoadViewPreferences());

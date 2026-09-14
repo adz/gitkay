@@ -123,6 +123,11 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
                 : Brushes.Transparent;
     }
 
+    /// <summary>Local branches pointing at this commit, whether or not their badges are shown.</summary>
+    public IEnumerable<BranchTarget> LocalBranches =>
+        _refs.Where(reference => reference.Kind == GitKay.Core.Models.CommitRefKind.Branch)
+            .Select(reference => new BranchTarget(reference.Name, reference.IsCurrentHead));
+
     partial void OnShowBranchRefsChanged(bool value) => UpdateRefBadges();
     partial void OnShowStashesChanged(bool value) => UpdateRefBadges();
 
@@ -192,6 +197,8 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         };
     }
 }
+
+public sealed record BranchTarget(string Name, bool IsCurrentHead);
 
 public enum CommitRefKind {
     Branch = 0,

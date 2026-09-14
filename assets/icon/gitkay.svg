@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- GitKay: a commit graph whose lanes form a "K" — one trunk, two branches forking from a shared commit. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#23264A"/>
+      <stop offset="1" stop-color="#120F24"/>
+    </linearGradient>
+    <linearGradient id="trunk" gradientUnits="userSpaceOnUse" x1="370" y1="236" x2="370" y2="788">
+      <stop offset="0" stop-color="#8AF0D2"/>
+      <stop offset="1" stop-color="#3CC2C9"/>
+    </linearGradient>
+    <linearGradient id="up" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#F7F3FF"/>
+      <stop offset="0.35" stop-color="#FFC857"/>
+      <stop offset="1" stop-color="#FF9F43"/>
+    </linearGradient>
+    <linearGradient id="down" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F7F3FF"/>
+      <stop offset="0.35" stop-color="#FF7A9A"/>
+      <stop offset="1" stop-color="#E8508A"/>
+    </linearGradient>
+  </defs>
+  <rect x="40" y="40" width="944" height="944" rx="216" fill="url(#bg)"/>
+  <rect x="40" y="40" width="944" height="944" rx="216" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="6"/>
+  <!-- trunk -->
+  <line x1="370" y1="236" x2="370" y2="788" stroke="url(#trunk)" stroke-width="84" stroke-linecap="round"/>
+  <!-- branches fork from the middle commit -->
+  <path d="M370,512 C 520,512 560,262 724,262" fill="none" stroke="url(#up)" stroke-width="84" stroke-linecap="round"/>
+  <path d="M370,512 C 520,512 560,762 724,762" fill="none" stroke="url(#down)" stroke-width="84" stroke-linecap="round"/>
+  <!-- commits -->
+  <circle cx="370" cy="236" r="70" fill="#1A1A36" stroke="#8AF0D2" stroke-width="40"/>
+  <circle cx="370" cy="788" r="70" fill="#1A1A36" stroke="#3CC2C9" stroke-width="40"/>
+  <circle cx="724" cy="262" r="70" fill="#1A1A36" stroke="#FF9F43" stroke-width="40"/>
+  <circle cx="724" cy="762" r="70" fill="#1A1A36" stroke="#E8508A" stroke-width="40"/>
+  <circle cx="370" cy="512" r="100" fill="#F7F3FF"/>
+  <circle cx="370" cy="512" r="42" fill="#23264A"/>
+</svg>

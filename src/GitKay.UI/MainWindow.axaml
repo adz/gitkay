@@ -52,11 +52,19 @@
                                           Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
                                 <Button.Flyout>
                                     <MenuFlyout Placement="BottomEdgeAlignedLeft">
+                                        <MenuItem Header="_Open repository…" Click="OnOpenRepositoryMenuItemClick" />
+                                        <MenuItem Header="_Fetch all remotes" Click="OnFetchAllMenuItemClick" />
                                         <MenuItem Header="_Reread refs" Command="{Binding RereadRefs}" />
+                                        <Separator />
+                                        <MenuItem Header="Zoom diff _in" Click="OnZoomDiffMenuItemClick" Tag="1" InputGesture="Ctrl+OemPlus" />
+                                        <MenuItem Header="Zoom diff _out" Click="OnZoomDiffMenuItemClick" Tag="-1" InputGesture="Ctrl+OemMinus" />
+                                        <MenuItem Header="Reset diff _zoom" Click="OnZoomDiffMenuItemClick" Tag="0" InputGesture="Ctrl+D0" />
                                         <MenuItem Header="_Settings…" Click="OnSettingsMenuItemClick" />
+                                        <MenuItem Header="_Diagnostics…" Click="OnDiagnosticsMenuItemClick" InputGesture="Ctrl+Shift+D" />
                                     <MenuItem Header="_Keyboard shortcuts" Command="{Binding ToggleShortcutHelpCommand}" InputGesture="F1" />
                                         <Separator />
                                         <MenuItem Header="Show _branch refs" ToggleType="CheckBox" IsChecked="{Binding ShowBranchRefs, Mode=TwoWay}" />
+                                        <MenuItem Header="_All branches (--all)" ToggleType="CheckBox" IsChecked="{Binding IsAllBranches, Mode=TwoWay}" />
                                         <MenuItem Header="Show _stashes" ToggleType="CheckBox" IsChecked="{Binding ShowStashes, Mode=TwoWay}" />
                                     </MenuFlyout>
                                 </Button.Flyout>
@@ -528,6 +536,8 @@
                                                           SearchPathQuery="{Binding CommitSearchPathTerm}"
                                                           SearchHighlightUseRegex="{Binding CommitSearchDiffTermUseRegex}"
                                                           Mode="{Binding SelectedDiffPresentationMode.Key}"
+                                                          CodeFontSize="{Binding DiffFontSize, Mode=TwoWay}"
+                                                          FileContextRequested="OnDiffFileHeaderContextRequested"
                                                           ExpandGapCommand="{Binding ExpandDiffGapCommand}"
                                                           ToggleFileCommand="{Binding ToggleDiffFileCollapsedCommand}"
                                                           ToggleFileContextCommand="{Binding ToggleDiffFileContextCommand}"
@@ -555,7 +565,7 @@
                             <Border DockPanel.Dock="Top" Classes="segmentGroup" HorizontalAlignment="Left" Margin="2,0,0,8">
                                 <StackPanel Orientation="Horizontal" Spacing="1">
                                     <Button Classes="segment"
-                                            Classes.selected="{Binding !IsDiffFileTreeMode}"
+                                            Classes.selected="{Binding IsPatchFileListMode}"
                                             Command="{Binding SetDiffFileListModeCommand}"
                                             CommandParameter="patch"
                                             ToolTip.Tip="Patch — changed files as full paths">
@@ -567,7 +577,7 @@
                                         </Canvas>
                                     </Button>
                                     <Button Classes="segment"
-                                            Classes.selected="{Binding IsDiffFileTreeMode}"
+                                            Classes.selected="{Binding IsTreeFileListMode}"
                                             Command="{Binding SetDiffFileListModeCommand}"
                                             CommandParameter="tree"
                                             ToolTip.Tip="Tree — changed files grouped by folder">
@@ -576,6 +586,20 @@
                                             <Path Data="M3.5,6 V13.5 H8 M3.5,9.5 H8" Stroke="{DynamicResource GitKaySecondaryTextBrush}" StrokeThickness="1" />
                                             <Rectangle Canvas.Left="9" Canvas.Top="8" Width="6" Height="3" RadiusX="1" RadiusY="1" Fill="{DynamicResource GitKayAccentBrush}" />
                                             <Rectangle Canvas.Left="9" Canvas.Top="12" Width="6" Height="3" RadiusX="1" RadiusY="1" Fill="{DynamicResource GitKayAccentBrush}" />
+                                        </Canvas>
+                                    </Button>
+                                    <Button Classes="segment"
+                                            Classes.selected="{Binding IsAllFilesMode}"
+                                            Command="{Binding SetDiffFileListModeCommand}"
+                                            CommandParameter="all"
+                                            ToolTip.Tip="All files — every file in the commit, as a tree">
+                                        <Canvas Width="16" Height="16">
+                                            <!-- A stack of whole files: distinct from the tree glyph's folder and branches. -->
+                                            <Path Data="M6,0.5 H12 L15.5,4 V11.5 H6 Z" Stroke="{DynamicResource GitKayMutedTextBrush}" StrokeThickness="1" />
+                                            <Path Data="M3.5,2.5 H9.5 L13,6 V13.5 H3.5 Z" Fill="{DynamicResource GitKayRaisedBrush}" Stroke="{DynamicResource GitKaySecondaryTextBrush}" StrokeThickness="1" />
+                                            <Path Data="M1,4.5 H7 L10.5,8 V15.5 H1 Z" Fill="{DynamicResource GitKayRaisedBrush}" Stroke="{DynamicResource GitKaySecondaryTextBrush}" StrokeThickness="1" />
+                                            <Rectangle Canvas.Left="2.5" Canvas.Top="9" Width="5" Height="1.5" Fill="{DynamicResource GitKayAccentBrush}" />
+                                            <Rectangle Canvas.Left="2.5" Canvas.Top="12" Width="6" Height="1.5" Fill="{DynamicResource GitKaySecondaryTextBrush}" />
                                         </Canvas>
                                     </Button>
                                 </StackPanel>
@@ -588,7 +612,9 @@
                                      SelectionMode="Single"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                      ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                     GotFocus="OnDiffFilesListBoxGotFocus">
+                                     GotFocus="OnDiffFilesListBoxGotFocus"
+                                     ContextRequested="OnDiffFilesContextRequested"
+                                     DoubleTapped="OnDiffFilesDoubleTapped">
                                 <ListBox.ItemsPanel>
                                     <ItemsPanelTemplate>
                                         <VirtualizingStackPanel />
@@ -661,6 +687,16 @@
                                                            TextTrimming="CharacterEllipsis"
                                                            VerticalAlignment="Center" />
                                             </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                    <DataTemplate x:DataType="local:RepoFileRow">
+                                        <Border Padding="8,4" Background="Transparent">
+                                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="7" Margin="{Binding Indent}" ToolTip.Tip="Unchanged — Enter or double-click shows the whole file">
+                                                <Border Width="14" Height="14" />
+                                                <TextBlock Grid.Column="1" Text="{Binding Name}" FontSize="12"
+                                                           Foreground="{DynamicResource GitKayMutedTextBrush}"
+                                                           TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                            </Grid>
                                         </Border>
                                     </DataTemplate>
                                     <DataTemplate x:DataType="local:DiffFileProjection">
@@ -786,6 +822,10 @@
                             <TextBlock Text="Esc" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Clear search / close popup" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
                         </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Ctrl+Shift+D" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Diagnostics — live Axial flows, failures, messages and log" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
                         <TextBlock Text="Go to" FontWeight="SemiBold" FontSize="12" Margin="0,10,0,4" Foreground="{DynamicResource GitKayAccentBrush}" />
                         <Grid ColumnDefinitions="200,*" Margin="0,2">
                             <TextBlock Text="Ctrl+Shift+P  or  :" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
@@ -861,6 +901,14 @@
                         <Grid ColumnDefinitions="200,*" Margin="0,2">
                             <TextBlock Text="Enter / Space" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="On a file: collapse / expand (Shift: all context) · on a gap: show hidden lines" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="v / V  then  y" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Visual select lines (move with j / k), then yank to the clipboard" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Ctrl+= / Ctrl+- / Ctrl+0" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Zoom diff text in / out / reset (also Ctrl+wheel)" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
                         </Grid>
                         <Grid ColumnDefinitions="200,*" Margin="0,2">
                             <TextBlock Text="]c / [c" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />

@@ -60,6 +60,8 @@ public partial class MainProjection {
 
     public IReadOnlyDictionary<string, string> CaptureViewPreferences() => new Dictionary<string, string> {
         ["diffFileTreeMode"] = IsDiffFileTreeMode.ToString(),
+        ["diffFileAllMode"] = IsAllFilesMode.ToString(),
+        ["diffFontSize"] = DiffFontSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
         ["commitDetailsExpanded"] = IsCommitDetailsExpanded.ToString(),
         ["searchMode"] = SelectedSearchScope?.Key ?? "commit",
         ["searchRegex"] = SearchUseRegex.ToString(),
@@ -70,6 +72,10 @@ public partial class MainProjection {
     public void ApplyViewPreferences(IReadOnlyDictionary<string, string> preferences) {
         bool Flag(string key) => preferences.TryGetValue(key, out var value) && bool.TryParse(value, out var flag) && flag;
         IsDiffFileTreeMode = Flag("diffFileTreeMode");
+        IsAllFilesMode = Flag("diffFileAllMode");
+        if (preferences.TryGetValue("diffFontSize", out var fontSize)
+            && double.TryParse(fontSize, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var size))
+            DiffFontSize = size;
         IsCommitDetailsExpanded = Flag("commitDetailsExpanded");
         CommitFindUseRegex = Flag("findRegex");
         SearchUseRegex = Flag("searchRegex");
@@ -215,6 +221,8 @@ public partial class MainProjection {
         PaletteMode.Files => SelectedDiffFiles
             .Select(file => new PaletteItem(file.Key.NewPath == "/dev/null" ? file.Key.OldPath : file.Key.NewPath,
                 $"{file.ChangeKind} · +{file.AddedLines} −{file.RemovedLines}", "▤", () => { SelectedDiffFile = file; FileJumpRequested?.Invoke(file); }))
+            .Concat(UnchangedFilePaths().Select(path =>
+                new PaletteItem(path, "unchanged · open whole file", "·", () => ShowWholeFile(new FileTarget(path, path, path, null)))))
             .ToList(),
         _ => BuildCommandItems(),
     };
@@ -264,17 +272,28 @@ public partial class MainProjection {
             Command("View: old file", "Before the change", () => SetDiffPresentationMode("old")),
             Command("Files: patch list", "Changed files as full paths", () => SetDiffFileListMode("patch")),
             Command("Files: tree", "Changed files grouped by folder", () => SetDiffFileListMode("tree")),
+            Command("Files: all files", "Every file in the commit, as a tree", () => SetDiffFileListMode("all")),
+            Command("Zoom diff in", "Larger diff text", () => ZoomDiff(1), "Ctrl+="),
+            Command("Zoom diff out", "Smaller diff text", () => ZoomDiff(-1), "Ctrl+-"),
+            Command("Reset diff zoom", "", () => ZoomDiff(0), "Ctrl+0"),
+            Command("Open repository…", "Open another local Git repository", () => WindowCommandRequested?.Invoke("open-repository")),
+            Command("Fetch all remotes", "git fetch --all --prune", () => WindowCommandRequested?.Invoke("fetch-all")),
             Command("Collapse all files", "Show only file headers", () => SetAllFilesCollapsed(true)),
             Command("Expand all files", "", () => SetAllFilesCollapsed(false)),
             Command(IsCommitDetailsExpanded ? "Hide commit details" : "Show commit details", "Full message, parents and children", ToggleCommitDetails),
             Command(ShowBranchRefs ? "Hide branch markers" : "Show branch markers", "Commit list", () => ShowBranchRefs = !ShowBranchRefs),
             Command(ShowStashes ? "Hide stashes" : "Show stashes", "Commit list", () => ShowStashes = !ShowStashes),
+            Command(IsAllBranches ? "History: current branch only" : "History: all branches", IsAllBranches ? "What HEAD reaches, like gitk" : "Every branch, tag and remote, like --all", () => IsAllBranches = !IsAllBranches),
             Command("Copy commit hash", SelectedCommit?.FullHash ?? "", () => WindowCommandRequested?.Invoke("copy-hash"), "y"),
             Command("Copy commit subject", SelectedCommit?.Subject ?? "", () => WindowCommandRequested?.Invoke("copy-subject"), "Y"),
             Command("Reread refs", "Reload history from the repository", RereadRefs, "F5"),
             Command("Keyboard shortcuts", "", () => IsShortcutHelpOpen = true, "?"),
             Command("Settings…", "", () => WindowCommandRequested?.Invoke("settings")),
+            Command("Show diagnostics", "Live Axial fibers, flows, failures, messages and log", () => WindowCommandRequested?.Invoke("diagnostics"), "Ctrl+Shift+D"),
         };
+
+        if (HasHistoryPathFilter)
+            items.Add(Command("Clear file filter", HistoryPathFilter, ClearHistoryPathFilter));
 
         foreach (var count in DiffContextLineCounts) {
             var option = count;

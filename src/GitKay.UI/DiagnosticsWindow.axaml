@@ -1,0 +1,210 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:GitKay.UI"
+        x:Class="GitKay.UI.DiagnosticsWindow"
+        x:DataType="local:DiagnosticsProjection"
+        Title="GitKay diagnostics"
+        Width="1000" Height="720" MinWidth="560" MinHeight="360"
+        Background="{DynamicResource GitKayWindowBrush}">
+    <Window.Styles>
+        <Style Selector="TextBlock.stat">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{DynamicResource GitKaySecondaryTextBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="TextBlock.head">
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="LetterSpacing" Value="0.6" />
+            <Setter Property="Foreground" Value="{DynamicResource GitKayMutedTextBrush}" />
+        </Style>
+        <Style Selector="TextBlock.cell">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontFamily" Value="{x:Static local:FontStacks.Mono}" />
+            <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="TextBlock.cell.muted">
+            <Setter Property="Foreground" Value="{DynamicResource GitKayMutedTextBrush}" />
+        </Style>
+        <Style Selector="TextBlock.cell.slow">
+            <Setter Property="Foreground" Value="#D29922" />
+        </Style>
+        <Style Selector="TextBlock.cell.failed">
+            <Setter Property="Foreground" Value="{DynamicResource GitKayRemovedAccentBrush}" />
+        </Style>
+        <Style Selector="TextBlock.cell.interrupted">
+            <Setter Property="Foreground" Value="{DynamicResource GitKayMutedTextBrush}" />
+        </Style>
+        <Style Selector="ListBoxItem">
+            <Setter Property="Padding" Value="8,2" />
+            <Setter Property="MinHeight" Value="0" />
+        </Style>
+        <Style Selector="TabItem">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="MinHeight" Value="32" />
+            <Setter Property="Padding" Value="10,0" />
+        </Style>
+    </Window.Styles>
+
+    <DockPanel>
+        <!-- Process and UI-thread health. -->
+        <Border DockPanel.Dock="Top" Padding="12,8" Background="{DynamicResource GitKaySurfaceBrush}"
+                BorderBrush="{DynamicResource GitKayHairlineBrush}" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" RowSpacing="4" ColumnSpacing="12">
+                <WrapPanel Orientation="Horizontal">
+                    <TextBlock Classes="stat" Margin="0,0,16,0"><Run Text="Up " /><Run Text="{Binding Uptime}" /></TextBlock>
+                    <TextBlock Classes="stat" Margin="0,0,16,0" Text="{Binding Memory}" />
+                    <TextBlock Classes="stat" Margin="0,0,16,0" Text="{Binding Collections}" />
+                    <TextBlock Classes="stat" Text="{Binding Threads}" />
+                </WrapPanel>
+                <StackPanel Grid.Column="1" Grid.RowSpan="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Top">
+                    <Button Padding="10,3" FontSize="12" Content="{Binding PauseLabel}" Click="OnTogglePause" ToolTip.Tip="Freeze the view to read it" />
+                    <Button Padding="10,3" FontSize="12" Content="Copy snapshot" Click="OnCopySnapshot" ToolTip.Tip="Copy everything shown as text" />
+                    <Button Padding="10,3" FontSize="12" Content="Write report" Click="OnWriteReport" ToolTip.Tip="Save a report file next to the logs" />
+                    <Button Padding="10,3" FontSize="12" Content="Open logs" Click="OnOpenLogs" ToolTip.Tip="{Binding LogDirectory}" />
+                </StackPanel>
+                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="16">
+                    <TextBlock Classes="stat" Text="{Binding UiLag}" Classes.slow="{Binding IsUiLagging}" />
+                    <TextBlock Classes="stat" Text="{Binding FiberSummary}" />
+                    <TextBlock Classes="stat" Text="{Binding InFlightMessage}" Foreground="#D29922" />
+                </StackPanel>
+                <local:LagSparkline Grid.Row="2" Grid.ColumnSpan="2" Height="22" Values="{Binding LagHistory}"
+                                    ToolTip.Tip="UI-thread wait per second over the last minute (log scale; amber &gt; 100 ms, red &gt; 1 s)" />
+            </Grid>
+        </Border>
+
+        <TabControl x:Name="Tabs" Padding="0" Margin="8,4,8,8">
+            <!-- Live Axial fibers, as a parent/child tree. -->
+            <TabItem Header="{Binding RunningHeader}">
+                <DockPanel>
+                    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,70,90,2*" Margin="8,6,8,2">
+                        <TextBlock Classes="head" Text="FIBER" />
+                        <TextBlock Classes="head" Grid.Column="1" Text="ID" />
+                        <TextBlock Classes="head" Grid.Column="2" Text="RUNNING FOR" />
+                        <TextBlock Classes="head" Grid.Column="3" Text="ANNOTATIONS" />
+                    </Grid>
+                    <Panel>
+                        <ListBox ItemsSource="{Binding Running}" Background="Transparent">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="local:RunningFiberRow">
+                                    <Grid ColumnDefinitions="*,70,90,2*">
+                                        <TextBlock Classes="cell" Text="{Binding Name}" Margin="{Binding Indent}" />
+                                        <TextBlock Classes="cell muted" Grid.Column="1" Text="{Binding Id}" />
+                                        <TextBlock Classes="cell" Classes.slow="{Binding IsSlow}" Grid.Column="2" Text="{Binding Age}" />
+                                        <TextBlock Classes="cell muted" Grid.Column="3" Text="{Binding Annotations}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <TextBlock Text="Nothing running — Git work shows here while it runs." IsVisible="{Binding !Running.Count}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource GitKayMutedTextBrush}" />
+                    </Panel>
+                </DockPanel>
+            </TabItem>
+
+            <!-- Settled fibers, newest first. -->
+            <TabItem Header="Flows">
+                <DockPanel>
+                    <TextBox DockPanel.Dock="Top" Margin="8,6" Height="28" Text="{Binding FlowFilter}" PlaceholderText="Filter by name, e.g. search or diff" />
+                    <Grid DockPanel.Dock="Top" ColumnDefinitions="100,*,90,100,2*" Margin="8,2">
+                        <TextBlock Classes="head" Text="SETTLED" />
+                        <TextBlock Classes="head" Grid.Column="1" Text="FIBER" />
+                        <TextBlock Classes="head" Grid.Column="2" Text="TOOK" />
+                        <TextBlock Classes="head" Grid.Column="3" Text="STATUS" />
+                        <TextBlock Classes="head" Grid.Column="4" Text="DEFECT" />
+                    </Grid>
+                    <ListBox ItemsSource="{Binding Settled}" Background="Transparent">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="local:SettledFiberRow">
+                                <Grid ColumnDefinitions="100,*,90,100,2*">
+                                    <TextBlock Classes="cell muted" Text="{Binding Time}" />
+                                    <TextBlock Classes="cell" Grid.Column="1" Text="{Binding Name}" ToolTip.Tip="{Binding Name}" />
+                                    <TextBlock Classes="cell" Classes.slow="{Binding IsSlow}" Grid.Column="2" Text="{Binding Duration}" />
+                                    <TextBlock Classes="cell" Classes.failed="{Binding IsFailed}" Classes.interrupted="{Binding IsInterrupted}" Grid.Column="3" Text="{Binding Status}" />
+                                    <TextBlock Classes="cell failed" Grid.Column="4" Text="{Binding Detail}" ToolTip.Tip="{Binding Detail}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </TabItem>
+
+            <!-- Totals per fiber name. -->
+            <TabItem Header="Totals">
+                <DockPanel>
+                    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,70,70,90,90,90" Margin="8,8,8,2">
+                        <TextBlock Classes="head" Text="FIBER" />
+                        <TextBlock Classes="head" Grid.Column="1" Text="RUNS" />
+                        <TextBlock Classes="head" Grid.Column="2" Text="FAILED" />
+                        <TextBlock Classes="head" Grid.Column="3" Text="CANCELLED" />
+                        <TextBlock Classes="head" Grid.Column="4" Text="AVERAGE" />
+                        <TextBlock Classes="head" Grid.Column="5" Text="SLOWEST" />
+                    </Grid>
+                    <ListBox ItemsSource="{Binding Stats}" Background="Transparent">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="local:FlowStatsRow">
+                                <Grid ColumnDefinitions="*,70,70,90,90,90">
+                                    <TextBlock Classes="cell" Text="{Binding Name}" ToolTip.Tip="{Binding Name}" />
+                                    <TextBlock Classes="cell" Grid.Column="1" Text="{Binding Count}" />
+                                    <TextBlock Classes="cell" Classes.failed="{Binding HasFailures}" Grid.Column="2" Text="{Binding Failed}" />
+                                    <TextBlock Classes="cell muted" Grid.Column="3" Text="{Binding Interrupted}" />
+                                    <TextBlock Classes="cell" Grid.Column="4" Text="{Binding Average}" />
+                                    <TextBlock Classes="cell" Grid.Column="5" Text="{Binding Max}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </TabItem>
+
+            <!-- Failures with Cause.prettyPrint output. -->
+            <TabItem Header="{Binding FailuresHeader}">
+                <ListBox ItemsSource="{Binding Failures}" Background="Transparent" Margin="0,6,0,0">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="local:FailureRow">
+                            <StackPanel Margin="0,4">
+                                <TextBlock Classes="cell"><Run Text="{Binding Time}" Foreground="{DynamicResource GitKayMutedTextBrush}" /><Run Text="  " /><Run Text="{Binding Name}" /></TextBlock>
+                                <SelectableTextBlock Text="{Binding Cause}" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12"
+                                                     Foreground="{DynamicResource GitKayRemovedAccentBrush}" TextWrapping="Wrap" Margin="16,2,0,0" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </TabItem>
+
+            <!-- Elmish messages and update timings. -->
+            <TabItem Header="Messages">
+                <DockPanel>
+                    <Grid DockPanel.Dock="Top" ColumnDefinitions="110,*,100" Margin="8,8,8,2">
+                        <TextBlock Classes="head" Text="TIME" />
+                        <TextBlock Classes="head" Grid.Column="1" Text="MESSAGE" />
+                        <TextBlock Classes="head" Grid.Column="2" Text="UPDATE" />
+                    </Grid>
+                    <ListBox ItemsSource="{Binding Messages}" Background="Transparent">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="local:MessageRow">
+                                <Grid ColumnDefinitions="110,*,100">
+                                    <TextBlock Classes="cell muted" Text="{Binding Time}" />
+                                    <TextBlock Classes="cell" Grid.Column="1" Text="{Binding Name}" />
+                                    <TextBlock Classes="cell" Classes.slow="{Binding IsSlow}" Grid.Column="2" Text="{Binding Duration}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </TabItem>
+
+            <!-- The log, live. -->
+            <TabItem Header="Log">
+                <DockPanel>
+                    <TextBox DockPanel.Dock="Top" Margin="8,6" Height="28" Text="{Binding LogFilter}" PlaceholderText="Filter lines, e.g. [flow] or [timing]" />
+                    <ScrollViewer x:Name="LogScroll" HorizontalScrollBarVisibility="Auto">
+                        <SelectableTextBlock x:Name="LogBlock" Text="{Binding LogText}" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12"
+                                             Foreground="{DynamicResource GitKaySecondaryTextBrush}" Margin="8,0" />
+                    </ScrollViewer>
+                </DockPanel>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>

@@ -2462,6 +2462,31 @@ module DiffFileTreeTests =
         test <@ describe (Seq.cast collapsed) = [ "0:[dev-docs/releases]"; "1:0.6.2.md"; "0:[src/FsLiveDocs.Cli]"; "0:Directory.Build.props"; "0:NEXT_VERSION" ] @>
 
     [<Fact>]
+    let ``all files mode should list unchanged files and expand only folders holding changes`` () =
+        let changed = [ file "src/FsLiveDocs.Cli/Program.fs" "src/FsLiveDocs.Cli/Program.fs"; file "Directory.Build.props" "/dev/null" ]
+        let all = [ "src/FsLiveDocs.Cli/Program.fs"; "src/FsLiveDocs.Cli/Other.fs"; "docs/README.md"; "LICENSE" ]
+        let describeAll (rows: obj seq) =
+            rows
+            |> Seq.map (function
+                | :? RepoFileRow as unchanged -> sprintf "%d:~%s" (int (unchanged.Indent.Left / DiffFileTree.IndentWidth)) unchanged.Name
+                | row -> describe [ row ] |> List.head)
+            |> List.ofSeq
+        let rows = DiffFileTree.BuildAllFilesRows(changed, all, Collections.Generic.HashSet<string>())
+        test <@ describeAll (Seq.cast rows) = [ "0:[docs]"; "0:[src/FsLiveDocs.Cli]"; "1:~Other.fs"; "1:Program.fs"; "0:Directory.Build.props"; "0:~LICENSE" ] @>
+        let toggled = DiffFileTree.BuildAllFilesRows(changed, all, Collections.Generic.HashSet<string>([ "docs"; "src/FsLiveDocs.Cli" ]))
+        test <@ describeAll (Seq.cast toggled) = [ "0:[docs]"; "1:~README.md"; "0:[src/FsLiveDocs.Cli]"; "0:Directory.Build.props"; "0:~LICENSE" ] @>
+
+    [<Fact>]
+    let ``diff zoom should step, clamp and reset`` () =
+        let projection = MainProjection()
+        projection.ZoomDiff 1
+        test <@ projection.DiffFontSize = 13.0 @>
+        projection.DiffFontSize <- 100.0
+        test <@ projection.DiffFontSize = MainProjection.MaxDiffFontSize @>
+        projection.ZoomDiff 0
+        test <@ projection.DiffFontSize = 12.0 @>
+
+    [<Fact>]
     let ``MainProjection folder selection should toggle the folder and keep the selected file`` () =
         let projection = MainProjection()
         let summaries : GitService.DiffFileSummary list =
@@ -2836,6 +2861,120 @@ module CliTests =
             test <@ history (GitStartup.revisionTargets "v1..HEAD") = [ c3.Sha; c2.Sha ] @>
             test <@ history [ GitStartup.Revision "HEAD"; GitStartup.Exclude c2.Sha ] = [ c3.Sha ] @>
             test <@ history [ GitStartup.Path "a.txt" ] = [ c3.Sha; c1.Sha ] @>
+        finally
+            try Directory.Delete(root, true) with _ -> ()
+
+    [<Fact>]
+    let ``a bare file argument should filter history like gitk, relative to the launch directory`` () =
+        let root = Path.Combine(Path.GetTempPath(), "gitkay-patharg-" + Guid.NewGuid().ToString("N"))
+        Repository.Init root |> ignore
+        try
+            use repo = new Repository(root)
+            let signature = Signature("T", "t@x", DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero))
+            let commit (file: string) (content: string) =
+                let full = Path.Combine(root, file)
+                Directory.CreateDirectory(Path.GetDirectoryName full) |> ignore
+                File.WriteAllText(full, content)
+                Commands.Stage(repo, file)
+                repo.Commit(file + content, signature, signature)
+            let c1 = commit "src/a.txt" "1"
+            commit "b.txt" "2" |> ignore
+            let c3 = commit "src/a.txt" "3"
+
+            let fromSrc = GitService.resolvePathArguments root (Path.Combine(root, "src")) [ GitStartup.Revision "a.txt"; GitStartup.Revision "HEAD" ]
+            test <@ fromSrc = [ GitStartup.Path "src/a.txt"; GitStartup.Revision "HEAD" ] @>
+            let windowsStyle = GitService.resolvePathArguments root root [ GitStartup.Path "src\\a.txt" ]
+            test <@ windowsStyle = [ GitStartup.Path "src/a.txt" ] || windowsStyle = [ GitStartup.Path "src\\a.txt" ] @>
+
+            let history targets =
+                match Flow.run (GitService.environment root) (GitService.fetchHistory (Some 1000) false targets) |> Exit.toResult with
+                | Ok commits -> commits |> List.map (fun c -> c.Hash)
+                | Error e -> failwith (GitError.describe e)
+            test <@ history fromSrc = [ c3.Sha; c1.Sha ] @>
+            test <@ history [ GitStartup.Path "src\\a.txt" ] = [ c3.Sha; c1.Sha ] @>
+        finally
+            try Directory.Delete(root, true) with _ -> ()
+
+    [<Fact>]
+    let ``default history should follow HEAD like gitk, and --all should include sibling branches`` () =
+        let root = Path.Combine(Path.GetTempPath(), "gitkay-head-" + Guid.NewGuid().ToString("N"))
+        Repository.Init root |> ignore
+        try
+            use repo = new Repository(root)
+            let signature = Signature("T", "t@x", DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero))
+            let commit (file: string) (content: string) =
+                File.WriteAllText(Path.Combine(root, file), content)
+                Commands.Stage(repo, file)
+                repo.Commit(file + content, signature, signature)
+            let trunk = commit "a.txt" "1"
+            let sibling = repo.CreateBranch("sibling")
+            Commands.Checkout(repo, sibling) |> ignore
+            let siblingCommit = commit "b.txt" "2"
+            Commands.Checkout(repo, repo.Branches.["master"] |> Option.ofObj |> Option.defaultWith (fun () -> repo.Branches.["main"])) |> ignore
+            let head = commit "c.txt" "3"
+
+            let history targets =
+                match Flow.run (GitService.environment root) (GitService.fetchHistory None false targets) |> Exit.toResult with
+                | Ok commits -> commits |> List.map (fun c -> c.Hash) |> Set.ofList
+                | Error e -> failwith (GitError.describe e)
+            test <@ history [] = Set.ofList [ head.Sha; trunk.Sha ] @>
+            test <@ history [ GitStartup.All ] = Set.ofList [ head.Sha; trunk.Sha; siblingCommit.Sha ] @>
+        finally
+            try Directory.Delete(root, true) with _ -> ()
+
+    [<Fact>]
+    let ``filtering history to a file should keep the branch scope and replace earlier paths`` () =
+        let projection = MainProjection()
+        let messages = Collections.Generic.List<App.Msg>()
+        projection.SetDispatch(fun msg -> messages.Add msg)
+        let model, _ = App.init [||]
+        projection.Update { model with StartupTargets = [ GitStartup.All; GitStartup.Path "old.txt" ] }
+        test <@ projection.IsAllBranches && projection.HistoryPathFilter = "old.txt" @>
+        projection.FilterHistoryToFile(FileTarget("src/a.fs", "src/a.fs", "src/a.fs", null))
+        test <@ List.ofSeq messages = [ App.Msg.SetHistoryTargets [ GitStartup.All; GitStartup.Path "src/a.fs" ] ] @>
+        messages.Clear()
+        projection.IsAllBranches <- false
+        test <@ List.ofSeq messages = [ App.Msg.SetHistoryTargets [ GitStartup.Path "old.txt" ] ] @>
+
+    [<Fact>]
+    let ``a path-limited first page should not be treated as the complete history`` () =
+        let model0, _ = App.init [||]
+        let model = { model0 with StartupTargets = [ GitStartup.Path "src/" ] }
+        let next, _ = App.update (App.Msg.HistoryLoaded(false, Ok [])) model
+        test <@ not next.HasFullHistory @>
+        let unfiltered, _ = App.update (App.Msg.HistoryLoaded(false, Ok [])) model0
+        test <@ unfiltered.HasFullHistory @>
+
+    [<Fact>]
+    let ``listCommitFiles and loadWholeFile should read every file at a commit`` () =
+        let root = Path.Combine(Path.GetTempPath(), "gitkay-whole-" + Guid.NewGuid().ToString("N"))
+        Repository.Init root |> ignore
+        try
+            use repo = new Repository(root)
+            let signature = Signature("T", "t@x", DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero))
+            let commit (file: string) (content: string) =
+                let full = Path.Combine(root, file)
+                Directory.CreateDirectory(Path.GetDirectoryName full) |> ignore
+                File.WriteAllText(full, content)
+                Commands.Stage(repo, file)
+                repo.Commit(file, signature, signature)
+            commit "src/a.txt" "one\ntwo\nthree\n" |> ignore
+            let second = commit "b.txt" "b\n"
+            let unwrap = function Ok value -> value | Error e -> failwith (GitError.describe e)
+
+            let files = GitService.listCommitFiles root second.Sha |> unwrap |> List.sort
+            test <@ files = [ "b.txt"; "src/a.txt" ] @>
+
+            // Unchanged in the second commit: every line as context.
+            let unchanged = GitService.loadWholeFile root second.Sha "src/a.txt" "src/a.txt" |> unwrap
+            let lines = unchanged.Hunks |> List.collect _.Lines
+            test <@ lines |> List.map _.Content = [ "one"; "two"; "three" ] && lines |> List.forall (fun line -> line.Type = Models.Context) @>
+            test <@ (lines |> List.last).NewLineNo = Some 3 @>
+
+            // Changed (added) in the second commit: the diff itself.
+            let added = GitService.loadWholeFile root second.Sha "/dev/null" "b.txt" |> unwrap
+            test <@ added.Hunks |> List.collect _.Lines |> List.map _.Type = [ Models.Added ] @>
+            test <@ GitService.workingDirectory root = Path.TrimEndingDirectorySeparator(Path.GetFullPath root) @>
         finally
             try Directory.Delete(root, true) with _ -> ()
 

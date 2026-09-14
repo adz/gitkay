@@ -282,14 +282,30 @@ public sealed partial class DiffFileFolderRow : ObservableObject {
     [ObservableProperty] private bool _isExpanded;
 }
 
-/// <summary>Builds the flattened changed-files rows for patch (flat) and tree (folder) modes.</summary>
+/// <summary>An unchanged file in the "All files" tree; it has no diff, so it opens as a whole file.</summary>
+public sealed class RepoFileRow {
+    public RepoFileRow(string path, string name, int depth) {
+        Path = path;
+        Name = name;
+        Indent = new Avalonia.Thickness(depth * DiffFileTree.IndentWidth, 0, 0, 0);
+    }
+
+    public string Path { get; }
+    public string Name { get; }
+    public Avalonia.Thickness Indent { get; }
+}
+
+/// <summary>Builds the flattened file-list rows for patch (flat), tree (folder) and all-files modes.</summary>
 public static class DiffFileTree {
     public const double IndentWidth = 14;
 
     private sealed class Node {
         public readonly SortedDictionary<string, Node> Folders = new(StringComparer.OrdinalIgnoreCase);
-        public readonly List<(string Name, DiffFileProjection File)> Files = new();
+        public readonly List<(string Name, string Path, DiffFileProjection? File)> Files = new();
+        public bool HasChange;
     }
+
+    public static string PathOf(DiffFileProjection file) => file.Key.NewPath == "/dev/null" ? file.Key.OldPath : file.Key.NewPath;
 
     public static List<object> BuildRows(IEnumerable<DiffFileProjection> files, bool treeMode, ISet<string> collapsedFolders) {
         var rows = new List<object>();
@@ -302,18 +318,43 @@ public static class DiffFileTree {
             return rows;
         }
 
+        return BuildTree(files, null, path => !collapsedFolders.Contains(path));
+    }
+
+    /// <summary>
+    /// Every file in the commit's tree, with changed files in place. Folders holding changes start expanded and
+    /// the rest collapsed; <paramref name="toggledFolders"/> flips that default.
+    /// </summary>
+    public static List<object> BuildAllFilesRows(IEnumerable<DiffFileProjection> files, IEnumerable<string> allPaths, ISet<string> toggledFolders) =>
+        BuildTree(files, allPaths, null, toggledFolders);
+
+    private static List<object> BuildTree(IEnumerable<DiffFileProjection> files, IEnumerable<string>? allPaths, Func<string, bool>? isExpanded, ISet<string>? toggledFolders = null) {
+        var rows = new List<object>();
         var root = new Node();
-        foreach (var file in files) {
-            var path = file.Key.NewPath == "/dev/null" ? file.Key.OldPath : file.Key.NewPath;
+
+        void Add(string path, DiffFileProjection? file) {
             var parts = path.Split('/');
             var node = root;
+            if (file != null) node.HasChange = true;
             for (var i = 0; i < parts.Length - 1; i++) {
                 if (!node.Folders.TryGetValue(parts[i], out var child))
                     node.Folders[parts[i]] = child = new Node();
                 node = child;
+                if (file != null) node.HasChange = true;
             }
-            node.Files.Add((parts[^1], file));
+            node.Files.Add((parts[^1], path, file));
         }
+
+        var changedPaths = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var file in files) {
+            var path = PathOf(file);
+            changedPaths.Add(path);
+            Add(path, file);
+        }
+
+        if (allPaths != null)
+            foreach (var path in allPaths)
+                if (!changedPaths.Contains(path)) Add(path, null);
 
         void Emit(Node node, string prefix, int depth) {
             foreach (var (folderName, folder) in node.Folders) {
@@ -327,12 +368,17 @@ public static class DiffFileTree {
                 }
 
                 var path = prefix.Length == 0 ? name : $"{prefix}/{name}";
-                var expanded = !collapsedFolders.Contains(path);
+                var expanded = isExpanded?.Invoke(path) ?? current.HasChange != (toggledFolders?.Contains(path) ?? false);
                 rows.Add(new DiffFileFolderRow(name, path, depth, expanded));
                 if (expanded) Emit(current, path, depth + 1);
             }
 
-            foreach (var (name, file) in node.Files.OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)) {
+            foreach (var (name, path, file) in node.Files.OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)) {
+                if (file == null) {
+                    rows.Add(new RepoFileRow(path, name, depth));
+                    continue;
+                }
+
                 file.ListLabel = name;
                 file.ListIndent = new Avalonia.Thickness(depth * IndentWidth, 0, 0, 0);
                 rows.Add(file);
@@ -401,6 +447,62 @@ public sealed partial class DiffFileHeaderProjection : ObservableObject, IDiffRo
         MatchSuffix = "";
         MatchForeground = DiffSearchPresentation.MatchForeground;
         MatchFontWeight = FontWeight.Normal;
+    }
+}
+
+/// <summary>Flattens a file's header, hunks and gaps into diff surface rows for a presentation mode.</summary>
+public static class DiffRowBuilder {
+    public static void AppendFile(List<IDiffRowProjection> rows, DiffFileProjection file, string mode) {
+        rows.Add(file.Header);
+        if (!file.IsLoaded || file.IsCollapsed) return;
+
+        foreach (var block in file.Blocks) {
+            if (block is DiffGapProjection gap) {
+                gap.HeaderText = null;
+                rows.Add(gap);
+                continue;
+            }
+
+            if (block is not DiffHunkProjection hunk) continue;
+
+            if (mode == "side-by-side") {
+                AddHunkHeader(rows, hunk);
+                AddSideBySideLines(rows, hunk.Lines);
+                continue;
+            }
+
+            var lines = mode switch {
+                "new" => hunk.Lines.Where(line => !line.IsRemoved).ToArray(),
+                "old" => hunk.Lines.Where(line => !line.IsAdded).ToArray(),
+                _ => hunk.Lines.ToArray(),
+            };
+            if (lines.Length == 0) continue;
+
+            AddHunkHeader(rows, hunk);
+            rows.AddRange(lines);
+        }
+    }
+
+    private static void AddHunkHeader(List<IDiffRowProjection> rows, DiffHunkProjection hunk) {
+        if (rows.Count > 0 && rows[^1] is DiffGapProjection gap)
+            gap.HeaderText = hunk.Header;
+        else
+            rows.Add(new DiffHunkHeaderProjection(hunk));
+    }
+
+    private static void AddSideBySideLines(List<IDiffRowProjection> target, IList<DiffLineProjection> lines) {
+        var index = 0;
+        while (index < lines.Count) {
+            var line = lines[index];
+            if (line.IsRemoved && index + 1 < lines.Count && lines[index + 1].IsAdded) {
+                target.Add(DiffLineProjection.CreateSideBySidePair(line, lines[index + 1]));
+                index += 2;
+                continue;
+            }
+
+            target.Add(line);
+            index++;
+        }
     }
 }
 

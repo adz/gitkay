@@ -2,6 +2,7 @@ namespace GitKay.Core
 
 open System
 open System.Collections.Concurrent
+open System.IO
 open System.Collections.Generic
 open System.Threading.Tasks
 open System.Text.RegularExpressions
@@ -242,7 +243,7 @@ module GitService =
                 // Single-flight per commit: selection loads the file list and diff concurrently, and both
                 // would otherwise run rename detection for the same commit at once. The load itself runs
                 // as a forked fiber rather than under a lock, so a joiner waits without blocking a thread.
-                let! candidate = Flow.fork (loadDiffCacheEntryFlow env.RepoPath hash)
+                let! candidate = Flow.forkNamed $"load changed files {hash}" (loadDiffCacheEntryFlow env.RepoPath hash)
                 let fiber, started = claimDiffLoad env.Cache hash candidate
 
                 if not started then
@@ -391,8 +392,18 @@ module GitService =
         let hasAll = targets |> List.exists ((=) StartupTarget.All)
         let tips = targets |> List.filter (function StartupTarget.Exclude _ | StartupTarget.ExcludeMergeBase _ | StartupTarget.Path _ -> false | _ -> true)
 
-        if hasAll || List.isEmpty tips then
+        if hasAll then
             Ok (box (History.defaultRoots includeStashes repo))
+        elif List.isEmpty tips then
+            // Like gitk and git log: without revisions, history is what HEAD reaches. Stashes still show when asked for;
+            // an unborn HEAD (empty repository) falls back to every ref.
+            match repo.Head |> Option.ofObj |> Option.bind (fun head -> Option.ofObj head.Tip) with
+            | Some tip ->
+                let stashes =
+                    if includeStashes then repo.Stashes |> Seq.choose (fun stash -> Option.ofObj stash.WorkTree |> Option.map box) |> List.ofSeq
+                    else []
+                Ok (box (box tip :: stashes))
+            | None -> Ok (box (History.defaultRoots includeStashes repo))
         else
             let resolveTarget target =
                 match target with
@@ -445,13 +456,54 @@ module GitService =
             | None -> return! Error(GitError.RevisionNotFound revision)
         }
 
+    /// A path argument as git matches it: relative to the working tree, with forward slashes. Arguments are relative to
+    /// the directory GitKay was launched from, as with gitk; paths outside the working tree are kept as given.
+    let private toRepoPath (workingDirectory: string) (launchDirectory: string) (path: string) =
+        let asGiven = path.Replace('\\', '/')
+        try
+            let full = Path.GetFullPath(path, launchDirectory)
+            let relative = Path.GetRelativePath(workingDirectory, full)
+            if relative = "." then ""
+            elif relative.StartsWith ".." || Path.IsPathRooted relative then asGiven
+            else relative.Replace('\\', '/')
+        with _ ->
+            asGiven
+
+    /// Resolves command-line path arguments against the launch directory: a bare argument that is not a revision but
+    /// names a file or folder becomes a path (as in `gitk file.cs`), and every path becomes repository-relative.
+    let resolvePathArguments (repoPath: string) (launchDirectory: string) (targets: StartupTarget list) =
+        if String.IsNullOrEmpty repoPath || targets.IsEmpty then
+            targets
+        else
+            try
+                use repo = new Repository(repoPath)
+                match repo.Info.WorkingDirectory with
+                | null -> targets
+                | workingDirectory ->
+                    let exists (name: string) =
+                        try
+                            let full = Path.GetFullPath(name, launchDirectory)
+                            File.Exists full || Directory.Exists full // axial-allow-effect: filesystem
+                        with _ ->
+                            false
+
+                    targets
+                    |> List.map (fun target ->
+                        match target with
+                        | StartupTarget.Revision name when isNull repo.Branches.[name] && (tryCommit repo name).IsNone && exists name ->
+                            StartupTarget.Path(toRepoPath workingDirectory launchDirectory name)
+                        | StartupTarget.Path path -> StartupTarget.Path(toRepoPath workingDirectory launchDirectory path)
+                        | _ -> target)
+            with _ ->
+                targets
+
     let fetchHistory (limit: int option) (includeStashes: bool) (targets: StartupTarget list) : Flow<GitEnv, GitError, Models.Commit list> =
         flow {
             let! env = Flow.env
             use repo = new Repository(env.RepoPath)
             let! roots = resolveStartupTargets includeStashes repo targets
             let! exclusions = resolveExclusions repo targets
-            let paths = targets |> List.choose (function StartupTarget.Path path -> Some path | _ -> None)
+            let paths = targets |> List.choose (function StartupTarget.Path path -> Some(path.Replace('\\', '/')) | _ -> None)
             
             let refsByCommit = History.commitRefs includeStashes repo
             let filter = CommitFilter()
@@ -468,8 +520,12 @@ module GitService =
 
             let query = repo.Commits.QueryBy(filter)
             let distinctQuery = query |> Seq.distinctBy (fun commit -> commit.Sha) |> Seq.filter touchesPaths
+            // A path-limited first page bounds the commits scanned, not the matches: a rarely touched path would
+            // otherwise walk (and diff) the entire history before anything appears.
             let limitedQuery =
                 match limit with
+                | Some n when not paths.IsEmpty ->
+                    query |> Seq.distinctBy (fun commit -> commit.Sha) |> Seq.truncate n |> Seq.filter touchesPaths
                 | Some n -> distinctQuery |> Seq.truncate n
                 | None -> distinctQuery
 
@@ -537,6 +593,72 @@ module GitService =
     /// Loads one file's diff with complete surrounding context, for file-scoped gap expansion.
     let fetchDiffFileFullContext (hash: string) (oldPath: string) (newPath: string) : Flow<GitEnv, GitError, FileDiff> =
         fetchDiffFileContent fullContextLines hash oldPath newPath
+
+    /// The working tree root of a repository, or null for a bare repository.
+    let workingDirectory (repoPath: string) : string =
+        try
+            use repo = new Repository(repoPath)
+            match repo.Info.WorkingDirectory with
+            | null -> null
+            | directory -> Path.TrimEndingDirectorySeparator directory
+        with _ ->
+            null
+
+    /// Every file path in a commit's tree, for the "All files" list. Submodules and other non-blob entries are skipped.
+    let listCommitFiles (repoPath: string) (hash: string) : Result<string list, GitError> =
+        result {
+            use repo = new Repository(repoPath)
+            let! (commit: LibGit2Sharp.Commit) = loadCommit repo hash
+
+            let rec walk (tree: Tree) =
+                seq {
+                    for entry in tree do
+                        match entry.TargetType with
+                        | TreeEntryTargetType.Tree -> yield! walk (entry.Target :?> Tree)
+                        | TreeEntryTargetType.Blob -> yield entry.Path.Replace('\\', '/')
+                        | _ -> ()
+                }
+
+            return walk commit.Tree |> Seq.toList
+        }
+
+    /// One file at a commit with its whole content: the change against the first parent with full context when
+    /// the file changed, otherwise every line as unchanged context.
+    let loadWholeFile (repoPath: string) (hash: string) (oldPath: string) (newPath: string) : Result<FileDiff, GitError> =
+        result {
+            use repo = new Repository(repoPath)
+            let! (commit: LibGit2Sharp.Commit) = loadCommit repo hash
+            let parent = commit.Parents |> Seq.tryHead |> Option.toObj
+            let compareOptions = buildCompareOptions fullContextLines
+            let diff = diffFileInCommit repo compareOptions commit parent oldPath newPath
+
+            if not diff.Hunks.IsEmpty then
+                return diff
+            else
+                let blob = tryBlob commit (if newPath = "/dev/null" then oldPath else newPath)
+
+                if isNull blob || blob.IsBinary then
+                    return diff
+                else
+                    let text = blob.GetContentText()
+                    let lines = text.Split('\n')
+                    let lines = if text.EndsWith "\n" then Array.take (lines.Length - 1) lines else lines
+
+                    let contextLines =
+                        lines
+                        |> Array.mapi (fun index line ->
+                            { Type = Context
+                              Content = line.TrimEnd('\r')
+                              OldLineNo = Some(index + 1)
+                              NewLineNo = Some(index + 1) })
+                        |> Array.toList
+
+                    let hunks =
+                        if contextLines.IsEmpty then []
+                        else [ { Header = $"@@ -1,{lines.Length} +1,{lines.Length} @@"; Lines = contextLines } ]
+
+                    return { diff with Hunks = hunks; NewLineCount = Some lines.Length }
+        }
 
     let searchCommits (contextLines: int) (commits: Models.Commit list) (mode: GitSearch.Mode) (useRegex: bool) (query: string) : Flow<GitEnv, GitError, GitSearch.Result list> =
         flow {

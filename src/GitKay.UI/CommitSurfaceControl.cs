@@ -133,6 +133,7 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource {
     }
 
     private void Rebuild() {
+        _rebuildPending = false;
         Detach();
         _all = ItemsSource?.ToArray() ?? Array.Empty<CommitProjection>();
         if (ItemsSource is INotifyCollectionChanged collection) {
@@ -165,7 +166,24 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource {
         _collection = null;
     }
 
-    private void OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) => Rebuild();
+    private bool _rebuildPending;
+
+    /// <summary>
+    /// Collection syncs arrive as one change per commit; rebuilding (an O(n) copy and re-subscription) on each made
+    /// loading a large history quadratic and froze the UI for seconds. Coalesce into one rebuild, and let anything
+    /// that reads rows before it runs catch up first.
+    /// </summary>
+    private void OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) {
+        if (_rebuildPending) return;
+        _rebuildPending = true;
+        Dispatcher.UIThread.Post(EnsureRows, DispatcherPriority.Send);
+    }
+
+    private void EnsureRows() {
+        if (!_rebuildPending) return;
+        _rebuildPending = false;
+        Rebuild();
+    }
     private void OnRowChanged(object? sender, PropertyChangedEventArgs e) {
         if (e.PropertyName == nameof(CommitProjection.HasSearchMatch) && ShowOnlyMatches && !_filterPending) {
             // Many rows change together when results arrive; refilter once.
@@ -178,10 +196,16 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource {
     }
     private void OnScrollChanged(object? sender, ScrollChangedEventArgs e) => InvalidateVisual();
 
-    protected override Size MeasureOverride(Size availableSize) =>
+    protected override Size MeasureOverride(Size availableSize) {
+        EnsureRows();
+        return MeasureRows(availableSize);
+    }
+
+    private Size MeasureRows(Size availableSize) =>
         new(double.IsInfinity(availableSize.Width) ? 800 : availableSize.Width, _rows.Length * RowHeight);
 
     public override void Render(DrawingContext context) {
+        EnsureRows();
         var offset = _scrollViewer?.Offset.Y ?? 0;
         var viewport = _scrollViewer?.Viewport.Height ?? Bounds.Height;
         context.FillRectangle(Brushes.Transparent, new Rect(0, offset, Bounds.Width, viewport));
@@ -381,6 +405,7 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource {
     }
 
     public void SelectAt(double documentY) {
+        EnsureRows();
         if (_rows.Length == 0) return;
         var index = Math.Clamp((int)(documentY / RowHeight), 0, _rows.Length - 1);
         _keyboardSelectionCancellation?.Cancel();
@@ -391,6 +416,7 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource {
     public int ViewportRowCount => _scrollViewer == null ? 20 : Math.Max(1, (int)(_scrollViewer.Viewport.Height / RowHeight));
 
     public void MoveSelection(int delta) {
+        EnsureRows();
         if (_rows.Length == 0) return;
         var currentItem = _keyboardSelection ?? SelectedItem;
         var current = currentItem == null ? -1 : Array.IndexOf(_rows, currentItem);
@@ -417,6 +443,7 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource {
     }
 
     public void ScrollIntoView(CommitProjection item) {
+        EnsureRows();
         if (_scrollViewer == null) return;
         var index = Array.IndexOf(_rows, item);
         if (index < 0) return;
@@ -426,6 +453,9 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource {
         if (top < offset.Y) _scrollViewer.Offset = offset.WithY(top);
         else if (bottom > offset.Y + _scrollViewer.Viewport.Height) _scrollViewer.Offset = offset.WithY(Math.Max(0, bottom - _scrollViewer.Viewport.Height));
     }
+
+    /// <summary>Push or pull ("push" / "pull") requested for a local branch on the clicked commit.</summary>
+    public event Action<string, BranchTarget>? BranchOperationRequested;
 
     private ContextMenu BuildContextMenu() {
         MenuItem Item(string title, Func<CommitProjection, System.Windows.Input.ICommand> command) {
@@ -437,6 +467,18 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource {
         if (SelectedItem is { } selected) {
             foreach (var filter in BuildFilterItems(selected)) menu.Items.Add(filter);
             menu.Items.Add(new Separator());
+            var branches = selected.LocalBranches.ToArray();
+            foreach (var branch in branches) {
+                MenuItem Operation(string title, string operation) {
+                    var item = new MenuItem { Header = title };
+                    item.Click += (_, _) => BranchOperationRequested?.Invoke(operation, branch);
+                    return item;
+                }
+
+                menu.Items.Add(Operation($"Push {branch.Name}", "push"));
+                menu.Items.Add(Operation(branch.IsCurrentHead ? $"Pull {branch.Name}" : $"Pull {branch.Name} (fast-forward)", "pull"));
+            }
+            if (branches.Length > 0) menu.Items.Add(new Separator());
         }
         foreach (var item in new Control[]
             {

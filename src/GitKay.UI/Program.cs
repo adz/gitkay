@@ -35,6 +35,9 @@ class Program {
             }
         }
 
+        DiagnosticsLog.Initialize(args);
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => System.Diagnostics.Trace.WriteLine("GitKay exiting");
+
         App.StartupArgs = args;
 
         BuildAvaloniaApp()

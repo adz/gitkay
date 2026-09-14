@@ -39,8 +39,12 @@ public static class FatalErrorPresenter {
             "GitKay could not start",
             BuildDetails("GitKay failed while starting.", exception));
 
+        Console.Error.WriteLine(BuildDetails("GitKay failed while starting.", exception));
+        PersistCrashDetails("GitKay failed while starting.", exception);
         dialog.Closed += (_, _) => desktopLifetime.Shutdown(1);
         desktopLifetime.MainWindow = dialog;
+        // Startup runs after the lifetime has started, when assigning MainWindow no longer shows it.
+        dialog.Show();
     }
 
     public static string BuildDetails(string heading, Exception exception) {
@@ -51,6 +55,8 @@ public static class FatalErrorPresenter {
         builder.AppendLine(exception.Message);
         builder.AppendLine();
         builder.AppendLine(exception.ToString());
+        builder.AppendLine();
+        builder.AppendLine($"Logs and crash reports: {DiagnosticsLog.LogDirectory}");
         return builder.ToString();
     }
 
@@ -126,20 +132,8 @@ public static class FatalErrorPresenter {
     }
 
     private static void PersistCrashDetails(string heading, Exception exception) {
-        var details = BuildDetails(heading, exception);
-        try {
-            Trace.WriteLine(details);
-            Trace.Flush();
-        }
-        catch {
-        }
-
-        try {
-            var path = Path.Combine(Path.GetTempPath(), "gitkay-crash.log");
-            File.WriteAllText(path, details);
-        }
-        catch {
-        }
+        var path = DiagnosticsLog.WriteReport("crash", BuildDetails(heading, exception));
+        if (path != null) Trace.WriteLine($"[crash] report written to {path}");
     }
 
     private static void WriteFallbackError(string heading, Exception exception) {

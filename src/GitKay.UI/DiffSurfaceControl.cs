@@ -16,6 +16,14 @@ using Avalonia.VisualTree;
 
 namespace GitKay.UI;
 
+/// <summary>A right-click on a file header or code line; handlers add file actions to <see cref="Menu"/>.</summary>
+public sealed class DiffFileMenuEventArgs(DiffFileProjection file, int? lineNumber, ContextMenu menu) : EventArgs {
+    public DiffFileProjection File { get; } = file;
+    /// <summary>The new-side (or old-side, for removed lines) line number that was clicked.</summary>
+    public int? LineNumber { get; } = lineNumber;
+    public ContextMenu Menu { get; } = menu;
+}
+
 /// <summary>Index-addressable diff viewport. It realizes no child controls and draws only visible rows.</summary>
 public sealed class DiffSurfaceControl : Control, IOverviewSource {
     private List<OverviewMark> _overviewMarks = new();
@@ -75,7 +83,12 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         CloseRun(_rows.Length);
     }
 
-    private const double LineHeight = 20;
+    /// <summary>Row height for code lines; scales with <see cref="CodeFontSize"/> (20 at the default 12).</summary>
+    private double LineHeight => Math.Round(CodeFontSize * 20 / 12);
+    /// <summary>Scales a gutter measurement laid out for the default 12px code font.</summary>
+    private double Z(double value) => value * CodeFontSize / 12;
+    private double CodeTextTop => Math.Floor((LineHeight - CodeFontSize * 4 / 3) / 2);
+    public const double DefaultCodeFontSize = 12;
     private const double HunkHeight = 28;
     private const double GapHeight = 40;
     private const double FileHeight = 50;
@@ -95,6 +108,8 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         AvaloniaProperty.Register<DiffSurfaceControl, IEnumerable<IDiffRowProjection>?>(nameof(ItemsSource));
     public static readonly StyledProperty<IDiffRowProjection?> SelectedItemProperty =
         AvaloniaProperty.Register<DiffSurfaceControl, IDiffRowProjection?>(nameof(SelectedItem), defaultBindingMode: Avalonia.Data.BindingMode.TwoWay);
+    public static readonly StyledProperty<double> CodeFontSizeProperty =
+        AvaloniaProperty.Register<DiffSurfaceControl, double>(nameof(CodeFontSize), DefaultCodeFontSize);
     public static readonly StyledProperty<string> ModeProperty =
         AvaloniaProperty.Register<DiffSurfaceControl, string>(nameof(Mode), "diff");
     public static readonly StyledProperty<string?> FindQueryProperty =
@@ -138,9 +153,15 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
     private readonly Dictionary<string, FormattedText> _colouredLayouts = new(StringComparer.Ordinal);
     private readonly HashSet<string> _pending = new(StringComparer.Ordinal);
 
+    public event EventHandler<DiffFileMenuEventArgs>? FileContextRequested;
+    /// <summary>Raised after text is copied, with the number of lines copied.</summary>
+    public event EventHandler<int>? TextCopied;
+
     public IEnumerable<IDiffRowProjection>? ItemsSource { get => GetValue(ItemsSourceProperty); set => SetValue(ItemsSourceProperty, value); }
     public IDiffRowProjection? SelectedItem { get => GetValue(SelectedItemProperty); set => SetValue(SelectedItemProperty, value); }
     public string Mode { get => GetValue(ModeProperty); set => SetValue(ModeProperty, value); }
+    /// <summary>Font size of diff code and line numbers only; file headers and hunk labels keep their size.</summary>
+    public double CodeFontSize { get => GetValue(CodeFontSizeProperty); set => SetValue(CodeFontSizeProperty, value); }
     /// <summary>Find-in-diff text; every occurrence in visible lines is highlighted.</summary>
     public string? FindQuery { get => GetValue(FindQueryProperty); set => SetValue(FindQueryProperty, value); }
     public bool FindUseRegex { get => GetValue(FindUseRegexProperty); set => SetValue(FindUseRegexProperty, value); }
@@ -157,6 +178,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         ItemsSourceProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => control.RebuildRows());
         SelectedItemProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => control.InvalidateVisual());
         ModeProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => control.InvalidateVisual());
+        CodeFontSizeProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => control.OnCodeFontSizeChanged());
         FindQueryProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => { control.InvalidateVisual(); control.InvalidateOverview(); });
         FindUseRegexProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => control.InvalidateVisual());
         SearchHighlightQueryProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => { control.InvalidateVisual(); control.InvalidateOverview(); });
@@ -190,6 +212,23 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         base.OnDetachedFromVisualTree(e);
     }
 
+    private void OnCodeFontSizeChanged() {
+        // Keep the row at the top of the viewport in place while rows change height.
+        var anchorIndex = _scrollViewer == null || _rows.Length == 0 ? -1 : FindRow(_scrollViewer.Offset.Y);
+        var within = anchorIndex < 0 ? 0 : (_scrollViewer!.Offset.Y - _tops[anchorIndex]) / Math.Max(1, _tops[anchorIndex + 1] - _tops[anchorIndex]);
+        Interlocked.Increment(ref _generation);
+        _colouredLayouts.Clear();
+        _pending.Clear();
+        ComputeTops();
+        InvalidateMeasure();
+        InvalidateVisual();
+        InvalidateOverview();
+        if (anchorIndex >= 0) {
+            var top = _tops[anchorIndex] + within * (_tops[anchorIndex + 1] - _tops[anchorIndex]);
+            Dispatcher.UIThread.Post(() => SetOffsetWithoutScrolling(Math.Max(0, top)), DispatcherPriority.Loaded);
+        }
+    }
+
     private void RebuildRows() {
         if (_expansionAnchor != null && System.Diagnostics.Stopwatch.GetElapsedTime(_expansionAnchor.StartedAt) > ExpansionAnchorLifetime)
             _expansionAnchor = null;
@@ -203,7 +242,10 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         _rows = ItemsSource?.ToArray() ?? Array.Empty<IDiffRowProjection>();
         RestoreSelectionPosition();
         // A different diff (or reshaped rows) invalidates row-based selection positions.
-        if (_textSelection != null && (previousRows.Length != _rows.Length || !ReferenceEquals(ItemsSource, _lastItemsSource))) _textSelection = null;
+        if (_textSelection != null && (previousRows.Length != _rows.Length || !ReferenceEquals(ItemsSource, _lastItemsSource))) {
+            _textSelection = null;
+            _visualAnchorRow = -1;
+        }
         _lastItemsSource = ItemsSource;
         _hoveredGapAction = GapActionHit.None;
         _pressedGapAction = GapActionHit.None;
@@ -441,7 +483,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
     }
 
     private void StoreColouredLayout(string text, IBrush foreground, IReadOnlyList<HighlightToken> tokens) {
-        var layout = new FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, CodeTypeface, 12, foreground);
+        var layout = new FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, CodeTypeface, CodeFontSize, foreground);
         var offset = 0;
         foreach (var token in tokens) {
             if (token.Kind != HighlightKind.Plain) layout.SetForegroundBrush(TokenBrush(token.Kind, foreground), offset, token.Text.Length);
@@ -622,7 +664,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         context.DrawText(path, new Point(FileChevronWidth + 8, centerY - path.Height / 2));
         var pathUnderline = ThemeBrush("GitKayAccentBrush", SearchMatchFallback);
         ForEachMatch(file.DisplayPath, SearchPathQuery, SearchHighlightUseRegex, (start, length) =>
-            DrawDottedUnderline(context, file.DisplayPath, start, length, FileChevronWidth + 8, centerY + path.Height / 2 - 1, pathUnderline));
+            DrawDottedUnderline(context, file.DisplayPath, start, length, FileChevronWidth + 8, centerY + path.Height / 2 - 1, pathUnderline, 12));
 
         if (HasContextToggle(file)) {
             var toggle = FileContextRect(header, y);
@@ -839,15 +881,15 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         var gutter = line.IsAdded ? ThemeBrush("GitKayAddedGutterBrush", Brushes.Transparent)
             : line.IsRemoved ? ThemeBrush("GitKayRemovedGutterBrush", Brushes.Transparent)
             : ThemeBrush("GitKayGutterBrush", Brushes.Transparent);
-        context.FillRectangle(gutter, new Rect(0, y, 50, LineHeight - 1));
+        context.FillRectangle(gutter, new Rect(0, y, Z(50), LineHeight - 1));
         var lineNumber = line.IsRemoved ? line.OldLineNoText : line.NewLineNoText;
-        DrawLineNumber(context, lineNumber, 2, y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
+        DrawLineNumber(context, lineNumber, Z(2), y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
         // The +/- marker only appears on changed lines, in a narrow column.
         if (line.IsAdded || line.IsRemoved)
-            DrawPlain(context, line.Prefix, 41, y + 2, 12, line.IsAdded ? ThemeBrush("GitKayAddedAccentBrush", line.PrefixForeground) : ThemeBrush("GitKayRemovedAccentBrush", line.PrefixForeground));
-        using (context.PushClip(new Rect(54, y, Math.Max(0, Bounds.Width - 54), LineHeight))) {
-            DrawFindMatches(context, line.Content, 54, y);
-            DrawCode(context, line.Content, 54, y + 2, ThemeBrush("GitKayTextBrush", line.Foreground));
+            DrawPlain(context, line.Prefix, Z(41), y + CodeTextTop, CodeFontSize, line.IsAdded ? ThemeBrush("GitKayAddedAccentBrush", line.PrefixForeground) : ThemeBrush("GitKayRemovedAccentBrush", line.PrefixForeground));
+        using (context.PushClip(new Rect(Z(54), y, Math.Max(0, Bounds.Width - Z(54)), LineHeight))) {
+            DrawFindMatches(context, line.Content, Z(54), y);
+            DrawCode(context, line.Content, Z(54), y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground));
         }
     }
 
@@ -860,11 +902,11 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         var gutter = line.IsAdded ? ThemeBrush("GitKayAddedGutterBrush", Brushes.Transparent)
             : line.IsRemoved ? ThemeBrush("GitKayRemovedGutterBrush", Brushes.Transparent)
             : ThemeBrush("GitKayGutterBrush", Brushes.Transparent);
-        context.FillRectangle(gutter, new Rect(0, y, 48, LineHeight - 1));
-        DrawLineNumber(context, lineNumber, 8, y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
-        using (context.PushClip(new Rect(52, y, Math.Max(0, Bounds.Width - 52), LineHeight))) {
-            DrawFindMatches(context, content, 52, y);
-            DrawCode(context, content, 52, y + 2, ThemeBrush("GitKayTextBrush", line.Foreground));
+        context.FillRectangle(gutter, new Rect(0, y, Z(48), LineHeight - 1));
+        DrawLineNumber(context, lineNumber, Z(8), y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
+        using (context.PushClip(new Rect(Z(52), y, Math.Max(0, Bounds.Width - Z(52)), LineHeight))) {
+            DrawFindMatches(context, content, Z(52), y);
+            DrawCode(context, content, Z(52), y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground));
         }
     }
 
@@ -879,22 +921,22 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
             context.FillRectangle(line.IsRemoved || isPairedChange ? ThemeBrush("GitKayRemovedBrush", line.OldCellBackground) : Brushes.Transparent, new Rect(0, y, middle, LineHeight - 1));
         if (!line.IsRemoved)
             context.FillRectangle(line.IsAdded || isPairedChange ? ThemeBrush("GitKayAddedBrush", line.NewCellBackground) : Brushes.Transparent, new Rect(middle + 1, y, Math.Max(0, Bounds.Width - middle - 1), LineHeight - 1));
-        context.FillRectangle(line.IsRemoved || isPairedChange ? ThemeBrush("GitKayRemovedGutterBrush", gutter) : line.IsAdded ? Brushes.Transparent : gutter, new Rect(0, y, 48, LineHeight - 1));
-        context.FillRectangle(line.IsAdded || isPairedChange ? ThemeBrush("GitKayAddedGutterBrush", gutter) : line.IsRemoved ? Brushes.Transparent : gutter, new Rect(middle + 1, y, 48, LineHeight - 1));
+        context.FillRectangle(line.IsRemoved || isPairedChange ? ThemeBrush("GitKayRemovedGutterBrush", gutter) : line.IsAdded ? Brushes.Transparent : gutter, new Rect(0, y, Z(48), LineHeight - 1));
+        context.FillRectangle(line.IsAdded || isPairedChange ? ThemeBrush("GitKayAddedGutterBrush", gutter) : line.IsRemoved ? Brushes.Transparent : gutter, new Rect(middle + 1, y, Z(48), LineHeight - 1));
         context.FillRectangle(border, new Rect(middle, y, 1, LineHeight));
 
-        DrawIntralineHighlights(context, line.OldContent, line.NewContent, 56, middle + 57, y);
+        DrawIntralineHighlights(context, line.OldContent, line.NewContent, Z(56), middle + Z(57), y);
 
-        DrawLineNumber(context, line.OldLineNoText, 8, y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
-        using (context.PushClip(new Rect(56, y, Math.Max(0, middle - 64), LineHeight))) {
-            DrawFindMatches(context, line.OldContent, 56, y);
-            DrawCode(context, line.OldContent, 56, y + 2, ThemeBrush("GitKayTextBrush", line.Foreground));
+        DrawLineNumber(context, line.OldLineNoText, Z(8), y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
+        using (context.PushClip(new Rect(Z(56), y, Math.Max(0, middle - Z(64)), LineHeight))) {
+            DrawFindMatches(context, line.OldContent, Z(56), y);
+            DrawCode(context, line.OldContent, Z(56), y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground));
         }
 
-        DrawLineNumber(context, line.NewLineNoText, middle + 9, y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
-        using (context.PushClip(new Rect(middle + 57, y, Math.Max(0, Bounds.Width - middle - 57), LineHeight))) {
-            DrawFindMatches(context, line.NewContent, middle + 57, y);
-            DrawCode(context, line.NewContent, middle + 57, y + 2, ThemeBrush("GitKayTextBrush", line.Foreground));
+        DrawLineNumber(context, line.NewLineNoText, middle + Z(9), y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
+        using (context.PushClip(new Rect(middle + Z(57), y, Math.Max(0, Bounds.Width - middle - Z(57)), LineHeight))) {
+            DrawFindMatches(context, line.NewContent, middle + Z(57), y);
+            DrawCode(context, line.NewContent, middle + Z(57), y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground));
         }
     }
 
@@ -930,7 +972,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         DrawTextSelection(context, text, x, y);
         if (string.IsNullOrEmpty(text)) return;
         var underline = ThemeBrush("GitKayAccentBrush", SearchMatchFallback);
-        ForEachMatch(text, SearchHighlightQuery, SearchHighlightUseRegex, (start, length) => DrawDottedUnderline(context, text, start, length, x, y + LineHeight - 3, underline));
+        ForEachMatch(text, SearchHighlightQuery, SearchHighlightUseRegex, (start, length) => DrawDottedUnderline(context, text, start, length, x, y + LineHeight - 3, underline, CodeFontSize));
         var highlight = ThemeBrush("GitKayFindMatchBrush", FindMatchFallback);
         ForEachMatch(text, FindQuery, FindUseRegex, (start, length) => DrawChangedSpan(context, text, start, length, x, y, highlight));
     }
@@ -950,9 +992,9 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
             onMatch(index, query.Length);
     }
 
-    private void DrawDottedUnderline(DrawingContext context, string text, int start, int length, double x, double baseline, IBrush brush) {
-        var left = x + (start == 0 ? 0 : Layout(text[..start], 12, Brushes.Transparent, false).Width);
-        var width = Layout(text.Substring(start, length), 12, Brushes.Transparent, false).Width;
+    private void DrawDottedUnderline(DrawingContext context, string text, int start, int length, double x, double baseline, IBrush brush, double size) {
+        var left = x + (start == 0 ? 0 : Layout(text[..start], size, Brushes.Transparent, false).Width);
+        var width = Layout(text.Substring(start, length), size, Brushes.Transparent, false).Width;
         for (var dot = left; dot < left + width; dot += 3)
             context.FillRectangle(brush, new Rect(dot, baseline, 1.5, 1.5));
     }
@@ -978,20 +1020,20 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
 
     private void DrawChangedSpan(DrawingContext context, string text, int start, int length, double x, double y, IBrush brush) {
         if (length <= 0) return;
-        var prefixWidth = start == 0 ? 0 : Layout(text[..start], 12, Brushes.Transparent, false).Width;
-        var changedWidth = Layout(text.Substring(start, length), 12, Brushes.Transparent, false).Width;
+        var prefixWidth = start == 0 ? 0 : Layout(text[..start], CodeFontSize, Brushes.Transparent, false).Width;
+        var changedWidth = Layout(text.Substring(start, length), CodeFontSize, Brushes.Transparent, false).Width;
         context.FillRectangle(brush, new Rect(x + prefixWidth, y, changedWidth, LineHeight - 1));
     }
 
     private static readonly IBrush LineNumberFallback = new SolidColorBrush(Color.FromRgb(110, 118, 129)).ToImmutable();
 
     private void DrawLineNumber(DrawingContext context, string text, double x, double y, IBrush foreground) {
-        var layout = Layout(text, 12, foreground, false);
-        context.DrawText(layout, new Point(x + 34 - layout.Width, y + 2));
+        var layout = Layout(text, CodeFontSize, foreground, false);
+        context.DrawText(layout, new Point(x + Z(34) - layout.Width, y + CodeTextTop));
     }
 
     private void DrawCode(DrawingContext context, string text, double x, double y, IBrush foreground) {
-        var plain = Layout(text, 12, foreground, false);
+        var plain = Layout(text, CodeFontSize, foreground, false);
         if (_colouredLayouts.TryGetValue(text, out var coloured)) {
             context.DrawText(coloured, new Point(x, y));
             return;
@@ -1160,6 +1202,12 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
                 ShowGapMenu(rowIndex, menuGap);
             else if ((uint)rowIndex < (uint)_rows.Length && _rows[rowIndex] is DiffLineProjection menuLine)
                 ShowLineMenu(rowIndex, menuLine);
+            else if (RowAt(position, out _) is var headerIndex && (uint)headerIndex < (uint)_rows.Length && _rows[headerIndex] is DiffFileHeaderProjection menuHeader) {
+                SelectedItem = menuHeader;
+                var menu = new ContextMenu();
+                FileContextRequested?.Invoke(this, new DiffFileMenuEventArgs(menuHeader.File, null, menu));
+                if (menu.Items.Count > 0) menu.Open(this);
+            }
             e.Handled = true;
             return;
         }
@@ -1211,7 +1259,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
     internal int FirstLineRowIndex(int skip = 0) =>
         Enumerable.Range(0, _rows.Length).Where(i => _rows[i] is DiffLineProjection).Skip(skip).DefaultIfEmpty(-1).First();
 
-    public bool HasTextSelection => _textSelection is { } selection && selection.Anchor != selection.Active;
+    public bool HasTextSelection => _visualAnchorRow >= 0 || _textSelection is { } selection && selection.Anchor != selection.Active;
 
     private static bool SameLineAt(IDiffRowProjection[] rows, int index) =>
         (uint)index < (uint)rows.Length && rows[index] is DiffLineProjection;
@@ -1220,9 +1268,9 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
     private int SideAt(double x) => Mode == "side-by-side" && x >= Bounds.Width / 2 ? 1 : 0;
 
     private double ContentOrigin(int side) => Mode switch {
-        "side-by-side" => side == 0 ? 56 : Bounds.Width / 2 + 57,
-        "new" or "old" => 52,
-        _ => 54,
+        "side-by-side" => side == 0 ? Z(56) : Bounds.Width / 2 + Z(57),
+        "new" or "old" => Z(52),
+        _ => Z(54),
     };
 
     private string TextFor(DiffLineProjection line, int side) => Mode switch {
@@ -1238,12 +1286,12 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         int low = 0, high = text.Length;
         while (low < high) {
             var mid = (low + high + 1) / 2;
-            if (Layout(text[..mid], 12, Brushes.Transparent, false).Width <= target) low = mid; else high = mid - 1;
+            if (Layout(text[..mid], CodeFontSize, Brushes.Transparent, false).Width <= target) low = mid; else high = mid - 1;
         }
 
         if (low < text.Length) {
-            var before = Layout(text[..low], 12, Brushes.Transparent, false).Width;
-            var after = Layout(text[..(low + 1)], 12, Brushes.Transparent, false).Width;
+            var before = Layout(text[..low], CodeFontSize, Brushes.Transparent, false).Width;
+            var after = Layout(text[..(low + 1)], CodeFontSize, Brushes.Transparent, false).Width;
             if (target - before > after - target) low++;
         }
 
@@ -1267,6 +1315,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
     }
 
     private void BeginTextSelection(int index, Point point, int clickCount, bool extend, IPointer pointer) {
+        _visualAnchorRow = -1;
         var side = extend && _textSelection != null ? _textSelection.Side : SideAt(point.X);
         var position = PositionAt(point, side);
         var text = TextFor((DiffLineProjection)_rows[index], side);
@@ -1326,8 +1375,8 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
 
         var from = row == start.Row ? Math.Min(start.Char, text.Length) : 0;
         var to = row == end.Row ? Math.Min(end.Char, text.Length) : text.Length;
-        var left = x + (from == 0 ? 0 : Layout(text[..from], 12, Brushes.Transparent, false).Width);
-        var right = x + (to == 0 ? 0 : Layout(text[..to], 12, Brushes.Transparent, false).Width);
+        var left = x + (from == 0 ? 0 : Layout(text[..from], CodeFontSize, Brushes.Transparent, false).Width);
+        var right = x + (to == 0 ? 0 : Layout(text[..to], CodeFontSize, Brushes.Transparent, false).Width);
         // Lines continuing past this row show a little of the line break, like an editor.
         if (row < end.Row) right += 6;
         if (right > left)
@@ -1357,8 +1406,59 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         Mode == "side-by-side" && !string.IsNullOrEmpty(line.NewContent) ? line.NewContent : TextFor(line, 0);
 
     public async void CopySelection() {
-        if (GetCopyText() is { } text && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
-            await clipboard.SetTextAsync(text);
+        if (GetCopyText() is not { } text || TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard) return;
+        // Like vim, a yank ends visual mode.
+        if (_visualAnchorRow >= 0) {
+            _visualAnchorRow = -1;
+            _textSelection = null;
+            InvalidateVisual();
+        }
+        await clipboard.SetTextAsync(text);
+        TextCopied?.Invoke(this, text.Split('\n').Length);
+    }
+
+    // ----- Vim visual mode: v / V selects whole lines from the focused line; j / k extend; y yanks; Esc cancels. -----
+
+    private int _visualAnchorRow = -1;
+
+    public bool IsVisualMode => _visualAnchorRow >= 0;
+
+    private void ToggleVisualMode() {
+        if (_visualAnchorRow >= 0) {
+            _visualAnchorRow = -1;
+            _textSelection = null;
+            InvalidateVisual();
+            return;
+        }
+
+        var index = SelectedItem == null ? -1 : Array.IndexOf(_rows, SelectedItem);
+        if (index < 0 && _scrollViewer != null) index = FindRow(_scrollViewer.Offset.Y);
+        while (index >= 0 && index < _rows.Length && _rows[index] is not DiffLineProjection) index++;
+        if (index < 0 || index >= _rows.Length) return;
+        SelectedItem = _rows[index];
+        _visualAnchorRow = index;
+        UpdateVisualSelection(index);
+    }
+
+    private void UpdateVisualSelection(int activeRow) {
+        if (_visualAnchorRow < 0 || _visualAnchorRow >= _rows.Length) return;
+        var side = _textSelection?.Side ?? (Mode == "side-by-side" ? 1 : 0);
+        var (start, end) = activeRow < _visualAnchorRow ? (activeRow, _visualAnchorRow) : (_visualAnchorRow, activeRow);
+        while (start < end && _rows[start] is not DiffLineProjection) start++;
+        while (end > start && _rows[end] is not DiffLineProjection) end--;
+        if (_rows[end] is not DiffLineProjection last) return;
+        _textSelection = new TextSelection(new TextPosition(start, 0), new TextPosition(end, TextFor(last, side).Length), side);
+        InvalidateVisual();
+    }
+
+    protected override void OnPointerWheelChanged(PointerWheelEventArgs e) {
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.Delta.Y != 0) {
+            CodeFontSize = Math.Clamp(CodeFontSize + Math.Sign(e.Delta.Y), 7, 32);
+            e.Handled = true;
+            return;
+        }
+
+        base.OnPointerWheelChanged(e);
     }
 
     private async void CopyText(string text) {
@@ -1416,7 +1516,20 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
             }
         }
 
+        if (e.Key == Key.V && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift) {
+            ToggleVisualMode();
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Y && e.KeyModifiers == KeyModifiers.None && HasTextSelection) {
+            CopySelection();
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key == Key.Escape && _textSelection != null) {
+            _visualAnchorRow = -1;
             _textSelection = null;
             InvalidateVisual();
             e.Handled = true;
@@ -1440,7 +1553,13 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         while (header >= 0 && _rows[header] is not DiffFileHeaderProjection) header--;
         if (header >= 0 && _rows[header] is DiffFileHeaderProjection file) {
             var path = file.File.Key.NewPath == "/dev/null" ? file.File.Key.OldPath : file.File.Key.NewPath;
-            Add("Copy file path", true, () => CopyText(path));
+            if (FileContextRequested == null) {
+                Add("Copy file path", true, () => CopyText(path));
+            }
+            else {
+                menu.Items.Add(new Separator());
+                FileContextRequested.Invoke(this, new DiffFileMenuEventArgs(file.File, line.NewLineNo ?? line.OldLineNo, menu));
+            }
         }
 
         menu.Open(this);
@@ -1500,6 +1619,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         var next = Math.Clamp(current + delta, 0, _rows.Length - 1);
         SelectedItem = _rows[next];
         ScrollIntoView(SelectedItem);
+        if (_visualAnchorRow >= 0) UpdateVisualSelection(next);
     }
 
     /// <summary>Scrolls so the item sits at the top of the viewport (jumping to a file puts its header first).</summary>
