@@ -61,20 +61,18 @@ type AppUiStateDocument
     member _.RepoSelections = repoSelections
     member _.Layout = layout
 
-/// Every field is an option (a reference type): NativeAOT cannot create Reified's curried constructor
-/// instantiations over value types, which made settings fail to load in AOT builds. Defaults apply on conversion.
 type private AppSettingsWire = {
-    ShowBranchRefs: bool option
-    ShowStashes: bool option
-    DiffContextLines: int option
-    DiffPresentationModeKey: string option
-    CommitRowFontFamily: string option
-    CommitRowMonoFontFamily: string option
-    CommitRowTextFontSize: double option
-    CommitRowMetaFontSize: double option
-    CommitRowBadgeFontSize: double option
-    SearchDebounceSeconds: double option
-    ThemeMode: string option
+    ShowBranchRefs: bool
+    ShowStashes: bool
+    DiffContextLines: int
+    DiffPresentationModeKey: string
+    CommitRowFontFamily: string
+    CommitRowMonoFontFamily: string
+    CommitRowTextFontSize: double
+    CommitRowMetaFontSize: double
+    CommitRowBadgeFontSize: double
+    SearchDebounceSeconds: double
+    ThemeMode: string
 }
 
 type private RepoStateWire = { LastSelectedCommitHash: string option }
@@ -107,19 +105,20 @@ module private Defaults =
 
 [<RequireQualifiedAccess>]
 module private Codecs =
+    // A field missing from the file (an older version wrote it, or never did) takes its default.
     let settings =
         schema<AppSettingsWire> {
-            fieldAs "ShowBranchRefs" _.ShowBranchRefs
-            fieldAs "ShowStashes" _.ShowStashes
-            fieldAs "DiffContextLines" _.DiffContextLines
-            fieldAs "DiffPresentationModeKey" _.DiffPresentationModeKey
-            fieldAs "CommitRowFontFamily" _.CommitRowFontFamily
-            fieldAs "CommitRowMonoFontFamily" _.CommitRowMonoFontFamily
-            fieldAs "CommitRowTextFontSize" _.CommitRowTextFontSize
-            fieldAs "CommitRowMetaFontSize" _.CommitRowMetaFontSize
-            fieldAs "CommitRowBadgeFontSize" _.CommitRowBadgeFontSize
-            fieldAs "SearchDebounceSeconds" _.SearchDebounceSeconds
-            fieldAs "ThemeMode" _.ThemeMode
+            fieldAs "ShowBranchRefs" _.ShowBranchRefs { defaultValue Defaults.showBranchRefs }
+            fieldAs "ShowStashes" _.ShowStashes { defaultValue Defaults.showStashes }
+            fieldAs "DiffContextLines" _.DiffContextLines { defaultValue Defaults.diffContextLines }
+            fieldAs "DiffPresentationModeKey" _.DiffPresentationModeKey { defaultValue Defaults.diffPresentationModeKey }
+            fieldAs "CommitRowFontFamily" _.CommitRowFontFamily { defaultValue Defaults.commitRowFontFamily }
+            fieldAs "CommitRowMonoFontFamily" _.CommitRowMonoFontFamily { defaultValue Defaults.commitRowMonoFontFamily }
+            fieldAs "CommitRowTextFontSize" _.CommitRowTextFontSize { defaultValue Defaults.commitRowTextFontSize }
+            fieldAs "CommitRowMetaFontSize" _.CommitRowMetaFontSize { defaultValue Defaults.commitRowMetaFontSize }
+            fieldAs "CommitRowBadgeFontSize" _.CommitRowBadgeFontSize { defaultValue Defaults.commitRowBadgeFontSize }
+            fieldAs "SearchDebounceSeconds" _.SearchDebounceSeconds { defaultValue Defaults.searchDebounceSeconds }
+            fieldAs "ThemeMode" _.ThemeMode { defaultValue Defaults.themeMode }
             construct (fun showBranchRefs showStashes diffContextLines diffPresentationModeKey commitRowFontFamily commitRowMonoFontFamily commitRowTextFontSize commitRowMetaFontSize commitRowBadgeFontSize searchDebounceSeconds themeMode ->
                 { ShowBranchRefs = showBranchRefs; ShowStashes = showStashes; DiffContextLines = diffContextLines
                   DiffPresentationModeKey = diffPresentationModeKey; CommitRowFontFamily = commitRowFontFamily
@@ -159,25 +158,21 @@ module private Codecs =
 module private Conversion =
     let settingsDocument (wire: AppSettingsWire) =
         AppSettingsDocument(
-            wire.ShowBranchRefs |> Option.defaultValue Defaults.showBranchRefs,
-            wire.ShowStashes |> Option.defaultValue Defaults.showStashes,
-            wire.DiffContextLines |> Option.defaultValue Defaults.diffContextLines,
-            wire.DiffPresentationModeKey |> Option.defaultValue Defaults.diffPresentationModeKey,
-            wire.CommitRowFontFamily |> Option.defaultValue Defaults.commitRowFontFamily,
-            wire.CommitRowMonoFontFamily |> Option.defaultValue Defaults.commitRowMonoFontFamily,
-            wire.CommitRowTextFontSize |> Option.defaultValue Defaults.commitRowTextFontSize,
-            wire.CommitRowMetaFontSize |> Option.defaultValue Defaults.commitRowMetaFontSize,
-            wire.CommitRowBadgeFontSize |> Option.defaultValue Defaults.commitRowBadgeFontSize,
-            wire.SearchDebounceSeconds |> Option.defaultValue Defaults.searchDebounceSeconds,
-            wire.ThemeMode |> Option.defaultValue Defaults.themeMode)
+            wire.ShowBranchRefs, wire.ShowStashes, wire.DiffContextLines, wire.DiffPresentationModeKey,
+            wire.CommitRowFontFamily, wire.CommitRowMonoFontFamily, wire.CommitRowTextFontSize,
+            wire.CommitRowMetaFontSize, wire.CommitRowBadgeFontSize, wire.SearchDebounceSeconds, wire.ThemeMode)
+
+    let private textOr fallback (value: string) = if isNull value then fallback else value
 
     let settingsWire (document: AppSettingsDocument) = {
-        ShowBranchRefs = Some document.ShowBranchRefs; ShowStashes = Some document.ShowStashes
-        DiffContextLines = Some document.DiffContextLines; DiffPresentationModeKey = Option.ofObj document.DiffPresentationModeKey
-        CommitRowFontFamily = Option.ofObj document.CommitRowFontFamily; CommitRowMonoFontFamily = Option.ofObj document.CommitRowMonoFontFamily
-        CommitRowTextFontSize = Some document.CommitRowTextFontSize; CommitRowMetaFontSize = Some document.CommitRowMetaFontSize
-        CommitRowBadgeFontSize = Some document.CommitRowBadgeFontSize; SearchDebounceSeconds = Some document.SearchDebounceSeconds
-        ThemeMode = Option.ofObj document.ThemeMode
+        ShowBranchRefs = document.ShowBranchRefs; ShowStashes = document.ShowStashes
+        DiffContextLines = document.DiffContextLines
+        DiffPresentationModeKey = document.DiffPresentationModeKey |> textOr Defaults.diffPresentationModeKey
+        CommitRowFontFamily = document.CommitRowFontFamily |> textOr Defaults.commitRowFontFamily
+        CommitRowMonoFontFamily = document.CommitRowMonoFontFamily |> textOr Defaults.commitRowMonoFontFamily
+        CommitRowTextFontSize = document.CommitRowTextFontSize; CommitRowMetaFontSize = document.CommitRowMetaFontSize
+        CommitRowBadgeFontSize = document.CommitRowBadgeFontSize; SearchDebounceSeconds = document.SearchDebounceSeconds
+        ThemeMode = document.ThemeMode |> textOr Defaults.themeMode
     }
 
     let uiStateDocument (wire: AppUiStateWire) =
@@ -214,36 +209,8 @@ type GitKayJson =
     static member SerializeSettings(document: AppSettingsDocument) =
         document |> Conversion.settingsWire |> Json.serialize Codecs.settings
 
-    /// Reads settings with JsonDocument rather than the Reified codec: the codec's ten-argument curried
-    /// constructor needs a closure instantiation that NativeAOT does not generate, so settings failed to load in AOT builds.
     static member DeserializeSettings(json: string) =
-        use document = System.Text.Json.JsonDocument.Parse(json)
-        let root = document.RootElement
-
-        let tryProperty (name: string) =
-            match root.TryGetProperty name with
-            | true, value -> Some value
-            | _ -> None
-
-        let bool name = tryProperty name |> Option.bind (fun v -> match v.ValueKind with System.Text.Json.JsonValueKind.True -> Some true | System.Text.Json.JsonValueKind.False -> Some false | _ -> None)
-        let int name = tryProperty name |> Option.bind (fun v -> match v.TryGetInt32() with | true, value -> Some value | _ -> None)
-        let double name = tryProperty name |> Option.bind (fun v -> match v.TryGetDouble() with | true, value -> Some value | _ -> None)
-        let string name = tryProperty name |> Option.bind (fun v -> if v.ValueKind = System.Text.Json.JsonValueKind.String then Option.ofObj (v.GetString()) else None)
-
-        Conversion.settingsDocument
-            {
-                ShowBranchRefs = bool "ShowBranchRefs"
-                ShowStashes = bool "ShowStashes"
-                DiffContextLines = int "DiffContextLines"
-                DiffPresentationModeKey = string "DiffPresentationModeKey"
-                CommitRowFontFamily = string "CommitRowFontFamily"
-                CommitRowMonoFontFamily = string "CommitRowMonoFontFamily"
-                CommitRowTextFontSize = double "CommitRowTextFontSize"
-                CommitRowMetaFontSize = double "CommitRowMetaFontSize"
-                CommitRowBadgeFontSize = double "CommitRowBadgeFontSize"
-                SearchDebounceSeconds = double "SearchDebounceSeconds"
-                ThemeMode = string "ThemeMode"
-            }
+        json |> Json.deserialize Codecs.settings |> Conversion.settingsDocument
 
     static member SerializeUiState(windowWidth: Nullable<double>, windowHeight: Nullable<double>, repoSelections: seq<KeyValuePair<string, string>>, layout: UiLayoutDocument) =
         Conversion.uiStateWire(windowWidth, windowHeight, repoSelections, layout) |> Json.serialize Codecs.uiState

@@ -3095,3 +3095,26 @@ module CliTests =
         test <@ next.StartupTargets = [ GitStartup.Path "src/" ] @>
         test <@ next.Status = "No commit found for 'ab'" @>
 
+module SettingsSerializationTests =
+    open GitKay.Serialization
+
+    [<Fact>]
+    let ``settings round-trip every field`` () =
+        let document = AppSettingsDocument(true, true, 7, "side-by-side", "Inter", "Iosevka", 14.5, 12.0, 10.0, 0.25, "dark")
+        let read = document |> GitKayJson.SerializeSettings |> GitKayJson.DeserializeSettings
+        test <@ (read.ShowBranchRefs, read.ShowStashes, read.DiffContextLines, read.DiffPresentationModeKey) = (true, true, 7, "side-by-side") @>
+        test <@ (read.CommitRowFontFamily, read.CommitRowMonoFontFamily, read.ThemeMode) = ("Inter", "Iosevka", "dark") @>
+        test <@ (read.CommitRowTextFontSize, read.CommitRowMetaFontSize, read.CommitRowBadgeFontSize, read.SearchDebounceSeconds) = (14.5, 12.0, 10.0, 0.25) @>
+
+    [<Fact>]
+    let ``settings missing from the file take their defaults`` () =
+        let read = GitKayJson.DeserializeSettings """{"ShowBranchRefs":true,"CommitRowTextFontSize":15}"""
+        test <@ read.ShowBranchRefs && read.CommitRowTextFontSize = 15.0 @>
+        test <@ (read.ShowStashes, read.DiffContextLines, read.DiffPresentationModeKey, read.ThemeMode) = (false, 3, "diff", "system") @>
+
+    [<Fact>]
+    let ``settings written by GitKay 0.3.0 still load`` () =
+        let json = """{"ShowBranchRefs":true,"ShowStashes":false,"DiffContextLines":3,"DiffPresentationModeKey":"diff","CommitRowFontFamily":"Courier New","CommitRowMonoFontFamily":"Inconsolata","CommitRowTextFontSize":13,"CommitRowMetaFontSize":13,"CommitRowBadgeFontSize":11,"SearchDebounceSeconds":0.5,"ThemeMode":"system"}"""
+        let read = GitKayJson.DeserializeSettings json
+        test <@ read.ShowBranchRefs && read.CommitRowMonoFontFamily = "Inconsolata" && read.CommitRowMetaFontSize = 13.0 @>
+
