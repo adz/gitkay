@@ -452,6 +452,29 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource {
         }
     }
 
+    /// <summary>vim's {count}G / {count}gg: selects the commit at that 1-based position.</summary>
+    public void SelectPosition(int position) {
+        EnsureRows();
+        if (_rows.Length == 0) return;
+        var currentItem = _keyboardSelection ?? SelectedItem;
+        var current = currentItem == null ? 0 : Math.Max(0, Array.IndexOf(_rows, currentItem));
+        MoveSelection(Math.Clamp(position - 1, 0, _rows.Length - 1) - current);
+    }
+
+    /// <summary>vim's zt / zz / zb: scrolls so the selected commit sits at the top, centre or bottom of the viewport.</summary>
+    public void ScrollSelectionTo(string position) {
+        EnsureRows();
+        if (_scrollViewer == null || (_keyboardSelection ?? SelectedItem) is not { } item || Array.IndexOf(_rows, item) is var index && index < 0) return;
+        var viewport = _scrollViewer.Viewport.Height;
+        var top = index * RowHeight;
+        var offset = position switch {
+            "top" => top,
+            "bottom" => top + RowHeight - viewport,
+            _ => top - (viewport - RowHeight) / 2,
+        };
+        _scrollViewer.Offset = _scrollViewer.Offset.WithY(Math.Clamp(offset, 0, Math.Max(0, _rows.Length * RowHeight - viewport)));
+    }
+
     public void ScrollIntoView(CommitProjection item) {
         EnsureRows();
         if (_scrollViewer == null) return;

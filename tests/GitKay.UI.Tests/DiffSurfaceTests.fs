@@ -45,6 +45,7 @@ type private DiffFixture(mode: string) =
                               Content =
                                 if number = 5 then "long = " + String.replicate 60 "abcdefghij"
                                 elif number = 7 then "call(first.second, third) + x"
+                                elif number = 9 then "    if (a[i] == b) { go(); }"
                                 else $"value = {number}"
                               OldLineNo = if number % 2 = 0 && number <> 3 then None else Some number
                               NewLineNo = if number % 2 = 1 && number <> 3 then None else Some number }
@@ -249,4 +250,60 @@ module DiffSurfaceTests =
                 Some(text.Substring(from, until - from))
             else None
         test <@ actual = Some expected @>
+
+    [<Fact>]
+    let ``counts repeat motions, finds and yanks`` () =
+        Headless.run (fun () ->
+            use fixture = new DiffFixture "diff"
+            let line = "call(first.second, third) + x"
+            fixture.Surface.Focus() |> ignore
+            fixture.Surface.SelectedItem <- fixture.Line 0 6
+            let counted (n: int) (key: Key) (modifiers: RawInputModifiers) (symbol: string) =
+                fixture.Surface.PendingCount <- n
+                fixture.Press(key, modifiers, symbol)
+
+            counted 3 Key.W RawInputModifiers.None "w"                 // call ( first → "."
+            fixture.Press Key.Y; fixture.Press Key.L
+            let afterThreeW = yanked fixture line
+            fixture.Press Key.D0
+            counted 2 Key.F RawInputModifiers.None "f"; fixture.Press(Key.I, symbol = "i")   // second i: "third"
+            fixture.Press Key.Y; fixture.Press Key.L
+            let afterTwoFi = yanked fixture line
+            fixture.Press Key.D0
+            fixture.Press Key.Y; fixture.Press Key.D3; fixture.Press(Key.W, symbol = "w")   // y3w
+            let yThreeW = yanked fixture line
+            test <@ (afterThreeW, afterTwoFi, yThreeW) = (".", "i", "call(first") @>)
+
+    [<Fact>]
+    let ``caret, percent, first non-blank, word under caret and G`` () =
+        Headless.run (fun () ->
+            use fixture = new DiffFixture "diff"
+            let line = "    if (a[i] == b) { go(); }"
+            fixture.Surface.Focus() |> ignore
+            fixture.Surface.SelectedItem <- fixture.Line 0 8
+            fixture.Press(Key.D6, RawInputModifiers.Shift, "^")
+            fixture.Press Key.Y; fixture.Press Key.L
+            let firstNonBlank = yanked fixture line
+            fixture.Press(Key.D5, RawInputModifiers.Shift, "%")          // from "if": next bracket is "(", jump to ")"
+            fixture.Press Key.Y; fixture.Press Key.L
+            let matched = yanked fixture line
+            fixture.Press Key.Y; fixture.Press(Key.D5, RawInputModifiers.Shift, "%")   // y% from ")" back to "("
+            let yankPercent = yanked fixture line
+            // From "(": w stops on "a", then on "["; the word under the caret is the next one, "i".
+            fixture.Press Key.W; fixture.Press Key.W
+            let word = fixture.Surface.WordUnderCaret()
+            test <@ (firstNonBlank, matched, yankPercent, word) = ("i", ")", "(a[i] == b)", "i") @>
+
+            fixture.Surface.GoToLine 21
+            test <@ Object.ReferenceEquals(fixture.Surface.SelectedItem, fixture.Line 0 20) @>)
+
+    [<Theory>]
+    [<InlineData("f(a[b]) x", 0, 6)>]
+    [<InlineData("f(a[b]) x", 3, 5)>]
+    [<InlineData("f(a[b]) x", 6, 1)>]
+    [<InlineData("no brackets", 0, -1)>]
+    let ``percent finds the partner of the next bracket`` (text: string, column: int, expected: int) =
+        let found = DiffSurfaceControl.MatchingBracket(text, column)
+        let actual = if found.HasValue then found.Value else -1
+        test <@ actual = expected @>
 

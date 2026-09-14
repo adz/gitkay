@@ -988,6 +988,26 @@
                             <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Move the caret by character, word, WORD (to whitespace), or to the line ends (crosses sides in side-by-side)" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
                         </Grid>
                         <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="^ / _ · %" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="First non-blank character · the bracket matching the next one on the line" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="{}{count}" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="{}Repeat a motion (3j, 5w, 2fx, y3w, 3]c) · {count}G / {count}gg: commit N, or line N in the focused file" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="* / #" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Find the word under the caret forwards / backwards; n and N continue" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="/ · ?" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Find in diff forwards · backwards (in the commit list, ? still opens this sheet; F1 anywhere)" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="zz / zt / zb" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Scroll so the focused row sits at the centre / top / bottom" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
                             <TextBlock Text="f / F / t / T  x · ; / ," FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Jump to (f) or just before (t) the next x on the line, backwards with Shift; ; repeats, , reverses" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
                         </Grid>

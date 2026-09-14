@@ -1595,7 +1595,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
     }
 
     /// <summary>Moves the caret within the focused line; returns false when there is no line to move on.</summary>
-    private bool MoveCaret(Key key, KeyModifiers modifiers) {
+    private bool MoveCaret(Key key, KeyModifiers modifiers, string? symbol = null) {
         var row = SelectedLineIndex;
         if (row < 0 || _rows[row] is not DiffLineProjection line) return false;
         var side = CaretSide(line);
@@ -1615,19 +1615,35 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
                 return false;
         }
 
-        return TryMotion(key, modifiers, text, column, out var target, out _) && PlaceCaret(row, side, target);
+        return TryMotion(key, modifiers, symbol, text, column, out var target, out _) && PlaceCaret(row, side, target);
     }
 
     /// <summary>
     /// Where a motion on one line takes the caret. <paramref name="inclusive"/> says whether a yank to that point
     /// includes the character there (vim's e, E and $ do; w, b, h, l and 0 stop before it).
     /// </summary>
-    private static bool TryMotion(Key key, KeyModifiers modifiers, string text, int column, out int target, out bool inclusive) {
+    private static bool TryMotion(Key key, KeyModifiers modifiers, string? symbol, string text, int column, out int target, out bool inclusive) {
         var shift = modifiers == KeyModifiers.Shift;
         // w / b / e move by words (letters, digits, _); W / B / E by WORDs (anything but whitespace).
         int Class(char c) => char.IsWhiteSpace(c) ? 0 : shift || char.IsLetterOrDigit(c) || c == '_' ? 1 : 2;
         target = column;
         inclusive = false;
+
+        // Symbols are matched by the character typed, so they work on any keyboard layout.
+        switch (symbol) {
+            case "^" or "_":
+                // First non-blank character: code is indented, so 0 often lands on whitespace.
+                target = 0;
+                while (target < text.Length && char.IsWhiteSpace(text[target])) target++;
+                if (target == text.Length) target = Math.Max(0, text.Length - 1);
+                return true;
+            case "%":
+                if (MatchingBracket(text, column) is { } match) {
+                    target = match;
+                    inclusive = true;
+                }
+                return true;
+        }
 
         switch (key) {
             case Key.H or Key.Left when modifiers == KeyModifiers.None:
@@ -1675,6 +1691,98 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         }
     }
 
+    /// <summary>
+    /// vim's %: the first bracket at or after <paramref name="column"/> on the line, and the index of its partner.
+    /// </summary>
+    internal static int? MatchingBracket(string text, int column) {
+        const string opens = "([{";
+        const string closes = ")]}";
+        for (var start = column; start < text.Length; start++) {
+            var open = opens.IndexOf(text[start]);
+            var close = closes.IndexOf(text[start]);
+            if (open < 0 && close < 0) continue;
+            var (self, partner, step) = open >= 0 ? (opens[open], closes[open], 1) : (closes[close], opens[close], -1);
+            var depth = 0;
+            for (var i = start; i >= 0 && i < text.Length; i += step) {
+                if (text[i] == self) depth++;
+                else if (text[i] == partner && --depth == 0) return i;
+            }
+            return null;
+        }
+        return null;
+    }
+
+    /// <summary>The word under the caret, or the next word after it on the line, for * and #.</summary>
+    public string? WordUnderCaret() {
+        var row = SelectedLineIndex;
+        if (row < 0 || _rows[row] is not DiffLineProjection line) return null;
+        var text = TextFor(line, CaretSide(line));
+        static bool IsWord(char c) => char.IsLetterOrDigit(c) || c == '_';
+        var start = Math.Min(_caretChar, text.Length);
+        while (start < text.Length && !IsWord(text[start])) start++;
+        if (start >= text.Length) return null;
+        while (start > 0 && IsWord(text[start - 1])) start--;
+        var end = start;
+        while (end < text.Length && IsWord(text[end])) end++;
+        return text[start..end];
+    }
+
+    /// <summary>After find-in-diff moves to a row, puts the caret on the first match in it.</summary>
+    public void PlaceCaretOnFindMatch() {
+        var row = SelectedLineIndex;
+        if (row < 0 || _rows[row] is not DiffLineProjection line) return;
+        var (query, regex) = string.IsNullOrWhiteSpace(FindQuery) ? (SearchHighlightQuery, SearchHighlightUseRegex) : (FindQuery, FindUseRegex);
+        var preferred = CaretSide(line);
+        foreach (var side in Mode == "side-by-side" ? new[] { preferred, 1 - preferred } : new[] { 0 }) {
+            var first = -1;
+            ForEachMatch(TextFor(line, side), query, regex, (start, _) => { if (first < 0) first = start; });
+            if (first < 0) continue;
+            _caretSide = side;
+            PlaceCaret(row, side, first);
+            return;
+        }
+    }
+
+    /// <summary>vim's zt / zz / zb: scrolls so the focused row sits at the top, centre or bottom of the viewport.</summary>
+    public void ScrollSelectionTo(string position) {
+        var index = SelectedItem == null ? -1 : Array.IndexOf(_rows, SelectedItem);
+        if (_scrollViewer == null || index < 0) return;
+        var viewport = _scrollViewer.Viewport.Height;
+        var top = _tops[index];
+        var height = _tops[index + 1] - top;
+        var offset = position switch {
+            "top" => top,
+            "bottom" => top + height - viewport,
+            _ => top - (viewport - height) / 2,
+        };
+        _scrollViewer.Offset = _scrollViewer.Offset.WithY(Math.Clamp(offset, 0, Math.Max(0, _tops[^1] - viewport)));
+    }
+
+    /// <summary>vim's {count}G: focuses the row with that line number in the focused file (the first file when none).</summary>
+    public void GoToLine(int number) {
+        var focus = SelectedItem == null ? 0 : Math.Max(0, Array.IndexOf(_rows, SelectedItem));
+        var fileStart = focus;
+        while (fileStart > 0 && _rows[fileStart] is not DiffFileHeaderProjection) fileStart--;
+        IDiffRowProjection? best = null;
+        var bestNumber = int.MaxValue;
+        for (var index = fileStart + 1; index < _rows.Length && _rows[index] is not DiffFileHeaderProjection; index++) {
+            if (_rows[index] is not DiffLineProjection line) continue;
+            var lineNumber = (Mode == "old" ? line.OldLineNo : line.NewLineNo) ?? line.OldLineNo ?? int.MaxValue;
+            // The exact line, or the nearest shown line after it when that line is hidden context.
+            if (lineNumber >= number && lineNumber < bestNumber) {
+                best = line;
+                bestNumber = lineNumber;
+            }
+        }
+        if (best == null) return;
+        SelectedItem = best;
+        ScrollIntoView(best);
+        if (_visualAnchorRow >= 0) UpdateVisualSelection(Array.IndexOf(_rows, best));
+    }
+
+    /// <summary>A count typed before the next key (3w, 2fx, y3w), set by the window's vim key handling.</summary>
+    public int PendingCount { get; set; }
+
     private bool PlaceCaret(int row, int side, int column) {
         if (_caretSide < 0) _caretSide = side;
         _caretChar = column;
@@ -1685,7 +1793,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
 
     // ----- f / F / t / T: find a character on the focused line; ; repeats, , repeats the other way. -----
 
-    private readonly record struct CharFind(char Target, bool Forward, bool Till, bool Yank = false);
+    private readonly record struct CharFind(char Target, bool Forward, bool Till, bool Yank = false, int Count = 1);
 
     private CharFind? _pendingFind;
 
@@ -1709,10 +1817,15 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
     private static int? FindTarget(CharFind find, string text, int column, bool repeat) {
         // Like vim, repeating t / T steps past the character the caret already stops before.
         var skip = repeat && find.Till ? 1 : 0;
-        var index = find.Forward
-            ? text.IndexOf(find.Target, Math.Min(text.Length, column + 1 + skip))
-            : column - 1 - skip < 0 ? -1 : text.LastIndexOf(find.Target, column - 1 - skip);
-        if (index < 0) return null;
+        var index = column;
+        for (var occurrence = 0; occurrence < Math.Max(1, find.Count); occurrence++) {
+            index = find.Forward
+                ? text.IndexOf(find.Target, Math.Min(text.Length, index + 1 + skip))
+                : index - 1 - skip < 0 ? -1 : text.LastIndexOf(find.Target, index - 1 - skip);
+            // A count beyond the last occurrence leaves the caret where it was, as in vim.
+            if (index < 0) return null;
+            skip = 0;
+        }
         return find.Till ? (find.Forward ? index - 1 : index + 1) : index;
     }
 
@@ -1721,11 +1834,19 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
 
     private bool _pendingYank;
     private char? _pendingTextObject;
+    private int _yankCount = 1;
+    private int _motionCount;
+
+    private static int? DigitOf(KeyEventArgs e) => e.Key switch {
+        >= Key.D0 and <= Key.D9 => e.Key - Key.D0,
+        >= Key.NumPad0 and <= Key.NumPad9 => e.Key - Key.NumPad0,
+        _ => null,
+    };
 
     private static bool IsModifierKey(Key key) =>
         key is Key.LeftShift or Key.RightShift or Key.LeftAlt or Key.RightAlt or Key.LeftCtrl or Key.RightCtrl;
 
-    private bool TryHandleYank(KeyEventArgs e) {
+    private bool TryHandleYank(KeyEventArgs e, int count) {
         if ((_pendingYank || _pendingTextObject != null) && IsModifierKey(e.Key)) return true;
         var row = SelectedLineIndex;
 
@@ -1740,7 +1861,14 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         }
 
         if (_pendingYank) {
+            // A count may come between y and the motion (y3w); it multiplies one typed before y (2y3w).
+            if (e.KeyModifiers == KeyModifiers.None && DigitOf(e) is { } digit && (digit > 0 || _motionCount > 0)) {
+                _motionCount = Math.Min(9999, _motionCount * 10 + digit);
+                return true;
+            }
             _pendingYank = false;
+            var total = Math.Max(1, _yankCount) * Math.Max(1, _motionCount);
+            _motionCount = 0;
             if (row < 0 || _rows[row] is not DiffLineProjection line || e.Key == Key.Escape) return true;
             var side = CaretSide(line);
             var text = TextFor(line, side);
@@ -1753,16 +1881,20 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
                 return true;
             }
             if (e.Key is Key.F or Key.T && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift) {
-                _pendingFind = new CharFind('\0', Forward: none, Till: e.Key == Key.T, Yank: true);
+                _pendingFind = new CharFind('\0', Forward: none, Till: e.Key == Key.T, Yank: true, Count: total);
                 return true;
             }
             if (e.Key is Key.OemSemicolon or Key.OemComma && none && _lastFind is { } last) {
-                FindOnLine((e.Key == Key.OemSemicolon ? last : last with { Forward = !last.Forward }) with { Yank = true }, repeat: true);
+                FindOnLine((e.Key == Key.OemSemicolon ? last : last with { Forward = !last.Forward }) with { Yank = true, Count = total }, repeat: true);
                 return true;
             }
-            if (TryMotion(e.Key, e.KeyModifiers, text, column, out var target, out var inclusive)) {
-                var end = inclusive ? target + 1 : target;
-                return YankRange(row, side, Math.Min(column, end), Math.Max(column, end));
+            if (TryMotion(e.Key, e.KeyModifiers, e.KeySymbol, text, column, out var target, out var inclusive)) {
+                for (var step = 1; step < total && target < text.Length; step++)
+                    if (!TryMotion(e.Key, e.KeyModifiers, e.KeySymbol, text, target, out target, out inclusive)) break;
+                // Inclusive motions (e, $, %) take the character at both ends; exclusive ones stop before the far end.
+                return target >= column
+                    ? YankRange(row, side, column, inclusive ? target + 1 : target)
+                    : YankRange(row, side, target, inclusive ? column + 1 : column);
             }
             // Anything else cancels the pending yank, as in vim.
             return true;
@@ -1771,6 +1903,8 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         if (row < 0 || HasTextSelection) return false;
         if (e.Key == Key.Y && e.KeyModifiers == KeyModifiers.None) {
             _pendingYank = true;
+            _yankCount = count;
+            _motionCount = 0;
             return true;
         }
         if (e.Key == Key.Y && e.KeyModifiers == KeyModifiers.Shift && _rows[row] is DiffLineProjection yLine) {
@@ -1866,25 +2000,25 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
     }
 
     /// <summary>Handles the character typed after f / F / t / T, and the ; and , repeats.</summary>
-    private bool TryHandleCharFind(KeyEventArgs e) {
+    private bool TryHandleCharFind(KeyEventArgs e, int count) {
         if (_pendingFind is { } pending) {
             // Modifier keys alone arrive before the shifted character; keep waiting for it.
             if (e.Key is Key.LeftShift or Key.RightShift or Key.LeftAlt or Key.RightAlt or Key.LeftCtrl or Key.RightCtrl) return true;
             _pendingFind = null;
             if (e.Key == Key.Escape || string.IsNullOrEmpty(e.KeySymbol) || char.IsControl(e.KeySymbol[0])) return true;
             var find = pending with { Target = e.KeySymbol[0] };
-            _lastFind = find;
+            _lastFind = find with { Yank = false, Count = 1 };
             FindOnLine(find, repeat: false);
             return true;
         }
 
         if (SelectedLineIndex < 0) return false;
         if (e.Key is Key.F or Key.T && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift) {
-            _pendingFind = new CharFind('\0', Forward: e.KeyModifiers == KeyModifiers.None, Till: e.Key == Key.T);
+            _pendingFind = new CharFind('\0', Forward: e.KeyModifiers == KeyModifiers.None, Till: e.Key == Key.T, Count: count);
             return true;
         }
         if (e.Key is Key.OemSemicolon or Key.OemComma && e.KeyModifiers == KeyModifiers.None && _lastFind is { } last) {
-            FindOnLine(e.Key == Key.OemSemicolon ? last : last with { Forward = !last.Forward }, repeat: true);
+            FindOnLine((e.Key == Key.OemSemicolon ? last : last with { Forward = !last.Forward }) with { Count = count }, repeat: true);
             return true;
         }
         return false;
@@ -1915,7 +2049,13 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
 
     protected override void OnKeyDown(KeyEventArgs e) {
         // First, so the character after f / t is never taken as a command.
-        if (_pendingFind == null && TryHandleYank(e) || TryHandleCharFind(e)) {
+        if (IsModifierKey(e.Key)) {
+            base.OnKeyDown(e);
+            return;
+        }
+        var count = Math.Max(1, PendingCount);
+        PendingCount = 0;
+        if (_pendingFind == null && TryHandleYank(e, count) || TryHandleCharFind(e, count)) {
             e.Handled = true;
             return;
         }
@@ -1964,10 +2104,14 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
             }
         }
 
-        if (e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift
-            && e.Key is Key.H or Key.L or Key.Left or Key.Right or Key.D0 or Key.NumPad0 or Key.D4 or Key.W or Key.B or Key.E
-            && (e.KeyModifiers == KeyModifiers.None || e.Key is Key.D4 or Key.W or Key.B or Key.E)
-            && MoveCaret(e.Key, e.KeyModifiers)) {
+        var caretKey = e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift
+            && (e.Key is Key.H or Key.L or Key.Left or Key.Right or Key.D0 or Key.NumPad0 or Key.D4 or Key.W or Key.B or Key.E
+                && (e.KeyModifiers == KeyModifiers.None || e.Key is Key.D4 or Key.W or Key.B or Key.E)
+                || e.KeySymbol is "^" or "_" or "%");
+        if (caretKey && MoveCaret(e.Key, e.KeyModifiers, e.KeySymbol)) {
+            // $, ^ and % don't repeat; the rest move count times.
+            if (e.KeySymbol is not ("$" or "^" or "_" or "%"))
+                for (var step = 1; step < count; step++) MoveCaret(e.Key, e.KeyModifiers, e.KeySymbol);
             e.Handled = true;
             return;
         }

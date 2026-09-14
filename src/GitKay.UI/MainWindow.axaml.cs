@@ -263,6 +263,14 @@ public partial class MainWindow : Window {
         // ? (shift+/) or F1 toggles the shortcut sheet; Esc closes it.
         if (_projection is { } help) {
             var questionMark = e.Key == Key.Oem2 && e.KeyModifiers == KeyModifiers.Shift && !typingInTextBox;
+            // In the diff, ? is vim's backward find; F1 still opens the shortcut sheet from anywhere.
+            if (questionMark && FocusedPane == Pane.Diff && !help.IsShortcutHelpOpen) {
+                help.DiffFindBackward = true;
+                CommitFindBox.Focus();
+                CommitFindBox.SelectAll();
+                e.Handled = true;
+                return;
+            }
             if (e.Key == Key.F1 || questionMark) {
                 help.IsShortcutHelpOpen = !help.IsShortcutHelpOpen;
                 e.Handled = true;
@@ -281,6 +289,7 @@ public partial class MainWindow : Window {
         if (!ctrlF && !slash) return;
 
         var target = IsDiffPaneFocused ? CommitFindBox : SearchBox;
+        if (IsDiffPaneFocused && _projection != null) _projection.DiffFindBackward = false;
         target.Focus();
         target.SelectAll();
         e.Handled = true;
@@ -805,8 +814,20 @@ public partial class MainWindow : Window {
         if (sender is not ListBox && sender is not DiffSurfaceControl && sender is not CommitSurfaceControl)
             return;
         if (sender is DiffSurfaceControl { IsAwaitingFindCharacter: true }) return;
+        if (e.Key is Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt) return;
+
+        // vim counts: digits typed before a motion repeat it (3j, 5w) or name a position (10G).
+        var count = _vimCount;
+        if (e.KeyModifiers == KeyModifiers.None && CountDigit(e.Key) is { } digit && (digit > 0 || count > 0) && _pendingVimPrefix == null) {
+            _vimCount = Math.Min(99999, count * 10 + digit);
+            e.Handled = true;
+            return;
+        }
+        _vimCount = 0;
+        if (sender is DiffSurfaceControl countedDiff) countedDiff.PendingCount = count;
 
         if (MainWindowNavigation.TryGetListNavigationDelta(e.Key, e.KeyModifiers, out var delta)) {
+            delta *= Math.Max(1, count);
             if (sender is ListBox listBox)
                 MainWindowNavigation.TryMoveSelection(listBox, delta);
             else if (sender is DiffSurfaceControl diffSurface)
@@ -817,7 +838,7 @@ public partial class MainWindow : Window {
             return;
         }
 
-        if (TryHandleVimKey(sender, e)) {
+        if (TryHandleVimKey(sender, e, count)) {
             e.Handled = true;
             return;
         }
@@ -836,12 +857,19 @@ public partial class MainWindow : Window {
     }
 
     private Key? _pendingVimPrefix;
+    private int _vimCount;
+
+    private static int? CountDigit(Key key) => key switch {
+        >= Key.D0 and <= Key.D9 => key - Key.D0,
+        >= Key.NumPad0 and <= Key.NumPad9 => key - Key.NumPad0,
+        _ => null,
+    };
 
     /// <summary>
     /// Common vim motions: gg / G (top, bottom), Ctrl+D / Ctrl+U (half page), n / N (next / previous match),
     /// ]c / [c (next / previous hunk in the diff). j / k and h / l are handled with the arrow keys.
     /// </summary>
-    private bool TryHandleVimKey(object? sender, KeyEventArgs e) {
+    private bool TryHandleVimKey(object? sender, KeyEventArgs e, int count = 0) {
         var shift = e.KeyModifiers == KeyModifiers.Shift;
         var none = e.KeyModifiers == KeyModifiers.None;
         var ctrl = e.KeyModifiers == KeyModifiers.Control;
@@ -862,17 +890,57 @@ public partial class MainWindow : Window {
             _ => 10,
         };
 
+        var times = Math.Max(1, count);
+
+        // {count}G and {count}gg go to a position: the commit's place in the list, or a line number in the diff.
+        void GoTo(int position) {
+            switch (sender) {
+                case CommitSurfaceControl commits: commits.SelectPosition(position); break;
+                case DiffSurfaceControl diff: diff.GoToLine(position); break;
+                case ListBox list when list.ItemCount > 0: MainWindowNavigation.TryMoveSelection(list, Math.Clamp(position - 1, 0, list.ItemCount - 1) - Math.Max(0, list.SelectedIndex)); break;
+            }
+        }
+
+        void ScrollSelection(string position) {
+            switch (sender) {
+                case CommitSurfaceControl commits: commits.ScrollSelectionTo(position); break;
+                case DiffSurfaceControl diff: diff.ScrollSelectionTo(position); break;
+            }
+        }
+
         if (e.Key == Key.Home && none) { Move(int.MinValue / 2); return true; }
         if (e.Key == Key.End && none) { Move(int.MaxValue / 2); return true; }
-        if (prefix == Key.G && none && e.Key == Key.G) { Move(int.MinValue / 2); return true; }
+        if (prefix == Key.G && none && e.Key == Key.G) {
+            if (count > 0) GoTo(count); else Move(int.MinValue / 2);
+            return true;
+        }
+        if (prefix == Key.Z) {
+            var position = e.Key switch { Key.Z when none => "center", Key.T when none => "top", Key.B when none => "bottom", _ => null };
+            if (position != null) ScrollSelection(position);
+            return true;
+        }
         if (prefix is Key.OemCloseBrackets or Key.OemOpenBrackets && none && e.Key == Key.C && sender is DiffSurfaceControl hunks) {
-            hunks.MoveToHunk(prefix == Key.OemCloseBrackets ? 1 : -1);
+            for (var step = 0; step < times; step++) hunks.MoveToHunk(prefix == Key.OemCloseBrackets ? 1 : -1);
+            return true;
+        }
+
+        // * and # search the diff for the word under the caret; n / N then continue in that direction.
+        if (e.KeySymbol is "*" or "#" && sender is DiffSurfaceControl wordDiff && _projection is { } wordProjection) {
+            if (wordDiff.WordUnderCaret() is { } word) {
+                wordProjection.FindWordInDiff(word, forward: e.KeySymbol == "*");
+                // FindWordInDiff sets the direction, so repeats continue the same way.
+                for (var step = 1; step < times; step++) wordProjection.FindInCommitCommand.Execute(null);
+                wordDiff.PlaceCaretOnFindMatch();
+            }
             return true;
         }
 
         switch (e.Key) {
-            case Key.G when none: _pendingVimPrefix = Key.G; return true;
-            case Key.G when shift: Move(int.MaxValue / 2); return true;
+            case Key.G when none: _pendingVimPrefix = Key.G; _vimCount = count; return true;
+            case Key.G when shift:
+                if (count > 0) GoTo(count); else Move(int.MaxValue / 2);
+                return true;
+            case Key.Z when none && sender is CommitSurfaceControl or DiffSurfaceControl: _pendingVimPrefix = Key.Z; return true;
             case Key.OemCloseBrackets or Key.OemOpenBrackets when none && sender is DiffSurfaceControl: _pendingVimPrefix = e.Key; return true;
             case Key.P when (none || shift) && _projection is { } relations:
                 relations.GoToParent(shift ? 1 : 0);
@@ -884,10 +952,13 @@ public partial class MainWindow : Window {
             case Key.U when ctrl: Move(-HalfPage()); return true;
             case Key.N when (none || shift) && _projection is { } projection:
                 var forward = none;
-                if (sender is CommitSurfaceControl)
-                    (forward ? projection.FindNextCommitCommand : projection.FindPreviousCommitCommand).Execute(null);
-                else
-                    (forward ? projection.FindInCommitCommand : projection.FindPreviousInCommitCommand).Execute(null);
+                for (var step = 0; step < times; step++) {
+                    if (sender is CommitSurfaceControl)
+                        (forward ? projection.FindNextCommitCommand : projection.FindPreviousCommitCommand).Execute(null);
+                    else
+                        (forward ? projection.FindInCommitCommand : projection.FindPreviousInCommitCommand).Execute(null);
+                }
+                if (sender is DiffSurfaceControl foundDiff) foundDiff.PlaceCaretOnFindMatch();
                 return true;
             default:
                 return false;

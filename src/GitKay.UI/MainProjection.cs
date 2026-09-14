@@ -1071,11 +1071,34 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
     }
 
-    [RelayCommand]
-    private void FindInCommit() => StepDiffFind(+1);
+    /// <summary>Set by ? and #: Enter and n step backwards through diff matches, N forwards, as in vim.</summary>
+    public bool DiffFindBackward { get; set; }
 
     [RelayCommand]
-    private void FindPreviousInCommit() => StepDiffFind(-1);
+    private void FindInCommit() => StepDiffFind(DiffFindBackward ? -1 : +1);
+
+    [RelayCommand]
+    private void FindPreviousInCommit() => StepDiffFind(DiffFindBackward ? +1 : -1);
+
+    private bool _steppingFromSelection;
+
+    /// <summary>vim's * and #: finds the whole word in the diff, starting from the focused row rather than the top.</summary>
+    public void FindWordInDiff(string word, bool forward) {
+        static bool IsWord(char c) => char.IsLetterOrDigit(c) || c == '_';
+        var pattern = System.Text.RegularExpressions.Regex.Escape(word);
+        if (IsWord(word[0])) pattern = @"\b" + pattern;
+        if (IsWord(word[^1])) pattern += @"\b";
+        _steppingFromSelection = true;
+        try {
+            CommitFindUseRegex = true;
+            CommitFindQuery = pattern;
+        }
+        finally {
+            _steppingFromSelection = false;
+        }
+        DiffFindBackward = !forward;
+        StepDiffFind(forward ? +1 : -1);
+    }
 
     [RelayCommand]
     private void ClearCommitFind() => CommitFindQuery = "";
@@ -1083,12 +1106,14 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     partial void OnCommitSearchStatusTextChanged(string value) => OnPropertyChanged(nameof(HasSearchNavigation));
 
     partial void OnCommitFindUseRegexChanged(bool value) {
+        if (_steppingFromSelection) return;
         SelectedDiffRow = null;
         StepDiffFind(+1);
     }
 
     partial void OnCommitFindQueryChanged(string value) {
         UpdateCommitFindPlaceholder();
+        if (_steppingFromSelection) return;
         // Incremental, like a browser: typing jumps to the first match in the selected commit's diff.
         SelectedDiffRow = null;
         StepDiffFind(+1);
@@ -1115,9 +1140,19 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
 
         var currentIndex = SelectedDiffRow != null ? matches.FindIndex(row => ReferenceEquals(row, SelectedDiffRow)) : -1;
-        var nextIndex = currentIndex < 0
-            ? (direction > 0 ? 0 : matches.Count - 1)
-            : (currentIndex + direction + matches.Count) % matches.Count;
+        int nextIndex;
+        if (currentIndex >= 0) {
+            nextIndex = (currentIndex + direction + matches.Count) % matches.Count;
+        }
+        else if (SelectedDiffRow != null && SelectedDiffRows.IndexOf(SelectedDiffRow) is var focused && focused >= 0) {
+            // From a row that doesn't match, step to the nearest match past it rather than restarting at the top.
+            var positions = matches.Select(row => SelectedDiffRows.IndexOf(row)).ToList();
+            nextIndex = direction > 0 ? positions.FindIndex(position => position > focused) : positions.FindLastIndex(position => position < focused);
+            if (nextIndex < 0) nextIndex = direction > 0 ? 0 : matches.Count - 1;
+        }
+        else {
+            nextIndex = direction > 0 ? 0 : matches.Count - 1;
+        }
         SelectedDiffRow = matches[nextIndex];
         CommitFindStatusText = borrowed ? $"{nextIndex + 1} of {matches.Count} · search" : $"{nextIndex + 1} of {matches.Count}";
     }
