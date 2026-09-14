@@ -108,7 +108,7 @@ internal static class HotPaths {
             true, FSharpOption<string>.Some(hash), FSharpOption<string>.Some(hash),
             FSharpOption<FSharpList<GitService.DiffFileSummary>>.Some(files), FSharpOption<FSharpList<Models.FileDiff>>.Some(diff),
             FSharpOption<GitService.DiffFileKey>.None, MapModule.Empty<GitService.DiffFileKey, App.FileExpansion>(),
-            FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None);
+            FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None);
 
     private static T Unwrap<T>(Exit<T, GitError> exit) =>
         exit.IsSuccess ? ((Exit<T, GitError>.Success)exit).Item : throw new InvalidOperationException(exit.ToString());
@@ -148,7 +148,7 @@ internal static class UiInteractions {
             FSharpOption<FSharpList<GitSearch.Result>>.None, graph, true, FSharpOption<string>.Some(full), FSharpOption<string>.Some(full),
             FSharpOption<FSharpList<GitService.DiffFileSummary>>.Some(files), FSharpOption<FSharpList<Models.FileDiff>>.Some(diff),
             FSharpOption<GitService.DiffFileKey>.None, MapModule.Empty<GitService.DiffFileKey, App.FileExpansion>(),
-            FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None);
+            FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None);
 
         var projection = new MainProjection();
         var window = new MainWindow { Width = 1600, Height = 1000, DataContext = projection };
@@ -163,7 +163,7 @@ internal static class UiInteractions {
             var results = Unwrap(Flow.run(env, GitService.searchCommits(3, commits, searchMode, false, searchText)));
             var searched = new App.Model(App.StartupSelection.NoStartupSelection, false, model.GitEnv, model.Status, model.StartupTargets, false, false, 3, "diff", searchText, GitSearch.modeKey(searchMode), false,
                 FSharpOption<FSharpList<GitSearch.Result>>.Some(results), model.Commits, true, model.SelectedCommitHash, model.SelectedDiffHash,
-                model.SelectedDiffFiles, model.SelectedDiff, model.SelectedDiffFileKey, model.DiffExpansions, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None);
+                model.SelectedDiffFiles, model.SelectedDiff, model.SelectedDiffFileKey, model.DiffExpansions, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None);
             projection.Update(searched);
             projection.IsAdvancedSearchExpanded = label.Contains("advanced");
             projection.CommitFindQuery = pathDiff ? "" : "Font";
