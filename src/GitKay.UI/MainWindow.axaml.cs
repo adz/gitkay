@@ -7,6 +7,8 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
+using Avalonia;
 
 namespace GitKay.UI;
 
@@ -244,6 +246,12 @@ public partial class MainWindow : Window {
             }
         }
 
+        if (e.Key == Key.Escape && e.KeyModifiers == KeyModifiers.None && _projection is { IsSearchRunning: true } running && !typingInTextBox) {
+            running.CancelSearch();
+            e.Handled = true;
+            return;
+        }
+
         if (!typingInTextBox && !(_projection?.IsShortcutHelpOpen ?? false) && TryHandlePaneNavigation(e)) {
             e.Handled = true;
             return;
@@ -330,6 +338,11 @@ public partial class MainWindow : Window {
                 projection.IsRecentSearchesOpen = false;
                 e.Handled = true;
                 break;
+            // A running search: the first Esc stops it and keeps the query; the next clears it.
+            case Key.Escape when projection.IsSearchRunning:
+                projection.CancelSearch();
+                e.Handled = true;
+                break;
             case Key.Escape:
                 projection.ClearSearchCommand.Execute(null);
                 projection.SearchQuery = "";
@@ -374,8 +387,39 @@ public partial class MainWindow : Window {
         };
     }
 
-    private void OnZoomDiffMenuItemClick(object? sender, RoutedEventArgs e) {
-        if (sender is MenuItem { Tag: string tag } && int.TryParse(tag, out var direction)) _projection?.ZoomDiff(direction);
+    private async void OnAboutMenuItemClick(object? sender, RoutedEventArgs e) => await new AboutWindow().ShowDialog(this);
+
+    // ----- File filter chip -----
+
+    private void ShowFileFilterMenu(Control anchor) {
+        if (_projection is not { HasHistoryPathFilter: true } projection) return;
+        var path = projection.HistoryPathFilter;
+        var target = new FileTarget(path, path, path, null);
+        var menu = new ContextMenu();
+        void Add(string header, Action action) {
+            var item = new MenuItem { Header = header };
+            item.Click += (_, _) => action();
+            menu.Items.Add(item);
+        }
+
+        menu.Items.Add(new MenuItem { Header = path, IsEnabled = false });
+        menu.Items.Add(new Separator());
+        Add("Clear file filter", projection.ClearHistoryPathFilter);
+        Add("Copy relative path", () => CopyToClipboard(path, "Copied relative path"));
+        Add("Copy full path", () => CopyToClipboard(projection.FullPath(target), "Copied full path"));
+        Add("Show whole file", () => projection.ShowWholeFile(target));
+        Add("Open in VS Code", () => projection.OpenInVsCode(target));
+        menu.Open(anchor);
+    }
+
+    private void OnFileFilterChipContextRequested(object? sender, ContextRequestedEventArgs e) {
+        ShowFileFilterMenu(FileFilterChip);
+        e.Handled = true;
+    }
+
+    private void OnFileFilterChipPointerReleased(object? sender, PointerReleasedEventArgs e) {
+        if (e.InitialPressMouseButton == MouseButton.Left && e.Source is not Button && (e.Source as Visual)?.FindAncestorOfType<Button>() == null)
+            ShowFileFilterMenu(FileFilterChip);
     }
 
     // ----- File actions: context menus on the file list and diff file headers, whole-file popup, VS Code. -----
@@ -449,6 +493,11 @@ public partial class MainWindow : Window {
         }
 
         _diagnosticsWindow = new DiagnosticsWindow();
+        _diagnosticsWindow.CommandCancelled += name => {
+            // An interrupted command dispatches nothing; settle the matching app state so it doesn't stay "running".
+            if (name.StartsWith("search", StringComparison.Ordinal)) _projection?.CancelSearch();
+            else if (_projection != null) _projection.Status = $"Cancelled {name}";
+        };
         _diagnosticsWindow.Closed += (_, _) => _diagnosticsWindow = null;
         _diagnosticsWindow.Show();
     }
@@ -809,6 +858,8 @@ public partial class MainWindow : Window {
             _ => 10,
         };
 
+        if (e.Key == Key.Home && none) { Move(int.MinValue / 2); return true; }
+        if (e.Key == Key.End && none) { Move(int.MaxValue / 2); return true; }
         if (prefix == Key.G && none && e.Key == Key.G) { Move(int.MinValue / 2); return true; }
         if (prefix is Key.OemCloseBrackets or Key.OemOpenBrackets && none && e.Key == Key.C && sender is DiffSurfaceControl hunks) {
             hunks.MoveToHunk(prefix == Key.OemCloseBrackets ? 1 : -1);

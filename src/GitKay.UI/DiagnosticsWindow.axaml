@@ -78,21 +78,22 @@
             <!-- Live Axial fibers, as a parent/child tree. -->
             <TabItem Header="{Binding RunningHeader}">
                 <DockPanel>
-                    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,70,90,2*" Margin="8,6,8,2">
-                        <TextBlock Classes="head" Text="FIBER" />
+                    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,70,90,2*,28" Margin="8,6,8,2">
+                        <TextBlock Classes="head" Text="FIBER  ·  right-click to cancel" />
                         <TextBlock Classes="head" Grid.Column="1" Text="ID" />
                         <TextBlock Classes="head" Grid.Column="2" Text="RUNNING FOR" />
                         <TextBlock Classes="head" Grid.Column="3" Text="ANNOTATIONS" />
                     </Grid>
                     <Panel>
-                        <ListBox ItemsSource="{Binding Running}" Background="Transparent">
+                        <ListBox x:Name="RunningList" ItemsSource="{Binding Running}" Background="Transparent" DoubleTapped="OnRowDoubleTapped">
                             <ListBox.ItemTemplate>
                                 <DataTemplate x:DataType="local:RunningFiberRow">
-                                    <Grid ColumnDefinitions="*,70,90,2*">
+                                    <Grid ColumnDefinitions="*,70,90,2*,28" Background="Transparent" ContextRequested="OnRunningRowContextRequested">
                                         <TextBlock Classes="cell" Text="{Binding Name}" Margin="{Binding Indent}" />
                                         <TextBlock Classes="cell muted" Grid.Column="1" Text="{Binding Id}" />
                                         <TextBlock Classes="cell" Classes.slow="{Binding IsSlow}" Grid.Column="2" Text="{Binding Age}" />
                                         <TextBlock Classes="cell muted" Grid.Column="3" Text="{Binding Annotations}" />
+                                        <Button Grid.Column="4" Classes="inline" Padding="0" Width="22" Height="20" Content="ⓘ" FontSize="12" Click="OnInfoClick" ToolTip.Tip="Details" />
                                     </Grid>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
@@ -107,22 +108,23 @@
             <TabItem Header="Flows">
                 <DockPanel>
                     <TextBox DockPanel.Dock="Top" Margin="8,6" Height="28" Text="{Binding FlowFilter}" PlaceholderText="Filter by name, e.g. search or diff" />
-                    <Grid DockPanel.Dock="Top" ColumnDefinitions="100,*,90,100,2*" Margin="8,2">
+                    <Grid DockPanel.Dock="Top" ColumnDefinitions="100,*,90,100,2*,28" Margin="8,2">
                         <TextBlock Classes="head" Text="SETTLED" />
                         <TextBlock Classes="head" Grid.Column="1" Text="FIBER" />
                         <TextBlock Classes="head" Grid.Column="2" Text="TOOK" />
                         <TextBlock Classes="head" Grid.Column="3" Text="STATUS" />
                         <TextBlock Classes="head" Grid.Column="4" Text="DEFECT" />
                     </Grid>
-                    <ListBox ItemsSource="{Binding Settled}" Background="Transparent">
+                    <ListBox ItemsSource="{Binding Settled}" Background="Transparent" DoubleTapped="OnRowDoubleTapped">
                         <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="local:SettledFiberRow">
-                                <Grid ColumnDefinitions="100,*,90,100,2*">
+                                <Grid ColumnDefinitions="100,*,90,100,2*,28">
                                     <TextBlock Classes="cell muted" Text="{Binding Time}" />
                                     <TextBlock Classes="cell" Grid.Column="1" Text="{Binding Name}" ToolTip.Tip="{Binding Name}" />
                                     <TextBlock Classes="cell" Classes.slow="{Binding IsSlow}" Grid.Column="2" Text="{Binding Duration}" />
                                     <TextBlock Classes="cell" Classes.failed="{Binding IsFailed}" Classes.interrupted="{Binding IsInterrupted}" Grid.Column="3" Text="{Binding Status}" />
                                     <TextBlock Classes="cell failed" Grid.Column="4" Text="{Binding Detail}" ToolTip.Tip="{Binding Detail}" />
+                                    <Button Grid.Column="5" Classes="inline" Padding="0" Width="22" Height="20" Content="ⓘ" FontSize="12" Click="OnInfoClick" ToolTip.Tip="Details" />
                                 </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>

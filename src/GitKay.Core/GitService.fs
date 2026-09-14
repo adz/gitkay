@@ -663,11 +663,32 @@ module GitService =
                     return { diff with Hunks = hunks; NewLineCount = Some lines.Length }
         }
 
-    let searchCommits (contextLines: int) (commits: Models.Commit list) (mode: GitSearch.Mode) (useRegex: bool) (query: string) : Flow<GitEnv, GitError, GitSearch.Result list> =
+    /// Searches commits. Path terms compare each commit's tree with its first parent through one repository handle,
+    /// without rename detection (which reads blob contents) and without caching; only line terms load diffs.
+    let searchCommitsWithProgress (contextLines: int) (commits: Models.Commit list) (mode: GitSearch.Mode) (useRegex: bool) (query: string) (progress: int -> int -> unit) : Flow<GitEnv, GitError, GitSearch.Result list> =
         flow {
             let! now = Clock.now
-            return! GitSearch.searchCommitsWithDiffLoader now commits mode useRegex query (fun hash -> fetchDiff contextLines hash)
+            let! env = Flow.env
+            use repo = new Repository(env.RepoPath)
+            let plainCompare = CompareOptions(Similarity = SimilarityOptions.None)
+
+            let changedPaths (hash: string) : Flow<GitEnv, GitError, (string * string) list> =
+                flow {
+                    let! (commit: LibGit2Sharp.Commit) = loadCommit repo hash
+                    let parentTree = commit.Parents |> Seq.tryHead |> Option.map _.Tree |> Option.toObj
+                    use changes = repo.Diff.Compare<TreeChanges>(parentTree, commit.Tree, plainCompare)
+                    return changes |> Seq.map (fun change -> change.OldPath, change.Path) |> List.ofSeq
+                }
+
+            return!
+                GitSearch.searchCommitsWith now commits mode useRegex query
+                    { LoadPaths = changedPaths
+                      LoadDiff = fun hash -> fetchDiff contextLines hash
+                      Progress = progress }
         }
+
+    let searchCommits (contextLines: int) (commits: Models.Commit list) (mode: GitSearch.Mode) (useRegex: bool) (query: string) : Flow<GitEnv, GitError, GitSearch.Result list> =
+        searchCommitsWithProgress contextLines commits mode useRegex query (fun _ _ -> ())
 
     let fetchFileBlame (revision: string) (path: string) : Flow<GitEnv, GitError, Map<int, BlameInfo>> =
         flow {

@@ -43,6 +43,8 @@ type CmdDiagnostics private () =
     static let failures = System.Collections.Generic.Queue<FlowFailure>()
     static let stats = System.Collections.Generic.Dictionary<string, FlowStats>()
     static let mutable started = 0L
+    static let active = System.Collections.Concurrent.ConcurrentDictionary<int64, string * CancellationTokenSource>()
+    static let mutable nextActive = 0L
     static let mutable onFailure: string -> string -> unit = fun _ _ -> ()
     static let capacity = 500
 
@@ -111,6 +113,22 @@ type CmdDiagnostics private () =
 
     static member OnFailure = onFailure
 
+    /// Registers a running command so it can be cancelled from diagnostics; dispose the result when it settles.
+    static member internal Track(name: string, source: CancellationTokenSource) : IDisposable =
+        let id = Interlocked.Increment(&nextActive)
+        active[id] <- (name, source)
+        { new IDisposable with member _.Dispose() = active.TryRemove id |> ignore }
+
+    /// Names of commands that are running now.
+    static member RunningCommands() = active.Values |> Seq.map fst |> Array.ofSeq
+
+    /// Cancels every running command with this name; returns how many were cancelled.
+    static member Cancel(name: string) : int =
+        let matching = active.Values |> Seq.filter (fun (candidate, _) -> candidate = name) |> Array.ofSeq
+        for (_, source) in matching do
+            try source.Cancel() with _ -> ()
+        matching.Length
+
     /// Sets the failure handler from C#.
     static member SetFailureHandler(handler: System.Action<string, string>) =
         onFailure <- fun name cause -> handler.Invoke(name, cause)
@@ -149,6 +167,10 @@ module Cmd =
         let private run (name: string) (token: CancellationToken) (env: 'env) (workflow: Flow<'env, 'error, 'value>) onSuccess onError : Cmd<'msg> =
             [ fun dispatch ->
                 task {
+                    // A linked source per command lets the diagnostics window cancel it without touching its slot.
+                    use cancellation = CancellationTokenSource.CreateLinkedTokenSource(token)
+                    use _tracked = CmdDiagnostics.Track(name, cancellation)
+                    let token = cancellation.Token
                     // Start on the thread pool: commands are dispatched on the UI thread, and a flow's synchronous
                     // prefix (LibGit2Sharp walks, diffs) would otherwise run there and freeze the window.
                     let! exit = Task.Run<Exit<_, _>>(Func<Task<Exit<_, _>>>(fun () -> (instrument name workflow).StartAsValueTask(env, cancellationToken = token).AsTask()))

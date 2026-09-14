@@ -107,7 +107,6 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource {
 
     public CommitSurfaceControl() {
         Focusable = true;
-        ContextMenu = BuildContextMenu();
         ContextRequested += OnCommitContextRequested;
         ActualThemeVariantChanged += (_, _) => {
             RefreshLaneBrushes();
@@ -372,9 +371,14 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource {
     }
 
     private void OnCommitContextRequested(object? sender, ContextRequestedEventArgs e) {
-        // Rebuilt per request so filter items reflect the clicked column and commit.
-        if (e.TryGetPosition(this, out var point)) _lastContextPoint = point;
-        ContextMenu = BuildContextMenu();
+        // Built and opened here for the clicked commit and column. Assigning the ContextMenu property instead let
+        // Avalonia's handler (registered first) open the menu built for the previous selection, hiding branch items.
+        if (e.TryGetPosition(this, out var point)) {
+            _lastContextPoint = point;
+            SelectAt(point.Y);
+        }
+        BuildContextMenu().Open(this);
+        e.Handled = true;
     }
 
     /// <summary>Filter actions for the clicked column, above the commit operations.</summary>

@@ -164,8 +164,12 @@ public partial class MainProjection {
     /// <summary>The paths history is limited to, or empty.</summary>
     [ObservableProperty] private string _historyPathFilter = "";
     public bool HasHistoryPathFilter => HistoryPathFilter.Length > 0;
+    public string HistoryPathFilterTip => $"History limited to commits touching {HistoryPathFilter}\nRight-click for actions";
 
-    partial void OnHistoryPathFilterChanged(string value) => OnPropertyChanged(nameof(HasHistoryPathFilter));
+    partial void OnHistoryPathFilterChanged(string value) {
+        OnPropertyChanged(nameof(HasHistoryPathFilter));
+        OnPropertyChanged(nameof(HistoryPathFilterTip));
+    }
 
     private void UpdateHistoryTargets(Microsoft.FSharp.Collections.FSharpList<GitKay.Core.GitStartup.StartupTarget> targets) {
         if (ReferenceEquals(_historyTargets, targets)) return;

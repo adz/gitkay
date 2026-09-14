@@ -68,6 +68,8 @@ module App =
             SelectionStartedAtTicks: int64 option
             SelectedDiffStartedAtTicks: int64 option
             SearchStartedAtTicks: int64 option
+            /// Commits checked and total for the running search.
+            SearchProgress: (int * int) option
         }
 
     type Msg =
@@ -94,6 +96,10 @@ module App =
         | SetSearchRegex of bool
         | RunSearch of query:string * scopeKey:string * startedAtTicks:int64
         | SearchResultsLoaded of query:string * scopeKey:string * startedAtTicks:int64 * Result<GitSearch.Result list, GitError>
+        /// Commits checked and total, for the search started at startedAtTicks.
+        | SearchProgressed of startedAtTicks:int64 * checkedCount:int * total:int
+        /// Stops the running search, keeping its query.
+        | CancelSearch
         | CreateTag of hash:string * name:string
         | CreateBranch of hash:string * name:string
         | CherryPick of hash:string
@@ -124,11 +130,11 @@ module App =
             return! GitService.fetchDiff contextLines hash
         }
 
-    let private loadSearchResultsFlow (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (useRegex: bool) =
+    let private loadSearchResultsFlow (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (useRegex: bool) progress =
         flow {
             do! Flow.Runtime.ensureNotCanceled (GitError.OperationCanceled "Search")
             let commitList = commits |> List.map (fun info -> info.Commit)
-            return! GitService.searchCommits contextLines commitList (GitSearch.parseMode scopeKey) useRegex query
+            return! GitService.searchCommitsWithProgress contextLines commitList (GitSearch.parseMode scopeKey) useRegex query progress
         }
 
 
@@ -151,13 +157,26 @@ module App =
             (fun err -> DiffLoaded(hash, startedAtTicks, Error err))
 
     let private startSearchLoad (env: GitService.GitEnv) (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (useRegex: bool) (startedAtTicks: int64) =
-        Cmd.OfFlow.ofFlowLatest
-            $"search [{scopeKey}] {query}"
-            searchJob
-            env
-            (loadSearchResultsFlow contextLines commits query scopeKey useRegex)
-            (fun result -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Ok result))
-            (fun err -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Error err))
+        // Progress dispatches are throttled so a fast search doesn't flood the message queue.
+        Cmd.ofEffect (fun dispatch ->
+            let mutable lastReport = 0L
+            let progress checkedCount total =
+                let now = Stopwatch.GetTimestamp()
+                if checkedCount = total || Stopwatch.GetElapsedTime(lastReport, now).TotalMilliseconds >= 200.0 then
+                    lastReport <- now
+                    dispatch (SearchProgressed(startedAtTicks, checkedCount, total))
+
+            let command =
+                Cmd.OfFlow.ofFlowLatest
+                    $"search [{scopeKey}] {query}"
+                    searchJob
+                    env
+                    (loadSearchResultsFlow contextLines commits query scopeKey useRegex progress)
+                    (fun result -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Ok result))
+                    (fun err -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Error err))
+
+            for effect in command do
+                effect dispatch)
 
     let private startDiffFileContextLoad (env: GitService.GitEnv) (hash: string) (key: GitService.DiffFileKey) (requestId: int64) =
         let workflow =
@@ -225,6 +244,7 @@ module App =
                     Commits = commits
                     SearchResults = None
                     SearchStartedAtTicks = None
+                    SearchProgress = None
                     SelectedCommitHash = selectedHash
                     SelectedDiffHash = if diffReadyForSelection then model.SelectedDiffHash else None
                     SelectedDiffFiles = if diffReadyForSelection then model.SelectedDiffFiles else None
@@ -314,6 +334,7 @@ module App =
                 SelectionStartedAtTicks = None
                 SelectedDiffStartedAtTicks = None
                 SearchStartedAtTicks = None
+                SearchProgress = None
             },
             Cmd.none
         | Ok startupOptions ->
@@ -350,6 +371,7 @@ module App =
                     SelectionStartedAtTicks = None
                     SelectedDiffStartedAtTicks = None
                     SearchStartedAtTicks = None
+                    SearchProgress = None
                 }
 
             if String.IsNullOrEmpty gitEnv.RepoPath then
@@ -538,16 +560,34 @@ module App =
 
                 let cmd = startSearchLoad model.GitEnv model.DiffContextLines model.Commits query scopeKey model.SearchUseRegex startedAtTicks
                 nextModel, cmd
+        | SearchProgressed (startedAtTicks, checkedCount, total) ->
+            match model.SearchStartedAtTicks with
+            | Some current when current = startedAtTicks && checkedCount < total ->
+                { model with
+                    SearchProgress = Some(checkedCount, total)
+                    Status = $"Searching {model.SearchQuery}... {checkedCount:N0} of {total:N0} commits (Esc to cancel)" },
+                Cmd.none
+            | _ -> model, Cmd.none
+        | CancelSearch ->
+            match model.SearchStartedAtTicks with
+            | Some _ ->
+                searchJob.Cancel()
+                { model with SearchStartedAtTicks = None; SearchProgress = None; Status = $"Search cancelled: {model.SearchQuery}" }, Cmd.none
+            | None -> model, Cmd.none
         | SearchResultsLoaded (query, scopeKey, startedAtTicks, Ok results) ->
             match model.SearchQuery, model.SearchScopeKey, model.SearchStartedAtTicks with
             | currentQuery, currentScopeKey, Some currentStartedAtTicks when currentQuery = query && currentScopeKey = scopeKey && currentStartedAtTicks = startedAtTicks ->
-                { model with SearchResults = Some results; SearchStartedAtTicks = None; Status = $"Search: {results.Length} hit(s) for \"{query}\"" }, Cmd.none
+                { model with SearchResults = Some results; SearchStartedAtTicks = None; SearchProgress = None; Status = $"Search: {results.Length} hit(s) for \"{query}\"" }, Cmd.none
             | _ ->
                 model, Cmd.none
         | SearchResultsLoaded (query, scopeKey, startedAtTicks, Error err) ->
             match model.SearchQuery, model.SearchScopeKey, model.SearchStartedAtTicks with
             | currentQuery, currentScopeKey, Some currentStartedAtTicks when currentQuery = query && currentScopeKey = scopeKey && currentStartedAtTicks = startedAtTicks ->
-                { model with SearchResults = None; SearchStartedAtTicks = None; Status = "Search Error: " + GitError.describe err }, Cmd.none
+                let status =
+                    match err with
+                    | GitError.OperationCanceled _ -> $"Search cancelled: {query}"
+                    | _ -> "Search Error: " + GitError.describe err
+                { model with SearchResults = None; SearchStartedAtTicks = None; SearchProgress = None; Status = status }, Cmd.none
             | _ ->
                 model, Cmd.none
         | DiffFilesLoaded (hash, startedAtTicks, Ok files) ->

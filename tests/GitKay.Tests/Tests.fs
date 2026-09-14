@@ -662,6 +662,39 @@ summary Another line
     let private hashes (results: GitSearch.Result list) = results |> List.map (fun r -> r.Commit.Hash.Substring(0, 3))
 
     [<Fact>]
+    let ``path searches should read changed paths only, never full diffs, and report progress`` () =
+        let diffLoads = ref 0
+        let progress = Collections.Generic.List<int * int>()
+        let loaders : GitSearch.Loaders<GitService.GitEnv> =
+            { LoadPaths = fun hash -> Flow.ok (if hash.StartsWith "abc" then [ "src/needle.txt", "src/needle.txt" ] else [ "docs/readme.md", "docs/readme.md" ])
+              LoadDiff = fun hash -> diffLoads.Value <- diffLoads.Value + 1; searchDiffLoader hash
+              Progress = fun checkedCount total -> progress.Add((checkedCount, total)) }
+        let results =
+            match runFlow "" (GitSearch.searchCommitsWith DateTimeOffset.Now (searchCommits ()) GitSearch.Path false "needle" loaders) with
+            | Ok results -> results
+            | Error err -> failwith (GitError.describe err)
+        test <@ hashes results = [ "abc" ] && diffLoads.Value = 0 @>
+        test <@ progress.[0] = (0, 2) && progress.[progress.Count - 1] = (2, 2) @>
+
+    [<Fact>]
+    let ``invalid after and before dates should be reported, valid ones not`` () =
+        let now = DateTimeOffset(2026, 9, 14, 0, 0, 0, TimeSpan.Zero)
+        test <@ GitSearch.invalidDateTerms now GitSearch.Commit "fix after:2024-05-01 before:\"2 weeks ago\"" = [] @>
+        test <@ GitSearch.invalidDateTerms now GitSearch.Commit "after:someday before:yesterday" = [ "after", "someday" ] @>
+
+    [<Fact>]
+    let ``cancelling a running search should stop it and keep the query`` () =
+        let model0, _ = App.init [||]
+        let running = { model0 with SearchQuery = "Path"; SearchStartedAtTicks = Some 42L; SearchProgress = Some(10, 100) }
+        let progressed, _ = App.update (App.Msg.SearchProgressed(42L, 50, 100)) running
+        test <@ progressed.SearchProgress = Some(50, 100) @>
+        let stale, _ = App.update (App.Msg.SearchProgressed(7L, 99, 100)) running
+        test <@ stale.SearchProgress = Some(10, 100) @>
+        let cancelled, _ = App.update App.Msg.CancelSearch progressed
+        test <@ cancelled.SearchStartedAtTicks = None && cancelled.SearchProgress = None && cancelled.SearchQuery = "Path" @>
+        test <@ cancelled.Status = "Search cancelled: Path" @>
+
+    [<Fact>]
     let ``commit mode should match headline, message, hash and refs but not authors or diffs`` () =
         test <@ hashes (search GitSearch.Commit false "needle") = [ "abc" ] @>
         test <@ hashes (search GitSearch.Commit false "release") = [ "def" ] @>
@@ -974,6 +1007,7 @@ module AppTests =
             SelectionStartedAtTicks = None
             SelectedDiffStartedAtTicks = None
             SearchStartedAtTicks = None
+            SearchProgress = None
         }
 
     [<Fact>]

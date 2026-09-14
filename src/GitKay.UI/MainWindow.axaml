@@ -57,7 +57,7 @@
                             BorderBrush="{DynamicResource GitKayHairlineBrush}"
                             BorderThickness="0,0,0,1"
                             Padding="6,4">
-                        <Grid RowDefinitions="Auto,Auto">
+                        <Grid RowDefinitions="Auto,Auto,Auto">
                         <Grid ColumnSpacing="6">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
@@ -81,12 +81,10 @@
                                         <MenuItem Header="_Open repository…" Click="OnOpenRepositoryMenuItemClick" />
                                         <MenuItem Header="_Fetch all remotes" Click="OnFetchAllMenuItemClick" />
                                         <MenuItem Header="_Reread refs" Command="{Binding RereadRefs}" />
-                                        <Separator />
-                                        <MenuItem Header="Zoom diff _in" Click="OnZoomDiffMenuItemClick" Tag="1" InputGesture="Ctrl+OemPlus" />
-                                        <MenuItem Header="Zoom diff _out" Click="OnZoomDiffMenuItemClick" Tag="-1" InputGesture="Ctrl+OemMinus" />
-                                        <MenuItem Header="Reset diff _zoom" Click="OnZoomDiffMenuItemClick" Tag="0" InputGesture="Ctrl+D0" />
+
                                         <MenuItem Header="_Settings…" Click="OnSettingsMenuItemClick" />
                                         <MenuItem Header="_Diagnostics…" Click="OnDiagnosticsMenuItemClick" InputGesture="Ctrl+Shift+D" />
+                                        <MenuItem Header="_About GitKay…" Click="OnAboutMenuItemClick" />
                                     <MenuItem Header="_Keyboard shortcuts" Command="{Binding ToggleShortcutHelpCommand}" InputGesture="F1" />
                                         <Separator />
                                         <MenuItem Header="Show _branch refs" ToggleType="CheckBox" IsChecked="{Binding ShowBranchRefs, Mode=TwoWay}" />
@@ -175,19 +173,17 @@
                                     </Button>
                                 </StackPanel>
                             </Border>
-<!-- History is limited to a file: say so, with a one-click way back to the full history. -->
-<Border Grid.Column="5" IsVisible="{Binding HasHistoryPathFilter}" VerticalAlignment="Center"
-        Background="{DynamicResource GitKaySelectionBrush}" BorderBrush="{DynamicResource GitKayAccentBrush}"
-        BorderThickness="1" CornerRadius="12" Padding="8,2,2,2" MaxWidth="320"
-        ToolTip.Tip="History is limited to commits touching this file">
-    <StackPanel Orientation="Horizontal" Spacing="4">
-        <PathIcon Width="10" Height="11" VerticalAlignment="Center" Foreground="{DynamicResource GitKayAccentBrush}"
-                  Data="M3,0.5 H10 L13.5,4 V15.5 H3 Z M9.5,1 V4.5 H13" />
-        <TextBlock Text="{Binding HistoryPathFilter}" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
-                   Foreground="{DynamicResource GitKayTextBrush}" />
-        <Button Classes="inline" Width="18" Height="18" Padding="0" Command="{Binding ClearHistoryPathFilterCommand}"
+<!-- History is limited to a file: a compact marker; hover names the file, right-click or ✕ acts on it. -->
+<Border x:Name="FileFilterChip" Grid.Column="5" IsVisible="{Binding HasHistoryPathFilter}" VerticalAlignment="Center"
+        Background="{DynamicResource GitKayAccentBrush}" CornerRadius="9" Padding="7,1,2,1" Cursor="Hand"
+        ToolTip.Tip="{Binding HistoryPathFilterTip}"
+        ContextRequested="OnFileFilterChipContextRequested"
+        PointerReleased="OnFileFilterChipPointerReleased">
+    <StackPanel Orientation="Horizontal" Spacing="3">
+        <TextBlock Text="FILE FILTERED" FontSize="10" FontWeight="SemiBold" LetterSpacing="0.4" VerticalAlignment="Center" Foreground="White" />
+        <Button Classes="inline" Width="16" Height="16" Padding="0" Command="{Binding ClearHistoryPathFilterCommand}"
                 ToolTip.Tip="Clear the file filter and show the full history">
-            <PathIcon Width="8" Height="8" Data="M2,2 L14,14 M14,2 L2,14" Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
+            <PathIcon Width="7" Height="7" Data="M2,2 L14,14 M14,2 L2,14" Foreground="White" />
         </Button>
     </StackPanel>
 </Border>
@@ -199,8 +195,13 @@
 </ToggleButton>
                         </Grid>
 
+                        <!-- Ignored parts of the search (a date that doesn't parse) are called out rather than dropped silently. -->
+                        <TextBlock Grid.Row="1" Margin="40,4,6,0" FontSize="11" TextWrapping="Wrap"
+                                   IsVisible="{Binding HasSearchValidationMessage}"
+                                   Text="{Binding SearchValidationMessage}"
+                                   Foreground="{DynamicResource GitKayRemovedAccentBrush}" VerticalAlignment="Top" />
                         <!-- Advanced search: edits the same query as prefixed terms. -->
-                        <Grid Grid.Row="1" Classes="fadeIn" IsVisible="{Binding IsAdvancedSearchExpanded}"
+                        <Grid Grid.Row="2" Classes="fadeIn" IsVisible="{Binding IsAdvancedSearchExpanded}"
                               Margin="40,8,6,4"
                               ColumnDefinitions="Auto,*,Auto,*,Auto,*,Auto"
                               RowDefinitions="Auto,Auto,Auto"
@@ -211,6 +212,13 @@
                                     <Setter Property="FontSize" Value="11" />
                                     <Setter Property="VerticalAlignment" Value="Center" />
                                     <Setter Property="HorizontalAlignment" Value="Right" />
+                                </Style>
+                                <Style Selector="TextBox.field.invalid">
+                                    <Setter Property="BorderBrush" Value="{DynamicResource GitKayRemovedAccentBrush}" />
+                                    <Setter Property="ToolTip.Tip" Value="Not a date — try 2024-05-01, 2 weeks ago or yesterday" />
+                                </Style>
+                                <Style Selector="TextBox.field.invalid:focus /template/ Border#PART_BorderElement">
+                                    <Setter Property="BorderBrush" Value="{DynamicResource GitKayRemovedAccentBrush}" />
                                 </Style>
                                 <Style Selector="TextBox.field">
                                     <!-- Room for the text's descenders: at 26px the placeholder's lower quarter was clipped. -->
@@ -236,9 +244,9 @@
                             <TextBox Classes="field" Grid.Row="1" Grid.Column="5" Text="{Binding AdvancedDiff, Mode=TwoWay}" PlaceholderText="added or removed text" />
 
                             <TextBlock Classes="label" Grid.Row="2" Text="After" />
-                            <TextBox Classes="field" Grid.Row="2" Grid.Column="1" Text="{Binding AdvancedAfter, Mode=TwoWay}" PlaceholderText="yyyy-mm-dd" />
+                            <TextBox Classes="field" Classes.invalid="{Binding IsAfterDateInvalid}" Grid.Row="2" Grid.Column="1" Text="{Binding AdvancedAfter, Mode=TwoWay}" PlaceholderText="yyyy-mm-dd" />
                             <TextBlock Classes="label" Grid.Row="2" Grid.Column="2" Text="Before" />
-                            <TextBox Classes="field" Grid.Row="2" Grid.Column="3" Text="{Binding AdvancedBefore, Mode=TwoWay}" PlaceholderText="yyyy-mm-dd" />
+                            <TextBox Classes="field" Classes.invalid="{Binding IsBeforeDateInvalid}" Grid.Row="2" Grid.Column="3" Text="{Binding AdvancedBefore, Mode=TwoWay}" PlaceholderText="yyyy-mm-dd" />
                             <Button Grid.Row="2" Grid.Column="5" HorizontalAlignment="Right" Height="30" Padding="10,0"
                                     Content="Clear" Command="{Binding ClearAdvancedSearchCommand}" />
                         </Grid>
@@ -893,7 +901,7 @@
                         </Grid>
                         <Grid ColumnDefinitions="200,*" Margin="0,2">
                             <TextBlock Text="Esc" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Clear search / close popup" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Cancel a running search, then clear it / close popup" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
                         </Grid>
                         <Grid ColumnDefinitions="200,*" Margin="0,2">
                             <TextBlock Text="Ctrl+Shift+D" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
@@ -946,7 +954,7 @@
                             <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Open in diff / back to commits" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
                         </Grid>
                         <Grid ColumnDefinitions="200,*" Margin="0,2">
-                            <TextBlock Text="gg / G" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="gg / G   Home / End" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Top / bottom" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
                         </Grid>
                         <Grid ColumnDefinitions="200,*" Margin="0,2">

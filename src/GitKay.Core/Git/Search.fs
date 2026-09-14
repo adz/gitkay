@@ -162,6 +162,16 @@ module GitSearch =
             | true, date -> Some(date.ToUnixTimeSeconds())
             | _ -> None
 
+    /// `after:`/`before:` values that aren't dates, as (field prefix, text). A search ignores these terms, so the UI
+    /// reports them instead of silently widening the results.
+    let invalidDateTerms (now: DateTimeOffset) (mode: Mode) (query: string) : (string * string) list =
+        parseQuery mode query
+        |> List.choose (fun term ->
+            match term.Field with
+            | After | Before when (tryParseDate now term.Text).IsNone ->
+                Some((if term.Field = After then "after" else "before"), term.Text)
+            | _ -> None)
+
     let private buildDisplayPath oldPath newPath =
         if oldPath = newPath then newPath
         elif oldPath = "/dev/null" then newPath
@@ -170,14 +180,25 @@ module GitSearch =
 
     let private needsDiff (term: Term) = term.Field = ChangedPath || term.Field = ChangedLine
 
-    /// Searches commits: every term must match. Diffs load only for commits whose metadata terms already matched.
-    let searchCommitsWithDiffLoader
+    /// How a search reads commit contents, and where it reports progress.
+    type Loaders<'env> =
+        { /// Changed (old path, new path) pairs of a commit: cheap, no patch text.
+          LoadPaths: string -> Flow<'env, GitError, (string * string) list>
+          /// A commit's full diff, for added/removed line terms.
+          LoadDiff: string -> Flow<'env, GitError, FileDiff list>
+          /// Called with (commits checked, total).
+          Progress: int -> int -> unit }
+
+    /// Searches commits: every term must match. Each commit is checked cheapest-first: metadata, then its changed
+    /// paths (a file list, no patch text), then its diff lines, and stops at the first term that fails. Progress is
+    /// reported as (commits checked, total) at most every 256 commits.
+    let searchCommitsWith
         (now: DateTimeOffset)
         (commits: Models.Commit list)
         (mode: Mode)
         (useRegex: bool)
         (query: string)
-        (loadDiff: string -> Flow<'env, GitError, FileDiff list>) : Flow<'env, GitError, Result list> =
+        (loaders: Loaders<'env>) : Flow<'env, GitError, Result list> =
         flow {
             let terms = parseQuery mode query
 
@@ -186,10 +207,16 @@ module GitSearch =
             else
                 let compiled = terms |> List.map (fun term -> term, matcher useRegex term.Text)
                 let metadataTerms, diffTerms = compiled |> List.partition (fst >> needsDiff >> not)
+                let pathTerms, lineTerms = diffTerms |> List.partition (fun (term, _) -> term.Field = ChangedPath)
                 let results = ResizeArray<Result>()
+                let total = commits.Length
+                let mutable checkedCount = 0
+                loaders.Progress 0 total
 
                 for commit in commits do
                     do! Flow.Runtime.ensureNotCanceled (GitError.OperationCanceled "Search")
+                    checkedCount <- checkedCount + 1
+                    if checkedCount % 256 = 0 then loaders.Progress checkedCount total
 
                     let kinds = Collections.Generic.List<string>()
                     let matchedRefs = Collections.Generic.List<string>()
@@ -231,38 +258,49 @@ module GitSearch =
 
                     let matchedPaths = Collections.Generic.List<string>()
 
-                    let! diffMatches =
+                    let! pathMatches =
                         if not metadataMatches then
                             Flow.ok false
-                        elif diffTerms.IsEmpty then
+                        elif pathTerms.IsEmpty then
                             Flow.ok true
                         else
                             flow {
-                                let! files = loadDiff commit.Hash
+                                let! files = loaders.LoadPaths commit.Hash
 
                                 return
-                                    diffTerms
-                                    |> List.forall (fun (term, matches) ->
-                                        match term.Field with
-                                        | ChangedPath ->
-                                            let paths =
-                                                files
-                                                |> List.filter (fun f -> matches f.OldPath || matches f.NewPath)
-                                                |> List.map (fun f -> buildDisplayPath f.OldPath f.NewPath)
-                                            if not paths.IsEmpty then
-                                                addKind "path"
-                                                for path in paths do
-                                                    if not (matchedPaths.Contains path) then matchedPaths.Add path
-                                            not paths.IsEmpty
-                                        | _ ->
-                                            let hit =
-                                                files
-                                                |> List.exists (fun f ->
-                                                    f.Hunks
-                                                    |> List.exists (fun h ->
-                                                        h.Lines |> List.exists (fun l -> (l.Type = Added || l.Type = Removed) && matches l.Content)))
-                                            if hit then addKind "text"
-                                            hit)
+                                    pathTerms
+                                    |> List.forall (fun (_, matches) ->
+                                        let paths =
+                                            files
+                                            |> List.filter (fun (oldPath, newPath) -> matches oldPath || matches newPath)
+                                            |> List.map (fun (oldPath, newPath) -> buildDisplayPath oldPath newPath)
+                                        if not paths.IsEmpty then
+                                            addKind "path"
+                                            for path in paths do
+                                                if not (matchedPaths.Contains path) then matchedPaths.Add path
+                                        not paths.IsEmpty)
+                            }
+
+                    let! diffMatches =
+                        if not pathMatches then
+                            Flow.ok false
+                        elif lineTerms.IsEmpty then
+                            Flow.ok true
+                        else
+                            flow {
+                                let! files = loaders.LoadDiff commit.Hash
+
+                                return
+                                    lineTerms
+                                    |> List.forall (fun (_, matches) ->
+                                        let hit =
+                                            files
+                                            |> List.exists (fun f ->
+                                                f.Hunks
+                                                |> List.exists (fun h ->
+                                                    h.Lines |> List.exists (fun l -> (l.Type = Added || l.Type = Removed) && matches l.Content)))
+                                        if hit then addKind "text"
+                                        hit)
                             }
 
                     if diffMatches then
@@ -277,5 +315,19 @@ module GitSearch =
                               MatchedPaths = List.ofSeq matchedPaths
                               MatchedRefs = matchedRefs |> Seq.distinct |> List.ofSeq }
 
+                loaders.Progress total total
                 return List.ofSeq results
         }
+
+    /// Searches with one diff loader for both path and line terms (paths are read from the loaded diffs).
+    let searchCommitsWithDiffLoader
+        (now: DateTimeOffset)
+        (commits: Models.Commit list)
+        (mode: Mode)
+        (useRegex: bool)
+        (query: string)
+        (loadDiff: string -> Flow<'env, GitError, FileDiff list>) : Flow<'env, GitError, Result list> =
+        searchCommitsWith now commits mode useRegex query
+            { LoadPaths = fun hash -> loadDiff hash |> Flow.map (List.map (fun file -> file.OldPath, file.NewPath))
+              LoadDiff = loadDiff
+              Progress = fun _ _ -> () }

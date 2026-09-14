@@ -79,6 +79,17 @@ module SelfTest =
               let dump = CmdDiagnostics.Registry.DumpAt(DateTimeOffset.UtcNow)
               if dump.Contains "self-test cancelled" then Some("still running: " + dump) else None)
 
+          check "command cancel from diagnostics" (fun () ->
+              let slow: Flow<GitService.GitEnv, GitError, int> = Flow.Runtime.sleep (TimeSpan.FromSeconds 30.0) |> Flow.map (fun () -> 1)
+              for subscription in Cmd.OfFlow.ofFlow "self-test diagnostics cancel" runtime env slow (fun _ -> "ok") (fun _ -> "error") do
+                  subscription ignore
+              Thread.Sleep 300
+              let cancelled = CmdDiagnostics.Cancel "self-test diagnostics cancel"
+              Thread.Sleep 500
+              if cancelled <> 1 then Some $"cancelled {cancelled} commands"
+              elif CmdDiagnostics.RunningCommands() |> Array.contains "self-test diagnostics cancel" then Some "still running"
+              else None)
+
           check "history, search and whole file load" (fun () ->
               match Flow.run env (GitService.fetchHistory (Some 50) false []) |> Exit.toResult with
               | Error error -> Some(GitError.describe error)

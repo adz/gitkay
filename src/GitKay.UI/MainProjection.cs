@@ -937,7 +937,25 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
     }
 
+    /// <summary>Why part of the search is being ignored (an unparseable date), or empty.</summary>
+    [ObservableProperty] private string _searchValidationMessage = "";
+    [ObservableProperty] private bool _isAfterDateInvalid;
+    [ObservableProperty] private bool _isBeforeDateInvalid;
+    public bool HasSearchValidationMessage => SearchValidationMessage.Length > 0;
+    partial void OnSearchValidationMessageChanged(string value) => OnPropertyChanged(nameof(HasSearchValidationMessage));
+
+    private void ValidateSearchQuery(string query) {
+        var mode = GitKay.Core.GitSearch.parseMode(SelectedSearchScope?.Key ?? "commit");
+        var invalid = GitKay.Core.GitSearch.invalidDateTerms(DateTimeOffset.Now, mode, query).ToList();
+        IsAfterDateInvalid = invalid.Any(term => term.Item1 == "after");
+        IsBeforeDateInvalid = invalid.Any(term => term.Item1 == "before");
+        SearchValidationMessage = invalid.Count == 0
+            ? ""
+            : string.Join("  ·  ", invalid.Select(term => $"“{term.Item2}” isn't a date, so {term.Item1}: is ignored — try 2024-05-01, “2 weeks ago” or yesterday"));
+    }
+
     partial void OnSearchQueryChanged(string value) {
+        ValidateSearchQuery(value);
         RaiseAdvancedFieldsChanged();
         if (_suppressSearchDispatch) {
             return;
@@ -1347,12 +1365,16 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
 
         if (string.IsNullOrWhiteSpace(model.SearchQuery)) {
+            IsSearchRunning = false;
             CommitSearchStatusText = "";
             return;
         }
 
+        IsSearchRunning = model.SearchStartedAtTicks != null;
         if (model.SearchStartedAtTicks != null) {
-            CommitSearchStatusText = "Searching…";
+            CommitSearchStatusText = model.SearchProgress?.Value is { } progress && progress.Item2 > 0
+                ? $"Searching… {progress.Item1 * 100 / progress.Item2}%"
+                : "Searching…";
             return;
         }
 
@@ -1404,6 +1426,15 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         var startedAtTicks = Stopwatch.GetTimestamp();
         LogTiming($"search click query={query} scope={scopeKey}");
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewRunSearch(query, scopeKey, startedAtTicks));
+    }
+
+    /// <summary>A commit search is running; Esc cancels it.</summary>
+    [ObservableProperty] private bool _isSearchRunning;
+
+    /// <summary>Stops the running search and keeps its query.</summary>
+    public void CancelSearch() {
+        CancelSearchDebounce();
+        _dispatch?.Invoke(GitKay.Core.App.Msg.CancelSearch);
     }
 
     [RelayCommand]

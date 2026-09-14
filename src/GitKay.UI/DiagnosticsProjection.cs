@@ -11,9 +11,13 @@ using Microsoft.FSharp.Core;
 
 namespace GitKay.UI;
 
-public sealed record RunningFiberRow(string Name, string Id, string Age, string Annotations, Avalonia.Thickness Indent, bool IsSlow);
+public sealed record RunningFiberRow(string Name, string Id, string Age, string Annotations, Avalonia.Thickness Indent, bool IsSlow) {
+    public FiberDump? Dump { get; init; }
+}
 
-public sealed record SettledFiberRow(string Time, string Name, string Duration, string Status, bool IsFailed, bool IsInterrupted, bool IsSlow, string Detail);
+public sealed record SettledFiberRow(string Time, string Name, string Duration, string Status, bool IsFailed, bool IsInterrupted, bool IsSlow, string Detail) {
+    public SettledFiber? Fiber { get; init; }
+}
 
 public sealed record FlowStatsRow(string Name, string Count, string Failed, string Interrupted, string Average, string Max, bool HasFailures);
 
@@ -118,7 +122,7 @@ public sealed partial class DiagnosticsProjection : ObservableObject {
                 FormatDuration(age.TotalMilliseconds),
                 annotations,
                 new Avalonia.Thickness(Depth(dump) * 16, 0, 0, 0),
-                age.TotalMilliseconds > SlowFlowMs));
+                age.TotalMilliseconds > SlowFlowMs) { Dump = dump });
             foreach (var child in ordered.Where(candidate => candidate.ParentId != null && candidate.ParentId.Value.Value == dump.Id.Value))
                 Emit(child);
         }
@@ -149,7 +153,7 @@ public sealed partial class DiagnosticsProjection : ObservableObject {
                 fiber.Status.IsFailed,
                 fiber.Status.IsInterrupted,
                 fiber.Duration.TotalMilliseconds > SlowFlowMs,
-                fiber.Defect == null ? "" : OptionModule.DefaultValue("", fiber.Defect)))
+                fiber.Defect == null ? "" : OptionModule.DefaultValue("", fiber.Defect)) { Fiber = fiber })
             .ToList();
         Replace(Settled, rows);
 
@@ -204,6 +208,46 @@ public sealed partial class DiagnosticsProjection : ObservableObject {
         var filter = LogFilter.Trim();
         var lines = DiagnosticsLog.LogTail();
         LogText = string.Join('\n', filter.Length == 0 ? lines : lines.Where(line => line.Contains(filter, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    /// <summary>Full details of a settled fiber: timings, lineage, annotations, defect and any rendered failure cause.</summary>
+    public static string DescribeSettled(SettledFiber fiber) {
+        var builder = new StringBuilder();
+        builder.AppendLine(fiber.Name);
+        builder.AppendLine();
+        builder.AppendLine($"Status      {StatusName(fiber.Status)}");
+        builder.AppendLine($"Fiber       #{fiber.Id}{(fiber.ParentId == null ? "" : $"  (parent #{fiber.ParentId.Value})")}");
+        builder.AppendLine($"Started     {fiber.StartedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss.fff}");
+        builder.AppendLine($"Settled     {fiber.SettledAt.ToLocalTime():yyyy-MM-dd HH:mm:ss.fff}");
+        builder.AppendLine($"Took        {FormatDuration(fiber.Duration.TotalMilliseconds)}");
+        foreach (var pair in fiber.Annotations) builder.AppendLine($"Annotation  {pair.Key} = {pair.Value}");
+        var failures = CmdDiagnostics.Failures()
+            .Where(failure => failure.Name == fiber.Name && failure.At >= fiber.StartedAt.AddSeconds(-1) && failure.At <= fiber.SettledAt.AddSeconds(5))
+            .ToArray();
+        foreach (var failure in failures) {
+            builder.AppendLine();
+            builder.AppendLine($"Failure cause ({failure.At.ToLocalTime():HH:mm:ss.fff}):");
+            builder.AppendLine(failure.Cause);
+        }
+        if (fiber.Defect != null) {
+            builder.AppendLine();
+            builder.AppendLine("Defect:");
+            builder.AppendLine(fiber.Defect.Value);
+        }
+        return builder.ToString();
+    }
+
+    /// <summary>Details of a running fiber.</summary>
+    public static string DescribeRunning(FiberDump dump) {
+        var builder = new StringBuilder();
+        builder.AppendLine(OptionModule.DefaultValue($"fiber #{dump.Id.Value}", dump.Name));
+        builder.AppendLine();
+        builder.AppendLine($"Status      {StatusName(dump.Status)}");
+        builder.AppendLine($"Fiber       #{dump.Id.Value}{(dump.ParentId == null ? "" : $"  (parent #{dump.ParentId.Value.Value})")}");
+        builder.AppendLine($"Started     {dump.StartedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss.fff}");
+        builder.AppendLine($"Running for {FormatDuration((DateTimeOffset.UtcNow - dump.StartedAt).TotalMilliseconds)}");
+        foreach (var pair in dump.Annotations) builder.AppendLine($"Annotation  {pair.Key} = {pair.Value}");
+        return builder.ToString();
     }
 
     /// <summary>Everything on screen as text, for pasting into an issue.</summary>
