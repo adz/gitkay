@@ -37,7 +37,19 @@ module SelfTest =
         use runtime = new AxialElmishRuntime()
         let env = GitService.environment repoPath
 
-        [ check "GitError renders without reflection" (fun () ->
+        [ check "vim keys interpret and render actions" (fun () ->
+              let context: Vim.KeyContext =
+                  { Pane = Vim.VimPane.Diff; LineText = "call(first.second, third)"; Caret = 11; OtherSideText = null
+                    Side = 0; HasSelection = false; HalfPageRows = 10 }
+              let press symbol : Vim.KeyStroke = { Name = "?"; Symbol = symbol; Control = false; Shift = false; Alt = false }
+              let mutable state = Vim.initial
+              let rendered = Collections.Generic.List<string>()
+              for symbol in [ "2"; "y"; "a"; "(" ] do
+                  let struct (next, actions, _) = Vim.step state context (press symbol)
+                  state <- next
+                  for action in actions do rendered.Add(action.ToString())
+              expect (String.Join("; ", rendered)) "CopyRange 4..25; SetCaret 4")
+          check "GitError renders without reflection" (fun () ->
               expect (GitError.CommitNotFound("abc").ToString()) "Commit not found: abc")
 
           check "message names without reflection" (fun () ->

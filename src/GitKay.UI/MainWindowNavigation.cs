@@ -5,27 +5,6 @@ using Avalonia.Input;
 namespace GitKay.UI;
 
 internal static class MainWindowNavigation {
-    public static bool TryGetListNavigationDelta(Key key, KeyModifiers modifiers, out int delta) {
-        delta = 0;
-
-        if (modifiers != KeyModifiers.None) {
-            return false;
-        }
-
-        switch (key) {
-            case Key.J:
-            case Key.Down:
-                delta = 1;
-                return true;
-            case Key.K:
-            case Key.Up:
-                delta = -1;
-                return true;
-            default:
-                return false;
-        }
-    }
-
     public static bool TryMoveSelection(ListBox listBox, int delta) {
         if (delta == 0) {
             return false;

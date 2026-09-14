@@ -16,7 +16,7 @@ using Avalonia.VisualTree;
 namespace GitKay.UI;
 
 /// <summary>Fixed-row commit history renderer with O(visible rows) scrolling cost.</summary>
-public sealed class CommitSurfaceControl : Control, IOverviewSource {
+public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core.Vim.IVimHost {
     public IReadOnlyList<OverviewMark> OverviewMarks {
         get {
             var marks = new List<OverviewMark>();
@@ -462,18 +462,46 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource {
     }
 
     /// <summary>vim's zt / zz / zb: scrolls so the selected commit sits at the top, centre or bottom of the viewport.</summary>
-    public void ScrollSelectionTo(string position) {
+    public void ScrollSelectionTo(GitKay.Core.Vim.VimScroll position) {
         EnsureRows();
         if (_scrollViewer == null || (_keyboardSelection ?? SelectedItem) is not { } item || Array.IndexOf(_rows, item) is var index && index < 0) return;
         var viewport = _scrollViewer.Viewport.Height;
         var top = index * RowHeight;
         var offset = position switch {
-            "top" => top,
-            "bottom" => top + RowHeight - viewport,
+            GitKay.Core.Vim.VimScroll.Top => top,
+            GitKay.Core.Vim.VimScroll.Bottom => top + RowHeight - viewport,
             _ => top - (viewport - RowHeight) / 2,
         };
         _scrollViewer.Offset = _scrollViewer.Offset.WithY(Math.Clamp(offset, 0, Math.Max(0, _rows.Length * RowHeight - viewport)));
     }
+
+    // ----- vim keys: the commit list moves rows; commit-level actions go to the window. -----
+
+    public IVimCommands? VimCommands { get; set; }
+
+    GitKay.Core.Vim.VimPane GitKay.Core.Vim.IVimHost.Pane => GitKay.Core.Vim.VimPane.Commits;
+    string GitKay.Core.Vim.IVimHost.LineText => null!;
+    int GitKay.Core.Vim.IVimHost.Caret => 0;
+    string GitKay.Core.Vim.IVimHost.OtherSideText => null!;
+    int GitKay.Core.Vim.IVimHost.Side => 0;
+    bool GitKay.Core.Vim.IVimHost.HasSelection => false;
+    int GitKay.Core.Vim.IVimHost.HalfPageRows => Math.Max(1, ViewportRowCount / 2);
+    void GitKay.Core.Vim.IVimHost.SetCaret(int column) { }
+    void GitKay.Core.Vim.IVimHost.SwitchSide(int column) { }
+    void GitKay.Core.Vim.IVimHost.MoveRows(int delta) => MoveSelection(delta);
+    void GitKay.Core.Vim.IVimHost.MoveToEdge(bool last) => MoveSelection(last ? int.MaxValue / 2 : int.MinValue / 2);
+    void GitKay.Core.Vim.IVimHost.GoToPosition(int position) => SelectPosition(position);
+    void GitKay.Core.Vim.IVimHost.MoveToHunk(int direction) { }
+    void GitKay.Core.Vim.IVimHost.ScrollFocus(GitKay.Core.Vim.VimScroll position) => ScrollSelectionTo(position);
+    void GitKay.Core.Vim.IVimHost.ToggleVisual(bool linewise) { }
+    bool GitKay.Core.Vim.IVimHost.CancelSelection() => false;
+    void GitKay.Core.Vim.IVimHost.CopySelection() { }
+    void GitKay.Core.Vim.IVimHost.CopyRange(int from, int until, bool wholeLine) { }
+    void GitKay.Core.Vim.IVimHost.CopyCommitReference(bool subject) => VimCommands?.CopyCommitReference(subject);
+    void GitKay.Core.Vim.IVimHost.FindWord(string word, bool forward) { }
+    void GitKay.Core.Vim.IVimHost.FindNext(bool forward) => VimCommands?.FindNext(GitKay.Core.Vim.VimPane.Commits, forward);
+    void GitKay.Core.Vim.IVimHost.GoToParent(int index) => VimCommands?.GoToParent(index);
+    void GitKay.Core.Vim.IVimHost.GoToChild() => VimCommands?.GoToChild();
 
     public void ScrollIntoView(CommitProjection item) {
         EnsureRows();

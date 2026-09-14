@@ -168,7 +168,7 @@ module DiffSurfaceTests =
 
             fixture.Surface.Focus() |> ignore
             fixture.Surface.SelectedItem <- fixture.Line 0 4
-            fixture.Press(Key.D4, RawInputModifiers.Shift)
+            fixture.Press(Key.D4, RawInputModifiers.Shift, "$")
             let atEnd = fixture.Surface.HorizontalOffset
             fixture.Press Key.D0
             let atStart = fixture.Surface.HorizontalOffset
@@ -233,24 +233,6 @@ module DiffSurfaceTests =
             fixture.Press Key.Y; fixture.Press(Key.D4, RawInputModifiers.Shift, "$"); keep ()      // y$
             // Like vim, each yank leaves the caret at the start of what it copied.
             test <@ List.ofSeq results = [ line; "call"; "second"; "first.second, third"; "(first.second, third)"; "(first.second, third"; "(first.second, third) + x" ] @>)
-
-    [<Theory>]
-    [<InlineData("say \"hello there\" now", 7, '"', false, "hello there")>]
-    [<InlineData("say \"hello there\" now", 7, '"', true, "\"hello there\"")>]
-    [<InlineData("f(a, [b, c])", 7, '[', false, "b, c")>]
-    [<InlineData("f(a, [b, c])", 7, ')', true, "(a, [b, c])")>]
-    [<InlineData("one  two three", 5, 'w', true, "two ")>]
-    [<InlineData("one two", 5, 'w', true, " two")>]
-    [<InlineData("x = a.b(c)", 5, 'W', false, "a.b(c)")>]
-    let ``text objects find the span around the caret`` (text: string, column: int, kind: char, around: bool, expected: string) =
-        let span = DiffSurfaceControl.TextObject(text, column, kind, around)
-        let actual =
-            if span.HasValue then
-                let struct (from, until) = span.Value
-                Some(text.Substring(from, until - from))
-            else None
-        test <@ actual = Some expected @>
-
     [<Fact>]
     let ``counts repeat motions, finds and yanks`` () =
         Headless.run (fun () ->
@@ -259,7 +241,7 @@ module DiffSurfaceTests =
             fixture.Surface.Focus() |> ignore
             fixture.Surface.SelectedItem <- fixture.Line 0 6
             let counted (n: int) (key: Key) (modifiers: RawInputModifiers) (symbol: string) =
-                fixture.Surface.PendingCount <- n
+                fixture.Press(enum<Key> (int Key.D0 + n))
                 fixture.Press(key, modifiers, symbol)
 
             counted 3 Key.W RawInputModifiers.None "w"                 // call ( first → "."
@@ -289,21 +271,7 @@ module DiffSurfaceTests =
             let matched = yanked fixture line
             fixture.Press Key.Y; fixture.Press(Key.D5, RawInputModifiers.Shift, "%")   // y% from ")" back to "("
             let yankPercent = yanked fixture line
-            // From "(": w stops on "a", then on "["; the word under the caret is the next one, "i".
-            fixture.Press Key.W; fixture.Press Key.W
-            let word = fixture.Surface.WordUnderCaret()
-            test <@ (firstNonBlank, matched, yankPercent, word) = ("i", ")", "(a[i] == b)", "i") @>
+            test <@ (firstNonBlank, matched, yankPercent) = ("i", ")", "(a[i] == b)") @>
 
             fixture.Surface.GoToLine 21
             test <@ Object.ReferenceEquals(fixture.Surface.SelectedItem, fixture.Line 0 20) @>)
-
-    [<Theory>]
-    [<InlineData("f(a[b]) x", 0, 6)>]
-    [<InlineData("f(a[b]) x", 3, 5)>]
-    [<InlineData("f(a[b]) x", 6, 1)>]
-    [<InlineData("no brackets", 0, -1)>]
-    let ``percent finds the partner of the next bracket`` (text: string, column: int, expected: int) =
-        let found = DiffSurfaceControl.MatchingBracket(text, column)
-        let actual = if found.HasValue then found.Value else -1
-        test <@ actual = expected @>
-

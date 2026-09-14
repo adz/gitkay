@@ -1,3 +1,4 @@
+using GitKay.Core;
 using System;
 using System.ComponentModel;
 using System.Linq;
@@ -12,7 +13,7 @@ using Avalonia;
 
 namespace GitKay.UI;
 
-public partial class MainWindow : Window {
+public partial class MainWindow : Window, IVimCommands {
     private MainProjection? _projection;
     private readonly System.Collections.Generic.Dictionary<string, double> _diffScrollOffsets = new(StringComparer.Ordinal);
     private string? _diffScrollCommit;
@@ -25,6 +26,10 @@ public partial class MainWindow : Window {
     public MainWindow() {
         InitializeComponent();
         Icon = AppIcon.Window;
+        _filesVimHost = new ListBoxVimHost(DiffFilesListBox, this);
+        DiffRowsListBox.SharedVim = _vim;
+        DiffRowsListBox.VimCommands = this;
+        CommitListBox.VimCommands = this;
         DataContextChanged += OnDataContextChanged;
         CommitListBox.AddHandler(InputElement.KeyDownEvent, OnMainListBoxKeyDown, RoutingStrategies.Tunnel);
         CommitScrollViewer.AddHandler(InputElement.PointerPressedEvent, OnCommitScrollPointerPressed, RoutingStrategies.Tunnel);
@@ -196,8 +201,8 @@ public partial class MainWindow : Window {
     }
 
     private void OnWindowKeyDown(object? sender, KeyEventArgs e) {
-        // After f / t the next key is the character to find, not a shortcut.
-        if (DiffRowsListBox.IsAwaitingFindCharacter) return;
+        // After a count, y, f / t or a prefix, the next key belongs to vim, not to a window shortcut.
+        if (_vim.IsAwaitingKey && !(TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox)) return;
         if (e.Key is Key.LeftCtrl or Key.RightCtrl) {
             _ctrlReleaseGeneration++;
             // Held modifiers auto-repeat on some systems: only the first press starts the wait.
@@ -233,17 +238,6 @@ public partial class MainWindow : Window {
             if (e.Key == Key.OemSemicolon && e.KeyModifiers == KeyModifiers.Shift) { OpenPalette(PaletteMode.Commands); e.Handled = true; return; }
             if (e.Key is Key.O or Key.I && e.KeyModifiers == KeyModifiers.Control) {
                 (e.Key == Key.O ? _projection?.GoBackCommand : _projection?.GoForwardCommand)?.Execute(null);
-                e.Handled = true;
-                return;
-            }
-            if (e.Key == Key.Y && e.KeyModifiers == KeyModifiers.None && FocusedPane == Pane.Diff && DiffRowsListBox.HasTextSelection) {
-                DiffRowsListBox.CopySelection();
-                e.Handled = true;
-                return;
-            }
-            if (e.Key == Key.Y && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift && FocusedPane != Pane.None
-                && !(FocusedPane == Pane.Diff && DiffRowsListBox.HandlesYank)) {
-                OnWindowCommandRequested(e.KeyModifiers == KeyModifiers.Shift ? "copy-subject" : "copy-hash");
                 e.Handled = true;
                 return;
             }
@@ -810,35 +804,21 @@ public partial class MainWindow : Window {
         _lastDiffPaneFocus = DiffFilesListBox;
     }
 
+    // ----- vim keys: every pane shares one GitKay.Core.Vim session, so counts and pending keys behave the same. -----
+
+    private readonly Vim.VimSession _vim = new();
+    private readonly ListBoxVimHost _filesVimHost;
+
     private void OnMainListBoxKeyDown(object? sender, KeyEventArgs e) {
-        if (sender is not ListBox && sender is not DiffSurfaceControl && sender is not CommitSurfaceControl)
-            return;
-        if (sender is DiffSurfaceControl { IsAwaitingFindCharacter: true }) return;
-        if (e.Key is Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt) return;
+        Vim.IVimHost? host = sender switch {
+            DiffSurfaceControl diff => diff,
+            CommitSurfaceControl commits => commits,
+            ListBox list when ReferenceEquals(list, DiffFilesListBox) => _filesVimHost,
+            _ => null,
+        };
+        if (host == null) return;
 
-        // vim counts: digits typed before a motion repeat it (3j, 5w) or name a position (10G).
-        var count = _vimCount;
-        if (e.KeyModifiers == KeyModifiers.None && CountDigit(e.Key) is { } digit && (digit > 0 || count > 0) && _pendingVimPrefix == null) {
-            _vimCount = Math.Min(99999, count * 10 + digit);
-            e.Handled = true;
-            return;
-        }
-        _vimCount = 0;
-        if (sender is DiffSurfaceControl countedDiff) countedDiff.PendingCount = count;
-
-        if (MainWindowNavigation.TryGetListNavigationDelta(e.Key, e.KeyModifiers, out var delta)) {
-            delta *= Math.Max(1, count);
-            if (sender is ListBox listBox)
-                MainWindowNavigation.TryMoveSelection(listBox, delta);
-            else if (sender is DiffSurfaceControl diffSurface)
-                diffSurface.MoveSelection(delta);
-            else
-                ((CommitSurfaceControl)sender).MoveSelection(delta);
-            e.Handled = true;
-            return;
-        }
-
-        if (TryHandleVimKey(sender, e, count)) {
+        if (_vim.Handle(host, VimKeys.From(e))) {
             e.Handled = true;
             return;
         }
@@ -856,114 +836,21 @@ public partial class MainWindow : Window {
         }
     }
 
-    private Key? _pendingVimPrefix;
-    private int _vimCount;
+    void IVimCommands.CopyCommitReference(bool subject) => OnWindowCommandRequested(subject ? "copy-subject" : "copy-hash");
 
-    private static int? CountDigit(Key key) => key switch {
-        >= Key.D0 and <= Key.D9 => key - Key.D0,
-        >= Key.NumPad0 and <= Key.NumPad9 => key - Key.NumPad0,
-        _ => null,
-    };
+    void IVimCommands.FindWord(string word, bool forward) => _projection?.FindWordInDiff(word, forward);
 
-    /// <summary>
-    /// Common vim motions: gg / G (top, bottom), Ctrl+D / Ctrl+U (half page), n / N (next / previous match),
-    /// ]c / [c (next / previous hunk in the diff). j / k and h / l are handled with the arrow keys.
-    /// </summary>
-    private bool TryHandleVimKey(object? sender, KeyEventArgs e, int count = 0) {
-        var shift = e.KeyModifiers == KeyModifiers.Shift;
-        var none = e.KeyModifiers == KeyModifiers.None;
-        var ctrl = e.KeyModifiers == KeyModifiers.Control;
-        var prefix = _pendingVimPrefix;
-        _pendingVimPrefix = null;
-
-        void Move(int delta) {
-            switch (sender) {
-                case CommitSurfaceControl commits: commits.MoveSelection(delta); break;
-                case DiffSurfaceControl diff: diff.MoveSelection(delta); break;
-                case ListBox list: MainWindowNavigation.TryMoveSelection(list, delta); break;
-            }
-        }
-
-        int HalfPage() => sender switch {
-            CommitSurfaceControl commits => Math.Max(1, commits.ViewportRowCount / 2),
-            DiffSurfaceControl diff => Math.Max(1, diff.ViewportRowCount / 2),
-            _ => 10,
-        };
-
-        var times = Math.Max(1, count);
-
-        // {count}G and {count}gg go to a position: the commit's place in the list, or a line number in the diff.
-        void GoTo(int position) {
-            switch (sender) {
-                case CommitSurfaceControl commits: commits.SelectPosition(position); break;
-                case DiffSurfaceControl diff: diff.GoToLine(position); break;
-                case ListBox list when list.ItemCount > 0: MainWindowNavigation.TryMoveSelection(list, Math.Clamp(position - 1, 0, list.ItemCount - 1) - Math.Max(0, list.SelectedIndex)); break;
-            }
-        }
-
-        void ScrollSelection(string position) {
-            switch (sender) {
-                case CommitSurfaceControl commits: commits.ScrollSelectionTo(position); break;
-                case DiffSurfaceControl diff: diff.ScrollSelectionTo(position); break;
-            }
-        }
-
-        if (e.Key == Key.Home && none) { Move(int.MinValue / 2); return true; }
-        if (e.Key == Key.End && none) { Move(int.MaxValue / 2); return true; }
-        if (prefix == Key.G && none && e.Key == Key.G) {
-            if (count > 0) GoTo(count); else Move(int.MinValue / 2);
-            return true;
-        }
-        if (prefix == Key.Z) {
-            var position = e.Key switch { Key.Z when none => "center", Key.T when none => "top", Key.B when none => "bottom", _ => null };
-            if (position != null) ScrollSelection(position);
-            return true;
-        }
-        if (prefix is Key.OemCloseBrackets or Key.OemOpenBrackets && none && e.Key == Key.C && sender is DiffSurfaceControl hunks) {
-            for (var step = 0; step < times; step++) hunks.MoveToHunk(prefix == Key.OemCloseBrackets ? 1 : -1);
-            return true;
-        }
-
-        // * and # search the diff for the word under the caret; n / N then continue in that direction.
-        if (e.KeySymbol is "*" or "#" && sender is DiffSurfaceControl wordDiff && _projection is { } wordProjection) {
-            if (wordDiff.WordUnderCaret() is { } word) {
-                wordProjection.FindWordInDiff(word, forward: e.KeySymbol == "*");
-                // FindWordInDiff sets the direction, so repeats continue the same way.
-                for (var step = 1; step < times; step++) wordProjection.FindInCommitCommand.Execute(null);
-                wordDiff.PlaceCaretOnFindMatch();
-            }
-            return true;
-        }
-
-        switch (e.Key) {
-            case Key.G when none: _pendingVimPrefix = Key.G; _vimCount = count; return true;
-            case Key.G when shift:
-                if (count > 0) GoTo(count); else Move(int.MaxValue / 2);
-                return true;
-            case Key.Z when none && sender is CommitSurfaceControl or DiffSurfaceControl: _pendingVimPrefix = Key.Z; return true;
-            case Key.OemCloseBrackets or Key.OemOpenBrackets when none && sender is DiffSurfaceControl: _pendingVimPrefix = e.Key; return true;
-            case Key.P when (none || shift) && _projection is { } relations:
-                relations.GoToParent(shift ? 1 : 0);
-                return true;
-            case Key.C when none && _projection is { } childRelations:
-                childRelations.GoToChild();
-                return true;
-            case Key.D when ctrl: Move(HalfPage()); return true;
-            case Key.U when ctrl: Move(-HalfPage()); return true;
-            case Key.N when (none || shift) && _projection is { } projection:
-                var forward = none;
-                for (var step = 0; step < times; step++) {
-                    if (sender is CommitSurfaceControl)
-                        (forward ? projection.FindNextCommitCommand : projection.FindPreviousCommitCommand).Execute(null);
-                    else
-                        (forward ? projection.FindInCommitCommand : projection.FindPreviousInCommitCommand).Execute(null);
-                }
-                if (sender is DiffSurfaceControl foundDiff) foundDiff.PlaceCaretOnFindMatch();
-                return true;
-            default:
-                return false;
-        }
+    void IVimCommands.FindNext(Vim.VimPane pane, bool forward) {
+        if (_projection is not { } projection) return;
+        if (pane == Vim.VimPane.Commits)
+            (forward ? projection.FindNextCommitCommand : projection.FindPreviousCommitCommand).Execute(null);
+        else
+            (forward ? projection.FindInCommitCommand : projection.FindPreviousInCommitCommand).Execute(null);
     }
+
+    void IVimCommands.GoToParent(int index) => _projection?.GoToParent(index);
+
+    void IVimCommands.GoToChild() => _projection?.GoToChild();
 
     private void FocusDiffPane() {
         var target = _lastDiffPaneFocus;

@@ -25,7 +25,7 @@ public sealed class DiffFileMenuEventArgs(DiffFileProjection file, int? lineNumb
 }
 
 /// <summary>Index-addressable diff viewport. It realizes no child controls and draws only visible rows.</summary>
-public sealed class DiffSurfaceControl : Control, IOverviewSource {
+public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOverviewSource {
     private List<OverviewMark> _overviewMarks = new();
     private bool _overviewDirty = true;
 
@@ -1595,138 +1595,6 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
     }
 
     /// <summary>Moves the caret within the focused line; returns false when there is no line to move on.</summary>
-    private bool MoveCaret(Key key, KeyModifiers modifiers, string? symbol = null) {
-        var row = SelectedLineIndex;
-        if (row < 0 || _rows[row] is not DiffLineProjection line) return false;
-        var side = CaretSide(line);
-        var text = TextFor(line, side);
-        var column = Math.Min(_caretChar, text.Length);
-
-        switch (key) {
-            case Key.H or Key.Left when column == 0 && Mode == "side-by-side" && side == 1 && line.OldContent.Length > 0:
-                _caretSide = 0;
-                return PlaceCaret(row, 0, line.OldContent.Length);
-            case Key.L or Key.Right when column == text.Length && Mode == "side-by-side" && side == 0 && line.NewContent.Length > 0:
-                _caretSide = 1;
-                return PlaceCaret(row, 1, 0);
-            case Key.Left when column == 0:
-            case Key.Right when column == text.Length:
-                // At the edge, arrows keep their pane navigation.
-                return false;
-        }
-
-        return TryMotion(key, modifiers, symbol, text, column, out var target, out _) && PlaceCaret(row, side, target);
-    }
-
-    /// <summary>
-    /// Where a motion on one line takes the caret. <paramref name="inclusive"/> says whether a yank to that point
-    /// includes the character there (vim's e, E and $ do; w, b, h, l and 0 stop before it).
-    /// </summary>
-    private static bool TryMotion(Key key, KeyModifiers modifiers, string? symbol, string text, int column, out int target, out bool inclusive) {
-        var shift = modifiers == KeyModifiers.Shift;
-        // w / b / e move by words (letters, digits, _); W / B / E by WORDs (anything but whitespace).
-        int Class(char c) => char.IsWhiteSpace(c) ? 0 : shift || char.IsLetterOrDigit(c) || c == '_' ? 1 : 2;
-        target = column;
-        inclusive = false;
-
-        // Symbols are matched by the character typed, so they work on any keyboard layout.
-        switch (symbol) {
-            case "^" or "_":
-                // First non-blank character: code is indented, so 0 often lands on whitespace.
-                target = 0;
-                while (target < text.Length && char.IsWhiteSpace(text[target])) target++;
-                if (target == text.Length) target = Math.Max(0, text.Length - 1);
-                return true;
-            case "%":
-                if (MatchingBracket(text, column) is { } match) {
-                    target = match;
-                    inclusive = true;
-                }
-                return true;
-        }
-
-        switch (key) {
-            case Key.H or Key.Left when modifiers == KeyModifiers.None:
-                target = Math.Max(0, column - 1);
-                return true;
-            case Key.L or Key.Right when modifiers == KeyModifiers.None:
-                target = Math.Min(text.Length, column + 1);
-                return true;
-            case Key.D0 or Key.NumPad0 when modifiers == KeyModifiers.None:
-                target = 0;
-                return true;
-            case Key.D4 when shift:
-                target = Math.Max(0, text.Length - 1);
-                inclusive = text.Length > 0;
-                return true;
-            case Key.W: {
-                // To the start of the next word: leave this run of word or punctuation characters, then skip spaces.
-                if (column < text.Length) {
-                    var start = Class(text[column]);
-                    while (target < text.Length && Class(text[target]) == start && start != 0) target++;
-                    while (target < text.Length && Class(text[target]) == 0) target++;
-                }
-                return true;
-            }
-            case Key.B: {
-                while (target > 0 && Class(text[target - 1]) == 0) target--;
-                var run = target > 0 ? Class(text[target - 1]) : 0;
-                while (target > 0 && Class(text[target - 1]) == run) target--;
-                return true;
-            }
-            case Key.E: {
-                // To the last character of this or the next word.
-                var next = column + 1;
-                while (next < text.Length && Class(text[next]) == 0) next++;
-                if (next < text.Length) {
-                    var run = Class(text[next]);
-                    while (next + 1 < text.Length && Class(text[next + 1]) == run) next++;
-                    target = next;
-                    inclusive = true;
-                }
-                return true;
-            }
-            default:
-                return false;
-        }
-    }
-
-    /// <summary>
-    /// vim's %: the first bracket at or after <paramref name="column"/> on the line, and the index of its partner.
-    /// </summary>
-    internal static int? MatchingBracket(string text, int column) {
-        const string opens = "([{";
-        const string closes = ")]}";
-        for (var start = column; start < text.Length; start++) {
-            var open = opens.IndexOf(text[start]);
-            var close = closes.IndexOf(text[start]);
-            if (open < 0 && close < 0) continue;
-            var (self, partner, step) = open >= 0 ? (opens[open], closes[open], 1) : (closes[close], opens[close], -1);
-            var depth = 0;
-            for (var i = start; i >= 0 && i < text.Length; i += step) {
-                if (text[i] == self) depth++;
-                else if (text[i] == partner && --depth == 0) return i;
-            }
-            return null;
-        }
-        return null;
-    }
-
-    /// <summary>The word under the caret, or the next word after it on the line, for * and #.</summary>
-    public string? WordUnderCaret() {
-        var row = SelectedLineIndex;
-        if (row < 0 || _rows[row] is not DiffLineProjection line) return null;
-        var text = TextFor(line, CaretSide(line));
-        static bool IsWord(char c) => char.IsLetterOrDigit(c) || c == '_';
-        var start = Math.Min(_caretChar, text.Length);
-        while (start < text.Length && !IsWord(text[start])) start++;
-        if (start >= text.Length) return null;
-        while (start > 0 && IsWord(text[start - 1])) start--;
-        var end = start;
-        while (end < text.Length && IsWord(text[end])) end++;
-        return text[start..end];
-    }
-
     /// <summary>After find-in-diff moves to a row, puts the caret on the first match in it.</summary>
     public void PlaceCaretOnFindMatch() {
         var row = SelectedLineIndex;
@@ -1744,15 +1612,15 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
     }
 
     /// <summary>vim's zt / zz / zb: scrolls so the focused row sits at the top, centre or bottom of the viewport.</summary>
-    public void ScrollSelectionTo(string position) {
+    public void ScrollSelectionTo(GitKay.Core.Vim.VimScroll position) {
         var index = SelectedItem == null ? -1 : Array.IndexOf(_rows, SelectedItem);
         if (_scrollViewer == null || index < 0) return;
         var viewport = _scrollViewer.Viewport.Height;
         var top = _tops[index];
         var height = _tops[index + 1] - top;
         var offset = position switch {
-            "top" => top,
-            "bottom" => top + height - viewport,
+            GitKay.Core.Vim.VimScroll.Top => top,
+            GitKay.Core.Vim.VimScroll.Bottom => top + height - viewport,
             _ => top - (viewport - height) / 2,
         };
         _scrollViewer.Offset = _scrollViewer.Offset.WithY(Math.Clamp(offset, 0, Math.Max(0, _tops[^1] - viewport)));
@@ -1780,9 +1648,6 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         if (_visualAnchorRow >= 0) UpdateVisualSelection(Array.IndexOf(_rows, best));
     }
 
-    /// <summary>A count typed before the next key (3w, 2fx, y3w), set by the window's vim key handling.</summary>
-    public int PendingCount { get; set; }
-
     private bool PlaceCaret(int row, int side, int column) {
         if (_caretSide < 0) _caretSide = side;
         _caretChar = column;
@@ -1791,238 +1656,99 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         return true;
     }
 
-    // ----- f / F / t / T: find a character on the focused line; ; repeats, , repeats the other way. -----
+    // ----- vim keys: GitKay.Core.Vim interprets them; this view reports its state and carries out the actions. -----
 
-    private readonly record struct CharFind(char Target, bool Forward, bool Till, bool Yank = false, int Count = 1);
+    private readonly GitKay.Core.Vim.VimSession _ownVim = new();
 
-    private CharFind? _pendingFind;
+    /// <summary>The window's shared session; when set, the window dispatches this view's keys to it.</summary>
+    public GitKay.Core.Vim.VimSession? SharedVim { get; set; }
 
-    /// <summary>f / F / t / T was pressed and the next key names the character to find.</summary>
-    public bool IsAwaitingFindCharacter => _pendingFind != null || _pendingYank || _pendingTextObject != null;
-    private CharFind? _lastFind;
-
-    private bool FindOnLine(CharFind find, bool repeat) {
-        var row = SelectedLineIndex;
-        if (row < 0 || _rows[row] is not DiffLineProjection line) return false;
-        var side = CaretSide(line);
-        var text = TextFor(line, side);
-        var column = Math.Min(_caretChar, text.Length);
-        // Like vim, repeating t / T steps past the character the caret already stops before.
-        if (FindTarget(find, text, column, repeat) is not { } target) return true;
-        if (!find.Yank) return PlaceCaret(row, side, target);
-        // Forward finds include the found character; backward finds stop before the caret's own.
-        return find.Forward ? YankRange(row, side, column, target + 1) : YankRange(row, side, target, column);
-    }
-
-    private static int? FindTarget(CharFind find, string text, int column, bool repeat) {
-        // Like vim, repeating t / T steps past the character the caret already stops before.
-        var skip = repeat && find.Till ? 1 : 0;
-        var index = column;
-        for (var occurrence = 0; occurrence < Math.Max(1, find.Count); occurrence++) {
-            index = find.Forward
-                ? text.IndexOf(find.Target, Math.Min(text.Length, index + 1 + skip))
-                : index - 1 - skip < 0 ? -1 : text.LastIndexOf(find.Target, index - 1 - skip);
-            // A count beyond the last occurrence leaves the caret where it was, as in vim.
-            if (index < 0) return null;
-            skip = 0;
-        }
-        return find.Till ? (find.Forward ? index - 1 : index + 1) : index;
-    }
-
-    // ----- y as an operator: yy / Y copy the line, y{motion} copies to where the motion goes,
-    //       yi{object} / ya{object} copy inside or around a word, WORD, bracket pair or quotes. -----
-
-    private bool _pendingYank;
-    private char? _pendingTextObject;
-    private int _yankCount = 1;
-    private int _motionCount;
-
-    private static int? DigitOf(KeyEventArgs e) => e.Key switch {
-        >= Key.D0 and <= Key.D9 => e.Key - Key.D0,
-        >= Key.NumPad0 and <= Key.NumPad9 => e.Key - Key.NumPad0,
-        _ => null,
-    };
-
-    private static bool IsModifierKey(Key key) =>
-        key is Key.LeftShift or Key.RightShift or Key.LeftAlt or Key.RightAlt or Key.LeftCtrl or Key.RightCtrl;
-
-    private bool TryHandleYank(KeyEventArgs e, int count) {
-        if ((_pendingYank || _pendingTextObject != null) && IsModifierKey(e.Key)) return true;
-        var row = SelectedLineIndex;
-
-        if (_pendingTextObject is { } kind) {
-            _pendingTextObject = null;
-            if (row < 0 || _rows[row] is not DiffLineProjection objectLine || string.IsNullOrEmpty(e.KeySymbol)) return true;
-            var side = CaretSide(objectLine);
-            var text = TextFor(objectLine, side);
-            if (TextObject(text, Math.Min(_caretChar, Math.Max(0, text.Length - 1)), e.KeySymbol[0], around: kind == 'a') is var (from, to))
-                YankRange(row, side, from, to);
-            return true;
-        }
-
-        if (_pendingYank) {
-            // A count may come between y and the motion (y3w); it multiplies one typed before y (2y3w).
-            if (e.KeyModifiers == KeyModifiers.None && DigitOf(e) is { } digit && (digit > 0 || _motionCount > 0)) {
-                _motionCount = Math.Min(9999, _motionCount * 10 + digit);
-                return true;
-            }
-            _pendingYank = false;
-            var total = Math.Max(1, _yankCount) * Math.Max(1, _motionCount);
-            _motionCount = 0;
-            if (row < 0 || _rows[row] is not DiffLineProjection line || e.Key == Key.Escape) return true;
-            var side = CaretSide(line);
-            var text = TextFor(line, side);
-            var column = Math.Min(_caretChar, text.Length);
-            var none = e.KeyModifiers == KeyModifiers.None;
-
-            if (e.Key == Key.Y && none) return YankRange(row, side, 0, text.Length, wholeLine: true);
-            if (e.Key is Key.I or Key.A && none) {
-                _pendingTextObject = e.Key == Key.I ? 'i' : 'a';
-                return true;
-            }
-            if (e.Key is Key.F or Key.T && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift) {
-                _pendingFind = new CharFind('\0', Forward: none, Till: e.Key == Key.T, Yank: true, Count: total);
-                return true;
-            }
-            if (e.Key is Key.OemSemicolon or Key.OemComma && none && _lastFind is { } last) {
-                FindOnLine((e.Key == Key.OemSemicolon ? last : last with { Forward = !last.Forward }) with { Yank = true, Count = total }, repeat: true);
-                return true;
-            }
-            if (TryMotion(e.Key, e.KeyModifiers, e.KeySymbol, text, column, out var target, out var inclusive)) {
-                for (var step = 1; step < total && target < text.Length; step++)
-                    if (!TryMotion(e.Key, e.KeyModifiers, e.KeySymbol, text, target, out target, out inclusive)) break;
-                // Inclusive motions (e, $, %) take the character at both ends; exclusive ones stop before the far end.
-                return target >= column
-                    ? YankRange(row, side, column, inclusive ? target + 1 : target)
-                    : YankRange(row, side, target, inclusive ? column + 1 : column);
-            }
-            // Anything else cancels the pending yank, as in vim.
-            return true;
-        }
-
-        if (row < 0 || HasTextSelection) return false;
-        if (e.Key == Key.Y && e.KeyModifiers == KeyModifiers.None) {
-            _pendingYank = true;
-            _yankCount = count;
-            _motionCount = 0;
-            return true;
-        }
-        if (e.Key == Key.Y && e.KeyModifiers == KeyModifiers.Shift && _rows[row] is DiffLineProjection yLine) {
-            var side = CaretSide(yLine);
-            return YankRange(row, side, 0, TextFor(yLine, side).Length, wholeLine: true);
-        }
-        return false;
-    }
-
-    /// <summary>Copies [from, to) of the focused line's caret side and moves the caret to the start, like a vim yank.</summary>
-    private bool YankRange(int row, int side, int from, int to, bool wholeLine = false) {
-        if (_rows[row] is not DiffLineProjection line) return true;
-        var text = TextFor(line, side);
-        from = Math.Clamp(from, 0, text.Length);
-        to = Math.Clamp(to, from, text.Length);
-        if (to == from && !wholeLine) return true;
-        CopyText(text[from..to]);
-        if (!wholeLine) PlaceCaret(row, side, from);
-        LastYank = (row, side, from, to);
-        InvalidateVisual();
-        TextCopied?.Invoke(this, wholeLine ? 1 : 0);
-        return true;
-    }
+    /// <summary>App-level actions keys can trigger (finding, commit relations, copying commit references).</summary>
+    public IVimCommands? VimCommands { get; set; }
 
     /// <summary>The span the last yank copied.</summary>
     internal (int Row, int Side, int From, int To)? LastYank { get; private set; }
 
-    /// <summary>True when the diff handles y itself: a line is focused, so y starts a yank rather than copying the commit hash.</summary>
-    public bool HandlesYank => SelectedLineIndex >= 0;
+    GitKay.Core.Vim.VimPane GitKay.Core.Vim.IVimHost.Pane => GitKay.Core.Vim.VimPane.Diff;
 
-    /// <summary>The [from, to) range of a vim text object around <paramref name="column"/>, or null when there is none.</summary>
-    internal static (int From, int To)? TextObject(string text, int column, char kind, bool around) {
-        if (text.Length == 0) return null;
-        switch (kind) {
-            case 'w' or 'W': {
-                int Class(char c) => char.IsWhiteSpace(c) ? 0 : kind == 'W' || char.IsLetterOrDigit(c) || c == '_' ? 1 : 2;
-                var run = Class(text[column]);
-                var from = column;
-                var to = column + 1;
-                while (from > 0 && Class(text[from - 1]) == run) from--;
-                while (to < text.Length && Class(text[to]) == run) to++;
-                if (!around) return (from, to);
-                // "a word" takes the whitespace after it, or before it when the word ends the line.
-                var end = to;
-                while (end < text.Length && char.IsWhiteSpace(text[end])) end++;
-                if (end > to || run == 0) return (from, end);
-                var begin = from;
-                while (begin > 0 && char.IsWhiteSpace(text[begin - 1])) begin--;
-                return (begin, to);
-            }
-            case '(' or ')' or 'b': return BracketObject(text, column, '(', ')', around);
-            case '[' or ']': return BracketObject(text, column, '[', ']', around);
-            case '{' or '}' or 'B': return BracketObject(text, column, '{', '}', around);
-            case '<' or '>': return BracketObject(text, column, '<', '>', around);
-            case '"' or '\'' or '`': {
-                // Quotes pair up from the start of the line; use the pair around the caret, or the next one after it.
-                var quotes = new List<int>();
-                for (var i = 0; i < text.Length; i++)
-                    if (text[i] == kind && (i == 0 || text[i - 1] != '\\')) quotes.Add(i);
-                for (var pair = 0; pair + 1 < quotes.Count; pair += 2) {
-                    var (open, close) = (quotes[pair], quotes[pair + 1]);
-                    if (close < column) continue;
-                    return around ? (open, close + 1) : (open + 1, close);
-                }
-                return null;
-            }
-            default:
-                return null;
+    string GitKay.Core.Vim.IVimHost.LineText =>
+        SelectedLineIndex is var row && row >= 0 && _rows[row] is DiffLineProjection line ? TextFor(line, CaretSide(line)) : null!;
+
+    int GitKay.Core.Vim.IVimHost.Caret =>
+        SelectedItem is DiffLineProjection line ? Math.Min(_caretChar, TextFor(line, CaretSide(line)).Length) : 0;
+
+    string GitKay.Core.Vim.IVimHost.OtherSideText {
+        get {
+            if (Mode != "side-by-side" || SelectedItem is not DiffLineProjection line) return null!;
+            var other = TextFor(line, 1 - CaretSide(line));
+            return other.Length == 0 ? null! : other;
         }
     }
 
-    private static (int From, int To)? BracketObject(string text, int column, char open, char close, bool around) {
-        // The innermost pair enclosing the caret (the caret may sit on either bracket).
-        var depth = 0;
-        var start = -1;
-        for (var i = text[column] == close ? column - 1 : column; i >= 0; i--) {
-            if (text[i] == close && i != column) depth++;
-            else if (text[i] == open) {
-                if (depth == 0) { start = i; break; }
-                depth--;
-            }
-        }
-        if (start < 0) return null;
-        depth = 0;
-        for (var i = start + 1; i < text.Length; i++) {
-            if (text[i] == open) depth++;
-            else if (text[i] == close) {
-                if (depth == 0) return around ? (start, i + 1) : (start + 1, i);
-                depth--;
-            }
-        }
-        return null;
+    int GitKay.Core.Vim.IVimHost.Side => SelectedItem is DiffLineProjection line ? CaretSide(line) : 0;
+
+    bool GitKay.Core.Vim.IVimHost.HasSelection => HasTextSelection;
+
+    int GitKay.Core.Vim.IVimHost.HalfPageRows => Math.Max(1, ViewportRowCount / 2);
+
+    void GitKay.Core.Vim.IVimHost.SetCaret(int column) {
+        if (SelectedLineIndex is var row && row >= 0 && _rows[row] is DiffLineProjection line) PlaceCaret(row, CaretSide(line), column);
     }
 
-    /// <summary>Handles the character typed after f / F / t / T, and the ; and , repeats.</summary>
-    private bool TryHandleCharFind(KeyEventArgs e, int count) {
-        if (_pendingFind is { } pending) {
-            // Modifier keys alone arrive before the shifted character; keep waiting for it.
-            if (e.Key is Key.LeftShift or Key.RightShift or Key.LeftAlt or Key.RightAlt or Key.LeftCtrl or Key.RightCtrl) return true;
-            _pendingFind = null;
-            if (e.Key == Key.Escape || string.IsNullOrEmpty(e.KeySymbol) || char.IsControl(e.KeySymbol[0])) return true;
-            var find = pending with { Target = e.KeySymbol[0] };
-            _lastFind = find with { Yank = false, Count = 1 };
-            FindOnLine(find, repeat: false);
-            return true;
-        }
-
-        if (SelectedLineIndex < 0) return false;
-        if (e.Key is Key.F or Key.T && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift) {
-            _pendingFind = new CharFind('\0', Forward: e.KeyModifiers == KeyModifiers.None, Till: e.Key == Key.T, Count: count);
-            return true;
-        }
-        if (e.Key is Key.OemSemicolon or Key.OemComma && e.KeyModifiers == KeyModifiers.None && _lastFind is { } last) {
-            FindOnLine((e.Key == Key.OemSemicolon ? last : last with { Forward = !last.Forward }) with { Count = count }, repeat: true);
-            return true;
-        }
-        return false;
+    void GitKay.Core.Vim.IVimHost.SwitchSide(int column) {
+        if (SelectedLineIndex is not (var row and >= 0) || _rows[row] is not DiffLineProjection line) return;
+        _caretSide = 1 - CaretSide(line);
+        PlaceCaret(row, _caretSide, column);
     }
+
+    void GitKay.Core.Vim.IVimHost.MoveRows(int delta) => MoveSelection(delta);
+
+    void GitKay.Core.Vim.IVimHost.MoveToEdge(bool last) => MoveSelection(last ? int.MaxValue / 2 : int.MinValue / 2);
+
+    void GitKay.Core.Vim.IVimHost.GoToPosition(int position) => GoToLine(position);
+
+    void GitKay.Core.Vim.IVimHost.MoveToHunk(int direction) => MoveToHunk(direction);
+
+    void GitKay.Core.Vim.IVimHost.ScrollFocus(GitKay.Core.Vim.VimScroll position) => ScrollSelectionTo(position);
+
+    void GitKay.Core.Vim.IVimHost.ToggleVisual(bool linewise) => ToggleVisualMode(linewise);
+
+    bool GitKay.Core.Vim.IVimHost.CancelSelection() {
+        if (_textSelection == null && _visualAnchorRow < 0) return false;
+        _visualAnchorRow = -1;
+        _textSelection = null;
+        InvalidateVisual();
+        return true;
+    }
+
+    void GitKay.Core.Vim.IVimHost.CopySelection() => CopySelection();
+
+    void GitKay.Core.Vim.IVimHost.CopyRange(int from, int until, bool wholeLine) {
+        if (SelectedLineIndex is not (var row and >= 0) || _rows[row] is not DiffLineProjection line) return;
+        var side = CaretSide(line);
+        var text = TextFor(line, side);
+        from = Math.Clamp(from, 0, text.Length);
+        until = Math.Clamp(until, from, text.Length);
+        CopyText(text[from..until]);
+        LastYank = (row, side, from, until);
+        TextCopied?.Invoke(this, wholeLine ? 1 : 0);
+    }
+
+    void GitKay.Core.Vim.IVimHost.CopyCommitReference(bool subject) => VimCommands?.CopyCommitReference(subject);
+
+    void GitKay.Core.Vim.IVimHost.FindWord(string word, bool forward) {
+        VimCommands?.FindWord(word, forward);
+        PlaceCaretOnFindMatch();
+    }
+
+    void GitKay.Core.Vim.IVimHost.FindNext(bool forward) {
+        VimCommands?.FindNext(GitKay.Core.Vim.VimPane.Diff, forward);
+        PlaceCaretOnFindMatch();
+    }
+
+    void GitKay.Core.Vim.IVimHost.GoToParent(int index) => VimCommands?.GoToParent(index);
+
+    void GitKay.Core.Vim.IVimHost.GoToChild() => VimCommands?.GoToChild();
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e) {
         if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.Delta.Y != 0) {
@@ -2048,14 +1774,8 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
     }
 
     protected override void OnKeyDown(KeyEventArgs e) {
-        // First, so the character after f / t is never taken as a command.
-        if (IsModifierKey(e.Key)) {
-            base.OnKeyDown(e);
-            return;
-        }
-        var count = Math.Max(1, PendingCount);
-        PendingCount = 0;
-        if (_pendingFind == null && TryHandleYank(e, count) || TryHandleCharFind(e, count)) {
+        // Inside the main window, the window sends keys to its shared session before they reach this view.
+        if (SharedVim == null && _ownVim.Handle(this, VimKeys.From(e))) {
             e.Handled = true;
             return;
         }
@@ -2102,38 +1822,6 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
                 e.Handled = true;
                 return;
             }
-        }
-
-        var caretKey = e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift
-            && (e.Key is Key.H or Key.L or Key.Left or Key.Right or Key.D0 or Key.NumPad0 or Key.D4 or Key.W or Key.B or Key.E
-                && (e.KeyModifiers == KeyModifiers.None || e.Key is Key.D4 or Key.W or Key.B or Key.E)
-                || e.KeySymbol is "^" or "_" or "%");
-        if (caretKey && MoveCaret(e.Key, e.KeyModifiers, e.KeySymbol)) {
-            // $, ^ and % don't repeat; the rest move count times.
-            if (e.KeySymbol is not ("$" or "^" or "_" or "%"))
-                for (var step = 1; step < count; step++) MoveCaret(e.Key, e.KeyModifiers, e.KeySymbol);
-            e.Handled = true;
-            return;
-        }
-
-        if (e.Key == Key.V && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift) {
-            ToggleVisualMode(linewise: e.KeyModifiers == KeyModifiers.Shift);
-            e.Handled = true;
-            return;
-        }
-
-        if (e.Key == Key.Y && e.KeyModifiers == KeyModifiers.None && HasTextSelection) {
-            CopySelection();
-            e.Handled = true;
-            return;
-        }
-
-        if (e.Key == Key.Escape && _textSelection != null) {
-            _visualAnchorRow = -1;
-            _textSelection = null;
-            InvalidateVisual();
-            e.Handled = true;
-            return;
         }
 
         base.OnKeyDown(e);
