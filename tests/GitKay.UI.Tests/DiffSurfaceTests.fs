@@ -42,7 +42,10 @@ type private DiffFixture(mode: string) =
                   [ for number in 1..40 ->
                         let line : Models.DiffLine =
                             { Type = if number = 3 then Models.Context elif number % 2 = 0 then Models.Added else Models.Removed
-                              Content = if number = 5 then "long = " + String.replicate 60 "abcdefghij" else $"value = {number}"
+                              Content =
+                                if number = 5 then "long = " + String.replicate 60 "abcdefghij"
+                                elif number = 7 then "call(first.second, third) + x"
+                                else $"value = {number}"
                               OldLineNo = if number % 2 = 0 && number <> 3 then None else Some number
                               NewLineNo = if number % 2 = 1 && number <> 3 then None else Some number }
                         DiffLineProjection line :> IDiffRowProjection ]
@@ -87,8 +90,8 @@ type private DiffFixture(mode: string) =
             window.Close()
             Headless.pump ()
 
-    member _.Press(key: Key, ?modifiers: RawInputModifiers) =
-        window.KeyPress(key, defaultArg modifiers RawInputModifiers.None, PhysicalKey.None, null)
+    member _.Press(key: Key, ?modifiers: RawInputModifiers, ?symbol: string) =
+        window.KeyPress(key, defaultArg modifiers RawInputModifiers.None, PhysicalKey.None, defaultArg symbol null)
         Headless.pump ()
 
 module DiffSurfaceTests =
@@ -128,7 +131,7 @@ module DiffSurfaceTests =
             fixture.Press Key.L
             fixture.Press Key.V
             fixture.Press Key.W
-            test <@ fixture.Surface.GetCopyText() = "lue = 2" @>
+            test <@ fixture.Surface.GetCopyText() = "lue =" @>
 
             fixture.Press Key.Escape
             // Line 1 is removed: the caret yields to the old side, and V takes the whole line.
@@ -169,3 +172,36 @@ module DiffSurfaceTests =
             fixture.Press Key.D0
             let atStart = fixture.Surface.HorizontalOffset
             test <@ atEnd > 0.0 && atStart = 0.0 @>)
+
+    [<Fact>]
+    let ``f t W B e and repeats move the caret like vim`` () =
+        Headless.run (fun () ->
+            use fixture = new DiffFixture "diff"
+            fixture.Surface.Focus() |> ignore
+            // "call(first.second, third) + x"
+            fixture.Surface.SelectedItem <- fixture.Line 0 6
+            let selectOne () =
+                fixture.Press Key.V
+                let text = fixture.Surface.GetCopyText()
+                fixture.Press Key.Escape
+                text
+
+            fixture.Press(Key.F, symbol = "f")
+            fixture.Press(Key.OemComma, symbol = ",")
+            let afterF = selectOne ()
+            fixture.Press(Key.OemSemicolon, symbol = ";")
+            let afterRepeat = selectOne ()
+            fixture.Press(Key.T, symbol = "t")
+            fixture.Press(Key.D0, RawInputModifiers.Shift, ")")
+            let afterT = selectOne ()
+            fixture.Press(Key.F, RawInputModifiers.Shift, "F")
+            fixture.Press(Key.J, symbol = "(")
+            let afterBackF = selectOne ()
+            fixture.Press(Key.W, RawInputModifiers.Shift)
+            let afterBigW = selectOne ()
+            fixture.Press(Key.B, RawInputModifiers.Shift)
+            let afterBigB = selectOne ()
+            fixture.Press Key.E
+            let afterE = selectOne ()
+            test <@ [ afterF; afterRepeat; afterT; afterBackF; afterBigW; afterBigB; afterE ] = [ ","; ","; "d"; "("; "t"; "c"; "l" ] @>)
+

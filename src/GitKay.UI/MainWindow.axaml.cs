@@ -196,6 +196,8 @@ public partial class MainWindow : Window {
     }
 
     private void OnWindowKeyDown(object? sender, KeyEventArgs e) {
+        // After f / t the next key is the character to find, not a shortcut.
+        if (DiffRowsListBox.IsAwaitingFindCharacter) return;
         if (e.Key is Key.LeftCtrl or Key.RightCtrl) {
             _ctrlReleaseGeneration++;
             // Held modifiers auto-repeat on some systems: only the first press starts the wait.
@@ -801,6 +803,7 @@ public partial class MainWindow : Window {
     private void OnMainListBoxKeyDown(object? sender, KeyEventArgs e) {
         if (sender is not ListBox && sender is not DiffSurfaceControl && sender is not CommitSurfaceControl)
             return;
+        if (sender is DiffSurfaceControl { IsAwaitingFindCharacter: true }) return;
 
         if (MainWindowNavigation.TryGetListNavigationDelta(e.Key, e.KeyModifiers, out var delta)) {
             if (sender is ListBox listBox)

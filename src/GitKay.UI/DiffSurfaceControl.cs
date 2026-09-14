@@ -1601,7 +1601,10 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         var side = CaretSide(line);
         var text = TextFor(line, side);
         var column = Math.Min(_caretChar, text.Length);
-        static bool IsWord(char c) => char.IsLetterOrDigit(c) || c == '_';
+        var shift = modifiers == KeyModifiers.Shift;
+        // w / b / e move by words (letters, digits, _); W / B / E by WORDs (anything but whitespace).
+        bool IsWord(char c) => shift ? !char.IsWhiteSpace(c) : char.IsLetterOrDigit(c) || c == '_';
+        int Class(char c) => char.IsWhiteSpace(c) ? 0 : IsWord(c) ? 1 : 2;
 
         switch (key) {
             case Key.H or Key.Left when column > 0:
@@ -1629,23 +1632,95 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
             case Key.D4 when modifiers == KeyModifiers.Shift:
                 column = text.Length;
                 break;
-            case Key.W:
-                while (column < text.Length && IsWord(text[column])) column++;
-                while (column < text.Length && !IsWord(text[column])) column++;
+            case Key.W when column < text.Length: {
+                // To the start of the next word: leave this run of word or punctuation characters, then skip spaces.
+                var start = Class(text[column]);
+                while (column < text.Length && Class(text[column]) == start && start != 0) column++;
+                while (column < text.Length && Class(text[column]) == 0) column++;
                 break;
-            case Key.B:
-                while (column > 0 && !IsWord(text[column - 1])) column--;
-                while (column > 0 && IsWord(text[column - 1])) column--;
+            }
+            case Key.B when column > 0: {
+                while (column > 0 && Class(text[column - 1]) == 0) column--;
+                var run = column > 0 ? Class(text[column - 1]) : 0;
+                while (column > 0 && Class(text[column - 1]) == run) column--;
+                break;
+            }
+            case Key.E when column < text.Length: {
+                // To the last character of this or the next word.
+                var next = column + 1;
+                while (next < text.Length && Class(text[next]) == 0) next++;
+                if (next >= text.Length) break;
+                var run = Class(text[next]);
+                while (next + 1 < text.Length && Class(text[next + 1]) == run) next++;
+                column = next;
+                break;
+            }
+            case Key.W or Key.B or Key.E:
                 break;
             default:
                 return false;
         }
 
+        return PlaceCaret(row, side, column);
+    }
+
+    private bool PlaceCaret(int row, int side, int column) {
         if (_caretSide < 0) _caretSide = side;
         _caretChar = column;
         if (_visualAnchorRow >= 0) UpdateVisualSelection(row);
         EnsureCaretVisible();
         return true;
+    }
+
+    // ----- f / F / t / T: find a character on the focused line; ; repeats, , repeats the other way. -----
+
+    private readonly record struct CharFind(char Target, bool Forward, bool Till);
+
+    private CharFind? _pendingFind;
+
+    /// <summary>f / F / t / T was pressed and the next key names the character to find.</summary>
+    public bool IsAwaitingFindCharacter => _pendingFind != null;
+    private CharFind? _lastFind;
+
+    private bool FindOnLine(CharFind find, bool repeat) {
+        var row = SelectedLineIndex;
+        if (row < 0 || _rows[row] is not DiffLineProjection line) return false;
+        var side = CaretSide(line);
+        var text = TextFor(line, side);
+        var column = Math.Min(_caretChar, text.Length);
+        // Like vim, repeating t / T steps past the character the caret already stops before.
+        var skip = repeat && find.Till ? 1 : 0;
+        var index = find.Forward
+            ? text.IndexOf(find.Target, Math.Min(text.Length, column + 1 + skip))
+            : column - 1 - skip < 0 ? -1 : text.LastIndexOf(find.Target, column - 1 - skip);
+        if (index < 0) return true;
+        var target = find.Till ? (find.Forward ? index - 1 : index + 1) : index;
+        return PlaceCaret(row, side, target);
+    }
+
+    /// <summary>Handles the character typed after f / F / t / T, and the ; and , repeats.</summary>
+    private bool TryHandleCharFind(KeyEventArgs e) {
+        if (_pendingFind is { } pending) {
+            // Modifier keys alone arrive before the shifted character; keep waiting for it.
+            if (e.Key is Key.LeftShift or Key.RightShift or Key.LeftAlt or Key.RightAlt or Key.LeftCtrl or Key.RightCtrl) return true;
+            _pendingFind = null;
+            if (e.Key == Key.Escape || string.IsNullOrEmpty(e.KeySymbol) || char.IsControl(e.KeySymbol[0])) return true;
+            var find = pending with { Target = e.KeySymbol[0] };
+            _lastFind = find;
+            FindOnLine(find, repeat: false);
+            return true;
+        }
+
+        if (SelectedLineIndex < 0) return false;
+        if (e.Key is Key.F or Key.T && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift) {
+            _pendingFind = new CharFind('\0', Forward: e.KeyModifiers == KeyModifiers.None, Till: e.Key == Key.T);
+            return true;
+        }
+        if (e.Key is Key.OemSemicolon or Key.OemComma && e.KeyModifiers == KeyModifiers.None && _lastFind is { } last) {
+            FindOnLine(e.Key == Key.OemSemicolon ? last : last with { Forward = !last.Forward }, repeat: true);
+            return true;
+        }
+        return false;
     }
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e) {
@@ -1672,6 +1747,12 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
     }
 
     protected override void OnKeyDown(KeyEventArgs e) {
+        // First, so the character after f / t is never taken as a command.
+        if (TryHandleCharFind(e)) {
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key == Key.C && e.KeyModifiers == KeyModifiers.Control) {
             CopySelection();
             e.Handled = true;
@@ -1717,8 +1798,8 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         }
 
         if (e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift
-            && e.Key is Key.H or Key.L or Key.Left or Key.Right or Key.D0 or Key.NumPad0 or Key.D4 or Key.W or Key.B
-            && (e.KeyModifiers == KeyModifiers.None || e.Key == Key.D4)
+            && e.Key is Key.H or Key.L or Key.Left or Key.Right or Key.D0 or Key.NumPad0 or Key.D4 or Key.W or Key.B or Key.E
+            && (e.KeyModifiers == KeyModifiers.None || e.Key is Key.D4 or Key.W or Key.B or Key.E)
             && MoveCaret(e.Key, e.KeyModifiers)) {
             e.Handled = true;
             return;
