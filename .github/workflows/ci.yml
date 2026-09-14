@@ -37,6 +37,9 @@ jobs:
       - name: Test
         run: dotnet test tests/GitKay.Tests/GitKay.Tests.fsproj --configuration Release --no-build --nologo -v minimal
 
+      - name: UI tests
+        run: dotnet test tests/GitKay.UI.Tests/GitKay.UI.Tests.fsproj --configuration Release --no-build --nologo -v minimal
+
       - name: Install NativeAOT prerequisites
         run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
 

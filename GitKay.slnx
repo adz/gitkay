@@ -7,6 +7,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/GitKay.Tests/GitKay.Tests.fsproj" />
+    <Project Path="tests/GitKay.UI.Tests/GitKay.UI.Tests.fsproj" />
   </Folder>
   <Folder Name="/benchmarks/">
     <Project Path="benchmarks/GitKay.Rendering.Benchmarks/GitKay.Rendering.Benchmarks.csproj" />

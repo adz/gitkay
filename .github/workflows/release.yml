@@ -70,7 +70,9 @@ jobs:
       - name: Test
         if: runner.os == 'Linux'
         shell: bash
-        run: dotnet test tests/GitKay.Tests/GitKay.Tests.fsproj --configuration Release --nologo -v minimal -m:1
+        run: |
+          dotnet test tests/GitKay.Tests/GitKay.Tests.fsproj --configuration Release --nologo -v minimal -m:1
+          dotnet test tests/GitKay.UI.Tests/GitKay.UI.Tests.fsproj --configuration Release --nologo -v minimal -m:1
 
       - name: Publish
         shell: bash

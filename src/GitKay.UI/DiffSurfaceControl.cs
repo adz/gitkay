@@ -246,6 +246,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
             _textSelection = null;
             _visualAnchorRow = -1;
         }
+        if (!ReferenceEquals(ItemsSource, _lastItemsSource)) _horizontalOffset = 0;
         _lastItemsSource = ItemsSource;
         _hoveredGapAction = GapActionHit.None;
         _pressedGapAction = GapActionHit.None;
@@ -377,11 +378,26 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         }, DispatcherPriority.Loaded);
     }
 
-    private int FindAnchorRow(ViewportAnchor anchor) =>
-        Array.FindIndex(_rows, row => row is DiffLineProjection line
+    private int FindAnchorRow(ViewportAnchor anchor) {
+        // Row instances survive re-rendering, so match the exact row first; line numbers and text repeat across files.
+        if (anchor.Row != null && Array.IndexOf(_rows, anchor.Row) is var exact and >= 0) return exact;
+        if (anchor.Row is DiffFileHeaderProjection) return -1;
+        return Array.FindIndex(_rows, row => row is DiffLineProjection line
             && line.OldLineNo == anchor.OldLineNo
             && line.NewLineNo == anchor.NewLineNo
             && line.Content == anchor.Content);
+    }
+
+    /// <summary>Toggles a file's rows while its header stays at the same viewport position.</summary>
+    private void ToggleFileAnchored(DiffFileHeaderProjection header, ICommand? command) {
+        if (command?.CanExecute(header.File) != true) return;
+        var index = Array.IndexOf(_rows, header);
+        if (_scrollViewer != null && index >= 0) {
+            _expansionAnchor = null;
+            _pendingAnchor = new ViewportAnchor(null, null, "", _tops[index] - _scrollViewer.Offset.Y, header);
+        }
+        command.Execute(header.File);
+    }
 
     private void BeginExpansion(int gapIndex, DiffGapProjection gap, GitKay.Core.DiffExpansion.ExpandDirection direction) {
         if (_scrollViewer == null) {
@@ -402,7 +418,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         _pendingAnchor = null;
         _expansionAnchor = new ExpansionAnchor(
             gap.Gap,
-            new ViewportAnchor(line.OldLineNo, line.NewLineNo, line.Content, _tops[anchorIndex] - _scrollViewer.Offset.Y),
+            new ViewportAnchor(line.OldLineNo, line.NewLineNo, line.Content, _tops[anchorIndex] - _scrollViewer.Offset.Y, line),
             System.Diagnostics.Stopwatch.GetTimestamp());
     }
 
@@ -419,7 +435,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         var first = FindRow(_scrollViewer.Offset.Y);
         for (var index = first; index < _rows.Length; index++) {
             if (_rows[index] is not DiffLineProjection line) continue;
-            _pendingAnchor = new ViewportAnchor(line.OldLineNo, line.NewLineNo, line.Content, _tops[index] - _scrollViewer.Offset.Y);
+            _pendingAnchor = new ViewportAnchor(line.OldLineNo, line.NewLineNo, line.Content, _tops[index] - _scrollViewer.Offset.Y, line);
             return;
         }
     }
@@ -888,8 +904,8 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         if (line.IsAdded || line.IsRemoved)
             DrawPlain(context, line.Prefix, Z(41), y + CodeTextTop, CodeFontSize, line.IsAdded ? ThemeBrush("GitKayAddedAccentBrush", line.PrefixForeground) : ThemeBrush("GitKayRemovedAccentBrush", line.PrefixForeground));
         using (context.PushClip(new Rect(Z(54), y, Math.Max(0, Bounds.Width - Z(54)), LineHeight))) {
-            DrawFindMatches(context, line.Content, Z(54), y);
-            DrawCode(context, line.Content, Z(54), y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground));
+            DrawFindMatches(context, line.Content, Z(54) - _horizontalOffset, y);
+            DrawCode(context, line.Content, Z(54) - _horizontalOffset, y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground));
         }
     }
 
@@ -905,8 +921,8 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         context.FillRectangle(gutter, new Rect(0, y, Z(48), LineHeight - 1));
         DrawLineNumber(context, lineNumber, Z(8), y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
         using (context.PushClip(new Rect(Z(52), y, Math.Max(0, Bounds.Width - Z(52)), LineHeight))) {
-            DrawFindMatches(context, content, Z(52), y);
-            DrawCode(context, content, Z(52), y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground));
+            DrawFindMatches(context, content, Z(52) - _horizontalOffset, y);
+            DrawCode(context, content, Z(52) - _horizontalOffset, y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground));
         }
     }
 
@@ -925,22 +941,26 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         context.FillRectangle(line.IsAdded || isPairedChange ? ThemeBrush("GitKayAddedGutterBrush", gutter) : line.IsRemoved ? Brushes.Transparent : gutter, new Rect(middle + 1, y, Z(48), LineHeight - 1));
         context.FillRectangle(border, new Rect(middle, y, 1, LineHeight));
 
-        DrawIntralineHighlights(context, line.OldContent, line.NewContent, Z(56), middle + Z(57), y);
+        DrawIntralineHighlights(context, line.OldContent, line.NewContent, Z(56), middle + Z(57), middle, y);
 
         DrawLineNumber(context, line.OldLineNoText, Z(8), y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
-        using (context.PushClip(new Rect(Z(56), y, Math.Max(0, middle - Z(64)), LineHeight))) {
-            DrawFindMatches(context, line.OldContent, Z(56), y);
-            DrawCode(context, line.OldContent, Z(56), y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground));
+        using (context.PushClip(OldColumnClip(middle, y))) {
+            DrawFindMatches(context, line.OldContent, Z(56) - _horizontalOffset, y);
+            DrawCode(context, line.OldContent, Z(56) - _horizontalOffset, y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground));
         }
 
         DrawLineNumber(context, line.NewLineNoText, middle + Z(9), y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
-        using (context.PushClip(new Rect(middle + Z(57), y, Math.Max(0, Bounds.Width - middle - Z(57)), LineHeight))) {
-            DrawFindMatches(context, line.NewContent, middle + Z(57), y);
-            DrawCode(context, line.NewContent, middle + Z(57), y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground));
+        using (context.PushClip(NewColumnClip(middle, y))) {
+            DrawFindMatches(context, line.NewContent, middle + Z(57) - _horizontalOffset, y);
+            DrawCode(context, line.NewContent, middle + Z(57) - _horizontalOffset, y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground));
         }
     }
 
-    private void DrawIntralineHighlights(DrawingContext context, string oldText, string newText, double oldX, double newX, double y) {
+    private Rect OldColumnClip(double middle, double y) => new(Z(56), y, Math.Max(0, middle - Z(64)), LineHeight);
+
+    private Rect NewColumnClip(double middle, double y) => new(middle + Z(57), y, Math.Max(0, Bounds.Width - middle - Z(57)), LineHeight);
+
+    private void DrawIntralineHighlights(DrawingContext context, string oldText, string newText, double oldX, double newX, double middle, double y) {
         if (_scrolling || string.IsNullOrEmpty(oldText) || string.IsNullOrEmpty(newText)
             || oldText == newText || oldText.Length > MaxHighlightedLineLength || newText.Length > MaxHighlightedLineLength)
             return;
@@ -955,10 +975,12 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
                && oldText[oldText.Length - suffixLength - 1] == newText[newText.Length - suffixLength - 1])
             suffixLength++;
 
-        DrawChangedSpan(context, oldText, prefixLength, oldText.Length - prefixLength - suffixLength, oldX, y,
-            ThemeBrush("GitKayRemovedStrongBrush", ThemeBrush("GitKayRemovedBrush", Brushes.Transparent)));
-        DrawChangedSpan(context, newText, prefixLength, newText.Length - prefixLength - suffixLength, newX, y,
-            ThemeBrush("GitKayAddedStrongBrush", ThemeBrush("GitKayAddedBrush", Brushes.Transparent)));
+        using (context.PushClip(OldColumnClip(middle, y)))
+            DrawChangedSpan(context, oldText, prefixLength, oldText.Length - prefixLength - suffixLength, oldX - _horizontalOffset, y,
+                ThemeBrush("GitKayRemovedStrongBrush", ThemeBrush("GitKayRemovedBrush", Brushes.Transparent)));
+        using (context.PushClip(NewColumnClip(middle, y)))
+            DrawChangedSpan(context, newText, prefixLength, newText.Length - prefixLength - suffixLength, newX - _horizontalOffset, y,
+                ThemeBrush("GitKayAddedStrongBrush", ThemeBrush("GitKayAddedBrush", Brushes.Transparent)));
     }
 
     private static readonly IBrush FindMatchFallback = new SolidColorBrush(Color.FromArgb(110, 187, 128, 9)).ToImmutable();
@@ -970,6 +992,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
     /// </summary>
     private void DrawFindMatches(DrawingContext context, string text, double x, double y) {
         DrawTextSelection(context, text, x, y);
+        DrawCaret(context, text, x, y);
         if (string.IsNullOrEmpty(text)) return;
         var underline = ThemeBrush("GitKayAccentBrush", SearchMatchFallback);
         ForEachMatch(text, SearchHighlightQuery, SearchHighlightUseRegex, (start, length) => DrawDottedUnderline(context, text, start, length, x, y + LineHeight - 3, underline, CodeFontSize));
@@ -1141,6 +1164,8 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         return Math.Clamp(index, 0, Math.Max(0, _rows.Length - 1));
     }
 
+    internal double RowHeightAt(int index) => RowHeight(_rows[index]);
+
     private double RowHeight(IDiffRowProjection row) {
         var height = row switch {
             DiffFileHeaderProjection => FileHeight,
@@ -1153,7 +1178,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
 
     private static double EaseOut(double t) => 1 - (1 - t) * (1 - t);
 
-    private readonly record struct ViewportAnchor(int? OldLineNo, int? NewLineNo, string Content, double ViewportOffset);
+    private readonly record struct ViewportAnchor(int? OldLineNo, int? NewLineNo, string Content, double ViewportOffset, IDiffRowProjection? Row = null);
     private sealed record ExpansionAnchor(GitKay.Core.DiffExpansion.DiffGap Gap, ViewportAnchor Anchor, long StartedAt);
     private readonly record struct GapCell(GitKay.Core.DiffExpansion.ExpandDirection Direction, Rect Bounds);
     private readonly record struct GapActionHit(int Row, int Action) {
@@ -1222,9 +1247,8 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
             var index = RowAt(position, out _);
             if ((uint)index < (uint)_rows.Length && _rows[index] is not (DiffHunkHeaderProjection or DiffGapProjection))
                 SelectedItem = _rows[index];
-            if ((uint)index < (uint)_rows.Length && _rows[index] is DiffFileHeaderProjection clickedHeader && e.ClickCount == 2
-                && ToggleFileCommand?.CanExecute(clickedHeader.File) == true)
-                ToggleFileCommand.Execute(clickedHeader.File);
+            if ((uint)index < (uint)_rows.Length && _rows[index] is DiffFileHeaderProjection clickedHeader && e.ClickCount == 2)
+                ToggleFileAnchored(clickedHeader, ToggleFileCommand);
             if ((uint)index < (uint)_rows.Length && _rows[index] is DiffLineProjection)
                 BeginTextSelection(index, position, e.ClickCount, e.KeyModifiers.HasFlag(KeyModifiers.Shift), e.Pointer);
         }
@@ -1267,11 +1291,75 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
     /// <summary>Which content column a point is in: 0 for the only / old side, 1 for the new side in side-by-side.</summary>
     private int SideAt(double x) => Mode == "side-by-side" && x >= Bounds.Width / 2 ? 1 : 0;
 
-    private double ContentOrigin(int side) => Mode switch {
+    /// <summary>Where a content column's text starts, before horizontal scrolling.</summary>
+    private double ColumnOrigin(int side) => Mode switch {
         "side-by-side" => side == 0 ? Z(56) : Bounds.Width / 2 + Z(57),
         "new" or "old" => Z(52),
         _ => Z(54),
     };
+
+    private double ContentOrigin(int side) => ColumnOrigin(side) - _horizontalOffset;
+
+    private double ColumnWidth(int side) => Mode == "side-by-side"
+        ? side == 0 ? Bounds.Width / 2 - Z(64) : Bounds.Width / 2 - Z(57)
+        : Bounds.Width - ColumnOrigin(0);
+
+    // ----- Horizontal scrolling: code columns share one offset; gutters and line numbers stay put. -----
+
+    private double _horizontalOffset;
+
+    private const double HorizontalWheelStep = 48;
+
+    private void SetHorizontalOffset(double offset) {
+        var clamped = Math.Clamp(offset, 0, MaxHorizontalOffset());
+        if (Math.Abs(clamped - _horizontalOffset) < 0.1) return;
+        _horizontalOffset = clamped;
+        InvalidateVisual();
+    }
+
+    /// <summary>How far the widest line near the viewport extends past its column.</summary>
+    private double MaxHorizontalOffset() {
+        if (_rows.Length == 0) return 0;
+        var top = _scrollViewer?.Offset.Y ?? 0;
+        var height = _scrollViewer?.Viewport.Height ?? Bounds.Height;
+        var start = Math.Max(0, FindRow(top));
+        var end = Math.Min(_rows.Length, FindRow(top + height) + 1);
+        var widest = 0.0;
+        for (var index = start; index < end; index++) {
+            if (_rows[index] is not DiffLineProjection line) continue;
+            if (Mode == "side-by-side") {
+                widest = Math.Max(widest, TextWidth(line.OldContent) - ColumnWidth(0));
+                widest = Math.Max(widest, TextWidth(line.NewContent) - ColumnWidth(1));
+            }
+            else {
+                widest = Math.Max(widest, TextWidth(TextFor(line, 0)) - ColumnWidth(0));
+            }
+        }
+        // A little slack past the end, so the last character isn't flush against the edge.
+        return widest <= 0 ? 0 : widest + Z(24);
+    }
+
+    internal double HorizontalOffset => _horizontalOffset;
+
+    // Very long lines (minified files) are estimated from one monospace cell rather than laid out.
+    private double TextWidth(string text) =>
+        text.Length == 0 ? 0
+        : text.Length > MaxHighlightedLineLength ? text.Length * Layout("0", CodeFontSize, Brushes.Transparent, false).Width
+        : Layout(text, CodeFontSize, Brushes.Transparent, false).Width;
+
+    /// <summary>Scrolls horizontally just enough to show the caret.</summary>
+    private void EnsureCaretVisible() {
+        if (SelectedItem is not DiffLineProjection line) return;
+        var side = CaretSide(line);
+        var text = TextFor(line, side);
+        var column = Math.Min(_caretChar, text.Length);
+        var x = column == 0 ? 0 : Layout(text[..column], CodeFontSize, Brushes.Transparent, false).Width;
+        var width = ColumnWidth(side);
+        var margin = Math.Min(Z(32), width / 4);
+        if (x - _horizontalOffset < margin) _horizontalOffset = Math.Max(0, x - margin);
+        else if (x - _horizontalOffset > width - margin) _horizontalOffset = x - width + margin;
+        InvalidateVisual();
+    }
 
     private string TextFor(DiffLineProjection line, int side) => Mode switch {
         "side-by-side" => side == 0 ? line.OldContent : line.NewContent,
@@ -1318,6 +1406,8 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         _visualAnchorRow = -1;
         var side = extend && _textSelection != null ? _textSelection.Side : SideAt(point.X);
         var position = PositionAt(point, side);
+        _caretSide = side;
+        _caretChar = position.Char;
         var text = TextFor((DiffLineProjection)_rows[index], side);
 
         if (clickCount >= 3) {
@@ -1370,7 +1460,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         if (OrderedSelection() is not var (start, end) || _textSelection == null) return;
         var row = _drawingRowIndex;
         if (row < start.Row || row > end.Row) return;
-        var side = Mode == "side-by-side" && x >= Bounds.Width / 2 ? 1 : 0;
+        var side = Mode == "side-by-side" && x + _horizontalOffset >= Bounds.Width / 2 ? 1 : 0;
         if (side != _textSelection.Side) return;
 
         var from = row == start.Row ? Math.Min(start.Char, text.Length) : 0;
@@ -1417,43 +1507,158 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         TextCopied?.Invoke(this, text.Split('\n').Length);
     }
 
-    // ----- Vim visual mode: v / V selects whole lines from the focused line; j / k extend; y yanks; Esc cancels. -----
+    // ----- Caret and vim visual mode -----
+    // The caret sits on the focused line: h / l move it, 0 / $ jump to the line ends, w / b move by word.
+    // In side-by-side it belongs to one column; moving past a column's edge crosses to the other column.
+    // v selects characters from the caret, V selects whole lines; j / k / h / l extend; y yanks; Esc cancels.
 
     private int _visualAnchorRow = -1;
+    private int _visualAnchorChar;
+    private bool _visualLinewise;
+    private int _caretChar;
+    private int _caretSide = -1;
 
     public bool IsVisualMode => _visualAnchorRow >= 0;
 
-    private void ToggleVisualMode() {
+    private int SelectedLineIndex => SelectedItem is DiffLineProjection && Array.IndexOf(_rows, SelectedItem) is var index and >= 0 ? index : -1;
+
+    /// <summary>The caret's column: side-by-side starts on the new side, and an empty side (an added or removed line) yields to the other.</summary>
+    private int CaretSide(DiffLineProjection line) {
+        if (Mode != "side-by-side") return 0;
+        var side = _caretSide < 0 ? 1 : _caretSide;
+        if (TextFor(line, side).Length == 0 && TextFor(line, 1 - side).Length > 0) side = 1 - side;
+        return side;
+    }
+
+    private void DrawCaret(DrawingContext context, string text, double x, double y) {
+        if (!IsKeyboardFocusWithin || _drawingRowIndex != SelectedLineIndex || SelectedItem is not DiffLineProjection line) return;
+        var side = Mode == "side-by-side" && x + _horizontalOffset >= Bounds.Width / 2 ? 1 : 0;
+        if (side != CaretSide(line)) return;
+        var column = Math.Min(_caretChar, text.Length);
+        var left = x + (column == 0 ? 0 : Layout(text[..column], CodeFontSize, Brushes.Transparent, false).Width);
+        context.FillRectangle(ThemeBrush("GitKayAccentBrush", SearchMatchFallback), new Rect(Math.Round(left) - 0.5, y + 1, 2, LineHeight - 3));
+    }
+
+    protected override void OnGotFocus(FocusChangedEventArgs e) {
+        base.OnGotFocus(e);
+        InvalidateVisual();
+    }
+
+    protected override void OnLostFocus(FocusChangedEventArgs e) {
+        base.OnLostFocus(e);
+        InvalidateVisual();
+    }
+
+    private void ToggleVisualMode(bool linewise) {
         if (_visualAnchorRow >= 0) {
+            var sameKind = _visualLinewise == linewise;
             _visualAnchorRow = -1;
             _textSelection = null;
             InvalidateVisual();
-            return;
+            // Like vim, v in V mode (or V in v mode) switches kind instead of leaving.
+            if (sameKind) return;
         }
 
         var index = SelectedItem == null ? -1 : Array.IndexOf(_rows, SelectedItem);
         if (index < 0 && _scrollViewer != null) index = FindRow(_scrollViewer.Offset.Y);
         while (index >= 0 && index < _rows.Length && _rows[index] is not DiffLineProjection) index++;
-        if (index < 0 || index >= _rows.Length) return;
-        SelectedItem = _rows[index];
+        if (index < 0 || index >= _rows.Length || _rows[index] is not DiffLineProjection line) return;
+        SelectedItem = line;
+        _caretSide = CaretSide(line);
+        _caretChar = Math.Min(_caretChar, TextFor(line, _caretSide).Length);
         _visualAnchorRow = index;
+        _visualAnchorChar = _caretChar;
+        _visualLinewise = linewise;
         UpdateVisualSelection(index);
     }
 
     private void UpdateVisualSelection(int activeRow) {
-        if (_visualAnchorRow < 0 || _visualAnchorRow >= _rows.Length) return;
-        var side = _textSelection?.Side ?? (Mode == "side-by-side" ? 1 : 0);
-        var (start, end) = activeRow < _visualAnchorRow ? (activeRow, _visualAnchorRow) : (_visualAnchorRow, activeRow);
-        while (start < end && _rows[start] is not DiffLineProjection) start++;
-        while (end > start && _rows[end] is not DiffLineProjection) end--;
-        if (_rows[end] is not DiffLineProjection last) return;
-        _textSelection = new TextSelection(new TextPosition(start, 0), new TextPosition(end, TextFor(last, side).Length), side);
+        if (_visualAnchorRow < 0 || _visualAnchorRow >= _rows.Length || _rows[_visualAnchorRow] is not DiffLineProjection anchorLine) return;
+        var side = CaretSide(anchorLine);
+        if (_visualLinewise) {
+            var (start, end) = activeRow < _visualAnchorRow ? (activeRow, _visualAnchorRow) : (_visualAnchorRow, activeRow);
+            while (start < end && _rows[start] is not DiffLineProjection) start++;
+            while (end > start && _rows[end] is not DiffLineProjection) end--;
+            if (_rows[end] is not DiffLineProjection last) return;
+            _textSelection = new TextSelection(new TextPosition(start, 0), new TextPosition(end, TextFor(last, side).Length), side);
+        }
+        else {
+            var anchor = new TextPosition(_visualAnchorRow, _visualAnchorChar);
+            var active = new TextPosition(activeRow, _caretChar);
+            // Vim's characterwise selection includes the character under the caret at both ends.
+            var forward = active.Row > anchor.Row || (active.Row == anchor.Row && active.Char >= anchor.Char);
+            var (from, to) = forward ? (anchor, active) : (active, anchor);
+            var toText = _rows[to.Row] is DiffLineProjection toLine ? TextFor(toLine, side) : "";
+            _textSelection = new TextSelection(from, to with { Char = Math.Min(to.Char + 1, toText.Length) }, side);
+        }
         InvalidateVisual();
+    }
+
+    /// <summary>Moves the caret within the focused line; returns false when there is no line to move on.</summary>
+    private bool MoveCaret(Key key, KeyModifiers modifiers) {
+        var row = SelectedLineIndex;
+        if (row < 0 || _rows[row] is not DiffLineProjection line) return false;
+        var side = CaretSide(line);
+        var text = TextFor(line, side);
+        var column = Math.Min(_caretChar, text.Length);
+        static bool IsWord(char c) => char.IsLetterOrDigit(c) || c == '_';
+
+        switch (key) {
+            case Key.H or Key.Left when column > 0:
+                column--;
+                break;
+            case Key.H or Key.Left when Mode == "side-by-side" && side == 1 && line.OldContent.Length > 0:
+                _caretSide = 0;
+                column = line.OldContent.Length;
+                break;
+            case Key.L or Key.Right when column < text.Length:
+                column++;
+                break;
+            case Key.L or Key.Right when Mode == "side-by-side" && side == 0 && line.NewContent.Length > 0:
+                _caretSide = 1;
+                column = 0;
+                break;
+            case Key.Left or Key.Right:
+                // At the edge, arrows keep their pane navigation.
+                return false;
+            case Key.H or Key.L:
+                break;
+            case Key.D0 or Key.NumPad0 when modifiers == KeyModifiers.None:
+                column = 0;
+                break;
+            case Key.D4 when modifiers == KeyModifiers.Shift:
+                column = text.Length;
+                break;
+            case Key.W:
+                while (column < text.Length && IsWord(text[column])) column++;
+                while (column < text.Length && !IsWord(text[column])) column++;
+                break;
+            case Key.B:
+                while (column > 0 && !IsWord(text[column - 1])) column--;
+                while (column > 0 && IsWord(text[column - 1])) column--;
+                break;
+            default:
+                return false;
+        }
+
+        if (_caretSide < 0) _caretSide = side;
+        _caretChar = column;
+        if (_visualAnchorRow >= 0) UpdateVisualSelection(row);
+        EnsureCaretVisible();
+        return true;
     }
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e) {
         if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.Delta.Y != 0) {
             CodeFontSize = Math.Clamp(CodeFontSize + Math.Sign(e.Delta.Y), 7, 32);
+            e.Handled = true;
+            return;
+        }
+
+        // Shift+wheel, a tilting wheel, or a sideways touchpad swipe scrolls the code columns.
+        var sideways = e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? (e.Delta.X != 0 ? e.Delta.X : e.Delta.Y) : e.Delta.X;
+        if (sideways != 0) {
+            SetHorizontalOffset(_horizontalOffset - sideways * HorizontalWheelStep);
             e.Handled = true;
             return;
         }
@@ -1498,12 +1703,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         if (e.Key is Key.Enter or Key.Space && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift) {
             var index = SelectedItem == null ? -1 : Array.IndexOf(_rows, SelectedItem);
             if (index >= 0 && _rows[index] is DiffFileHeaderProjection fileHeader) {
-                if (e.KeyModifiers == KeyModifiers.Shift) {
-                    if (ToggleFileContextCommand?.CanExecute(fileHeader.File) == true) ToggleFileContextCommand.Execute(fileHeader.File);
-                }
-                else if (ToggleFileCommand?.CanExecute(fileHeader.File) == true) {
-                    ToggleFileCommand.Execute(fileHeader.File);
-                }
+                ToggleFileAnchored(fileHeader, e.KeyModifiers == KeyModifiers.Shift ? ToggleFileContextCommand : ToggleFileCommand);
 
                 e.Handled = true;
                 return;
@@ -1516,8 +1716,16 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
             }
         }
 
+        if (e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift
+            && e.Key is Key.H or Key.L or Key.Left or Key.Right or Key.D0 or Key.NumPad0 or Key.D4 or Key.W or Key.B
+            && (e.KeyModifiers == KeyModifiers.None || e.Key == Key.D4)
+            && MoveCaret(e.Key, e.KeyModifiers)) {
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key == Key.V && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift) {
-            ToggleVisualMode();
+            ToggleVisualMode(linewise: e.KeyModifiers == KeyModifiers.Shift);
             e.Handled = true;
             return;
         }
@@ -1570,6 +1778,12 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         if (_selectingText) {
             _selectingText = false;
             e.Pointer.Capture(null);
+            // The caret follows the end of a drag, so keyboard selection continues from there.
+            if (_textSelection is { } dragged && (uint)dragged.Active.Row < (uint)_rows.Length && _rows[dragged.Active.Row] is DiffLineProjection) {
+                SelectedItem = _rows[dragged.Active.Row];
+                _caretChar = dragged.Active.Char;
+                InvalidateVisual();
+            }
             return;
         }
 
@@ -1582,8 +1796,7 @@ public sealed class DiffSurfaceControl : Control, IOverviewSource {
         // Only a release inside the same bounded control activates it.
         if (GapActionAt(e.GetPosition(this)) != pressed) return;
         if (_rows[pressed.Row] is DiffFileHeaderProjection header) {
-            var command = pressed.Action == HeaderChevronAction ? ToggleFileCommand : ToggleFileContextCommand;
-            if (command?.CanExecute(header.File) == true) command.Execute(header.File);
+            ToggleFileAnchored(header, pressed.Action == HeaderChevronAction ? ToggleFileCommand : ToggleFileContextCommand);
             e.Handled = true;
             return;
         }
