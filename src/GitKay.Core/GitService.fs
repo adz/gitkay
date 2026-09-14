@@ -492,7 +492,10 @@ module GitService =
                         match target with
                         | StartupTarget.Revision name when isNull repo.Branches.[name] && (tryCommit repo name).IsNone && exists name ->
                             StartupTarget.Path(toRepoPath workingDirectory launchDirectory name)
-                        | StartupTarget.Path path -> StartupTarget.Path(toRepoPath workingDirectory launchDirectory path)
+                        // A path that exists relative to the launch directory is rebased onto the working tree;
+                        // anything else (a deleted file, a pattern) is taken as repository-relative, as before.
+                        | StartupTarget.Path path when exists path -> StartupTarget.Path(toRepoPath workingDirectory launchDirectory path)
+                        | StartupTarget.Path path -> StartupTarget.Path(path.Replace('\\', '/'))
                         | _ -> target)
             with _ ->
                 targets

@@ -2885,6 +2885,8 @@ module CliTests =
             test <@ fromSrc = [ GitStartup.Path "src/a.txt"; GitStartup.Revision "HEAD" ] @>
             let windowsStyle = GitService.resolvePathArguments root root [ GitStartup.Path "src\\a.txt" ]
             test <@ windowsStyle = [ GitStartup.Path "src/a.txt" ] || windowsStyle = [ GitStartup.Path "src\\a.txt" ] @>
+            let missing = GitService.resolvePathArguments root (Path.Combine(root, "src")) [ GitStartup.Path "gone/old.txt" ]
+            test <@ missing = [ GitStartup.Path "gone/old.txt" ] @>
 
             let history targets =
                 match Flow.run (GitService.environment root) (GitService.fetchHistory (Some 1000) false targets) |> Exit.toResult with
