@@ -83,7 +83,10 @@ public sealed partial class DiagnosticsProjection : ObservableObject {
         using var process = Process.GetCurrentProcess();
         var up = DateTimeOffset.Now - DiagnosticsLog.StartedAt;
         Uptime = up.TotalHours >= 1 ? $"{(int)up.TotalHours}h {up.Minutes}m" : $"{up.Minutes}m {up.Seconds}s";
-        Memory = $"{process.WorkingSet64 / 1048576.0:F0} MB working set · {GC.GetTotalMemory(false) / 1048576.0:F0} MB managed";
+        var anonymous = NativeMemory.AnonymousResidentBytes();
+        Memory = $"{process.WorkingSet64 / 1048576.0:F0} MB working set · {GC.GetTotalMemory(false) / 1048576.0:F0} MB managed"
+                 + (anonymous > 0 ? $" · {anonymous / 1048576.0:F0} MB anon" : "")
+                 + (NativeMemory.TrimCount > 0 ? $" · {NativeMemory.TotalReleasedBytes / 1048576.0:F0} MB returned by {NativeMemory.TrimCount} trim(s)" : "");
         Collections = $"GC {GC.CollectionCount(0)} / {GC.CollectionCount(1)} / {GC.CollectionCount(2)}";
         Threads = $"{process.Threads.Count} threads · {ThreadPoolSummary()}";
         UiLag = $"UI lag {DiagnosticsLog.LastUiLagMs:F0} ms · worst {DiagnosticsLog.MaxUiLagMs:F0} ms · {DiagnosticsLog.HangCount} stall(s)";

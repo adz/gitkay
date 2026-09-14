@@ -1370,7 +1370,10 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             return;
         }
 
+        var wasSearchRunning = IsSearchRunning;
         IsSearchRunning = model.SearchStartedAtTicks != null;
+        // A finished search leaves libgit2's freed allocations resident; hand them back to the OS.
+        if (wasSearchRunning && !IsSearchRunning) System.Threading.Tasks.Task.Run(NativeMemory.TrimNow);
         if (model.SearchStartedAtTicks != null) {
             CommitSearchStatusText = model.SearchProgress?.Value is { } progress && progress.Item2 > 0
                 ? $"Searching… {progress.Item1 * 100 / progress.Item2}%"

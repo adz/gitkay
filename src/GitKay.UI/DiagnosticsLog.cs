@@ -158,6 +158,7 @@ public static class DiagnosticsLog {
                     Interlocked.Exchange(ref _lastUiHeartbeat, Stopwatch.GetTimestamp());
                     RecordLag(Stopwatch.GetElapsedTime(postedAt).TotalMilliseconds);
                 }, DispatcherPriority.Send);
+                NativeMemory.TrimIfGrown();
                 var silence = Stopwatch.GetElapsedTime(Interlocked.Read(ref _lastUiHeartbeat));
                 if (silence > HangThreshold && !reported) {
                     reported = true;
