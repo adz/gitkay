@@ -13,7 +13,9 @@
 
 ## Performance And Design Direction
 - Prefer in-process Git access over repeated shelling out when a feature becomes interactive or high frequency.
-- The read path should stay on LibGit2Sharp. Keep any remaining CLI usage limited to low-frequency write operations until they are ported.
+- Interactive reads (a commit, its files, a diff, a whole file) stay on LibGit2Sharp.
+- History-wide scans that git accelerates run the `git` executable through Axial.Process, with a LibGit2Sharp fallback when it can't run: path-limited history uses `git log -- <paths>`, which reads commit-graph changed-path Bloom filters. Network operations (push, pull, fetch) also use the CLI.
+- Commit search reads contents through per-worker LibGit2Sharp handles in parallel, streams matches as they are found, and never caches diffs. libgit2's blob cache is enabled at startup (`NativeGitOptions`), and freed native memory is trimmed on Linux (`NativeMemory`).
 - Keep commit selection fast. Expensive work should be lazy, cancellable, and scoped to the current selection.
 - File selection in the diff view should drive focus in the left pane rather than only rendering a list.
 

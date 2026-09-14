@@ -11,6 +11,7 @@ class Program {
     public static int Main(string[] args) {
         if (args.Length > 0 && args[0] == "--self-test") {
             DiagnosticsLog.Initialize(args);
+            NativeGitOptions.Configure();
             var repository = GitKay.Core.GitService.tryDiscoverRepositoryPath();
             if (string.IsNullOrEmpty(repository)) {
                 Console.Error.WriteLine("Self-test must run inside a Git repository.");
@@ -46,6 +47,7 @@ class Program {
         }
 
         DiagnosticsLog.Initialize(args);
+        NativeGitOptions.Configure();
         AppDomain.CurrentDomain.ProcessExit += (_, _) => System.Diagnostics.Trace.WriteLine("GitKay exiting");
 
         App.StartupArgs = args;

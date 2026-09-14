@@ -180,18 +180,29 @@ module GitSearch =
 
     let private needsDiff (term: Term) = term.Field = ChangedPath || term.Field = ChangedLine
 
-    /// How a search reads commit contents, and where it reports progress.
-    type Loaders<'env> =
-        { /// Changed (old path, new path) pairs of a commit: cheap, no patch text.
-          LoadPaths: string -> Flow<'env, GitError, (string * string) list>
-          /// A commit's full diff, for added/removed line terms.
-          LoadDiff: string -> Flow<'env, GitError, FileDiff list>
-          /// Called with (commits checked, total).
-          Progress: int -> int -> unit }
+    /// Reads commit contents for one search worker. A reader serves one worker at a time.
+    type ContentReader<'env> =
+        { /// Changed (old path, new path) pairs of a commit: no patch text.
+          ChangedPaths: string -> Flow<'env, GitError, (string * string) list>
+          /// For each predicate, whether any added or removed line of the commit satisfies it.
+          MatchChangedLines: string -> (string -> bool) list -> Flow<'env, GitError, bool list>
+          /// Releases the reader's resources (such as its repository handle).
+          Release: unit -> unit }
 
-    /// Searches commits: every term must match. Each commit is checked cheapest-first: metadata, then its changed
-    /// paths (a file list, no patch text), then its diff lines, and stops at the first term that fails. Progress is
-    /// reported as (commits checked, total) at most every 256 commits.
+    /// How a search reads commit contents in parallel, and where it reports progress.
+    type Loaders<'env> =
+        { /// Opens a reader for one worker.
+          OpenReader: unit -> ContentReader<'env>
+          /// Workers checking commit contents concurrently.
+          Workers: int
+          /// Called with (commits checked, total).
+          Progress: int -> int -> unit
+          /// Called for each match as soon as it is found (from worker threads, in no particular order).
+          Found: Result -> unit }
+
+    /// Searches commits: every term must match. Metadata terms filter all commits in one cheap pass; only the
+    /// remaining candidates have their changed paths and then changed lines checked, split across parallel workers.
+    /// Results keep history order.
     let searchCommitsWith
         (now: DateTimeOffset)
         (commits: Models.Commit list)
@@ -208,118 +219,156 @@ module GitSearch =
                 let compiled = terms |> List.map (fun term -> term, matcher useRegex term.Text)
                 let metadataTerms, diffTerms = compiled |> List.partition (fst >> needsDiff >> not)
                 let pathTerms, lineTerms = diffTerms |> List.partition (fun (term, _) -> term.Field = ChangedPath)
-                let results = ResizeArray<Result>()
                 let total = commits.Length
-                let mutable checkedCount = 0
                 loaders.Progress 0 total
+                do! Flow.Runtime.ensureNotCanceled (GitError.OperationCanceled "Search")
 
-                for commit in commits do
-                    do! Flow.Runtime.ensureNotCanceled (GitError.OperationCanceled "Search")
-                    checkedCount <- checkedCount + 1
-                    if checkedCount % 256 = 0 then loaders.Progress checkedCount total
+                // Phase 1: metadata, pure and fast.
+                let candidates =
+                    commits
+                    |> List.choose (fun commit ->
+                        let kinds = Collections.Generic.List<string>()
+                        let matchedRefs = Collections.Generic.List<string>()
+                        let addKind kind = if not (kinds.Contains kind) then kinds.Add kind
 
-                    let kinds = Collections.Generic.List<string>()
-                    let matchedRefs = Collections.Generic.List<string>()
-                    let addKind kind = if not (kinds.Contains kind) then kinds.Add kind
+                        let metadataMatches =
+                            metadataTerms
+                            |> List.forall (fun (term, matches) ->
+                                let refMatches () = commit.Refs |> List.filter (fun r -> matches r.Name) |> List.map _.Name
+                                match term.Field with
+                                | CommitInfo ->
+                                    let refs = refMatches ()
+                                    let message = matches commit.Subject || matches commit.Message
+                                    let hash = matches commit.Hash
+                                    if message then addKind "message"
+                                    if hash then addKind "hash"
+                                    if not refs.IsEmpty then addKind "ref"; matchedRefs.AddRange refs
+                                    message || hash || not refs.IsEmpty
+                                | Message ->
+                                    let hit = matches commit.Subject || matches commit.Message
+                                    if hit then addKind "message"
+                                    hit
+                                | Author ->
+                                    let hit = matches commit.AuthorName || matches commit.AuthorEmail
+                                    if hit then addKind "author"
+                                    hit
+                                | Hash ->
+                                    let hit = matches commit.Hash
+                                    if hit then addKind "hash"
+                                    hit
+                                | Ref ->
+                                    let refs = refMatches ()
+                                    if not refs.IsEmpty then addKind "ref"; matchedRefs.AddRange refs
+                                    not refs.IsEmpty
+                                | After -> tryParseDate now term.Text |> Option.forall (fun date -> commit.Timestamp >= date)
+                                | Before -> tryParseDate now term.Text |> Option.forall (fun date -> commit.Timestamp < date)
+                                | ChangedPath
+                                | ChangedLine -> true)
 
-                    let metadataMatches =
-                        metadataTerms
-                        |> List.forall (fun (term, matches) ->
-                            let refMatches () = commit.Refs |> List.filter (fun r -> matches r.Name) |> List.map _.Name
-                            match term.Field with
-                            | CommitInfo ->
-                                let refs = refMatches ()
-                                let message = matches commit.Subject || matches commit.Message
-                                let hash = matches commit.Hash
-                                if message then addKind "message"
-                                if hash then addKind "hash"
-                                if not refs.IsEmpty then addKind "ref"; matchedRefs.AddRange refs
-                                message || hash || not refs.IsEmpty
-                            | Message ->
-                                let hit = matches commit.Subject || matches commit.Message
-                                if hit then addKind "message"
-                                hit
-                            | Author ->
-                                let hit = matches commit.AuthorName || matches commit.AuthorEmail
-                                if hit then addKind "author"
-                                hit
-                            | Hash ->
-                                let hit = matches commit.Hash
-                                if hit then addKind "hash"
-                                hit
-                            | Ref ->
-                                let refs = refMatches ()
-                                if not refs.IsEmpty then addKind "ref"; matchedRefs.AddRange refs
-                                not refs.IsEmpty
-                            | After -> tryParseDate now term.Text |> Option.forall (fun date -> commit.Timestamp >= date)
-                            | Before -> tryParseDate now term.Text |> Option.forall (fun date -> commit.Timestamp < date)
-                            | ChangedPath
-                            | ChangedLine -> true)
+                        if metadataMatches then Some(commit, kinds, matchedRefs) else None)
+                    |> Array.ofList
 
-                    let matchedPaths = Collections.Generic.List<string>()
+                let toResult (commit: Models.Commit, kinds: Collections.Generic.List<string>, matchedRefs: Collections.Generic.List<string>, matchedPaths: Collections.Generic.List<string>) =
+                    let details = ResizeArray<string>(kinds)
+                    if matchedPaths.Count > 0 then details.Add("paths: " + String.Join(", ", matchedPaths))
+                    if matchedRefs.Count > 0 then details.Add("refs: " + String.Join(", ", Seq.distinct matchedRefs))
 
-                    let! pathMatches =
-                        if not metadataMatches then
-                            Flow.ok false
-                        elif pathTerms.IsEmpty then
-                            Flow.ok true
-                        else
-                            flow {
-                                let! files = loaders.LoadPaths commit.Hash
+                    { Commit = commit
+                      MatchKinds = List.ofSeq kinds
+                      MatchSummary = String.Join("; ", details)
+                      MatchedPaths = List.ofSeq matchedPaths
+                      MatchedRefs = matchedRefs |> Seq.distinct |> List.ofSeq }
 
-                                return
-                                    pathTerms
-                                    |> List.forall (fun (_, matches) ->
-                                        let paths =
-                                            files
-                                            |> List.filter (fun (oldPath, newPath) -> matches oldPath || matches newPath)
-                                            |> List.map (fun (oldPath, newPath) -> buildDisplayPath oldPath newPath)
-                                        if not paths.IsEmpty then
-                                            addKind "path"
-                                            for path in paths do
-                                                if not (matchedPaths.Contains path) then matchedPaths.Add path
-                                        not paths.IsEmpty)
-                            }
+                if diffTerms.IsEmpty then
+                    loaders.Progress total total
+                    return candidates |> Array.map (fun (commit, kinds, refs) -> toResult (commit, kinds, refs, Collections.Generic.List())) |> List.ofArray
+                else
+                    // Phase 2: contents of the candidates, in parallel.
+                    let outcomes : Result option array = Array.zeroCreate candidates.Length
+                    let mutable checkedCount = total - candidates.Length
+                    loaders.Progress checkedCount total
 
-                    let! diffMatches =
-                        if not pathMatches then
-                            Flow.ok false
-                        elif lineTerms.IsEmpty then
-                            Flow.ok true
-                        else
-                            flow {
-                                let! files = loaders.LoadDiff commit.Hash
+                    let evaluate (reader: ContentReader<'env>) index =
+                        flow {
+                            let commit, kinds, matchedRefs = candidates.[index]
+                            let addKind kind = if not (kinds.Contains kind) then kinds.Add kind
+                            let matchedPaths = Collections.Generic.List<string>()
 
-                                return
-                                    lineTerms
-                                    |> List.forall (fun (_, matches) ->
-                                        let hit =
-                                            files
-                                            |> List.exists (fun f ->
-                                                f.Hunks
-                                                |> List.exists (fun h ->
-                                                    h.Lines |> List.exists (fun l -> (l.Type = Added || l.Type = Removed) && matches l.Content)))
-                                        if hit then addKind "text"
-                                        hit)
-                            }
+                            let! pathsMatch =
+                                if pathTerms.IsEmpty then
+                                    Flow.ok true
+                                else
+                                    flow {
+                                        let! files = reader.ChangedPaths commit.Hash
 
-                    if diffMatches then
-                        let details = ResizeArray<string>(kinds)
-                        if matchedPaths.Count > 0 then details.Add("paths: " + String.Join(", ", matchedPaths))
-                        if matchedRefs.Count > 0 then details.Add("refs: " + String.Join(", ", Seq.distinct matchedRefs))
+                                        return
+                                            pathTerms
+                                            |> List.forall (fun (_, matches) ->
+                                                let paths =
+                                                    files
+                                                    |> List.filter (fun (oldPath, newPath) -> matches oldPath || matches newPath)
+                                                    |> List.map (fun (oldPath, newPath) -> buildDisplayPath oldPath newPath)
+                                                if not paths.IsEmpty then
+                                                    addKind "path"
+                                                    for path in paths do
+                                                        if not (matchedPaths.Contains path) then matchedPaths.Add path
+                                                not paths.IsEmpty)
+                                    }
 
-                        results.Add
-                            { Commit = commit
-                              MatchKinds = List.ofSeq kinds
-                              MatchSummary = String.Join("; ", details)
-                              MatchedPaths = List.ofSeq matchedPaths
-                              MatchedRefs = matchedRefs |> Seq.distinct |> List.ofSeq }
+                            let! linesMatch =
+                                if not pathsMatch then
+                                    Flow.ok false
+                                elif lineTerms.IsEmpty then
+                                    Flow.ok true
+                                else
+                                    flow {
+                                        let! hits = reader.MatchChangedLines commit.Hash (lineTerms |> List.map snd)
+                                        let all = List.forall id hits
+                                        if all then addKind "text"
+                                        return all
+                                    }
 
-                loaders.Progress total total
-                return List.ofSeq results
+                            if pathsMatch && linesMatch then
+                                let result = toResult (commit, kinds, matchedRefs, matchedPaths)
+                                outcomes.[index] <- Some result
+                                loaders.Found result
+                            let checkedNow = Threading.Interlocked.Increment(&checkedCount)
+                            if checkedNow % 64 = 0 then loaders.Progress checkedNow total
+                        }
+
+                    let workers = max 1 (min loaders.Workers candidates.Length)
+                    // Workers take contiguous chunks from a shared queue: neighbouring commits share blob versions,
+                    // so keeping them on one worker lets its object cache hit, while the queue still balances load.
+                    let chunkSize = 32
+                    let chunks = Collections.Concurrent.ConcurrentQueue<int>(seq { 0 .. chunkSize .. candidates.Length - 1 })
+
+                    let worker (_: int) =
+                        flow {
+                            let reader = loaders.OpenReader ()
+
+                            try
+                                let mutable next = 0
+                                while chunks.TryDequeue(&next) do
+                                    let last = min (next + chunkSize) candidates.Length - 1
+                                    for index in next .. last do
+                                        do! Flow.Runtime.ensureNotCanceled (GitError.OperationCanceled "Search")
+                                        do! evaluate reader index
+                            finally
+                                reader.Release ()
+                        }
+
+                    if workers = 1 then
+                        do! worker 0
+                    else
+                        let! fibers = List.init workers id |> Flow.traverse (fun slot -> Flow.forkNamed $"search worker {slot + 1}" (worker slot))
+                        for fiber in fibers do
+                            do! Flow.join fiber
+
+                    loaders.Progress total total
+                    return outcomes |> Array.choose id |> List.ofArray
         }
 
-    /// Searches with one diff loader for both path and line terms (paths are read from the loaded diffs).
+    /// Searches with one diff loader for both path and line terms (paths and lines are read from the loaded diffs).
     let searchCommitsWithDiffLoader
         (now: DateTimeOffset)
         (commits: Models.Commit list)
@@ -328,6 +377,21 @@ module GitSearch =
         (query: string)
         (loadDiff: string -> Flow<'env, GitError, FileDiff list>) : Flow<'env, GitError, Result list> =
         searchCommitsWith now commits mode useRegex query
-            { LoadPaths = fun hash -> loadDiff hash |> Flow.map (List.map (fun file -> file.OldPath, file.NewPath))
-              LoadDiff = loadDiff
-              Progress = fun _ _ -> () }
+            { OpenReader =
+                fun () ->
+                    { ChangedPaths = fun hash -> loadDiff hash |> Flow.map (List.map (fun file -> file.OldPath, file.NewPath))
+                      MatchChangedLines =
+                        fun hash predicates ->
+                            loadDiff hash
+                            |> Flow.map (fun files ->
+                                predicates
+                                |> List.map (fun matches ->
+                                    files
+                                    |> List.exists (fun f ->
+                                        f.Hunks
+                                        |> List.exists (fun h ->
+                                            h.Lines |> List.exists (fun l -> (l.Type = Added || l.Type = Removed) && matches l.Content)))))
+                      Release = ignore }
+              Workers = 1
+              Progress = fun _ _ -> ()
+              Found = ignore }

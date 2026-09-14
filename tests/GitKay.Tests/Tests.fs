@@ -666,9 +666,14 @@ summary Another line
         let diffLoads = ref 0
         let progress = Collections.Generic.List<int * int>()
         let loaders : GitSearch.Loaders<GitService.GitEnv> =
-            { LoadPaths = fun hash -> Flow.ok (if hash.StartsWith "abc" then [ "src/needle.txt", "src/needle.txt" ] else [ "docs/readme.md", "docs/readme.md" ])
-              LoadDiff = fun hash -> diffLoads.Value <- diffLoads.Value + 1; searchDiffLoader hash
-              Progress = fun checkedCount total -> progress.Add((checkedCount, total)) }
+            { OpenReader =
+                fun () ->
+                    { ChangedPaths = fun hash -> Flow.ok (if hash.StartsWith "abc" then [ "src/needle.txt", "src/needle.txt" ] else [ "docs/readme.md", "docs/readme.md" ])
+                      MatchChangedLines = fun _ predicates -> diffLoads.Value <- diffLoads.Value + 1; Flow.ok (predicates |> List.map (fun _ -> false))
+                      Release = ignore }
+              Workers = 2
+              Progress = fun checkedCount total -> lock progress (fun () -> progress.Add((checkedCount, total)))
+              Found = ignore }
         let results =
             match runFlow "" (GitSearch.searchCommitsWith DateTimeOffset.Now (searchCommits ()) GitSearch.Path false "needle" loaders) with
             | Ok results -> results
@@ -681,6 +686,38 @@ summary Another line
         let now = DateTimeOffset(2026, 9, 14, 0, 0, 0, TimeSpan.Zero)
         test <@ GitSearch.invalidDateTerms now GitSearch.Commit "fix after:2024-05-01 before:\"2 weeks ago\"" = [] @>
         test <@ GitSearch.invalidDateTerms now GitSearch.Commit "after:someday before:yesterday" = [ "after", "someday" ] @>
+
+    [<Fact>]
+    let ``partial search results should show while the search runs and only for the current search`` () =
+        let model0, _ = App.init [||]
+        let running = { model0 with SearchQuery = "needle"; SearchStartedAtTicks = Some 42L }
+        let result : GitSearch.Result =
+            { Commit = (searchCommits ()).Head; MatchKinds = [ "text" ]; MatchSummary = "text"; MatchedPaths = []; MatchedRefs = [] }
+        let partial, _ = App.update (App.Msg.SearchPartialResults(42L, [ result ])) running
+        test <@ partial.SearchResults = Some [ result ] && partial.SearchStartedAtTicks = Some 42L @>
+        let stale, _ = App.update (App.Msg.SearchPartialResults(7L, [ result ])) running
+        test <@ stale.SearchResults = None @>
+
+    [<Fact>]
+    let ``parallel search should report every match through Found and keep history order`` () =
+        let found = Collections.Concurrent.ConcurrentBag<string>()
+        let commits = [ for index in 0 .. 99 -> searchCommit (sprintf "%040d" index) $"commit {index}" "" "Jane" [] (int64 index) ]
+        let loaders : GitSearch.Loaders<GitService.GitEnv> =
+            { OpenReader =
+                fun () ->
+                    { ChangedPaths = fun hash -> Flow.ok [ (if hash.EndsWith "7" then "hit.txt" else "miss.txt"), "x" ]
+                      MatchChangedLines = fun _ predicates -> Flow.ok (predicates |> List.map (fun _ -> false))
+                      Release = ignore }
+              Workers = 4
+              Progress = fun _ _ -> ()
+              Found = fun result -> found.Add result.Commit.Hash }
+        let results =
+            match runFlow "" (GitSearch.searchCommitsWith DateTimeOffset.Now commits GitSearch.Path false "hit" loaders) with
+            | Ok results -> results
+            | Error err -> failwith (GitError.describe err)
+        let expected = [ for index in 0 .. 99 do if index % 10 = 7 then yield sprintf "%040d" index ]
+        test <@ (results |> List.map _.Commit.Hash) = expected @>
+        test <@ (found |> Seq.sort |> List.ofSeq) = expected @>
 
     [<Fact>]
     let ``cancelling a running search should stop it and keep the query`` () =

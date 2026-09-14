@@ -98,6 +98,8 @@ module App =
         | SearchResultsLoaded of query:string * scopeKey:string * startedAtTicks:int64 * Result<GitSearch.Result list, GitError>
         /// Commits checked and total, for the search started at startedAtTicks.
         | SearchProgressed of startedAtTicks:int64 * checkedCount:int * total:int
+        /// Matches found so far, in history order, while the search continues.
+        | SearchPartialResults of startedAtTicks:int64 * GitSearch.Result list
         /// Stops the running search, keeping its query.
         | CancelSearch
         | CreateTag of hash:string * name:string
@@ -130,11 +132,11 @@ module App =
             return! GitService.fetchDiff contextLines hash
         }
 
-    let private loadSearchResultsFlow (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (useRegex: bool) progress =
+    let private loadSearchResultsFlow (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (useRegex: bool) progress found =
         flow {
             do! Flow.Runtime.ensureNotCanceled (GitError.OperationCanceled "Search")
             let commitList = commits |> List.map (fun info -> info.Commit)
-            return! GitService.searchCommitsWithProgress contextLines commitList (GitSearch.parseMode scopeKey) useRegex query progress
+            return! GitService.searchCommitsStreaming contextLines commitList (GitSearch.parseMode scopeKey) useRegex query progress found
         }
 
 
@@ -159,19 +161,36 @@ module App =
     let private startSearchLoad (env: GitService.GitEnv) (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (useRegex: bool) (startedAtTicks: int64) =
         // Progress dispatches are throttled so a fast search doesn't flood the message queue.
         Cmd.ofEffect (fun dispatch ->
+            let gate = obj ()
             let mutable lastReport = 0L
-            let progress checkedCount total =
+            let found = ResizeArray<GitSearch.Result>()
+            let mutable foundSinceReport = false
+            let order = commits |> List.mapi (fun index info -> info.Commit.Hash, index) |> dict
+
+            // Matches stream in with progress reports: sorted into history order, at most every 200ms.
+            let report checkedCount total force =
                 let now = Stopwatch.GetTimestamp()
-                if checkedCount = total || Stopwatch.GetElapsedTime(lastReport, now).TotalMilliseconds >= 200.0 then
-                    lastReport <- now
-                    dispatch (SearchProgressed(startedAtTicks, checkedCount, total))
+                lock gate (fun () ->
+                    if force || checkedCount = total || Stopwatch.GetElapsedTime(lastReport, now).TotalMilliseconds >= 200.0 then
+                        lastReport <- now
+                        if foundSinceReport then
+                            foundSinceReport <- false
+                            let snapshot = found |> Seq.sortBy (fun result -> order.[result.Commit.Hash]) |> List.ofSeq
+                            dispatch (SearchPartialResults(startedAtTicks, snapshot))
+                        dispatch (SearchProgressed(startedAtTicks, checkedCount, total)))
+
+            let progress checkedCount total = report checkedCount total false
+            let onFound (result: GitSearch.Result) =
+                lock gate (fun () ->
+                    found.Add result
+                    foundSinceReport <- true)
 
             let command =
                 Cmd.OfFlow.ofFlowLatest
                     $"search [{scopeKey}] {query}"
                     searchJob
                     env
-                    (loadSearchResultsFlow contextLines commits query scopeKey useRegex progress)
+                    (loadSearchResultsFlow contextLines commits query scopeKey useRegex progress onFound)
                     (fun result -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Ok result))
                     (fun err -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Error err))
 
@@ -565,8 +584,14 @@ module App =
             | Some current when current = startedAtTicks && checkedCount < total ->
                 { model with
                     SearchProgress = Some(checkedCount, total)
-                    Status = $"Searching {model.SearchQuery}... {checkedCount:N0} of {total:N0} commits (Esc to cancel)" },
+                    Status =
+                        let matches = model.SearchResults |> Option.map List.length |> Option.defaultValue 0
+                        $"Searching {model.SearchQuery}... {checkedCount:N0} of {total:N0} commits, {matches:N0} matches so far (Esc to cancel)" },
                 Cmd.none
+            | _ -> model, Cmd.none
+        | SearchPartialResults (startedAtTicks, results) ->
+            match model.SearchStartedAtTicks with
+            | Some current when current = startedAtTicks -> { model with SearchResults = Some results }, Cmd.none
             | _ -> model, Cmd.none
         | CancelSearch ->
             match model.SearchStartedAtTicks with

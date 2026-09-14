@@ -500,6 +500,51 @@ module GitService =
             with _ ->
                 targets
 
+    /// The commits `git log` lists for these revisions and paths. git reads commit-graph changed-path Bloom filters,
+    /// so a path-limited history takes milliseconds where diffing every commit in-process takes seconds. It applies
+    /// history simplification, as gitk does. Returns None when git can't run, so callers fall back to libgit2.
+    let private gitPathLimitedCommits (repo: Repository) (includeStashes: bool) (targets: StartupTarget list) (exclusions: obj list) (paths: string list) : Flow<GitEnv, GitError, Set<string> option> =
+        flow {
+            let workingDirectory = repo.Info.WorkingDirectory
+
+            if isNull workingDirectory then
+                return None
+            else
+                let tips =
+                    targets
+                    |> List.choose (function
+                        | StartupTarget.Revision name | StartupTarget.Branch name | StartupTarget.Tag name | StartupTarget.Sha name -> Some name
+                        | _ -> None)
+
+                let hasAll = targets |> List.contains StartupTarget.All
+                let revisionArguments =
+                    [ if hasAll then
+                          if not includeStashes then yield "--exclude=refs/stash"
+                          yield "--all"
+                      elif tips.IsEmpty then
+                          yield "HEAD"
+                      else
+                          yield! tips
+                      for exclusion in exclusions do
+                          match exclusion with
+                          | :? LibGit2Sharp.Commit as commit -> yield "^" + commit.Sha
+                          | _ -> () ]
+
+                let arguments = [ "--literal-pathspecs"; "log"; "--format=%H" ] @ revisionArguments @ [ "--" ] @ paths
+                let! outcome =
+                    Process.commandArgs "git" arguments
+                    |> Process.workingDirectory workingDirectory
+                    |> Process.capture
+                    |> Flow.map (fun (result: ProcessResult) -> Some result.StdOut)
+                    |> Flow.orElseWith (fun _ -> Flow.ok None)
+                    |> Flow.mapError (fun (error: ProcessError) -> GitError.GitProcessFailed(arguments, error))
+
+                return
+                    outcome
+                    |> Option.map (fun (output: string) ->
+                        output.Split('\n', StringSplitOptions.RemoveEmptyEntries ||| StringSplitOptions.TrimEntries) |> Set.ofArray)
+        }
+
     let fetchHistory (limit: int option) (includeStashes: bool) (targets: StartupTarget list) : Flow<GitEnv, GitError, Models.Commit list> =
         flow {
             let! env = Flow.env
@@ -507,6 +552,9 @@ module GitService =
             let! roots = resolveStartupTargets includeStashes repo targets
             let! exclusions = resolveExclusions repo targets
             let paths = targets |> List.choose (function StartupTarget.Path path -> Some(path.Replace('\\', '/')) | _ -> None)
+            let! gitMatches =
+                if paths.IsEmpty then Flow.ok None
+                else gitPathLimitedCommits repo includeStashes targets exclusions paths
             
             let refsByCommit = History.commitRefs includeStashes repo
             let filter = CommitFilter()
@@ -514,10 +562,12 @@ module GitService =
             if not exclusions.IsEmpty then filter.ExcludeReachableFrom <- box exclusions
             filter.SortBy <- CommitSortStrategies.Topological ||| CommitSortStrategies.Time
 
-            // -- <paths>: keep commits whose change against their first parent touches a path.
+            // -- <paths>: git's answer when it ran; otherwise commits whose change against their first parent touches a path.
             let touchesPaths (commit: LibGit2Sharp.Commit) =
                 paths.IsEmpty
-                || (let parentTree = commit.Parents |> Seq.tryHead |> Option.map _.Tree |> Option.toObj
+                || (match gitMatches with Some matches -> matches.Contains commit.Sha | None -> false)
+                || (gitMatches.IsNone &&
+                    let parentTree = commit.Parents |> Seq.tryHead |> Option.map _.Tree |> Option.toObj
                     use changes = repo.Diff.Compare<TreeChanges>(parentTree, commit.Tree, paths, ExplicitPathsOptions(ShouldFailOnUnmatchedPath = false), CompareOptions(Similarity = SimilarityOptions.None))
                     changes.Count > 0)
 
@@ -527,7 +577,7 @@ module GitService =
             // otherwise walk (and diff) the entire history before anything appears.
             let limitedQuery =
                 match limit with
-                | Some n when not paths.IsEmpty ->
+                | Some n when not paths.IsEmpty && gitMatches.IsNone ->
                     query |> Seq.distinctBy (fun commit -> commit.Sha) |> Seq.truncate n |> Seq.filter touchesPaths
                 | Some n -> distinctQuery |> Seq.truncate n
                 | None -> distinctQuery
@@ -663,29 +713,110 @@ module GitService =
                     return { diff with Hunks = hunks; NewLineCount = Some lines.Length }
         }
 
-    /// Searches commits. Path terms compare each commit's tree with its first parent through one repository handle,
-    /// without rename detection (which reads blob contents) and without caching; only line terms load diffs.
-    let searchCommitsWithProgress (contextLines: int) (commits: Models.Commit list) (mode: GitSearch.Mode) (useRegex: bool) (query: string) (progress: int -> int -> unit) : Flow<GitEnv, GitError, GitSearch.Result list> =
+    /// Blobs above this size are skipped by diff text search: generated or vendored files cost seconds and rarely
+    /// hold what a search is for.
+    let private searchBlobSizeLimit = 2L * 1024L * 1024L
+
+    let private searchWorkers = Math.Clamp(Environment.ProcessorCount - 1, 1, 8) // axial-allow-effect: environment
+
+    /// A search content reader with its own repository handle (libgit2 handles are not shared across threads).
+    let private openSearchReader (repoPath: string) : GitSearch.ContentReader<GitEnv> =
+        let repo = new Repository(repoPath)
+        let pathCompare = CompareOptions(Similarity = SimilarityOptions.None)
+        // Exact rename detection is cheap (content hashes) and keeps a moved file from reading as all lines changed.
+        let lineCompare = CompareOptions(Similarity = SimilarityOptions.Exact)
+        let blobCompare = CompareOptions(ContextLines = 0, InterhunkLines = 0)
+
+        let changes (hash: string) =
+            match repo.Lookup<LibGit2Sharp.Commit>(hash) with
+            | null -> Error(GitError.CommitNotFound hash)
+            | commit ->
+                let parentTree = commit.Parents |> Seq.tryHead |> Option.map _.Tree |> Option.toObj
+                Ok(commit, parentTree)
+
+        let blobAt (tree: Tree) (path: string) =
+            if isNull tree || String.IsNullOrEmpty path then
+                null
+            else
+                match tree.[path] with
+                | null -> null
+                | entry ->
+                    match entry.Target with
+                    | :? Blob as blob -> blob
+                    | _ -> null
+
+        { ChangedPaths =
+            fun hash ->
+                flow {
+                    let! (commit: LibGit2Sharp.Commit), parentTree = changes hash
+                    use treeChanges = repo.Diff.Compare<TreeChanges>(parentTree, commit.Tree, pathCompare)
+                    return treeChanges |> Seq.map (fun change -> change.OldPath, change.Path) |> List.ofSeq
+                }
+          MatchChangedLines =
+            fun hash predicates ->
+                flow {
+                    let! (commit: LibGit2Sharp.Commit), parentTree = changes hash
+                    let predicates = Array.ofList predicates
+                    let found = Array.zeroCreate predicates.Length
+                    let mutable remaining = predicates.Length
+                    use treeChanges = repo.Diff.Compare<TreeChanges>(parentTree, commit.Tree, lineCompare)
+                    use enumerator = (treeChanges :> seq<TreeEntryChanges>).GetEnumerator()
+
+                    while remaining > 0 && enumerator.MoveNext() do
+                        let change = enumerator.Current
+
+                        if change.Status <> ChangeKind.Renamed || change.OldOid <> change.Oid then
+                            let oldBlob = if change.Status = ChangeKind.Added then null else blobAt parentTree change.OldPath
+                            let newBlob = if change.Status = ChangeKind.Deleted then null else blobAt commit.Tree change.Path
+                            let tooBig (blob: Blob) = not (isNull blob) && (blob.Size > searchBlobSizeLimit || blob.IsBinary)
+
+                            let contentText (blob: Blob) = if isNull blob then "" else blob.GetContentText()
+                            let oldText = lazy (contentText oldBlob)
+                            let newText = lazy (contentText newBlob)
+                            // A changed line matching a term appears in the old or new file, so a file whose contents
+                            // match no outstanding term cannot hit: skip its diff, which is most of the cost.
+                            let mayMatch () =
+                                predicates
+                                |> Array.exists (fun matches ->
+                                    matches oldText.Value || matches newText.Value)
+
+                            if not (isNull oldBlob && isNull newBlob) && not (tooBig oldBlob || tooBig newBlob) && mayMatch () then
+                                let patch = repo.Diff.Compare(oldBlob, newBlob, blobCompare).Patch
+                                use reader = new IO.StringReader(patch)
+                                let mutable line = reader.ReadLine()
+
+                                while remaining > 0 && not (isNull line) do
+                                    if line.Length > 0 && (line.[0] = '+' || line.[0] = '-')
+                                       && not (line.StartsWith "+++" || line.StartsWith "---") then
+                                        let content = line.Substring 1
+                                        for index in 0 .. predicates.Length - 1 do
+                                            if not found.[index] && predicates.[index] content then
+                                                found.[index] <- true
+                                                remaining <- remaining - 1
+                                    line <- reader.ReadLine()
+
+                    return List.ofArray found
+                }
+          Release = fun () -> repo.Dispose() }
+
+    /// Searches commits: metadata filters every commit first, then parallel workers check the candidates' changed
+    /// paths and changed lines without building diff objects or caching them.
+    let searchCommitsStreaming (contextLines: int) (commits: Models.Commit list) (mode: GitSearch.Mode) (useRegex: bool) (query: string) (progress: int -> int -> unit) (found: GitSearch.Result -> unit) : Flow<GitEnv, GitError, GitSearch.Result list> =
+        ignore contextLines
         flow {
             let! now = Clock.now
             let! env = Flow.env
-            use repo = new Repository(env.RepoPath)
-            let plainCompare = CompareOptions(Similarity = SimilarityOptions.None)
-
-            let changedPaths (hash: string) : Flow<GitEnv, GitError, (string * string) list> =
-                flow {
-                    let! (commit: LibGit2Sharp.Commit) = loadCommit repo hash
-                    let parentTree = commit.Parents |> Seq.tryHead |> Option.map _.Tree |> Option.toObj
-                    use changes = repo.Diff.Compare<TreeChanges>(parentTree, commit.Tree, plainCompare)
-                    return changes |> Seq.map (fun change -> change.OldPath, change.Path) |> List.ofSeq
-                }
 
             return!
                 GitSearch.searchCommitsWith now commits mode useRegex query
-                    { LoadPaths = changedPaths
-                      LoadDiff = fun hash -> fetchDiff contextLines hash
-                      Progress = progress }
+                    { OpenReader = fun () -> openSearchReader env.RepoPath
+                      Workers = searchWorkers
+                      Progress = progress
+                      Found = found }
         }
+
+    let searchCommitsWithProgress (contextLines: int) (commits: Models.Commit list) (mode: GitSearch.Mode) (useRegex: bool) (query: string) (progress: int -> int -> unit) : Flow<GitEnv, GitError, GitSearch.Result list> =
+        searchCommitsStreaming contextLines commits mode useRegex query progress ignore
 
     let searchCommits (contextLines: int) (commits: Models.Commit list) (mode: GitSearch.Mode) (useRegex: bool) (query: string) : Flow<GitEnv, GitError, GitSearch.Result list> =
         searchCommitsWithProgress contextLines commits mode useRegex query (fun _ _ -> ())

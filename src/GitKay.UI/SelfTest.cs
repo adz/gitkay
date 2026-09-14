@@ -29,6 +29,26 @@ public static class SelfTest {
         foreach (var result in GitKay.Core.SelfTest.run(repositoryPath))
             Report(result.Name, result.Passed, result.Detail);
 
+        Check("libgit2 blob cache configured", () =>
+            NativeGitOptions.Status.StartsWith("blob cache", StringComparison.Ordinal) || NativeGitOptions.Status.StartsWith("skipped", StringComparison.Ordinal)
+                ? null
+                : NativeGitOptions.Status);
+
+        Check("streaming search reports matches as found", () => {
+            var repository = GitKay.Core.GitService.tryDiscoverRepositoryPath();
+            var env = GitKay.Core.GitService.environment(repository);
+            var history = Axial.Flow.run(env, GitKay.Core.GitService.fetchHistory(Microsoft.FSharp.Core.FSharpOption<int>.Some(200), false, Microsoft.FSharp.Collections.FSharpList<GitKay.Core.GitStartup.StartupTarget>.Empty));
+            if (!history.IsSuccess) return "history failed";
+            var commits = ((Axial.Exit<Microsoft.FSharp.Collections.FSharpList<GitKay.Core.Models.Commit>, GitKay.Core.GitError>.Success)history).Item;
+            var found = 0;
+            var search = Axial.Flow.run(env, GitKay.Core.GitService.searchCommitsStreaming(3, commits, GitKay.Core.GitSearch.Mode.Diff, false, "e",
+                Microsoft.FSharp.Core.FuncConvert.FromAction<int, int>((_, _) => { }),
+                Microsoft.FSharp.Core.FuncConvert.FromAction<GitKay.Core.GitSearch.Result>(_ => System.Threading.Interlocked.Increment(ref found))));
+            if (!search.IsSuccess) return "search failed: " + search;
+            var results = ((Axial.Exit<Microsoft.FSharp.Collections.FSharpList<GitKay.Core.GitSearch.Result>, GitKay.Core.GitError>.Success)search).Item;
+            return results.Length == found ? null : $"{results.Length} results but {found} streamed";
+        });
+
         Check("diagnostics window data refreshes", () => {
             var diagnostics = new DiagnosticsProjection();
             diagnostics.Refresh(force: true);
