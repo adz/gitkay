@@ -261,9 +261,15 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource {
             DrawText(context, commit.Hash, hashX + 2, y + 4, 12, mutedBrush, monoTypeface);
             if (highlight != null) Underline(context, commit.Hash, highlight.Hash, hashX + 2, y + RowHeight - 2, 12, monoTypeface, highlight, underline);
         }
-        using (context.PushClip(new Rect(authorX, y, authorWidth, RowHeight))) {
-            DrawText(context, commit.Author, authorX + 2, y + 4, 12, mutedBrush, textTypeface);
+        using (context.PushClip(new Rect(authorX, y, authorWidth - 4, RowHeight))) {
+            // "Name <email>" like gitk, with the address dimmer than the name.
+            var authorLayout = Layout(commit.Author, 12, mutedBrush, textTypeface);
+            context.DrawText(authorLayout, new Point(authorX + 2, y + 4));
             if (highlight != null) Underline(context, commit.Author, highlight.Author, authorX + 2, y + RowHeight - 2, 12, textTypeface, highlight, underline);
+            if (!string.IsNullOrEmpty(commit.AuthorEmail)) {
+                using (context.PushOpacity(0.6))
+                    DrawText(context, $"<{commit.AuthorEmail}>", authorX + 2 + authorLayout.Width + 4, y + 4, 12, mutedBrush, textTypeface);
+            }
         }
 
         using (context.PushClip(new Rect(dateX, y, dateWidth, RowHeight))) {
@@ -477,6 +483,13 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource {
 
                 menu.Items.Add(Operation($"Push {branch.Name}", "push"));
                 menu.Items.Add(Operation(branch.IsCurrentHead ? $"Pull {branch.Name}" : $"Pull {branch.Name} (fast-forward)", "pull"));
+                var delete = Operation($"Delete {branch.Name}…", "delete");
+                // Git refuses to delete the checked-out branch; say why instead of offering it.
+                if (branch.IsCurrentHead) {
+                    delete.IsEnabled = false;
+                    ToolTip.SetTip(delete, "This branch is checked out");
+                }
+                menu.Items.Add(delete);
             }
             if (branches.Length > 0) menu.Items.Add(new Separator());
         }

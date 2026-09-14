@@ -95,7 +95,24 @@ public partial class MainProjection {
     /// <summary>The status bar only appears for errors, progress and notices — not for "Loaded N commits".</summary>
     public bool IsStatusVisible => !string.IsNullOrWhiteSpace(Status) && !Status.StartsWith("Loaded", StringComparison.Ordinal);
 
-    partial void OnStatusChanged(string value) => OnPropertyChanged(nameof(IsStatusVisible));
+    /// <summary>The status reports a failure, so the footer should draw attention to it.</summary>
+    public bool IsStatusError => IsErrorStatus(Status);
+
+    internal static bool IsErrorStatus(string status) =>
+        status.StartsWith("Error", StringComparison.OrdinalIgnoreCase)
+        || status.StartsWith("Could not", StringComparison.OrdinalIgnoreCase)
+        || status.StartsWith("Not a Git repository", StringComparison.OrdinalIgnoreCase)
+        || status.Contains(" failed", StringComparison.OrdinalIgnoreCase)
+        || status.StartsWith("No commit found", StringComparison.OrdinalIgnoreCase);
+
+    partial void OnStatusChanged(string value) {
+        OnPropertyChanged(nameof(IsStatusVisible));
+        OnPropertyChanged(nameof(IsStatusError));
+        if (IsErrorStatus(value)) ErrorStatusRaised?.Invoke();
+    }
+
+    /// <summary>A new error status arrived; the window pulses the footer.</summary>
+    public event Action? ErrorStatusRaised;
 
     /// <summary>Pointing at a pane makes it the target for keyboard shortcuts (on by default).</summary>
     [ObservableProperty] private bool _hoverToFocus = true;

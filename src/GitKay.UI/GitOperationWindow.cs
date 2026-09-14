@@ -61,6 +61,16 @@ public static class GitOperations {
         return await runner.RunAsync("fetch", "--progress", remote, $"{merge}:refs/heads/{branch.Name}");
     });
 
+    public static GitOperation DeleteBranch(BranchTarget branch, bool force) =>
+        new(force ? $"Force delete {branch.Name}" : $"Delete {branch.Name}", async runner => {
+            runner.Log(force
+                ? $"Deleting local branch {branch.Name} even though it is not merged into HEAD"
+                : $"Deleting local branch {branch.Name}");
+            var deleted = await runner.RunAsync("branch", force ? "-D" : "-d", branch.Name);
+            if (deleted) runner.Log($"Deleted {branch.Name}. Remote branches, if any, are unchanged.");
+            return deleted;
+        });
+
     private static async Task<(string? Remote, string? Merge)> UpstreamAsync(GitRunner runner, string branch) {
         var remote = (await runner.CaptureAsync("config", "--get", $"branch.{branch}.remote"))?.Trim();
         var merge = (await runner.CaptureAsync("config", "--get", $"branch.{branch}.merge"))?.Trim();

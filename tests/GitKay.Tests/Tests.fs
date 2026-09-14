@@ -2487,6 +2487,27 @@ module DiffFileTreeTests =
         test <@ projection.DiffFontSize = 12.0 @>
 
     [<Fact>]
+    let ``folder rows should total the added and removed lines of loaded files beneath them`` () =
+        let a = file "src/a.fs" "src/a.fs"
+        let b = file "src/deep/b.fs" "src/deep/b.fs"
+        let c = file "other.txt" "other.txt"
+        let hunk lines : Models.DiffHunk = { Header = "@@ -1 +1 @@"; Lines = lines }
+        let line kind : Models.DiffLine = { Type = kind; Content = "x"; OldLineNo = Some 1; NewLineNo = Some 1 }
+        a.ApplyContent { OldPath = "src/a.fs"; NewPath = "src/a.fs"; NewLineCount = None; Hunks = [ hunk [ line Models.Added; line Models.Added; line Models.Removed ] ] }
+        b.ApplyContent { OldPath = "src/deep/b.fs"; NewPath = "src/deep/b.fs"; NewLineCount = None; Hunks = [ hunk [ line Models.Added ] ] }
+        let rows = DiffFileTree.BuildRows([ a; b; c ], true, Collections.Generic.HashSet<string>())
+        let src = rows |> Seq.pick (function :? DiffFileFolderRow as folder when folder.Name = "src" -> Some folder | _ -> None)
+        test <@ src.AddedText = "+3" && src.RemovedText = "−1" && src.HasChanges @>
+
+    [<Fact>]
+    let ``error statuses should be recognised so the footer can draw attention`` () =
+        test <@ MainProjection.IsErrorStatus "Error: Could not locate a Git repository." @>
+        test <@ MainProjection.IsErrorStatus "Could not start VS Code (is 'code' on PATH?)" @>
+        test <@ MainProjection.IsErrorStatus "No commit found for 'ab'" @>
+        test <@ not (MainProjection.IsErrorStatus "Loaded 1000 commits") @>
+        test <@ not (MainProjection.IsErrorStatus "Copied 3 lines") @>
+
+    [<Fact>]
     let ``MainProjection folder selection should toggle the folder and keep the selected file`` () =
         let projection = MainProjection()
         let summaries : GitService.DiffFileSummary list =

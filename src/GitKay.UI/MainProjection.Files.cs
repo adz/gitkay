@@ -94,6 +94,7 @@ public partial class MainProjection {
         DiffFileListRows.Clear();
         DiffFileListRows.AddRange(rows);
         OnPropertyChanged(nameof(SelectedDiffFileListRow));
+        RefreshDiffTotals();
     }
 
     private void LoadAllFiles(string hash) {
@@ -123,6 +124,33 @@ public partial class MainProjection {
         if (_allFilesHash != _selectedDiffHash || _allFiles == null) return [];
         var changed = SelectedDiffFiles.Select(DiffFileTree.PathOf).ToHashSet(StringComparer.Ordinal);
         return _allFiles.Where(path => !changed.Contains(path));
+    }
+
+    // ----- Change totals: the files title bar and each folder row show +added −removed. -----
+
+    private readonly HashSet<DiffFileProjection> _totalsSubscriptions = new(ReferenceEqualityComparer.Instance);
+    [ObservableProperty] private string _diffTotalAddedText = "";
+    [ObservableProperty] private string _diffTotalRemovedText = "";
+    [ObservableProperty] private bool _hasDiffTotals;
+
+    private void RefreshDiffTotals() {
+        foreach (var file in SelectedDiffFiles)
+            if (_totalsSubscriptions.Add(file))
+                file.PropertyChanged += (_, e) => {
+                    if (e.PropertyName is nameof(DiffFileProjection.IsLoaded) or nameof(DiffFileProjection.AddedLines) or nameof(DiffFileProjection.RemovedLines))
+                        Dispatcher.UIThread.Post(RefreshDiffTotalsNow, DispatcherPriority.Background);
+                };
+        RefreshDiffTotalsNow();
+    }
+
+    private void RefreshDiffTotalsNow() {
+        var loaded = SelectedDiffFiles.Where(file => file.IsLoaded).ToList();
+        var added = loaded.Sum(file => file.AddedLines);
+        var removed = loaded.Sum(file => file.RemovedLines);
+        HasDiffTotals = loaded.Count > 0;
+        DiffTotalAddedText = $"+{added}";
+        DiffTotalRemovedText = $"−{removed}";
+        foreach (var folder in DiffFileListRows.OfType<DiffFileFolderRow>()) folder.RefreshTotals();
     }
 
     // ----- History scope: all branches or HEAD, and a file filter. -----
@@ -163,6 +191,7 @@ public partial class MainProjection {
         Status = $"History limited to {target.Path}";
     }
 
+    [RelayCommand]
     public void ClearHistoryPathFilter() => SetHistoryTargets(_historyTargets.Where(existing => !existing.IsPath).ToList());
 
     private void SetHistoryTargets(List<GitKay.Core.GitStartup.StartupTarget> targets) =>

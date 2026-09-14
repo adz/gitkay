@@ -280,6 +280,22 @@ public sealed partial class DiffFileFolderRow : ObservableObject {
     public string Path { get; }
     public Avalonia.Thickness Indent { get; }
     [ObservableProperty] private bool _isExpanded;
+
+    /// <summary>Changed files anywhere beneath this folder.</summary>
+    public List<DiffFileProjection> Files { get; } = new();
+    [ObservableProperty] private string _addedText = "";
+    [ObservableProperty] private string _removedText = "";
+    [ObservableProperty] private bool _hasChanges;
+
+    /// <summary>Sums the loaded files' added and removed lines.</summary>
+    public void RefreshTotals() {
+        var loaded = Files.Where(file => file.IsLoaded).ToList();
+        var added = loaded.Sum(file => file.AddedLines);
+        var removed = loaded.Sum(file => file.RemovedLines);
+        HasChanges = loaded.Count > 0 && added + removed > 0;
+        AddedText = added > 0 ? $"+{added}" : "";
+        RemovedText = removed > 0 ? $"−{removed}" : "";
+    }
 }
 
 /// <summary>An unchanged file in the "All files" tree; it has no diff, so it opens as a whole file.</summary>
@@ -369,7 +385,10 @@ public static class DiffFileTree {
 
                 var path = prefix.Length == 0 ? name : $"{prefix}/{name}";
                 var expanded = isExpanded?.Invoke(path) ?? current.HasChange != (toggledFolders?.Contains(path) ?? false);
-                rows.Add(new DiffFileFolderRow(name, path, depth, expanded));
+                var folderRow = new DiffFileFolderRow(name, path, depth, expanded);
+                folderRow.Files.AddRange(ChangedFilesUnder(current));
+                folderRow.RefreshTotals();
+                rows.Add(folderRow);
                 if (expanded) Emit(current, path, depth + 1);
             }
 
@@ -387,6 +406,14 @@ public static class DiffFileTree {
 
         Emit(root, "", 0);
         return rows;
+    }
+
+    private static IEnumerable<DiffFileProjection> ChangedFilesUnder(Node node) {
+        foreach (var (_, _, file) in node.Files)
+            if (file != null) yield return file;
+        foreach (var child in node.Folders.Values)
+            foreach (var file in ChangedFilesUnder(child))
+                yield return file;
     }
 }
 

@@ -40,7 +40,7 @@ public partial class MainWindow : Window {
         PaletteBox.AddHandler(InputElement.KeyDownEvent, OnPaletteBoxKeyDown, RoutingStrategies.Tunnel);
         CommitFindBox.AddHandler(InputElement.KeyDownEvent, OnCommitFindBoxKeyDown, RoutingStrategies.Tunnel);
         CommitListBox.FilterRequested += OnCommitFilterRequested;
-        CommitListBox.BranchOperationRequested += (operation, branch) => RunGitOperation(GitOperations.ForBranch(operation, branch));
+        CommitListBox.BranchOperationRequested += OnBranchOperationRequested;
         DiffRowsListBox.TextCopied += (_, lines) => { if (_projection != null) _projection.Status = lines == 1 ? "Copied 1 line" : $"Copied {lines} lines"; };
         AddHandler(InputElement.GotFocusEvent, (_, _) => UpdatePaneFocusIndicator(), RoutingStrategies.Bubble);
         AddHandler(InputElement.LostFocusEvent, (_, _) => Dispatcher.UIThread.Post(UpdatePaneFocusIndicator), RoutingStrategies.Bubble);
@@ -480,6 +480,17 @@ public partial class MainWindow : Window {
         return false;
     }
 
+    private async void OnBranchOperationRequested(string operation, BranchTarget branch) {
+        if (operation != "delete") {
+            RunGitOperation(GitOperations.ForBranch(operation, branch));
+            return;
+        }
+
+        if (_projection is not { WorkingDirectory: { } directory }) return;
+        var choice = await DeleteBranchDialog.ShowAsync(this, directory, branch);
+        if (choice != null) RunGitOperation(GitOperations.DeleteBranch(branch, force: choice == DeleteBranchDialog.Choice.ForceDelete));
+    }
+
     private void RunGitOperation(GitOperation operation) {
         if (_projection is not { WorkingDirectory: { } directory } projection) return;
         var window = new GitOperationWindow(operation, directory, succeeded => {
@@ -487,6 +498,12 @@ public partial class MainWindow : Window {
         });
         window.Show(this);
     }
+
+    /// <summary>Restarts the footer's pulse animation for each new error.</summary>
+    private void PulseStatusBar() => Dispatcher.UIThread.Post(() => {
+        StatusBar.Classes.Remove("pulse");
+        Dispatcher.UIThread.Post(() => StatusBar.Classes.Add("pulse"), DispatcherPriority.Background);
+    });
 
     private void OnDiffFolderPointerPressed(object? sender, PointerPressedEventArgs e) {
         if (sender is Control { DataContext: DiffFileFolderRow folder } && _projection != null) {
@@ -537,6 +554,7 @@ public partial class MainWindow : Window {
             _projection.PropertyChanged += OnProjectionPropertyChanged;
             _projection.WindowCommandRequested += OnWindowCommandRequested;
             _projection.WholeFileRequested += OpenWholeFile;
+            _projection.ErrorStatusRaised += PulseStatusBar;
             _projection.FileJumpRequested += file =>
                 Dispatcher.UIThread.Post(() => DiffRowsListBox.ScrollToTop(file.Header), DispatcherPriority.Background);
         }
@@ -977,7 +995,8 @@ public partial class MainWindow : Window {
 
         Restore(0, layout.GraphColumnWidth);
         Restore(2, layout.HashColumnWidth);
-        Restore(3, layout.AuthorColumnWidth);
+        // The author column now shows the email too; a width at or below the old 110px default takes the new default.
+        Restore(3, layout.AuthorColumnWidth is <= 110 ? null : layout.AuthorColumnWidth);
         Restore(4, layout.DateColumnWidth);
         columns[1].Width = new GridLength(1, GridUnitType.Star);
     }
