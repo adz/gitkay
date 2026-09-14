@@ -274,7 +274,9 @@ public partial class MainWindow : Window {
         e.Handled = true;
     }
 
-    private void OnSearchBoxGotFocus(object? sender, FocusChangedEventArgs e) => _projection?.UpdateRecentSearchMatches(true);
+    // Recent searches stay out of the way of live results: they open on an empty box, or on ↓ while typing.
+    private void OnSearchBoxGotFocus(object? sender, FocusChangedEventArgs e) =>
+        _projection?.UpdateRecentSearchMatches(string.IsNullOrWhiteSpace(SearchBox.Text));
 
     private void OnSearchBoxLostFocus(object? sender, RoutedEventArgs e) {
         // Delay so a click on a recent search lands before the popup closes.
@@ -284,7 +286,7 @@ public partial class MainWindow : Window {
     }
 
     private void OnSearchBoxTextChanged(object? sender, TextChangedEventArgs e) {
-        if (SearchBox.IsKeyboardFocusWithin) _projection?.UpdateRecentSearchMatches(true);
+        if (SearchBox.IsKeyboardFocusWithin) _projection?.UpdateRecentSearchMatches(string.IsNullOrWhiteSpace(SearchBox.Text));
     }
 
     private void OnRecentSearchPointerReleased(object? sender, PointerReleasedEventArgs e) {
@@ -300,6 +302,10 @@ public partial class MainWindow : Window {
         var popupOpen = projection.IsRecentSearchesOpen && projection.RecentSearchMatches.Count > 0;
 
         switch (e.Key) {
+            case Key.Down when !popupOpen && e.KeyModifiers == KeyModifiers.None:
+                projection.UpdateRecentSearchMatches(true);
+                e.Handled = projection.IsRecentSearchesOpen;
+                break;
             case Key.Down or Key.Up when popupOpen:
                 var count = projection.RecentSearchMatches.Count;
                 var index = RecentSearchesList.SelectedIndex;

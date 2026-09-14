@@ -1256,7 +1256,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         RecentSearchMatches.Clear();
         foreach (var recent in _recentSearches.Where(recent =>
                      !string.Equals(recent, text, StringComparison.Ordinal)
-                     && (text.Length == 0 || recent.Contains(text, StringComparison.OrdinalIgnoreCase))).Take(8)) {
+                     && (text.Length == 0 || recent.Contains(text, StringComparison.OrdinalIgnoreCase))).Take(6)) {
             RecentSearchMatches.Add(recent);
         }
 
