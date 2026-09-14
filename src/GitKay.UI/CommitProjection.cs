@@ -123,6 +123,15 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
                 : Brushes.Transparent;
     }
 
+    /// <summary>Every branch, remote branch and tag on this commit (not stashes), for copying names.</summary>
+    public IEnumerable<(string Name, string Kind)> RefNames =>
+        _refs.Where(reference => reference.Kind != GitKay.Core.Models.CommitRefKind.Stash)
+            .Select(reference => (reference.Name, reference.Kind switch {
+                GitKay.Core.Models.CommitRefKind.Tag => "tag",
+                GitKay.Core.Models.CommitRefKind.Remote => "remote branch",
+                _ => "branch",
+            }));
+
     /// <summary>Local branches pointing at this commit, whether or not their badges are shown.</summary>
     public IEnumerable<BranchTarget> LocalBranches =>
         _refs.Where(reference => reference.Kind == GitKay.Core.Models.CommitRefKind.Branch)

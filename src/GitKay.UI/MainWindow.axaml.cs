@@ -41,6 +41,7 @@ public partial class MainWindow : Window {
         CommitFindBox.AddHandler(InputElement.KeyDownEvent, OnCommitFindBoxKeyDown, RoutingStrategies.Tunnel);
         CommitListBox.FilterRequested += OnCommitFilterRequested;
         CommitListBox.BranchOperationRequested += OnBranchOperationRequested;
+        CommitListBox.CopyRequested += name => CopyToClipboard(name, "Copied");
         DiffRowsListBox.TextCopied += (_, lines) => { if (_projection != null) _projection.Status = lines == 1 ? "Copied 1 line" : $"Copied {lines} lines"; };
         AddHandler(InputElement.GotFocusEvent, (_, _) => UpdatePaneFocusIndicator(), RoutingStrategies.Bubble);
         AddHandler(InputElement.LostFocusEvent, (_, _) => Dispatcher.UIThread.Post(UpdatePaneFocusIndicator), RoutingStrategies.Bubble);

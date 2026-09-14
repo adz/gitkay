@@ -463,6 +463,9 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource {
     /// <summary>Push or pull ("push" / "pull") requested for a local branch on the clicked commit.</summary>
     public event Action<string, BranchTarget>? BranchOperationRequested;
 
+    /// <summary>Text the user asked to copy (a branch or tag name).</summary>
+    public event Action<string>? CopyRequested;
+
     private ContextMenu BuildContextMenu() {
         MenuItem Item(string title, Func<CommitProjection, System.Windows.Input.ICommand> command) {
             var item = new MenuItem { Header = title };
@@ -473,6 +476,14 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource {
         if (SelectedItem is { } selected) {
             foreach (var filter in BuildFilterItems(selected)) menu.Items.Add(filter);
             menu.Items.Add(new Separator());
+            var refNames = selected.RefNames.ToArray();
+            foreach (var (name, kind) in refNames) {
+                var copy = new MenuItem { Header = $"Copy {kind} name “{name}”" };
+                copy.Click += (_, _) => CopyRequested?.Invoke(name);
+                menu.Items.Add(copy);
+            }
+            if (refNames.Length > 0) menu.Items.Add(new Separator());
+
             var branches = selected.LocalBranches.ToArray();
             foreach (var branch in branches) {
                 MenuItem Operation(string title, string operation) {
