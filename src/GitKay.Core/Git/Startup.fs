@@ -69,7 +69,7 @@ module GitStartup =
         | "old" -> Some "old"
         | _ -> None
 
-    let private tryConsumeValue (args: string array) index optionName valueLabel allowEmpty =
+    let private tryConsumeValue (args: string array) index (optionName: string) (valueLabel: string) allowEmpty =
         let inlinePrefix = optionName + "="
         let arg = args.[index]
 

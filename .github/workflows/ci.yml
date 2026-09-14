@@ -36,3 +36,12 @@ jobs:
 
       - name: Test
         run: dotnet test tests/GitKay.Tests/GitKay.Tests.fsproj --configuration Release --no-build --nologo -v minimal
+
+      - name: Install NativeAOT prerequisites
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
+      # Unit tests run on the JIT; the self-test runs the NativeAOT binary over paths that only fail there.
+      - name: NativeAOT self-test
+        run: |
+          bash scripts/publish-gitkay.sh --rid linux-x64 --output artifacts/publish/linux-x64
+          artifacts/publish/linux-x64/gitkay --self-test

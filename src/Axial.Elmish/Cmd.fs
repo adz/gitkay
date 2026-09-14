@@ -115,16 +115,26 @@ type CmdDiagnostics private () =
     static member SetFailureHandler(handler: System.Action<string, string>) =
         onFailure <- fun name cause -> handler.Invoke(name, cause)
 
+/// Renders an error through its own ToString. `string error` on a generic value compiles to F#'s structured printer for
+/// unions and records, which throws under NativeAOT; error types render themselves (see GitError).
+module internal ErrorText =
+    let render (error: obj) =
+        match error with
+        | null -> "null"
+        | value -> value.ToString()
+
 [<RequireQualifiedAccess>]
 module Cmd =
     module OfFlow =
+        let private renderError (error: 'error) = ErrorText.render (box error)
+
         let private dispatchOrNothing onSuccess onError =
             function
             | Exit.Success value -> Some(onSuccess value)
             | Exit.Failure(Cause.Fail error) -> Some(onError error)
             | Exit.Failure cause when Cause.isInterrupted cause -> None
             | Exit.Failure(Cause.Die error) -> raise error
-            | Exit.Failure cause -> failwith (Cause.prettyPrint string cause)
+            | Exit.Failure cause -> failwith (Cause.prettyPrint renderError cause)
 
         /// Forks the workflow as a named fiber tracked by the diagnostics registry, and joins it.
         let private instrument (name: string) (workflow: Flow<'env, 'error, 'value>) : Flow<'env, 'error, 'value> =
@@ -145,7 +155,7 @@ module Cmd =
 
                     match exit with
                     | Exit.Failure cause when not (Cause.isInterrupted cause) ->
-                        CmdDiagnostics.ReportFailure(name, Cause.prettyPrint string cause)
+                        CmdDiagnostics.ReportFailure(name, Cause.prettyPrint renderError cause)
                     | _ -> ()
 
                     dispatchOrNothing onSuccess onError exit |> Option.iter dispatch

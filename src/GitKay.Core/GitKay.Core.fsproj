@@ -18,6 +18,7 @@
     <Compile Include="Git\Internal\History.fs" />
     <Compile Include="GitService.fs" />
     <Compile Include="App.fs" />
+    <Compile Include="SelfTest.fs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -76,6 +76,14 @@ jobs:
         shell: bash
         run: bash scripts/publish-gitkay.sh --rid ${{ matrix.rid }} --output artifacts/publish/${{ matrix.rid }} -p:Version=${{ needs.version.outputs.value }}
 
+      # Unit tests run on the JIT; this runs the shipped NativeAOT binary over the paths that only fail there.
+      - name: Self-test published binary
+        shell: bash
+        run: |
+          exe="artifacts/publish/${{ matrix.rid }}/gitkay"
+          [[ -f "$exe.exe" ]] && exe="$exe.exe"
+          "$exe" --self-test
+
       - name: Package (Linux)
         if: runner.os == 'Linux'
         shell: bash

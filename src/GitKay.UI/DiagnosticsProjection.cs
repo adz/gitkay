@@ -145,7 +145,7 @@ public sealed partial class DiagnosticsProjection : ObservableObject {
                 fiber.SettledAt.ToLocalTime().ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture),
                 fiber.Name,
                 FormatDuration(fiber.Duration.TotalMilliseconds),
-                fiber.Status.ToString(),
+                StatusName(fiber.Status),
                 fiber.Status.IsFailed,
                 fiber.Status.IsInterrupted,
                 fiber.Duration.TotalMilliseconds > SlowFlowMs,
@@ -221,6 +221,10 @@ public sealed partial class DiagnosticsProjection : ObservableObject {
         foreach (var failure in Failures.Take(20)) builder.AppendLine($"  {failure.Time}  {failure.Name}: {failure.Cause}");
         return builder.ToString();
     }
+
+    // F# unions' generated ToString needs reflection that NativeAOT removes; name the cases explicitly.
+    private static string StatusName(FiberStatus status) =>
+        status.IsSucceeded ? "Succeeded" : status.IsFailed ? "Failed" : status.IsInterrupted ? "Interrupted" : "Running";
 
     private static string FormatDuration(double ms) =>
         ms >= 60_000 ? $"{ms / 60_000:F1} min" : ms >= 1000 ? $"{ms / 1000:F2} s" : $"{ms:F1} ms";

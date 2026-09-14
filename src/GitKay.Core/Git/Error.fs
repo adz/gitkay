@@ -41,3 +41,8 @@ module GitError =
         | OperationCanceled operation -> $"{operation} canceled."
         | GitProcessFailed(_, error) -> ProcessError.describe error
         | OperationFailed(operation, status) -> $"{operation} failed: {status}"
+
+/// Hand-written ToString: the compiler-generated one uses reflection that NativeAOT removes, and generic diagnostics
+/// (such as `Cause.prettyPrint`) render errors through ToString.
+type GitError with
+    override this.ToString() = GitError.describe this

@@ -8,18 +8,28 @@ class Program {
     // SynchronizationContext-reliant code before AppMain is called: things aren't initialized
     // yet and stuff might break.
     [STAThread]
-    public static void Main(string[] args) {
+    public static int Main(string[] args) {
+        if (args.Length > 0 && args[0] == "--self-test") {
+            DiagnosticsLog.Initialize(args);
+            var repository = GitKay.Core.GitService.tryDiscoverRepositoryPath();
+            if (string.IsNullOrEmpty(repository)) {
+                Console.Error.WriteLine("Self-test must run inside a Git repository.");
+                return 2;
+            }
+            return SelfTest.Run(repository);
+        }
+
         var optionsResult = GitKay.Core.GitStartup.parseStartupOptions(args);
         if (optionsResult.IsOk) {
             var options = optionsResult.ResultValue;
             if (options.HelpRequested) {
                 Console.WriteLine(GitKay.Core.GitStartup.getHelpText());
-                return;
+                return 0;
             }
             if (options.VersionRequested) {
                 var version = typeof(Program).Assembly.GetName().Version;
                 Console.WriteLine($"gitkay version {version}");
-                return;
+                return 0;
             }
 
             if (options.LogFile != null && Microsoft.FSharp.Core.FSharpOption<string>.get_IsSome(options.LogFile)) {
@@ -40,8 +50,8 @@ class Program {
 
         App.StartupArgs = args;
 
-        BuildAvaloniaApp()
-        .StartWithClassicDesktopLifetime(args);
+        return BuildAvaloniaApp()
+            .StartWithClassicDesktopLifetime(args);
     }
 
     // Avalonia configuration, don't remove; also used by visual designer.
