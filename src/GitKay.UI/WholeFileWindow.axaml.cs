@@ -95,7 +95,7 @@ public partial class WholeFileWindow : Window {
     public WholeFileWindow(MainProjection main, string repositoryPath, string hash, string shortHash, FileTarget target) : this() {
         var projection = new WholeFileProjection(main, shortHash, main.SelectedCommit?.Subject ?? "", target);
         DataContext = projection;
-        Surface.TextCopied += (_, lines) => projection.LoadStatus = lines == 1 ? "Copied 1 line" : $"Copied {lines} lines";
+        Surface.TextCopied += (_, lines) => projection.LoadStatus = lines switch { 0 => "Copied", 1 => "Copied 1 line", _ => $"Copied {lines} lines" };
         AddHandler(KeyDownEvent, OnWindowKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         Opened += async (_, _) => {
             Surface.Focus();

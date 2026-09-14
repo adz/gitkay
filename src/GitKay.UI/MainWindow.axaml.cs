@@ -44,7 +44,7 @@ public partial class MainWindow : Window {
         CommitListBox.FilterRequested += OnCommitFilterRequested;
         CommitListBox.BranchOperationRequested += OnBranchOperationRequested;
         CommitListBox.CopyRequested += name => CopyToClipboard(name, "Copied");
-        DiffRowsListBox.TextCopied += (_, lines) => { if (_projection != null) _projection.Status = lines == 1 ? "Copied 1 line" : $"Copied {lines} lines"; };
+        DiffRowsListBox.TextCopied += (_, lines) => { if (_projection != null) _projection.Status = lines switch { 0 => "Copied", 1 => "Copied 1 line", _ => $"Copied {lines} lines" }; };
         AddHandler(InputElement.GotFocusEvent, (_, _) => UpdatePaneFocusIndicator(), RoutingStrategies.Bubble);
         AddHandler(InputElement.LostFocusEvent, (_, _) => Dispatcher.UIThread.Post(UpdatePaneFocusIndicator), RoutingStrategies.Bubble);
     }
@@ -241,7 +241,8 @@ public partial class MainWindow : Window {
                 e.Handled = true;
                 return;
             }
-            if (e.Key == Key.Y && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift && FocusedPane != Pane.None) {
+            if (e.Key == Key.Y && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift && FocusedPane != Pane.None
+                && !(FocusedPane == Pane.Diff && DiffRowsListBox.HandlesYank)) {
                 OnWindowCommandRequested(e.KeyModifiers == KeyModifiers.Shift ? "copy-subject" : "copy-hash");
                 e.Handled = true;
                 return;

@@ -205,3 +205,48 @@ module DiffSurfaceTests =
             let afterE = selectOne ()
             test <@ [ afterF; afterRepeat; afterT; afterBackF; afterBigW; afterBigB; afterE ] = [ ","; ","; "d"; "("; "t"; "c"; "l" ] @>)
 
+    let private yanked (fixture: DiffFixture) (line: string) =
+        let yank = fixture.Surface.LastYank
+        if yank.HasValue then
+            let struct (_, _, from, until) = yank.Value
+            line.Substring(from, until - from)
+        else "<nothing>"
+
+    [<Fact>]
+    let ``y takes a motion, a find, or an inside or around text object`` () =
+        Headless.run (fun () ->
+            use fixture = new DiffFixture "diff"
+            let line = "call(first.second, third) + x"
+            fixture.Surface.Focus() |> ignore
+            fixture.Surface.SelectedItem <- fixture.Line 0 6
+            let results = ResizeArray<string>()
+            let keep () = results.Add(yanked fixture line)
+
+            fixture.Press Key.Y; fixture.Press Key.Y; keep ()                                       // yy
+            fixture.Press Key.Y; fixture.Press Key.E; keep ()                                       // ye
+            fixture.Press(Key.F, symbol = "f"); fixture.Press(Key.OemPeriod, symbol = "."); fixture.Press Key.L // caret to "second"
+            fixture.Press Key.Y; fixture.Press Key.I; fixture.Press(Key.W, symbol = "w"); keep ()   // yiw
+            fixture.Press Key.Y; fixture.Press Key.I; fixture.Press(Key.D9, RawInputModifiers.Shift, "("); keep () // yi(
+            fixture.Press Key.Y; fixture.Press Key.A; fixture.Press(Key.B, symbol = "b"); keep ()   // yab
+            fixture.Press Key.Y; fixture.Press(Key.T, symbol = "t"); fixture.Press(Key.D0, RawInputModifiers.Shift, ")"); keep () // yt)
+            fixture.Press Key.Y; fixture.Press(Key.D4, RawInputModifiers.Shift, "$"); keep ()      // y$
+            // Like vim, each yank leaves the caret at the start of what it copied.
+            test <@ List.ofSeq results = [ line; "call"; "second"; "first.second, third"; "(first.second, third)"; "(first.second, third"; "(first.second, third) + x" ] @>)
+
+    [<Theory>]
+    [<InlineData("say \"hello there\" now", 7, '"', false, "hello there")>]
+    [<InlineData("say \"hello there\" now", 7, '"', true, "\"hello there\"")>]
+    [<InlineData("f(a, [b, c])", 7, '[', false, "b, c")>]
+    [<InlineData("f(a, [b, c])", 7, ')', true, "(a, [b, c])")>]
+    [<InlineData("one  two three", 5, 'w', true, "two ")>]
+    [<InlineData("one two", 5, 'w', true, " two")>]
+    [<InlineData("x = a.b(c)", 5, 'W', false, "a.b(c)")>]
+    let ``text objects find the span around the caret`` (text: string, column: int, kind: char, around: bool, expected: string) =
+        let span = DiffSurfaceControl.TextObject(text, column, kind, around)
+        let actual =
+            if span.HasValue then
+                let struct (from, until) = span.Value
+                Some(text.Substring(from, until - from))
+            else None
+        test <@ actual = Some expected @>
+
