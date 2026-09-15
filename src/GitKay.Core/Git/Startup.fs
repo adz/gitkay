@@ -2,6 +2,7 @@ namespace GitKay.Core
 
 open System
 open Reified
+open Reified.Result
 
 /// Startup argument parsing and normalization. This module is pure: it performs no Git or host effects.
 module GitStartup =
@@ -72,21 +73,17 @@ module GitStartup =
             Some(GitSearch.modeKey (GitSearch.parseMode key))
         | _ -> None
 
-    let private tryConsumeValue (args: string array) index (optionName: string) (valueLabel: string) allowEmpty =
-        let inlinePrefix = optionName + "="
-        let arg = args.[index]
+    /// <summary>Why the command line couldn't be read.</summary>
+    type StartupError =
+        | UnrecognizedArgument of argument: string
+        | MissingValue of option: string * label: string
+        | InvalidValue of label: string * value: string
 
-        if arg.StartsWith(inlinePrefix) then
-            let value = arg.Substring(inlinePrefix.Length)
-
-            if allowEmpty || not (String.IsNullOrWhiteSpace value) then
-                Ok(value, index + 1)
-            else
-                Error $"Missing {valueLabel} after {optionName}."
-        elif index + 1 < args.Length && not (args.[index + 1].StartsWith("--")) then
-            Ok(args.[index + 1], index + 2)
-        else
-            Error $"Missing {valueLabel} after {optionName}."
+    let describeError error =
+        match error with
+        | UnrecognizedArgument argument -> "Unrecognized startup argument: " + argument
+        | MissingValue(option, label) -> $"Missing {label} after {option}."
+        | InvalidValue(label, value) -> $"Invalid {label}: {value}"
 
     /// Expands one revision argument: ^X, A..B and A...B ranges (an empty side means HEAD), or a plain revision.
     let revisionTargets (arg: string) : StartupTarget list =
@@ -149,298 +146,149 @@ module GitStartup =
             | _ -> "before:"
         prefix + quoteTerm value
 
-    let parseStartupOptions (args: string array) =
-        let mutable index = 0
-        let mutable hasAll = false
-        let mutable targets = ResizeArray<StartupTarget>()
-        let mutable showBranchRefs = defaultStartupOptions.ShowBranchRefs
-        let mutable showStashes = defaultStartupOptions.ShowStashes
-        let mutable diffContextLines = defaultStartupOptions.DiffContextLines
-        let mutable diffLayout = defaultStartupOptions.DiffLayout
-        let mutable searchQuery = defaultStartupOptions.SearchQuery
-        let mutable searchScopeKey = defaultStartupOptions.SearchScopeKey
-        let mutable selectedCommitHash = defaultStartupOptions.SelectedCommitHash
-        let mutable logFile = defaultStartupOptions.LogFile
-        let mutable helpRequested = false
-        let mutable versionRequested = false
-        let positionals = ResizeArray<string>()
-        let paths = ResizeArray<string>()
-        let filterTerms = ResizeArray<string>()
-        let mutable searchUseRegex = false
+    /// <summary>What has been read so far; lists are newest first until the end.</summary>
+    type private Reading =
+        { Options: StartupOptions
+          HasAll: bool
+          Targets: StartupTarget list
+          Positionals: string list
+          Paths: string list
+          Filters: string list }
 
-        let rec loop () =
-            if index >= args.Length then
-                // A single bare hash selects that commit in the normal history; anything else names history tips.
-                let isHash (value: string) = value.Length >= 4 && value.Length <= 40 && value |> Seq.forall Uri.IsHexDigit
-                match List.ofSeq positionals with
-                | [ single ] when isHash single && targets.Count = 0 ->
-                    if selectedCommitHash.IsNone then selectedCommitHash <- Some single
-                | many ->
-                    for positional in many do
-                        targets.AddRange(revisionTargets positional)
+    /// <summary>A reader for one option: None when the arguments don't start with it.</summary>
+    type private OptionReader = string list -> Reading -> Result<Reading * string list, StartupError> option
 
-                let exclusions =
-                    targets |> Seq.filter (function Exclude _ | ExcludeMergeBase _ -> true | _ -> false) |> List.ofSeq
-                let pathTargets = paths |> Seq.map Path |> List.ofSeq
-                let startupTargets =
-                    if hasAll then
-                        StartupTarget.All :: exclusions @ pathTargets
-                    else
-                        List.ofSeq targets @ pathTargets
+    let private flag (names: string list) (apply: Reading -> Reading) : OptionReader =
+        fun args reading ->
+            match args with
+            | arg :: rest when List.contains arg names -> Some(Ok(apply reading, rest))
+            | _ -> None
 
-                let combinedQuery =
-                    [ yield! (if String.IsNullOrWhiteSpace searchQuery then [] else [ searchQuery.Trim() ]); yield! filterTerms ]
-                    |> String.concat " "
+    /// <summary>
+    /// An option taking a value as <c>--name value</c> or <c>--name=value</c>. A separate value can't start with "--".
+    /// <paramref name="optional"/> says when a missing value is ignored rather than an error.
+    /// </summary>
+    let private valued (name: string) (label: string) (allowEmpty: bool) (optional: Reading -> bool) (apply: string -> Reading -> Result<Reading, StartupError>) : OptionReader =
+        fun args reading ->
+            let missing rest = if optional reading then Ok(reading, rest) else Error(MissingValue(name, label))
+            match args with
+            | arg :: rest when arg = name ->
+                match rest with
+                | value :: after when not (value.StartsWith "--") -> Some(apply value reading |> Result.map (fun next -> next, after))
+                | _ -> Some(missing rest)
+            | arg :: rest when arg.StartsWith(name + "=") ->
+                let value = arg.Substring(name.Length + 1)
+                if allowEmpty || not (String.IsNullOrWhiteSpace value) then Some(apply value reading |> Result.map (fun next -> next, rest))
+                else Some(missing rest)
+            | _ -> None
 
-                Ok
-                    {
-                        StartupTargets = startupTargets
-                        ShowBranchRefs = showBranchRefs
-                        ShowStashes = showStashes
-                        DiffContextLines = diffContextLines
-                        DiffLayout = diffLayout
-                        SearchQuery = combinedQuery
-                        SearchScopeKey = searchScopeKey
-                        SelectedCommitHash = selectedCommitHash
-                        SearchUseRegex = searchUseRegex
-                        ShowOnlyMatches = filterTerms.Count > 0
-                        LogFile = logFile
-                        HelpRequested = helpRequested
-                        VersionRequested = versionRequested
-                    }
-            else
-                match args.[index] with
-                | "--help" | "-h" ->
-                    helpRequested <- true
-                    index <- index + 1
-                    loop ()
-                | "--version" | "-v" ->
-                    versionRequested <- true
-                    index <- index + 1
-                    loop ()
-                | "--all" ->
-                    hasAll <- true
-                    index <- index + 1
-                    loop ()
-                | "--show-branch-refs" ->
-                    showBranchRefs <- true
-                    index <- index + 1
-                    loop ()
-                | "--hide-branch-refs" ->
-                    showBranchRefs <- false
-                    index <- index + 1
-                    loop ()
-                | "--show-stashes" ->
-                    showStashes <- true
-                    index <- index + 1
-                    loop ()
-                | "--hide-stashes" ->
-                    showStashes <- false
-                    index <- index + 1
-                    loop ()
-                | "--diff-context" ->
-                    match tryConsumeValue args index "--diff-context" "diff context line count" false with
-                    | Error err -> Error err
-                    | Ok (value, nextIndex) ->
-                        match Parse.int value with
-                        | Ok parsed ->
-                            diffContextLines <- max 0 parsed
-                            index <- nextIndex
-                            loop ()
-                        | Error _ ->
-                            Error ("Invalid diff context line count: " + value)
-                | arg when arg.StartsWith("--diff-context=") ->
-                    let value = arg.Substring("--diff-context=".Length)
+    let private always _ = false
 
-                    match Parse.int value with
-                    | Ok parsed ->
-                        diffContextLines <- max 0 parsed
-                        index <- index + 1
-                        loop ()
-                    | Error _ ->
-                        Error ("Invalid diff context line count: " + value)
-                | "--diff-presentation" ->
-                    match tryConsumeValue args index "--diff-presentation" "diff presentation mode" false with
-                    | Error err -> Error err
-                    | Ok (value, nextIndex) ->
-                        match DiffLayout.tryParse value with
-                        | Some layout ->
-                            diffLayout <- layout
-                            index <- nextIndex
-                            loop ()
-                        | None ->
-                            Error ("Invalid diff presentation mode: " + value)
-                | arg when arg.StartsWith("--diff-presentation=") ->
-                    let value = arg.Substring("--diff-presentation=".Length)
+    let private withOptions (update: StartupOptions -> StartupOptions) (reading: Reading) = { reading with Options = update reading.Options }
 
-                    match DiffLayout.tryParse value with
-                    | Some layout ->
-                        diffLayout <- layout
-                        index <- index + 1
-                        loop ()
-                    | None ->
-                        Error ("Invalid diff presentation mode: " + value)
-                | "--search" ->
-                    match tryConsumeValue args index "--search" "search query" true with
-                    | Error err -> Error err
-                    | Ok (value, nextIndex) ->
-                        searchQuery <- value
-                        index <- nextIndex
-                        loop ()
-                | arg when arg.StartsWith("--search=") ->
-                    searchQuery <- arg.Substring("--search=".Length)
-                    index <- index + 1
-                    loop ()
-                | "--search-scope" ->
-                    match tryConsumeValue args index "--search-scope" "search scope" false with
-                    | Error err -> Error err
-                    | Ok (value, nextIndex) ->
-                        match tryParseSearchScopeKey value with
-                        | Some scopeKey ->
-                            searchScopeKey <- scopeKey
-                            index <- nextIndex
-                            loop ()
-                        | None ->
-                            Error ("Invalid search scope: " + value)
-                | arg when arg.StartsWith("--search-scope=") ->
-                    let value = arg.Substring("--search-scope=".Length)
+    let private setOption (update: StartupOptions -> StartupOptions) : string -> Reading -> Result<Reading, StartupError> =
+        fun _ reading -> Ok(withOptions update reading)
 
-                    match tryParseSearchScopeKey value with
-                    | Some scopeKey ->
-                        searchScopeKey <- scopeKey
-                        index <- index + 1
-                        loop ()
-                    | None ->
-                        Error ("Invalid search scope: " + value)
-                | "--select" | "--select-commit" as option ->
-                    match tryConsumeValue args index option "revision" false with
-                    | Error err -> Error err
-                    | Ok (value, nextIndex) ->
-                        selectedCommitHash <- Some value
-                        index <- nextIndex
-                        loop ()
-                | arg when arg.StartsWith("--select=") || arg.StartsWith("--select-commit=") ->
-                    let value = arg.Substring(arg.IndexOf('=') + 1)
-                    selectedCommitHash <- Some value
-                    index <- index + 1
-                    loop ()
-                | "--log" ->
-                    match tryConsumeValue args index "--log" "log file" false with
-                    | Error err -> Error err
-                    | Ok (value, nextIndex) ->
-                        logFile <- Some value
-                        index <- nextIndex
-                        loop ()
-                | arg when arg.StartsWith("--log=") ->
-                    logFile <- Some (arg.Substring("--log=".Length))
-                    index <- index + 1
-                    loop ()
-                | "--branch" ->
-                    if hasAll then
-                        index <-
-                            if index + 1 < args.Length && not (args.[index + 1].StartsWith("--")) then
-                                index + 2
-                            else
-                                index + 1
+    let private parsedOption (label: string) (parse: string -> 'value option) (update: 'value -> StartupOptions -> StartupOptions) =
+        fun (value: string) reading ->
+            parse value
+            |> Result.fromOption
+            |> Result.orError (InvalidValue(label, value))
+            |> Result.map (fun parsed -> withOptions (update parsed) reading)
 
-                        loop ()
-                    else
-                        match tryConsumeValue args index "--branch" "branch name" false with
-                        | Error err -> Error err
-                        | Ok (value, nextIndex) ->
-                            targets.Add(StartupTarget.Branch value)
-                            index <- nextIndex
-                            loop ()
-                | arg when arg.StartsWith("--branch=") ->
-                    let value = arg.Substring("--branch=".Length)
+    /// <summary>--branch, --sha and --tag name history tips, ignored (value and all) once --all is given.</summary>
+    let private tip (name: string) (label: string) (target: string -> StartupTarget) =
+        valued name label false (fun reading -> reading.HasAll) (fun value reading ->
+            Ok(if reading.HasAll then reading else { reading with Targets = target value :: reading.Targets }))
 
-                    if not hasAll then
-                        targets.Add(StartupTarget.Branch value)
+    let private filter (option: string) =
+        valued option "value" false always (fun value reading -> Ok { reading with Filters = filterTerm option value :: reading.Filters })
 
-                    index <- index + 1
-                    loop ()
-                | "--sha" ->
-                    if hasAll then
-                        index <-
-                            if index + 1 < args.Length && not (args.[index + 1].StartsWith("--")) then
-                                index + 2
-                            else
-                                index + 1
+    /// <summary>-S and -G take the next argument whatever it looks like, or a value joined on.</summary>
+    let private pickaxe (option: string) : OptionReader =
+        fun args reading ->
+            let add value reading =
+                { reading with
+                    Filters = ("diff:" + quoteTerm value) :: reading.Filters
+                    Options = if option = "-G" then { reading.Options with SearchUseRegex = true } else reading.Options }
+            match args with
+            | arg :: value :: rest when arg = option -> Some(Ok(add value reading, rest))
+            | arg :: rest when arg.StartsWith option && arg.Length > 2 -> Some(Ok(add (arg.Substring 2) reading, rest))
+            | _ -> None
 
-                        loop ()
-                    else
-                        match tryConsumeValue args index "--sha" "commit hash" false with
-                        | Error err -> Error err
-                        | Ok (value, nextIndex) ->
-                            targets.Add(StartupTarget.Sha value)
-                            index <- nextIndex
-                            loop ()
-                | arg when arg.StartsWith("--sha=") ->
-                    let value = arg.Substring("--sha=".Length)
+    let private readers: OptionReader list =
+        [ flag [ "--help"; "-h" ] (withOptions (fun o -> { o with HelpRequested = true }))
+          flag [ "--version"; "-v" ] (withOptions (fun o -> { o with VersionRequested = true }))
+          flag [ "--all" ] (fun reading -> { reading with HasAll = true })
+          flag [ "--show-branch-refs" ] (withOptions (fun o -> { o with ShowBranchRefs = true }))
+          flag [ "--hide-branch-refs" ] (withOptions (fun o -> { o with ShowBranchRefs = false }))
+          flag [ "--show-stashes" ] (withOptions (fun o -> { o with ShowStashes = true }))
+          flag [ "--hide-stashes" ] (withOptions (fun o -> { o with ShowStashes = false }))
+          valued "--diff-context" "diff context line count" false always
+              (fun value reading ->
+                  Parse.int value
+                  |> Result.orError (InvalidValue("diff context line count", value))
+                  |> Result.map (fun lines -> withOptions (fun o -> { o with DiffContextLines = max 0 lines }) reading))
+          valued "--diff-presentation" "diff presentation mode" false always
+              (parsedOption "diff presentation mode" DiffLayout.tryParse (fun layout o -> { o with DiffLayout = layout }))
+          valued "--search" "search query" true always (fun value -> setOption (fun o -> { o with SearchQuery = value }) value)
+          valued "--search-scope" "search scope" false always
+              (parsedOption "search scope" tryParseSearchScopeKey (fun key o -> { o with SearchScopeKey = key }))
+          valued "--select" "revision" false always (fun value -> setOption (fun o -> { o with SelectedCommitHash = Some value }) value)
+          valued "--select-commit" "revision" false always (fun value -> setOption (fun o -> { o with SelectedCommitHash = Some value }) value)
+          valued "--log" "log file" false always (fun value -> setOption (fun o -> { o with LogFile = Some value }) value)
+          tip "--branch" "branch name" Branch
+          tip "--sha" "commit hash" Sha
+          tip "--tag" "tag name" Tag
+          filter "--author"
+          filter "--grep"
+          filter "--since"
+          filter "--after"
+          filter "--until"
+          filter "--before"
+          pickaxe "-S"
+          pickaxe "-G" ]
 
-                    if not hasAll then
-                        targets.Add(StartupTarget.Sha value)
+    let rec private read (reading: Reading) (args: string list) : Result<Reading, StartupError> =
+        match args with
+        | [] -> Ok reading
+        | "--" :: paths -> Ok { reading with Paths = paths }
+        | _ ->
+            match readers |> List.tryPick (fun reader -> reader args reading) with
+            | Some(Ok(next, rest)) -> read next rest
+            | Some(Error error) -> Error error
+            | None ->
+                match args with
+                | arg :: rest when not (arg.StartsWith "-") || (arg.StartsWith "^" && arg.Length > 1) ->
+                    read { reading with Positionals = arg :: reading.Positionals } rest
+                | arg :: _ -> Error(UnrecognizedArgument arg)
+                | [] -> Ok reading
 
-                    index <- index + 1
-                    loop ()
-                | "--tag" ->
-                    if hasAll then
-                        index <-
-                            if index + 1 < args.Length && not (args.[index + 1].StartsWith("--")) then
-                                index + 2
-                            else
-                                index + 1
+    /// <summary>Options with what was read turned into history targets and the search query.</summary>
+    let private finish (reading: Reading) =
+        // A single bare hash selects that commit in the normal history; anything else names history tips.
+        let isHash (value: string) = value.Length >= 4 && value.Length <= 40 && value |> Seq.forall Uri.IsHexDigit
+        let explicitTargets = List.rev reading.Targets
+        let positionals = List.rev reading.Positionals
+        let selected, targets =
+            match positionals with
+            | [ single ] when isHash single && explicitTargets.IsEmpty ->
+                reading.Options.SelectedCommitHash |> Option.orElse (Some single), explicitTargets
+            | many -> reading.Options.SelectedCommitHash, explicitTargets @ List.collect revisionTargets many
+        let pathTargets = reading.Paths |> List.map Path
+        let exclusions = targets |> List.filter (function Exclude _ | ExcludeMergeBase _ -> true | _ -> false)
+        let filters = List.rev reading.Filters
+        let query = reading.Options.SearchQuery
+        { reading.Options with
+            StartupTargets = (if reading.HasAll then All :: exclusions else targets) @ pathTargets
+            SelectedCommitHash = selected
+            SearchQuery = ([ if not (String.IsNullOrWhiteSpace query) then query.Trim() ] @ filters) |> String.concat " "
+            ShowOnlyMatches = not filters.IsEmpty }
 
-                        loop ()
-                    else
-                        match tryConsumeValue args index "--tag" "tag name" false with
-                        | Error err -> Error err
-                        | Ok (value, nextIndex) ->
-                            targets.Add(StartupTarget.Tag value)
-                            index <- nextIndex
-                            loop ()
-                | arg when arg.StartsWith("--tag=") ->
-                    let value = arg.Substring("--tag=".Length)
-
-                    if not hasAll then
-                        targets.Add(StartupTarget.Tag value)
-
-                    index <- index + 1
-                    loop ()
-                | "--" ->
-                    paths.AddRange(args |> Seq.skip (index + 1))
-                    index <- args.Length
-                    loop ()
-                | "--author" | "--grep" | "--since" | "--after" | "--until" | "--before" as option ->
-                    match tryConsumeValue args index option "value" false with
-                    | Error err -> Error err
-                    | Ok(value, nextIndex) ->
-                        filterTerms.Add(filterTerm option value)
-                        index <- nextIndex
-                        loop ()
-                | arg when [ "--author="; "--grep="; "--since="; "--after="; "--until="; "--before=" ] |> List.exists arg.StartsWith ->
-                    let option = arg.Substring(0, arg.IndexOf '=')
-                    filterTerms.Add(filterTerm option (arg.Substring(arg.IndexOf '=' + 1)))
-                    index <- index + 1
-                    loop ()
-                | "-S" | "-G" as option when index + 1 < args.Length ->
-                    filterTerms.Add("diff:" + quoteTerm args.[index + 1])
-                    if option = "-G" then searchUseRegex <- true
-                    index <- index + 2
-                    loop ()
-                | arg when (arg.StartsWith "-S" || arg.StartsWith "-G") && arg.Length > 2 ->
-                    filterTerms.Add("diff:" + quoteTerm (arg.Substring 2))
-                    if arg.StartsWith "-G" then searchUseRegex <- true
-                    index <- index + 1
-                    loop ()
-                | arg when not (arg.StartsWith "-") || (arg.StartsWith "^" && arg.Length > 1) ->
-                    positionals.Add arg
-                    index <- index + 1
-                    loop ()
-                | arg ->
-                    Error ("Unrecognized startup argument: " + arg)
-
-        loop ()
+    /// <summary>Reads GitKay's command line: gitk- and git-log-style options, revisions, ranges and -- paths.</summary>
+    let parseStartupOptions (args: string array) : Result<StartupOptions, StartupError> =
+        let empty = { Options = defaultStartupOptions; HasAll = false; Targets = []; Positionals = []; Paths = []; Filters = [] }
+        read empty (List.ofArray args) |> Result.map finish
 
     let parseStartupTargets args =
         parseStartupOptions args |> Result.map _.StartupTargets

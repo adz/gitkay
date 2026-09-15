@@ -245,13 +245,13 @@ summary Another line
                 |]
 
         match result with
-        | Error err -> failwith err
+        | Error err -> failwith (GitStartup.describeError err)
         | Ok targets ->
             test <@ targets = [ GitStartup.StartupTarget.Branch "main"; GitStartup.StartupTarget.Sha "abc123"; GitStartup.StartupTarget.Tag "v1.0.0" ] @>
 
         let allResult = GitStartup.parseStartupTargets [| "--all" |]
         match allResult with
-        | Error err -> failwith err
+        | Error err -> failwith (GitStartup.describeError err)
         | Ok targets -> test <@ targets = [ GitStartup.StartupTarget.All ] @>
 
     [<Fact>]
@@ -272,7 +272,7 @@ summary Another line
                 |]
 
         match result with
-        | Error err -> failwith err
+        | Error err -> failwith (GitStartup.describeError err)
         | Ok options ->
             test <@ options.StartupTargets = [ GitStartup.StartupTarget.All ] @>
             test <@ options.ShowBranchRefs @>
@@ -439,8 +439,22 @@ summary Another line
             test <@ resolve "no-such-thing" = None @>)
 
     [<Fact>]
+    let ``parseStartupOptions should report what it couldn't read`` () =
+        let error args = match GitStartup.parseStartupOptions args with Ok _ -> None | Error e -> Some(GitStartup.describeError e)
+        test <@ error [| "--bogus" |] = Some "Unrecognized startup argument: --bogus" @>
+        test <@ error [| "--diff-context" |] = Some "Missing diff context line count after --diff-context." @>
+        test <@ error [| "--diff-context=many" |] = Some "Invalid diff context line count: many" @>
+        test <@ error [| "--diff-presentation"; "sideways" |] = Some "Invalid diff presentation mode: sideways" @>
+        test <@ error [| "--search-scope=nowhere" |] = Some "Invalid search scope: nowhere" @>
+        test <@ error [| "--log=" |] = Some "Missing log file after --log." @>
+        test <@ error [| "-S" |] = Some "Unrecognized startup argument: -S" @>
+        // Once --all is given, --branch/--sha/--tag are ignored, including a missing value.
+        test <@ error [| "--all"; "--branch" |] = None && error [| "--branch" |] = Some "Missing branch name after --branch." @>
+        test <@ error [| "--search="; "-G"; "--x"; "--"; "-weird" |] = None @>
+
+    [<Fact>]
     let ``parseStartupOptions should accept gitk-style select-commit`` () =
-        let selected args = match GitStartup.parseStartupOptions args with Ok options -> options.SelectedCommitHash | Error e -> failwith e
+        let selected args = match GitStartup.parseStartupOptions args with Ok options -> options.SelectedCommitHash | Error e -> failwith (GitStartup.describeError e)
         test <@ selected [| "--select-commit=HEAD~2" |] = Some "HEAD~2" @>
         test <@ selected [| "--select-commit"; "main" |] = Some "main" @>
         test <@ selected [| "--select"; "abc123" |] = Some "abc123" @>
@@ -2829,10 +2843,10 @@ module StartupSelectionTests =
         match GitStartup.parseStartupOptions [| "d17398a" |] with
         | Ok options ->
             test <@ options.SelectedCommitHash = Some "d17398a" && options.StartupTargets = [] @>
-        | Error e -> failwith e
+        | Error e -> failwith (GitStartup.describeError e)
         match GitStartup.parseStartupOptions [| "main" |] with
         | Ok options -> test <@ options.SelectedCommitHash = None && options.StartupTargets = [ GitStartup.StartupTarget.Revision "main" ] @>
-        | Error e -> failwith e
+        | Error e -> failwith (GitStartup.describeError e)
 
     let private commitOf hash : Models.Commit =
         { Hash = hash; AuthorName = "A"; AuthorEmail = "a@x"; Timestamp = 1L; Parents = []; Subject = hash; Message = hash; Refs = [] }
@@ -2861,7 +2875,7 @@ module StartupSelectionTests =
 
 module CliTests =
 
-    let private parse args = match GitStartup.parseStartupOptions args with Ok o -> o | Error e -> failwith e
+    let private parse args = match GitStartup.parseStartupOptions args with Ok o -> o | Error e -> failwith (GitStartup.describeError e)
 
     [<Fact>]
     let ``ranges, excludes and several tips should become targets`` () =
