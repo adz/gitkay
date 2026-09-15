@@ -230,9 +230,14 @@ public partial class MainWindow : Window, IVimCommands {
         if (e.Key == Key.P && e.KeyModifiers == ctrlShift) { OpenPalette(PaletteMode.Commands); e.Handled = true; return; }
         if (e.Key == Key.P && e.KeyModifiers == KeyModifiers.Control) { OpenPalette(PaletteMode.Files); e.Handled = true; return; }
         if (e.Key == Key.D && e.KeyModifiers == ctrlShift) { ShowDiagnostics(); e.Handled = true; return; }
-        if (e.Key == Key.C && e.KeyModifiers == ctrlShift) { OpenCommitWindow(); e.Handled = true; return; }
+        if (e.Key == Key.C && e.KeyModifiers == ctrlShift) {
+            // Opened after this key finishes, so the window that gets focus doesn't lose it back to this one.
+            Dispatcher.UIThread.Post(OpenCommitWindow, DispatcherPriority.Background);
+            e.Handled = true;
+            return;
+        }
         if (e.Key == Key.Enter && e.KeyModifiers == KeyModifiers.None && CommitListBox.IsKeyboardFocusWithin && CommitListBox.FocusedCommit is { IsWorkingTree: true }) {
-            OpenCommitWindow();
+            Dispatcher.UIThread.Post(OpenCommitWindow, DispatcherPriority.Background);
             e.Handled = true;
             return;
         }
@@ -596,6 +601,7 @@ public partial class MainWindow : Window, IVimCommands {
     }
 
     private CommitWindow? _commitWindow;
+    internal CommitWindow? OpenCommitWindowForTests => _commitWindow;
 
     private void OnCommitWindowMenuItemClick(object? sender, RoutedEventArgs e) => OpenCommitWindow();
 
@@ -603,6 +609,7 @@ public partial class MainWindow : Window, IVimCommands {
     private void OpenCommitWindow() {
         if (_commitWindow is { } open) {
             open.Activate();
+            open.FocusMessage();
             return;
         }
         if (_projection is not { RepositoryPath: { } repo, WorkingDirectory: { } directory } projection) {
@@ -619,6 +626,7 @@ public partial class MainWindow : Window, IVimCommands {
         _commitWindow.OpenInVsCode = (path, line) => projection.OpenInVsCode(new FileTarget(path, path, path, null), line);
         _commitWindow.Closed += (_, _) => _commitWindow = null;
         _commitWindow.Show(this);
+        _commitWindow.Activate();
     }
 
     private async System.Threading.Tasks.Task PushCurrentBranchAsync(string directory) {

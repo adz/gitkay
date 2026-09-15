@@ -463,3 +463,43 @@ module HistoryChipTests =
             test <@ visible branchCross && visible fileCross @>
             test <@ afterBranch = App.Msg.SetHistoryTargets [ GitStartup.Path "src/a.fs" ] @>
             test <@ afterFile = App.Msg.SetHistoryTargets [ GitStartup.Revision "main" ] @>)
+
+    [<Fact>]
+    let ``the commit window takes keyboard focus when opened with Ctrl+Shift+C`` () =
+        let root = IO.Path.Combine(IO.Path.GetTempPath(), "gitkay-ui-" + Guid.NewGuid().ToString("N"))
+        IO.Directory.CreateDirectory root |> ignore
+        let git (args: string) =
+            let info = Diagnostics.ProcessStartInfo("git", args, WorkingDirectory = root, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true)
+            use p = Diagnostics.Process.Start info
+            p.WaitForExit()
+        git "init -q -b main"
+        IO.File.WriteAllText(IO.Path.Combine(root, "a.txt"), "one\n")
+        try
+            let mutable result = (false, false, false, false)
+            Headless.run (fun () ->
+                let projection = MainProjection(RepositoryPath = IO.Path.Combine(root, ".git"))
+                let window = MainWindow(Width = 1200.0, Height = 800.0, DataContext = projection)
+                try
+                    window.Show()
+                    Headless.pump ()
+                    window.KeyPressQwerty(PhysicalKey.C, RawInputModifiers.Control ||| RawInputModifiers.Shift)
+                    Headless.pump ()
+                    match window.OpenCommitWindowForTests with
+                    | null -> ()
+                    | commit ->
+                        try
+                            Headless.pump ()
+                            let focused = TopLevel.GetTopLevel(commit).FocusManager.GetFocusedElement()
+                            commit.KeyTextInput "Fix"
+                            Headless.pump ()
+                            // The headless platform keeps every window "active", so check what matters: keys land in the commit window.
+                            result <- (true, obj.ReferenceEquals(focused, commit.MessageBoxForTests), commit.IsActive, commit.MessageBoxForTests.Text = "Fix")
+                        finally
+                            commit.Close()
+                finally
+                    window.Close()
+                    Headless.pump ())
+            let opened, messageFocused, active, typed = result
+            test <@ opened && messageFocused && active && typed @>
+        finally
+            try IO.Directory.Delete(root, true) with _ -> ()

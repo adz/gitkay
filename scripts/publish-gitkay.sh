@@ -136,6 +136,12 @@ publish_one() {
   mkdir -p "$output_dir"
   echo "Publishing GitKay for $rid to $output_dir"
   "${publish_args[@]}"
+
+  # gitkay-gui opens the commit window directly, as `git gui` does next to `gitk`.
+  case "$rid" in
+    win-*) cp "$ROOT_DIR/assets/launchers/gitkay-gui.cmd" "$output_dir/" ;;
+    *) cp "$ROOT_DIR/assets/launchers/gitkay-gui" "$output_dir/" && chmod +x "$output_dir/gitkay-gui" ;;
+  esac
 }
 
 for rid in "${RUNTIME_IDS[@]}"; do

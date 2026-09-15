@@ -59,6 +59,7 @@ Section "Install"
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
   CreateShortcut "$SMPROGRAMS\GitKay.lnk" "$INSTDIR\gitkay.exe"
+  CreateShortcut "$SMPROGRAMS\GitKay Commit.lnk" "$INSTDIR\gitkay.exe" "gui"
   !insertmacro UserPath add
 
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "${APP_NAME}"
@@ -76,6 +77,7 @@ SectionEnd
 Section "Uninstall"
   !insertmacro UserPath remove
   Delete "$SMPROGRAMS\GitKay.lnk"
+  Delete "$SMPROGRAMS\GitKay Commit.lnk"
   RMDir /r "$INSTDIR"  ; $INSTDIR is the uninstaller's own directory here
   DeleteRegKey HKCU "${UNINSTALL_KEY}"
 SectionEnd

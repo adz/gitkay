@@ -12,6 +12,7 @@ namespace GitKay.UI;
 
 public partial class App : Application {
     public static string[] StartupArgs { get; set; } = Array.Empty<string>();
+    public static GitStartup.LaunchMode LaunchMode { get; set; } = GitStartup.LaunchMode.History;
     private static Exception? _startupInitializationFailure;
 
     public override void Initialize() {
@@ -44,7 +45,45 @@ public partial class App : Application {
         base.OnFrameworkInitializationCompleted();
     }
 
+    /// <summary>gitkay gui: only the commit window, with the saved theme; closing it exits.</summary>
+    private async Task InitializeCommitWindowAsync(IClassicDesktopStyleApplicationLifetime desktop) {
+        try {
+            var (settings, repository) = await Task.Run(() => (new AppSettingsStore().Load(), GitService.tryDiscoverRepositoryPath()));
+            RequestedThemeVariant =
+                settings.Theme.IsLightTheme ? Avalonia.Styling.ThemeVariant.Light
+                : settings.Theme.IsDarkTheme ? Avalonia.Styling.ThemeVariant.Dark
+                : Avalonia.Styling.ThemeVariant.Default;
+            var directory = string.IsNullOrEmpty(repository) ? null : GitService.workingDirectory(repository);
+            if (directory == null) {
+                Console.Error.WriteLine("gitkay gui: run it inside a Git repository with a working tree.");
+                desktop.Shutdown(2);
+                return;
+            }
+
+            var window = new CommitWindow(repository!, System.IO.Path.GetFileName(directory)) { WindowStartupLocation = Avalonia.Controls.WindowStartupLocation.CenterScreen };
+            window.OpenInVsCode = (path, line) => {
+                var full = System.IO.Path.GetFullPath(System.IO.Path.Combine(directory, path));
+                try {
+                    ExternalTools.StartVsCode(line is { } number ? [directory, "--goto", $"{full}:{number}"] : [directory, "--goto", full], directory);
+                }
+                catch (Exception) {
+                    // VS Code isn't on PATH; nothing else to do from a commit-only window.
+                }
+            };
+            desktop.MainWindow = window;
+            desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnMainWindowClose;
+            window.Show();
+        }
+        catch (Exception ex) {
+            FatalErrorPresenter.ShowStartupFailure(desktop, ex);
+        }
+    }
+
     private async Task InitializeAppAsync(IClassicDesktopStyleApplicationLifetime desktop) {
+        if (LaunchMode.IsCommit) {
+            await InitializeCommitWindowAsync(desktop);
+            return;
+        }
         try {
             var (persistedSettings, persistedUiState, repoKey) = await Task.Run(() => {
                 var settingsStore = new AppSettingsStore();

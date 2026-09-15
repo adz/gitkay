@@ -103,8 +103,27 @@ module GitStartup =
     let private quoteTerm (value: string) =
         if value |> Seq.exists Char.IsWhiteSpace then "\"" + value.Replace("\"", "") + "\"" else value
 
+    /// <summary>Which window GitKay opens: the history (like gitk) or the commit window (like git gui).</summary>
+    type LaunchMode =
+        | History
+        | Commit
+
+    /// <summary>
+    /// <c>gitkay gui</c> or <c>gitkay commit</c>, or starting as <c>gitkay-gui</c>, opens the commit window; the
+    /// remaining arguments are returned for option parsing.
+    /// </summary>
+    let launchMode (programPath: string) (args: string array) : LaunchMode * string array =
+        // Either separator: a Windows path read on any platform still names the program.
+        let file = if isNull programPath then "" else programPath.Substring(programPath.LastIndexOfAny [| '/'; '\\' |] + 1)
+        let name = match file.LastIndexOf '.' with -1 -> file | dot -> file.Substring(0, dot)
+        match args |> Array.tryHead with
+        | Some("gui" | "commit") -> Commit, Array.tail args
+        | _ when String.Equals(name, "gitkay-gui", StringComparison.OrdinalIgnoreCase) -> Commit, args
+        | _ -> History, args
+
     let getHelpText () =
-        "Usage: gitkay [options] [<revision>...] [-- <path>...]\n\n" +
+        "Usage: gitkay [options] [<revision>...] [-- <path>...]\n" +
+        "       gitkay gui        Open the commit window (stage, unstage, commit), like git gui; also gitkay-gui\n\n" +
         "Options:\n" +
         "  --help, -h               Show this help message\n" +
         "  --version, -v            Show version information\n" +

@@ -20,6 +20,10 @@ class Program {
             return SelfTest.Run(repository);
         }
 
+        var (mode, rest) = GitKay.Core.GitStartup.launchMode(Environment.ProcessPath ?? "", args).ToValueTuple();
+        App.LaunchMode = mode;
+        args = rest;
+
         var optionsResult = GitKay.Core.GitStartup.parseStartupOptions(args);
         if (optionsResult.IsOk) {
             var options = optionsResult.ResultValue;

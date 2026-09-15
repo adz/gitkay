@@ -482,7 +482,9 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         Focus();
         _lastContextPoint = e.GetPosition(this);
         SelectAt(_lastContextPoint.Y);
-        if (e.ClickCount == 2 && SelectedItem is { IsWorkingTree: true }) CommitWindowRequested?.Invoke();
+        // After the click finishes, so the pointer release doesn't give focus back to this window.
+        if (e.ClickCount == 2 && SelectedItem is { IsWorkingTree: true })
+            Dispatcher.UIThread.Post(() => CommitWindowRequested?.Invoke(), DispatcherPriority.Background);
     }
 
     private void OnCommitContextRequested(object? sender, ContextRequestedEventArgs e) {
@@ -712,7 +714,7 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         // The uncommitted changes row has no commit to act on; staging and committing belong to the commit window.
         if (SelectedItem is { IsWorkingTree: true }) {
             var open = new MenuItem { Header = "Open commit window…", InputGesture = new KeyGesture(Key.C, KeyModifiers.Control | KeyModifiers.Shift) };
-            open.Click += (_, _) => CommitWindowRequested?.Invoke();
+            open.Click += (_, _) => Dispatcher.UIThread.Post(() => CommitWindowRequested?.Invoke(), DispatcherPriority.Background);
             menu.Items.Add(open);
             return menu;
         }

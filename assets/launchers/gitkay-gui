@@ -1,0 +1,4 @@
+#!/bin/sh
+# Opens GitKay's commit window (like `git gui`), for the repository in the current directory.
+here=$(dirname "$(readlink -f "$0")")
+exec "$here/gitkay" gui "$@"

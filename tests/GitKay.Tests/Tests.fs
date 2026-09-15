@@ -3076,6 +3076,13 @@ module DiffSearchBorrowTests =
 
 module CommitWindowTests =
 
+    [<Fact>]
+    let ``gitkay gui, gitkay commit and gitkay-gui open the commit window`` () =
+        test <@ GitStartup.launchMode "/usr/bin/gitkay" [| "gui"; "--log"; "x" |] = (GitStartup.Commit, [| "--log"; "x" |]) @>
+        test <@ fst (GitStartup.launchMode "/usr/bin/gitkay" [| "commit" |]) = GitStartup.Commit @>
+        test <@ fst (GitStartup.launchMode @"C:\GitKay\gitkay-gui.exe" [||]) = GitStartup.Commit @>
+        test <@ GitStartup.launchMode "/usr/bin/gitkay" [| "main"; "--all" |] = (GitStartup.History, [| "main"; "--all" |]) @>
+
     let private diff path : Models.FileDiff = { OldPath = path; NewPath = path; Hunks = []; NewLineCount = None }
 
     let private changes (unstaged: string list) (staged: string list) (untracked: string list) : GitService.WorkingTreeChanges =

@@ -510,12 +510,27 @@ public partial class CommitWindow : Window, IVimCommands {
             GitKay.Core.CommitWindow.program(env, ""),
             model => projection.Update(model),
             dispatch => projection.SetDispatch(dispatch));
-        Activated += (_, _) => projection.RescanCommand.Execute(null);
+        // Rescan when the user comes back from elsewhere; not on every activation, which focus changes can repeat.
+        var wasAway = false;
+        Deactivated += (_, _) => wasAway = true;
+        Activated += (_, _) => {
+            if (!wasAway) return;
+            wasAway = false;
+            projection.RescanCommand.Execute(null);
+        };
         Closed += (_, _) => _host?.Dispose();
-        Opened += (_, _) => MessageBox.Focus();
+        // Take keyboard focus as soon as the window is up, so its keys go here and not to the window behind.
+        Opened += (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(() => {
+            Activate();
+            MessageBox.Focus();
+        }, Avalonia.Threading.DispatcherPriority.Input);
     }
 
     public CommitWindowProjection? Projection { get; }
+
+    internal TextBox MessageBoxForTests => MessageBox;
+
+    public void FocusMessage() => Avalonia.Threading.Dispatcher.UIThread.Post(() => MessageBox.Focus(), Avalonia.Threading.DispatcherPriority.Input);
 
     /// <summary>Opens a file in VS Code at a line; set by the main window.</summary>
     public Action<string, int?>? OpenInVsCode { get; set; }
