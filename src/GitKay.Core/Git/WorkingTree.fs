@@ -104,6 +104,14 @@ module WorkingTree =
             | [] -> None
             | inSection -> Some(section, inSection))
 
+    /// <summary>Reads a section back from <see cref="sectionName"/>.</summary>
+    let tryParseSection name =
+        match name with
+        | "Staged" -> Some Staged
+        | "Unstaged" -> Some Unstaged
+        | "Untracked" -> Some Untracked
+        | _ -> None
+
     let sectionName section =
         match section with
         | Staged -> "Staged"

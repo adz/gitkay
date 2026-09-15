@@ -893,7 +893,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private void RequestExpansion(int index, DiffGapProjection gap, GitKay.Core.DiffExpansion.ExpandDirection direction) {
         // Rows may have been rebuilt while a menu was open; act only on the same gap.
         if ((uint)index >= (uint)_rows.Length || !ReferenceEquals(_rows[index], gap)) return;
-        var request = new DiffGapExpansionRequest(gap.Gap, direction);
+        var request = new DiffGapExpansionRequest(gap.Gap, direction, gap.File);
         if (ExpandGapCommand?.CanExecute(request) != true) return;
         BeginExpansion(index, gap, direction);
         ExpandGapCommand.Execute(request);

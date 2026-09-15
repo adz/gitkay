@@ -65,8 +65,8 @@ public sealed partial class WholeFileProjection : ObservableObject {
         Main.OpenInVsCode(_target, line);
     }
 
-    public async Task LoadAsync(string repositoryPath, string hash) {
-        var result = await Task.Run(() => GitKay.Core.GitService.loadWholeFile(repositoryPath, hash, _target.OldPath, _target.NewPath));
+    public async Task LoadAsync(Func<Microsoft.FSharp.Core.FSharpResult<GitKay.Core.Models.FileDiff, GitKay.Core.GitError>> load, string unchangedNote) {
+        var result = await Task.Run(load);
         if (result.IsError) {
             LoadStatus = GitKay.Core.GitErrorModule.describe(result.ErrorValue);
             return;
@@ -74,7 +74,7 @@ public sealed partial class WholeFileProjection : ObservableObject {
 
         var content = result.ResultValue;
         _file.ApplyContent(content);
-        LoadStatus = content.Hunks.IsEmpty ? "Binary or empty file" : _target.Changed == null ? "unchanged in this commit" : "";
+        LoadStatus = content.Hunks.IsEmpty ? "Binary or empty file" : _target.Changed == null ? unchangedNote : "";
         Rebuild();
     }
 
@@ -94,14 +94,21 @@ public partial class WholeFileWindow : Window {
         Icon = AppIcon.Window;
     }
 
-    public WholeFileWindow(MainProjection main, string repositoryPath, string hash, string shortHash, FileTarget target) : this() {
-        var projection = new WholeFileProjection(main, shortHash, main.SelectedCommit?.Subject ?? "", target);
+    public WholeFileWindow(MainProjection main, string repositoryPath, string hash, string shortHash, FileTarget target)
+        : this(main, shortHash, main.SelectedCommit?.Subject ?? "", target,
+            () => GitKay.Core.GitService.loadWholeFile(repositoryPath, hash, target.OldPath, target.NewPath), "unchanged in this commit") {
+    }
+
+    /// <summary>A file with its whole content; <paramref name="label"/> names where it's from (a short hash, "staged", "HEAD").</summary>
+    public WholeFileWindow(MainProjection main, string label, string subject, FileTarget target,
+        Func<Microsoft.FSharp.Core.FSharpResult<GitKay.Core.Models.FileDiff, GitKay.Core.GitError>> load, string unchangedNote) : this() {
+        var projection = new WholeFileProjection(main, label, subject, target);
         DataContext = projection;
         Surface.TextCopied += (_, lines) => projection.LoadStatus = lines switch { 0 => "Copied", 1 => "Copied 1 line", _ => $"Copied {lines} lines" };
         AddHandler(KeyDownEvent, OnWindowKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         Opened += async (_, _) => {
             Surface.Focus();
-            await projection.LoadAsync(repositoryPath, hash);
+            await projection.LoadAsync(load, unchangedNote);
         };
     }
 

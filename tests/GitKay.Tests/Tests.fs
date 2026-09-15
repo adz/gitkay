@@ -835,7 +835,8 @@ summary Another line
             writeFile root "a.txt" "one\nTWO\nthree\n"
             Commands.Move(repo, "old name.txt", "new name.txt")
             writeFile root "notes/draft file.md" "# Draft\nhello\n"
-            match runFlow root (GitService.fetchWorkingTreeChanges 3) with
+            // The app's RepoPath is the git directory, not the working tree.
+            match runFlow (Path.Combine(root, ".git")) (GitService.fetchWorkingTreeChanges 3) with
             | Error error -> failwith (GitError.describe error)
             | Ok changes ->
                 let paths (files: Models.FileDiff list) = files |> List.map (fun f -> f.OldPath, f.NewPath)
@@ -846,6 +847,23 @@ summary Another line
                 let unstagedLines = changes.Unstaged.Head.Hunks |> List.collect _.Lines |> List.filter (fun l -> l.Type <> Models.Context) |> List.map _.Content
                 test <@ stagedLines = [ "two"; "TWO" ] && unstagedLines = [ "three" ] @>
                 test <@ changes.Untracked.Head.Hunks.Head.Lines |> List.map _.Content = [ "# Draft"; "hello" ] @>)
+
+    [<Fact>]
+    let ``working tree file loads one section's change with its whole content`` () =
+        withTempRepository (fun root repo ->
+            let content = [ 1..30 ] |> List.map string |> String.concat "\n"
+            commitFile repo root "a.txt" (content + "\n") "init" |> ignore
+            writeFile root "a.txt" ((content.Replace("15", "fifteen")) + "\n")
+            Commands.Stage(repo, "a.txt")
+            writeFile root "a.txt" ((content.Replace("15", "fifteen").Replace("29", "twenty-nine")) + "\n")
+            let changed (file: Models.FileDiff) = file.Hunks |> List.collect _.Lines |> List.filter (fun l -> l.Type <> Models.Context) |> List.map _.Content
+            let lineCount (file: Models.FileDiff) = file.Hunks |> List.collect _.Lines |> List.filter (fun l -> l.Type <> Models.Removed) |> List.length
+            let gitDir = Path.Combine(root, ".git")
+            match runFlow gitDir (GitService.fetchWorkingTreeFile WorkingTree.Staged "a.txt" "a.txt"), runFlow gitDir (GitService.fetchWorkingTreeFile WorkingTree.Unstaged "a.txt" "a.txt") with
+            | Ok staged, Ok unstaged ->
+                test <@ changed staged = [ "15"; "fifteen" ] && lineCount staged = 30 @>
+                test <@ changed unstaged = [ "29"; "twenty-nine" ] && lineCount unstaged = 30 @>
+            | Error error, _ | _, Error error -> failwith (GitError.describe error))
 
 module AppTests =
 

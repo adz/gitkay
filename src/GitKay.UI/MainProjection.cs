@@ -379,6 +379,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         if (!wasShown) {
             SaveCommitViewState();
             _collapsedDiffSections.Clear();
+            _workingTreeExpansions.Clear();
+            _workingTreeContents.Clear();
         }
         var previousKey = wasShown ? SelectedDiffFile?.Key : null;
         var collapsed = wasShown ? SelectedDiffFiles.Where(file => file.IsCollapsed).Select(file => file.Key).ToHashSet() : [];
@@ -401,7 +403,10 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                     var summary = new GitKay.Core.GitService.DiffFileSummary(diff.OldPath, diff.NewPath, GitKay.Core.FileChange.displayPath(diff.OldPath, diff.NewPath));
                     if (!existing.TryGetValue(key, out var file)) file = new DiffFileProjection(summary, sectionName);
                     else file.UpdateSummary(summary);
-                    file.ApplyContent(diff);
+                    // A refresh keeps revealed context for files whose change is the same.
+                    if (!_workingTreeContents.TryGetValue(key, out var previous) || !previous.Equals(diff)) _workingTreeExpansions.Remove(key);
+                    _workingTreeContents[key] = diff;
+                    file.ApplyContent(diff, _workingTreeExpansions.GetValueOrDefault(key));
                     file.IsCollapsed = collapsed.Contains(key);
                     file.Marker = markers.GetValueOrDefault(DiffFileTree.PathOf(file), "");
                     SelectedDiffFiles.Add(file);
@@ -1458,6 +1463,59 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         SelectedDiffRows.AddRange(rows);
     }
 
+    // ----- Context expansion for uncommitted files: presentation state kept here, keyed by section and path. -----
+
+    private static readonly GitKay.Core.DiffExpansion.LineRange AllLines = new(1, int.MaxValue);
+    private readonly Dictionary<DiffFileKey, GitKay.Core.App.FileExpansion> _workingTreeExpansions = new();
+    private readonly Dictionary<DiffFileKey, GitKay.Core.Models.FileDiff> _workingTreeContents = new();
+
+    private void RevealWorkingTreeContext(DiffFileProjection file, GitKay.Core.DiffExpansion.LineRange range) {
+        var key = file.Key;
+        var current = _workingTreeExpansions.GetValueOrDefault(key)
+                      ?? new GitKay.Core.App.FileExpansion(null, Microsoft.FSharp.Collections.FSharpList<GitKay.Core.DiffExpansion.LineRange>.Empty, null);
+        var revealed = GitKay.Core.DiffExpansion.addRange(range, current.Revealed);
+        var section = GitKay.Core.WorkingTree.tryParseSection(key.Section);
+        var needsLoad = current.FullContext == null && current.PendingRequestId == null && RepositoryPath != null && section != null;
+        var requestId = Stopwatch.GetTimestamp();
+        var next = new GitKay.Core.App.FileExpansion(current.FullContext, revealed,
+            needsLoad ? Microsoft.FSharp.Core.FSharpOption<long>.Some(requestId) : current.PendingRequestId);
+        SetWorkingTreeExpansion(file, next);
+        if (needsLoad) _ = LoadWorkingTreeContextAsync(RepositoryPath!, file, section!.Value, requestId);
+    }
+
+    private async Task LoadWorkingTreeContextAsync(string repo, DiffFileProjection file, GitKay.Core.WorkingTree.Section section, long requestId) {
+        string? error;
+        GitKay.Core.Models.FileDiff? loaded = null;
+        try {
+            var result = await Task.Run(() => GitKay.Core.GitService.loadWorkingTreeFile(repo, section, file.Key.OldPath, file.Key.NewPath));
+            error = result.IsError ? GitKay.Core.GitErrorModule.describe(result.ErrorValue) : null;
+            if (result.IsOk) loaded = result.ResultValue;
+        }
+        catch (Exception ex) {
+            error = ex.Message;
+        }
+        if (!IsWorkingTreeDiffShown || !_workingTreeExpansions.TryGetValue(file.Key, out var current) || current.PendingRequestId?.Value != requestId) return;
+        if (loaded != null) {
+            SetWorkingTreeExpansion(file, new GitKay.Core.App.FileExpansion(loaded, current.Revealed, null));
+        }
+        else {
+            Status = $"Context Error: {error}";
+            _workingTreeExpansions.Remove(file.Key);
+            if (file.ApplyExpansion(null)) RenderSelectedDiffRows();
+        }
+    }
+
+    private void CollapseWorkingTreeContext(DiffFileProjection file) {
+        if (!_workingTreeExpansions.TryGetValue(file.Key, out var current)) return;
+        SetWorkingTreeExpansion(file, new GitKay.Core.App.FileExpansion(current.FullContext,
+            Microsoft.FSharp.Collections.FSharpList<GitKay.Core.DiffExpansion.LineRange>.Empty, current.PendingRequestId));
+    }
+
+    private void SetWorkingTreeExpansion(DiffFileProjection file, GitKay.Core.App.FileExpansion expansion) {
+        _workingTreeExpansions[file.Key] = expansion;
+        if (file.ApplyExpansion(expansion)) RenderSelectedDiffRows();
+    }
+
     /// <summary>Collapses or expands an uncommitted changes section in the diff pane.</summary>
     public void ToggleDiffSection(string section) {
         if (!_collapsedDiffSections.Remove(section)) _collapsedDiffSections.Add(section);
@@ -1472,7 +1530,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     [RelayCommand]
     private void ToggleDiffFileContext(DiffFileProjection file) {
-        if (_selectedDiffHash is null or WorkingTreeDiffId) {
+        if (IsWorkingTreeDiffShown) {
+            if (file.HasHiddenContext) RevealWorkingTreeContext(file, AllLines);
+            else if (file.HasRevealedContext) CollapseWorkingTreeContext(file);
+            return;
+        }
+        if (_selectedDiffHash == null) {
             return;
         }
 
@@ -1487,7 +1550,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     [RelayCommand]
     private void ExpandDiffGap(DiffGapExpansionRequest request) {
-        if (_selectedDiffHash is null or WorkingTreeDiffId) {
+        if (IsWorkingTreeDiffShown) {
+            if (request.File != null && GitKay.Core.DiffExpansion.revealRange(request.Direction, request.Gap) is { } range)
+                RevealWorkingTreeContext(request.File, range.Value);
+            return;
+        }
+        if (_selectedDiffHash == null) {
             return;
         }
 

@@ -501,8 +501,26 @@ public partial class MainWindow : Window, IVimCommands {
         AddFileMenuItems(e.Menu, FileTarget.From(e.File), e.LineNumber);
 
     private void OpenWholeFile(FileTarget target) {
+        if (_projection is { RepositoryPath: { } workingRepo, IsWorkingTreeDiffShown: true } workingProjection) {
+            OpenWorkingTreeFile(workingProjection, workingRepo, target);
+            return;
+        }
         if (_projection is not { RepositoryPath: { } repo, SelectedCommit: { IsWorkingTree: false } commit } projection) return;
         var window = new WholeFileWindow(projection, repo, commit.FullHash, commit.Hash, target);
+        window.Show(this);
+    }
+
+    /// <summary>An uncommitted file with its section's change in full; an unchanged file as it is at HEAD.</summary>
+    private void OpenWorkingTreeFile(MainProjection projection, string repo, FileTarget target) {
+        WholeFileWindow window;
+        if (target.Changed is { Key.Section: var sectionName } && GitKay.Core.WorkingTree.tryParseSection(sectionName) is { } section) {
+            window = new WholeFileWindow(projection, sectionName.ToLowerInvariant(), "Uncommitted changes", target,
+                () => GitKay.Core.GitService.loadWorkingTreeFile(repo, section.Value, target.OldPath, target.NewPath), "");
+        }
+        else {
+            window = new WholeFileWindow(projection, "HEAD", "Uncommitted changes", target,
+                () => GitKay.Core.GitService.loadWholeFile(repo, "HEAD", target.OldPath, target.NewPath), "unchanged");
+        }
         window.Show(this);
     }
 

@@ -663,8 +663,19 @@ module GitService =
 
     // Paths are printed as-is (not octal-escaped) and diffs ignore external diff drivers and colour configuration.
     // --no-optional-locks: status mustn't rewrite the index, or the working tree watcher would see its own refresh.
+    // Runs in the working tree: status and diff fail inside the git directory, which is what RepoPath names.
     let private plainGit (arguments: string list) =
-        executeGitCommand ([ "--no-optional-locks"; "-c"; "core.quotePath=false"; "-c"; "color.ui=false"; "-c"; "diff.noprefix=false"; "-c"; "diff.mnemonicPrefix=false" ] @ arguments)
+        flow {
+            let! repoPath = Flow.envWith _.RepoPath
+            let directory = match workingDirectory repoPath with null -> repoPath | directory -> directory
+            let arguments = [ "--no-optional-locks"; "-c"; "core.quotePath=false"; "-c"; "color.ui=false"; "-c"; "diff.noprefix=false"; "-c"; "diff.mnemonicPrefix=false" ] @ arguments
+            return!
+                Process.commandArgs "git" arguments
+                |> Process.workingDirectory directory
+                |> Process.capture
+                |> Flow.map _.StdOut
+                |> Flow.mapError (fun error -> GitError.GitProcessFailed(arguments, error))
+        }
 
     /// <summary>What <c>git status</c> reports for the working tree and index.</summary>
     let fetchWorkingTreeStatus : Flow<GitEnv, GitError, WorkingTree.Entry list> =
@@ -695,6 +706,37 @@ module GitService =
                 entries |> List.filter _.Untracked |> List.map (fun entry -> readUntracked repoPath entry.Path)
             return { Entries = entries; Staged = staged; Unstaged = unstaged; Untracked = untracked }
         }
+
+    /// <summary>
+    /// One uncommitted file's change in a section with its whole content, for the whole-file view and context
+    /// expansion. A file with no change there (or binary) comes back without hunks.
+    /// </summary>
+    let fetchWorkingTreeFile (section: WorkingTree.Section) (oldPath: string) (newPath: string) : Flow<GitEnv, GitError, FileDiff> =
+        flow {
+            let paths =
+                if oldPath = "/dev/null" || oldPath = newPath then [ newPath ]
+                elif newPath = "/dev/null" then [ oldPath ]
+                else [ oldPath; newPath ]
+
+            match section with
+            | WorkingTree.Untracked ->
+                let! repoPath = Flow.envWith _.RepoPath
+                return readUntracked repoPath newPath
+            | WorkingTree.Staged
+            | WorkingTree.Unstaged ->
+                let staged = if section = WorkingTree.Staged then [ "--cached"; "--find-renames" ] else []
+                let! files =
+                    plainGit ([ "diff" ] @ staged @ [ "--no-ext-diff"; $"-U{fullContextLines}"; "--" ] @ paths)
+                    |> Flow.map WorkingTree.parsePatch
+
+                match files with
+                | file :: _ -> return file
+                | [] -> return { OldPath = oldPath; NewPath = newPath; Hunks = []; NewLineCount = None }
+        }
+
+    /// <summary>Runs <see cref="fetchWorkingTreeFile"/> for a repository, for callers outside Elmish.</summary>
+    let loadWorkingTreeFile (repoPath: string) (section: WorkingTree.Section) (oldPath: string) (newPath: string) : Result<FileDiff, GitError> =
+        Flow.run (environment repoPath) (fetchWorkingTreeFile section oldPath newPath) |> Exit.toResult
 
     /// Every file path in a commit's tree, for the "All files" list. Submodules and other non-blob entries are skipped.
     let listCommitFiles (repoPath: string) (hash: string) : Result<string list, GitError> =

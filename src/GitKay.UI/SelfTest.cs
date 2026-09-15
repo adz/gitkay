@@ -49,6 +49,19 @@ public static class SelfTest {
             return results.Length == found ? null : $"{results.Length} results but {found} streamed";
         });
 
+        Check("uncommitted changes parse and load", () => {
+            var entries = GitKay.Core.WorkingTree.parseStatus(
+                "1 MM N... 100644 100644 100644 abc abc a.txt\0" +
+                "2 R. N... 100644 100644 100644 abc abc R100 new name.txt\0old name.txt\0" +
+                "? notes/draft.md\0");
+            if (GitKay.Core.WorkingTree.summary(entries) != "2 staged · 1 unstaged · 1 untracked") return "status summary: " + GitKay.Core.WorkingTree.summary(entries);
+            var patch = GitKay.Core.WorkingTree.parsePatch("diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-one\n+two\n");
+            if (patch.Length != 1 || patch.Head.Hunks.Head.Lines.Length != 2) return "patch did not parse";
+            var repository = GitKay.Core.GitService.tryDiscoverRepositoryPath();
+            var loaded = Axial.Exit.toResult(Axial.Flow.run(GitKay.Core.GitService.environment(repository), GitKay.Core.GitService.fetchWorkingTreeChanges(3)));
+            return loaded.IsOk ? null : "git status and diff failed: " + GitKay.Core.GitErrorModule.describe(loaded.ErrorValue);
+        });
+
         Check("settings round-trip through the Reified codec", () => {
             // Eleven fields: records this wide threw TypeLoadException under NativeAOT before Reified 0.8.1.
             var settings = new GitKay.Core.Settings(true, true, 7, GitKay.Core.DiffLayout.SideBySide, "Inter", "Iosevka", 14.5, 12, 10, 0.25, GitKay.Core.ThemeMode.DarkTheme);

@@ -158,6 +158,7 @@ internal static class UiInteractions {
         Console.WriteLine($"# ui label={label} files={files.Length} rows={projection.SelectedDiffRows.Count}");
         if (label.StartsWith("worktree", StringComparison.Ordinal)) {
             var changes = Unwrap(System.Threading.Tasks.Task.Run(() => Flow.run(env, GitService.fetchWorkingTreeChanges(3))).Result);
+            projection.RepositoryPath = repo;
             projection.IsAllFilesMode = label.Contains("allfiles");
             projection.IsDiffFileTreeMode = label.Contains("tree");
             projection.Update(new App.Model(model.StartupSelection, false, model.GitEnv, "Loaded", model.StartupTargets, false, false, 3, DiffLayout.Unified, "", "commit", false,
@@ -166,6 +167,13 @@ internal static class UiInteractions {
                 model.DiffExpansions, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None,
                 changes.Entries, FSharpOption<GitService.WorkingTreeChanges>.Some(changes), FSharpOption<long>.None));
             Pump(window);
+            if (label.Contains("expand")) {
+                projection.ToggleDiffFileContextCommand.Execute(projection.SelectedDiffFiles[0]);
+                for (var i = 0; i < 40 && projection.SelectedDiffFiles[0].IsContextLoading | projection.SelectedDiffFiles[0].HasHiddenContext; i++) {
+                    System.Threading.Thread.Sleep(50);
+                    Pump(window);
+                }
+            }
             Pump(window);
             using var frame = Avalonia.Headless.HeadlessWindowExtensions.CaptureRenderedFrame(window);
             var output = args.ElementAtOrDefault(3) ?? $"{label}.png";

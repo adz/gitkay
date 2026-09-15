@@ -124,11 +124,8 @@ public partial class DiffFileProjection : ObservableObject {
                     Hunks.Add(hunk);
                     _blocks.Add(hunk);
                     break;
-                // Uncommitted files have no revision to read hidden context from, so they show no gaps.
-                case GitKay.Core.DiffExpansion.DiffBlock.GapBlock when Key.Section.Length > 0:
-                    break;
                 case GitKay.Core.DiffExpansion.DiffBlock.GapBlock gapBlock:
-                    _blocks.Add(new DiffGapProjection(gapBlock.Item, isLoading));
+                    _blocks.Add(new DiffGapProjection(gapBlock.Item, isLoading, this));
                     break;
             }
         }
@@ -328,16 +325,20 @@ public static class DiffRowBuilder {
 
 public readonly record struct DiffGapExpansionRequest(
     GitKay.Core.DiffExpansion.DiffGap Gap,
-    GitKay.Core.DiffExpansion.ExpandDirection Direction);
+    GitKay.Core.DiffExpansion.ExpandDirection Direction,
+    DiffFileProjection? File = null);
 
 public sealed class DiffGapProjection : IDiffRowProjection {
-    public DiffGapProjection(GitKay.Core.DiffExpansion.DiffGap gap, bool isLoading = false) {
+    public DiffGapProjection(GitKay.Core.DiffExpansion.DiffGap gap, bool isLoading = false, DiffFileProjection? file = null) {
         Gap = gap;
+        File = file;
         IsLoading = isLoading;
         Directions = GitKay.Core.DiffExpansion.availableDirections(gap).ToArray();
     }
 
     public GitKay.Core.DiffExpansion.DiffGap Gap { get; }
+    /// <summary>The file this gap belongs to; paths alone don't tell a staged file from the same unstaged one.</summary>
+    public DiffFileProjection? File { get; }
     public bool IsLoading { get; }
     /// <summary>Header of the hunk that follows this gap; the gap row stands in for that header row.</summary>
     public string? HeaderText { get; set; }
