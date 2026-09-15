@@ -385,6 +385,7 @@ internal static class UiInteractions {
 
     /// <summary>The commit window on a repository: scanned, then optionally with the cursor's hunk staged.</summary>
     private static void RunCommitWindow(string repo, string label, string output) {
+        if (label.Contains("dark")) Avalonia.Application.Current!.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Dark;
         var window = new GitKay.UI.CommitWindow(repo, System.IO.Path.GetFileName(repo)) { Width = 1300, Height = 860 };
         window.Show();
         var projection = window.Projection!;

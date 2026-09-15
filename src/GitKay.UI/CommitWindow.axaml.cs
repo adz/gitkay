@@ -212,11 +212,12 @@ public sealed partial class CommitWindowProjection : ObservableObject {
     public bool HasFailureOutput => !string.IsNullOrEmpty(FailureOutput);
     partial void OnFailureOutputChanged(string? value) => OnPropertyChanged(nameof(HasFailureOutput));
 
-    public string CommitLabel => Amend ? "Amend  Ctrl+Enter" : "Commit  Ctrl+Enter";
+    // Ctrl keys aren't labelled on buttons: holding Ctrl shows them.
+    public string CommitLabel => Amend ? "Amend" : "Commit";
     public string FileActionLabel => IsStagedFileSelected ? "Unstage file" : "Stage file";
     public string SelectionActionLabel => IsStagedFileSelected
-        ? Surface?.HasTextSelection == true ? "Unstage lines" : "Unstage hunk"
-        : Surface?.HasTextSelection == true ? "Stage lines" : "Stage hunk";
+        ? Surface?.HasTextSelection == true ? "Unstage lines (u)" : "Unstage hunk (u)"
+        : Surface?.HasTextSelection == true ? "Stage lines (s)" : "Stage hunk (s)";
     public string SelectionActionTip => "s / u: stages or unstages the selected lines, or the hunk at the cursor";
     public bool CanDiscard => HasSelectedFile && !IsStagedFileSelected;
     /// <summary>Untracked files have no hunks in the index to patch; they stage whole.</summary>

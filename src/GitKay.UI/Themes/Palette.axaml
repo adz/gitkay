@@ -8,6 +8,11 @@
             <SolidColorBrush x:Key="GitKayHoverBrush" Color="#21262D" />
             <SolidColorBrush x:Key="GitKaySelectionBrush" Color="#27364A" />
             <SolidColorBrush x:Key="GitKayBorderBrush" Color="#30363D" />
+            <!-- Buttons and other controls: a fill and edge that stand apart from labels and bars. -->
+            <SolidColorBrush x:Key="GitKayControlBrush" Color="#2D333B" />
+            <SolidColorBrush x:Key="GitKayControlHoverBrush" Color="#373E47" />
+            <SolidColorBrush x:Key="GitKayControlBorderBrush" Color="#545D68" />
+            <SolidColorBrush x:Key="GitKayPrimaryBrush" Color="#1F6FEB" />
             <SolidColorBrush x:Key="GitKayTextBrush" Color="#E6EDF3" />
             <SolidColorBrush x:Key="GitKaySecondaryTextBrush" Color="#9DA7B3" />
             <SolidColorBrush x:Key="GitKayMutedTextBrush" Color="#6E7681" />
@@ -62,6 +67,11 @@
             <SolidColorBrush x:Key="GitKayHoverBrush" Color="#EAEEF2" />
             <SolidColorBrush x:Key="GitKaySelectionBrush" Color="#CCE5FF" />
             <SolidColorBrush x:Key="GitKayBorderBrush" Color="#D0D7DE" />
+            <!-- Buttons and other controls: a fill and edge that stand apart from labels and bars. -->
+            <SolidColorBrush x:Key="GitKayControlBrush" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="GitKayControlHoverBrush" Color="#EAEEF2" />
+            <SolidColorBrush x:Key="GitKayControlBorderBrush" Color="#8C959F" />
+            <SolidColorBrush x:Key="GitKayPrimaryBrush" Color="#0969DA" />
             <SolidColorBrush x:Key="GitKayTextBrush" Color="#0B0D10" />
             <SolidColorBrush x:Key="GitKaySecondaryTextBrush" Color="#3D444D" />
             <SolidColorBrush x:Key="GitKayMutedTextBrush" Color="#4F5761" />
