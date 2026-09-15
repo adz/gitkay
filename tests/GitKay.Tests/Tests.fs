@@ -3105,3 +3105,12 @@ module SettingsSerializationTests =
         test <@ read = { Settings.defaults with Theme = LightTheme; DiffContextLines = 0 } @>
         test <@ (SettingsJson.decode "not json" |> Result.isError) && (SettingsJson.decode """{"DiffContextLines":"three"}""" |> Result.isError) @>
 
+
+    [<Fact>]
+    let ``UI state with Windows-style repository paths round-trips`` () =
+        let state =
+            UiState.empty
+            |> UiState.withSelectedCommit @"C:\Users\ada\repo" "abc123"
+            |> UiState.withSelectedCommit "path with \"quotes\"" "def456"
+        let json = UiStateJson.encode state
+        test <@ UiStateJson.decode json = Ok(UiState.normalize state) @>
