@@ -1016,6 +1016,14 @@
                             <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Focus the top / middle / bottom row on screen (3H: third from the top)" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
                         </Grid>
                         <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Ctrl+W  h / j / k / l" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Move to the pane left / below / above / right (also arrows, or with Ctrl held); w / W cycle; p goes back" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Ctrl+W  o · _ · | · =" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Maximise the focused pane (o toggles) · maximise its height · its width · restore the layout" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
                             <TextBlock Text="Ctrl+E / Ctrl+Y" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Scroll one row down / up; the focus stays unless it would leave the screen" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
                         </Grid>

@@ -302,3 +302,31 @@ module DiffSurfaceTests =
             let kept = Object.ReferenceEquals(fixture.Surface.SelectedItem, focused)
             test <@ scrolled && kept @>)
 
+
+module MainWindowPaneTests =
+    [<Fact>]
+    let ``Ctrl+W o maximises the focused pane and Ctrl+W = restores the layout`` () =
+        Headless.run (fun () ->
+            let window = MainWindow(Width = 1200.0, Height = 800.0)
+            window.Show()
+            Headless.pump ()
+            let rows = window.FindControl<Grid>("MainSplitGrid").RowDefinitions
+            let columns = window.FindControl<Grid>("DiffSplitGrid").ColumnDefinitions
+            let diff = window.FindControl<DiffSurfaceControl>("DiffRowsListBox")
+            let commands = window :> IVimCommands
+            let before = (rows[0].Height, rows[2].Height, columns[2].Width)
+            diff.Focus() |> ignore
+            Headless.pump ()
+
+            commands.PaneCommand Vim.VimPaneCommand.Only
+            Headless.pump ()
+            let maximised = rows[0].Height.Value = 0.0 && columns[2].Width.Value = 0.0 && diff.IsEffectivelyVisible
+            let commitsHidden = not (window.FindControl<CommitSurfaceControl>("CommitListBox").IsEffectivelyVisible)
+
+            commands.PaneCommand Vim.VimPaneCommand.Equalize
+            Headless.pump ()
+            let after = (rows[0].Height, rows[2].Height, columns[2].Width)
+            let commitsBack = window.FindControl<CommitSurfaceControl>("CommitListBox").IsEffectivelyVisible
+            window.Close()
+            Headless.pump ()
+            test <@ maximised && commitsHidden && commitsBack && after = before @>)

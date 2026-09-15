@@ -201,6 +201,7 @@ type private RecordingHost() =
         member this.FindNext forward = this.Calls.Add $"next {forward}"
         member this.GoToParent index = this.Calls.Add $"parent {index}"
         member this.GoToChild() = this.Calls.Add "child"
+        member this.PaneCommand command = this.Calls.Add $"pane {int command}"
 
 [<Fact>]
 let ``a session keeps pending keys between presses and applies actions to the host`` () =
@@ -227,4 +228,23 @@ let ``page keys, screen rows and one-row scrolling`` () =
     test <@ actions (diffContext 0) [ "4"; "C-y" ] = [ "ScrollRows -4" ] @>
     let _, consumed, _ = run (paneContext VimPane.Files) [ "C-e" ]
     test <@ not consumed @>
+
+[<Fact>]
+let ``Ctrl+W then a key switches, maximises or restores panes`` () =
+    let commits = paneContext VimPane.Commits
+    let pane (command: VimPaneCommand) = $"PaneCommand {int command}"
+    test <@ actions commits [ "C-w"; "j" ] = [ pane VimPaneCommand.Down ] @>
+    test <@ actions commits [ "C-w"; "C-j" ] = [ pane VimPaneCommand.Down ] @>
+    test <@ actions (diffContext 0) [ "C-w"; "Right" ] = [ pane VimPaneCommand.Right ] @>
+    test <@ actions (paneContext VimPane.Files) [ "C-w"; "h" ] = [ pane VimPaneCommand.Left ] @>
+    test <@ actions commits [ "C-w"; "w" ] = [ pane VimPaneCommand.Next ] @>
+    test <@ actions commits [ "C-w"; "W" ] = [ pane VimPaneCommand.Previous ] @>
+    test <@ actions commits [ "C-w"; "C-w" ] = [ pane VimPaneCommand.Next ] @>
+    test <@ actions commits [ "C-w"; "p" ] = [ pane VimPaneCommand.Last ] @>
+    test <@ actions (diffContext 0) [ "C-w"; "o" ] = [ pane VimPaneCommand.Only ] @>
+    test <@ actions (diffContext 0) [ "C-w"; "_" ] = [ pane VimPaneCommand.MaximizeHeight ] @>
+    test <@ actions (diffContext 0) [ "C-w"; "|" ] = [ pane VimPaneCommand.MaximizeWidth ] @>
+    test <@ actions (diffContext 0) [ "C-w"; "=" ] = [ pane VimPaneCommand.Equalize ] @>
+    // An unknown key after Ctrl+W is swallowed and clears the prefix; the next key works normally.
+    test <@ actions commits [ "C-w"; "q"; "j" ] = [ "MoveRows 1" ] @>
 

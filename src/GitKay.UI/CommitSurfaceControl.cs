@@ -536,6 +536,7 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
     void GitKay.Core.Vim.IVimHost.FindNext(bool forward) => VimCommands?.FindNext(GitKay.Core.Vim.VimPane.Commits, forward);
     void GitKay.Core.Vim.IVimHost.GoToParent(int index) => VimCommands?.GoToParent(index);
     void GitKay.Core.Vim.IVimHost.GoToChild() => VimCommands?.GoToChild();
+    void GitKay.Core.Vim.IVimHost.PaneCommand(GitKay.Core.Vim.VimPaneCommand command) => VimCommands?.PaneCommand(command);
 
     public void ScrollIntoView(CommitProjection item) {
         EnsureRows();

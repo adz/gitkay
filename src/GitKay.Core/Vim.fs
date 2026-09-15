@@ -23,6 +23,25 @@ module Vim =
         | Center = 1
         | Bottom = 2
 
+    /// <summary>Ctrl+W commands: move between panes, maximise one, or restore the layout.</summary>
+    type VimPaneCommand =
+        | Left = 0
+        | Down = 1
+        | Up = 2
+        | Right = 3
+        | Next = 4
+        | Previous = 5
+        /// <summary>The pane focused before this one (Ctrl+W p).</summary>
+        | Last = 6
+        /// <summary>Toggle between maximising the focused pane and the normal layout (Ctrl+W o).</summary>
+        | Only = 7
+        /// <summary>Give the focused pane's row all the height (Ctrl+W _).</summary>
+        | MaximizeHeight = 8
+        /// <summary>Give the focused pane's column all the width (Ctrl+W |).</summary>
+        | MaximizeWidth = 9
+        /// <summary>Restore the normal layout (Ctrl+W =).</summary>
+        | Equalize = 10
+
     /// <summary>A place on screen for H / M / L.</summary>
     type VimScreenRow =
         | Top = 0
@@ -76,6 +95,7 @@ module Vim =
         abstract FindNext: forward: bool -> unit
         abstract GoToParent: index: int -> unit
         abstract GoToChild: unit -> unit
+        abstract PaneCommand: command: VimPaneCommand -> unit
 
     [<Struct>]
     type CharFind =
@@ -102,6 +122,7 @@ module Vim =
         | FindNext of forward: bool
         | GoToParent of index: int
         | GoToChild
+        | PaneCommand of command: VimPaneCommand
 
         // Hand-written: the default structural ToString uses reflection that NativeAOT does not support.
         override this.ToString() =
@@ -124,6 +145,7 @@ module Vim =
             | FindNext forward -> if forward then "FindNext forward" else "FindNext backward"
             | GoToParent index -> $"GoToParent {index}"
             | GoToChild -> "GoToChild"
+            | PaneCommand command -> $"PaneCommand {int command}"
 
     /// <summary>A key waiting for the next one.</summary>
     type Pending =
@@ -491,6 +513,30 @@ module Vim =
                         // Anything else cancels the pending yank, as in vim.
                         | ValueNone -> handled cleared []
 
+            | Prefix '\u0017' ->
+                // Ctrl+W: vim accepts the next key with or without Ctrl held (Ctrl+W Ctrl+J = Ctrl+W j).
+                let next =
+                    if stroke.Control && stroke.Name.Length = 1 then
+                        if stroke.Shift then stroke.Name else stroke.Name.ToLowerInvariant()
+                    else symbol
+                let command =
+                    match next, stroke.Name with
+                    | "h", _ | _, "Left" -> ValueSome VimPaneCommand.Left
+                    | "j", _ | _, "Down" -> ValueSome VimPaneCommand.Down
+                    | "k", _ | _, "Up" -> ValueSome VimPaneCommand.Up
+                    | "l", _ | _, "Right" -> ValueSome VimPaneCommand.Right
+                    | "w", _ -> ValueSome VimPaneCommand.Next
+                    | "W", _ -> ValueSome VimPaneCommand.Previous
+                    | "p", _ -> ValueSome VimPaneCommand.Last
+                    | "o", _ -> ValueSome VimPaneCommand.Only
+                    | "_", _ -> ValueSome VimPaneCommand.MaximizeHeight
+                    | "|", _ -> ValueSome VimPaneCommand.MaximizeWidth
+                    | "=", _ -> ValueSome VimPaneCommand.Equalize
+                    | _ -> ValueNone
+                match command with
+                | ValueSome command -> handled cleared [ PaneCommand command ]
+                | ValueNone -> handled cleared []
+
             | Prefix prefix ->
                 let prefixCount = state.Count
                 match prefix, symbol with
@@ -525,6 +571,8 @@ module Vim =
                     | ("PageDown" | "PageUp"), _ when plain && not stroke.Shift ->
                         let rows = count * max 1 context.PageRows
                         handled cleared [ MoveRows(if stroke.Name = "PageDown" then rows else -rows) ]
+                    | "W", _ when stroke.Control && not stroke.Shift && not stroke.Alt ->
+                        handled { cleared with Pending = Prefix '\u0017' } []
                     | ("E" | "Y"), _ when stroke.Control && not stroke.Shift && not stroke.Alt && context.Pane <> VimPane.Files ->
                         handled cleared [ ScrollRows(if stroke.Name = "E" then count else -count) ]
                     | _ when not plain -> unhandled cleared
@@ -608,6 +656,7 @@ module Vim =
         | FindNext forward -> host.FindNext forward
         | GoToParent index -> host.GoToParent index
         | GoToChild -> host.GoToChild()
+        | PaneCommand command -> host.PaneCommand command
 
     /// <summary>The vim key state for one window, shared by its panes.</summary>
     [<Sealed; AllowNullLiteral>]

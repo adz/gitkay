@@ -50,7 +50,7 @@ public partial class MainWindow : Window, IVimCommands {
         CommitListBox.BranchOperationRequested += OnBranchOperationRequested;
         CommitListBox.CopyRequested += name => CopyToClipboard(name, "Copied");
         DiffRowsListBox.TextCopied += (_, lines) => { if (_projection != null) _projection.Status = lines switch { 0 => "Copied", 1 => "Copied 1 line", _ => $"Copied {lines} lines" }; };
-        AddHandler(InputElement.GotFocusEvent, (_, _) => UpdatePaneFocusIndicator(), RoutingStrategies.Bubble);
+        AddHandler(InputElement.GotFocusEvent, (_, _) => { UpdatePaneFocusIndicator(); TrackPaneFocus(); }, RoutingStrategies.Bubble);
         AddHandler(InputElement.LostFocusEvent, (_, _) => Dispatcher.UIThread.Post(UpdatePaneFocusIndicator), RoutingStrategies.Bubble);
     }
 
@@ -980,9 +980,11 @@ public partial class MainWindow : Window, IVimCommands {
         var bottom = MainSplitGrid.RowDefinitions[2].ActualHeight;
         var columns = HistoryHeaderGrid.ColumnDefinitions;
         double? Width(int index) => columns[index].ActualWidth > 0 ? columns[index].ActualWidth : null;
+        var normal = SavedNormalLayout;
         return new UiLayoutState {
-            HistoryPaneRatio = top + bottom > 0 ? top / (top + bottom) : null,
-            FileListWidth = DiffSplitGrid.ColumnDefinitions[2].ActualWidth > 0 ? DiffSplitGrid.ColumnDefinitions[2].ActualWidth : null,
+            HistoryPaneRatio = normal is { } saved ? saved.HistoryPaneRatio : top + bottom > 0 ? top / (top + bottom) : null,
+            FileListWidth = normal is { } savedWidth ? savedWidth.FileListWidth
+                : DiffSplitGrid.ColumnDefinitions[2].ActualWidth > 0 ? DiffSplitGrid.ColumnDefinitions[2].ActualWidth : null,
             GraphColumnWidth = Width(0),
             HashColumnWidth = Width(2),
             AuthorColumnWidth = Width(3),

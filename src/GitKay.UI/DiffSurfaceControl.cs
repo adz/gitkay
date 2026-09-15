@@ -1791,6 +1791,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     void GitKay.Core.Vim.IVimHost.GoToChild() => VimCommands?.GoToChild();
 
+    void GitKay.Core.Vim.IVimHost.PaneCommand(GitKay.Core.Vim.VimPaneCommand command) => VimCommands?.PaneCommand(command);
+
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e) {
         if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.Delta.Y != 0) {
             CodeFontSize = Math.Clamp(CodeFontSize + Math.Sign(e.Delta.Y), 7, 32);
