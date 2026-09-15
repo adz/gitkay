@@ -1120,27 +1120,20 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         IsSearchRunning = model.SearchStartedAtTicks != null;
         // A finished search leaves libgit2's freed allocations resident; hand them back to the OS.
         if (wasSearchRunning && !IsSearchRunning) System.Threading.Tasks.Task.Run(NativeMemory.TrimNow);
+        GitKay.Core.GitSearch.Progress progress;
         if (model.SearchStartedAtTicks != null) {
-            var soFar = model.SearchResults?.Value is { } partial ? partial.Length : 0;
-            var percent = model.SearchProgress?.Value is { } progress && progress.Item2 > 0 ? $" {progress.Item1 * 100 / progress.Item2}%" : "";
-            CommitSearchStatusText = soFar > 0 ? $"{soFar} so far ·{percent}" : $"Searching…{percent}";
-            return;
+            progress = GitKay.Core.GitSearch.Progress.NewSearching(model.SearchResults?.Value.Length ?? 0, model.SearchProgress);
+        }
+        else if (model.SearchResults == null) {
+            progress = GitKay.Core.GitSearch.Progress.NotSearching;
+        }
+        else {
+            var positions = CommitMatchPositions();
+            var selected = SelectedCommit is { HasSearchMatch: true } ? Array.BinarySearch(positions, Commits.IndexOf(SelectedCommit)) : -1;
+            progress = GitKay.Core.GitSearch.Progress.NewSearched(model.SearchResults.Value.Length, Math.Max(-1, selected));
         }
 
-        if (model.SearchResults == null) {
-            CommitSearchStatusText = "";
-            return;
-        }
-
-        var matches = model.SearchResults.Value.Length;
-        if (matches == 0) {
-            CommitSearchStatusText = "No matches";
-            return;
-        }
-
-        var positions = CommitMatchPositions();
-        var selected = SelectedCommit is { HasSearchMatch: true } ? Array.BinarySearch(positions, Commits.IndexOf(SelectedCommit)) : -1;
-        CommitSearchStatusText = GitKay.Kit.Cycle.summary(selected < 0 ? -1 : selected, matches);
+        CommitSearchStatusText = GitKay.Core.GitSearch.progressText(progress);
     }
 
     public void RereadRefs() => _dispatch?.Invoke(GitKay.Core.App.Msg.RereadRefs);

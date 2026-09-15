@@ -238,6 +238,28 @@ module GitSearch =
     let firstTermText (mode: Mode) (query: string) (field: Field) =
         parseQuery mode query |> List.tryFind (fun term -> term.Field = field) |> Option.map _.Text
 
+    // ----- The commit search's status line -----
+
+    /// <summary>Where the commit search is, for its status line.</summary>
+    type Progress =
+        | NotSearching
+        /// <summary>Running: matches found so far, and commits checked of the total when known.</summary>
+        | Searching of found: int * checkedOf: (int * int) option
+        /// <summary>Done: the number of matches, and which of them is selected (-1 for none).</summary>
+        | Searched of matches: int * selected: int
+
+    /// <summary>"Searching… 42%", "12 so far · 42%", "3 of 12", "12 matches", "No matches".</summary>
+    let progressText (progress: Progress) =
+        match progress with
+        | NotSearching -> ""
+        | Searching(found, checkedOf) ->
+            let percent =
+                match checkedOf with
+                | Some(checkedCount, total) when total > 0 -> $" {checkedCount * 100 / total}%%"
+                | _ -> ""
+            if found > 0 then $"{found} so far ·{percent}" else $"Searching…{percent}"
+        | Searched(matches, selected) -> Cycle.summary selected matches
+
     // ----- Recent searches, suggested under the search box -----
 
     [<Literal>]

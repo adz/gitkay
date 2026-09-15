@@ -171,3 +171,16 @@ let ``commit formatting: short hashes, ref summaries, badges and counted lists``
 [<Fact>]
 let ``match kinds have summary keys and list labels`` () =
     test <@ GitSearch.matchKindLabel GitSearch.PathMatch = "File / path" && GitSearch.matchKindKey GitSearch.TextMatch = "text" @>
+
+[<Fact>]
+let ``search progress reads as a status line`` () =
+    let texts =
+        [ GitSearch.NotSearching
+          GitSearch.Searching(0, None)
+          GitSearch.Searching(12, Some(21, 50))
+          GitSearch.Searching(0, Some(0, 0))
+          GitSearch.Searched(12, 2)
+          GitSearch.Searched(12, -1)
+          GitSearch.Searched(0, -1) ]
+        |> List.map GitSearch.progressText
+    test <@ texts = [ ""; "Searching…"; "12 so far · 42%"; "Searching…"; "3 of 12"; "12 matches"; "No matches" ] @>
