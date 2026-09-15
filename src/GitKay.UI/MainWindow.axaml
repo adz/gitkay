@@ -68,7 +68,7 @@
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Column="0" HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock Text="⇧P" /></Border>
+<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Column="0" HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock Text="Ctrl+⇧P" /></Border>
                             <Button x:Name="AppMenuButton"
                                     Width="28" Height="28" Padding="0"
                                     Background="Transparent" BorderThickness="0"
@@ -95,7 +95,7 @@
                             </Button>
 
 
-<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Column="2" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="6,0,0,0"><TextBlock Text="F  find" /></Border>
+<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Column="2" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="6,0,0,0"><TextBlock Text="Ctrl+F  find" /></Border>
                             <Panel Grid.Column="2" MinWidth="220">
                                 <TextBox x:Name="SearchBox"
                                          Height="28"
@@ -324,7 +324,7 @@
                         </Grid>
                     </Border>
 
-<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Row="2" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10,4,0,0"><TextBlock Text="1  commits" /></Border>
+<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Row="2" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10,4,0,0"><TextBlock Text="Ctrl+1  commits" /></Border>
                     <Border x:Name="CommitPaneFocus" Grid.Row="2" IsHitTestVisible="False" Background="{DynamicResource GitKayWindowBrush}" Opacity="0" ZIndex="10">
                         <Border.Transitions><Transitions><DoubleTransition Property="Opacity" Duration="0:0:0.12" /></Transitions></Border.Transitions>
                     </Border>
@@ -408,8 +408,8 @@
                             <!-- Search progress and counts live in the search boxes; underlines mark matches in the diff. -->
                         </Grid>
 
-<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Center"><TextBlock Text="G  go to ref" /></Border>
-<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Column="2" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="6,0,0,0"><TextBlock Text="F  find" /></Border>
+<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Center"><TextBlock Text="Ctrl+G  go to ref" /></Border>
+<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Column="2" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="6,0,0,0"><TextBlock Text="Ctrl+F  find" /></Border>
                         <TextBox x:Name="CommitFindBox"
                                  Grid.Column="2"
                                  Width="340"
@@ -495,7 +495,7 @@
                     <Border x:Name="DiffPaneFocus" Grid.Row="1" Grid.Column="0" IsHitTestVisible="False" Background="{DynamicResource GitKayWindowBrush}" Opacity="0" ZIndex="10">
                         <Border.Transitions><Transitions><DoubleTransition Property="Opacity" Duration="0:0:0.12" /></Transitions></Border.Transitions>
                     </Border>
-<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Row="1" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,10,0"><TextBlock Text="3  files · P  go to file" /></Border>
+<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Row="1" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,10,0"><TextBlock Text="Ctrl+3  files · Ctrl+P  go to file" /></Border>
                     <Border x:Name="FilesPaneFocus" Grid.Row="1" Grid.Column="2" IsHitTestVisible="False" Background="{DynamicResource GitKayWindowBrush}" Opacity="0" ZIndex="10">
                         <Border.Transitions><Transitions><DoubleTransition Property="Opacity" Duration="0:0:0.12" /></Transitions></Border.Transitions>
                     </Border>
@@ -583,7 +583,7 @@
                             </Grid>
                         </Border>
                             <Panel>
-<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10,6,0,0"><TextBlock Text="2  diff · C  copy" /></Border>
+<Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10,6,0,0"><TextBlock Text="Ctrl+2  diff · Ctrl+C  copy" /></Border>
                             <ScrollViewer x:Name="DiffRowsScrollViewer"
                                           HorizontalScrollBarVisibility="Disabled"
                                           VerticalScrollBarVisibility="Auto">
