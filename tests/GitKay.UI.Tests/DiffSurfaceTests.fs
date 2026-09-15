@@ -122,6 +122,21 @@ module DiffSurfaceTests =
         toggleKeepsHeaderInPlace 120.0
 
     [<Fact>]
+    let ``collapsing a file whose header is stuck to the top leaves it at the top`` () =
+        Headless.run (fun () ->
+            use fixture = new DiffFixture(DiffLayout.Unified)
+            let header = fixture.Header 1
+            // Scrolled into the file: its header row is above the viewport and drawn as the sticky header.
+            fixture.Scroller.Offset <- Vector(0.0, fixture.ViewportTop header + 200.0)
+            Headless.pump ()
+            let stuck = fixture.ViewportTop header < 0.0
+            fixture.Surface.Focus() |> ignore
+            fixture.Surface.SelectedItem <- header
+            fixture.Press Key.Enter
+            let collapsedTop = Math.Round(fixture.ViewportTop header, 1)
+            test <@ stuck && collapsedTop = 0.0 @>)
+
+    [<Fact>]
     let ``v selects from the caret on the side the caret is on`` () =
         Headless.run (fun () ->
             use fixture = new DiffFixture(DiffLayout.SideBySide)
