@@ -355,7 +355,10 @@ module SearchPromptTests =
                 Headless.pump ()
 
             press Key.Oem2 "/"
-            let opened = projection.IsSearchPromptOpen && prompt.IsFocused && (prompt.Text = "" || isNull prompt.Text)
+            let keys = window.FindControl<TextBlock>("SearchPromptKeys")
+            let opened =
+                projection.IsSearchPromptOpen && prompt.IsFocused && (prompt.Text = "" || isNull prompt.Text)
+                && keys.IsEffectivelyVisible && keys.MaxWidth > 0.0 && keys.Text.Contains "Esc cancel"
             prompt.Text <- "beta"                                   // smartcase: matches "Beta" and "beta"
             Headless.pump ()
             let incremental = Object.ReferenceEquals(projection.SelectedDiffRow, rows[1])

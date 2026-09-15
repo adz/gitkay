@@ -42,10 +42,10 @@
             <Panel>
                 <TextBlock Text="{Binding Status}" FontSize="11" IsVisible="{Binding !IsSearchPromptOpen}" />
                 <!-- vim's / and ? prompt: incremental search; Enter keeps it for n / N, Esc cancels. -->
-                <Grid x:Name="SearchPrompt" ColumnDefinitions="Auto,*,Auto" IsVisible="{Binding IsSearchPromptOpen}">
+                <Grid x:Name="SearchPrompt" ColumnDefinitions="Auto,*,Auto,Auto" IsVisible="{Binding IsSearchPromptOpen}">
                     <TextBlock x:Name="SearchPromptPrefix" Grid.Column="0" Text="/" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12"
                                Foreground="{DynamicResource GitKayAccentBrush}" VerticalAlignment="Center" Margin="0,0,4,0" />
-                    <TextBox x:Name="SearchPromptBox" Grid.Column="1" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12"
+                    <TextBox x:Name="SearchPromptBox" Grid.Column="1" MinWidth="160" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12"
                              MinHeight="0" Padding="0" BorderThickness="0" Background="Transparent" VerticalAlignment="Center">
                         <TextBox.Styles>
                             <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
@@ -59,7 +59,11 @@
                         </TextBox.Styles>
                     </TextBox>
                     <TextBlock x:Name="SearchPromptInfo" Grid.Column="2" FontSize="11" Foreground="{DynamicResource GitKaySecondaryTextBrush}"
-                               VerticalAlignment="Center" Margin="8,0,0,0" ToolTip.Tip="Alt+R regex / literal · Alt+C case · /i ignore case · \V literal · Up / Down history" />
+                               VerticalAlignment="Center" Margin="8,0,0,0" />
+                    <!-- The prompt's keys, so they needn't be remembered; trimmed before the input when the window is narrow. -->
+                    <TextBlock x:Name="SearchPromptKeys" Grid.Column="3" FontSize="11" Foreground="{DynamicResource GitKayMutedTextBrush}"
+                               VerticalAlignment="Center" Margin="16,0,0,0" TextTrimming="CharacterEllipsis"
+                               Text="Enter keep for n / N · Esc cancel · ↑↓ history · Alt+R regex · Alt+C case · /i ignore case · \V literal · \&lt; \&gt; word" />
                 </Grid>
             </Panel>
         </Border>

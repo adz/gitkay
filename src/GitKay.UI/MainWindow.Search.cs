@@ -49,6 +49,8 @@ public partial class MainWindow {
         _promptClosing = false;
         SearchPromptInfo.Text = Vim.describeSearch(Vim.parseSearch(""));
         projection.IsSearchPromptOpen = true;
+        // Keys trim before the input: cap them at what's left after the input's minimum and the match summary.
+        SearchPromptKeys.MaxWidth = Math.Max(0, Bounds.Width - 16 - 160 - 240);
         Avalonia.Threading.Dispatcher.UIThread.Post(() => SearchPromptBox.Focus(), Avalonia.Threading.DispatcherPriority.Input);
     }
 
