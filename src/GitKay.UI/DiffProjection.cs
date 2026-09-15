@@ -178,13 +178,7 @@ public sealed class RepoFileRow {
 public static class DiffFileTree {
     public const double IndentWidth = 14;
 
-    private sealed class Node {
-        public readonly SortedDictionary<string, Node> Folders = new(StringComparer.OrdinalIgnoreCase);
-        public readonly List<(string Name, string Path, DiffFileProjection? File)> Files = new();
-        public bool HasChange;
-    }
-
-    public static string PathOf(DiffFileProjection file) => file.Key.NewPath == "/dev/null" ? file.Key.OldPath : file.Key.NewPath;
+    public static string PathOf(DiffFileProjection file) => GitKay.Core.FileChange.currentPath(file.Key.OldPath, file.Key.NewPath);
 
     public static List<object> BuildRows(IEnumerable<DiffFileProjection> files, bool treeMode, ISet<string> collapsedFolders) {
         var rows = new List<object>();
@@ -208,75 +202,34 @@ public static class DiffFileTree {
         BuildTree(files, allPaths, null, toggledFolders);
 
     private static List<object> BuildTree(IEnumerable<DiffFileProjection> files, IEnumerable<string>? allPaths, Func<string, bool>? isExpanded, ISet<string>? toggledFolders = null) {
+        var changed = files.ToList();
+        var changedPaths = changed.Select(PathOf).ToHashSet(StringComparer.Ordinal);
+        var entries = changed.Select(file => Tuple.Create(PathOf(file), Microsoft.FSharp.Core.FSharpOption<DiffFileProjection>.Some(file)))
+            .Concat((allPaths ?? []).Where(path => !changedPaths.Contains(path)).Select(path => Tuple.Create(path, Microsoft.FSharp.Core.FSharpOption<DiffFileProjection>.None)));
+        // Folders holding changes start expanded in the all-files tree; toggling flips that. The changes-only tree follows the collapsed set.
+        var expanded = Microsoft.FSharp.Core.FuncConvert.FromFunc<string, bool, bool>((path, hasChange) =>
+            isExpanded?.Invoke(path) ?? hasChange != (toggledFolders?.Contains(path) ?? false));
+
         var rows = new List<object>();
-        var root = new Node();
-
-        void Add(string path, DiffFileProjection? file) {
-            var parts = path.Split('/');
-            var node = root;
-            if (file != null) node.HasChange = true;
-            for (var i = 0; i < parts.Length - 1; i++) {
-                if (!node.Folders.TryGetValue(parts[i], out var child))
-                    node.Folders[parts[i]] = child = new Node();
-                node = child;
-                if (file != null) node.HasChange = true;
-            }
-            node.Files.Add((parts[^1], path, file));
-        }
-
-        var changedPaths = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var file in files) {
-            var path = PathOf(file);
-            changedPaths.Add(path);
-            Add(path, file);
-        }
-
-        if (allPaths != null)
-            foreach (var path in allPaths)
-                if (!changedPaths.Contains(path)) Add(path, null);
-
-        void Emit(Node node, string prefix, int depth) {
-            foreach (var (folderName, folder) in node.Folders) {
-                // Merge chains of folders that contain only one folder, like GitHub ("dev-docs/releases").
-                var name = folderName;
-                var current = folder;
-                while (current.Files.Count == 0 && current.Folders.Count == 1) {
-                    var only = current.Folders.First();
-                    name = $"{name}/{only.Key}";
-                    current = only.Value;
-                }
-
-                var path = prefix.Length == 0 ? name : $"{prefix}/{name}";
-                var expanded = isExpanded?.Invoke(path) ?? current.HasChange != (toggledFolders?.Contains(path) ?? false);
-                var folderRow = new DiffFileFolderRow(name, path, depth, expanded);
-                folderRow.Files.AddRange(ChangedFilesUnder(current));
-                folderRow.RefreshTotals();
-                rows.Add(folderRow);
-                if (expanded) Emit(current, path, depth + 1);
-            }
-
-            foreach (var (name, path, file) in node.Files.OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)) {
-                if (file == null) {
-                    rows.Add(new RepoFileRow(path, name, depth));
-                    continue;
-                }
-
-                file.ListLabel = name;
-                file.ListIndent = new Avalonia.Thickness(depth * IndentWidth, 0, 0, 0);
-                rows.Add(file);
+        foreach (var row in GitKay.Kit.PathTree.rows(expanded, entries)) {
+            switch (row) {
+                case GitKay.Kit.PathTreeRow<DiffFileProjection>.FolderRow folder:
+                    var folderRow = new DiffFileFolderRow(folder.name, folder.path, folder.depth, folder.expanded);
+                    folderRow.Files.AddRange(folder.items);
+                    folderRow.RefreshTotals();
+                    rows.Add(folderRow);
+                    break;
+                case GitKay.Kit.PathTreeRow<DiffFileProjection>.FileRow { item: null } unchanged:
+                    rows.Add(new RepoFileRow(unchanged.path, unchanged.name, unchanged.depth));
+                    break;
+                case GitKay.Kit.PathTreeRow<DiffFileProjection>.FileRow file:
+                    file.item.Value.ListLabel = file.name;
+                    file.item.Value.ListIndent = new Avalonia.Thickness(file.depth * IndentWidth, 0, 0, 0);
+                    rows.Add(file.item.Value);
+                    break;
             }
         }
-
-        Emit(root, "", 0);
         return rows;
-    }
-
-    private static IEnumerable<DiffFileProjection> ChangedFilesUnder(Node node) {
-        foreach (var (_, _, file) in node.Files)
-            if (file != null) yield return file;
-        foreach (var child in node.Folders.Values)
-            foreach (var file in ChangedFilesUnder(child))
-                yield return file;
     }
 }
 

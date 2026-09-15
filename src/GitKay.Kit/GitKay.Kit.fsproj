@@ -15,6 +15,9 @@
     <Compile Include="TextQuery.fs" />
     <Compile Include="Cycle.fs" />
     <Compile Include="Recent.fs" />
+    <Compile Include="Fuzzy.fs" />
+    <Compile Include="Navigation.fs" />
+    <Compile Include="PathTree.fs" />
   </ItemGroup>
 
 </Project>

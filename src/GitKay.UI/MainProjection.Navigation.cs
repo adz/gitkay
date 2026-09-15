@@ -29,30 +29,6 @@ public sealed class PaletteItem {
     public string Shortcut { get; }
     public bool HasShortcut => Shortcut.Length > 0;
     public Action Run { get; }
-    internal int Score { get; set; }
-}
-
-/// <summary>Case-insensitive subsequence matching that favours word starts and consecutive characters.</summary>
-public static class FuzzyMatch {
-    public static int? Score(string candidate, string query) {
-        // Spaces in the query only separate words; "side by" should find "side-by-side".
-        query = string.Concat(query.Where(c => !char.IsWhiteSpace(c)));
-        if (string.IsNullOrEmpty(query)) return 0;
-        var score = 0;
-        var queryIndex = 0;
-        var previousMatch = -2;
-        for (var i = 0; i < candidate.Length && queryIndex < query.Length; i++) {
-            if (char.ToLowerInvariant(candidate[i]) != char.ToLowerInvariant(query[queryIndex])) continue;
-            var wordStart = i == 0 || !char.IsLetterOrDigit(candidate[i - 1]) || (char.IsUpper(candidate[i]) && char.IsLower(candidate[i - 1]));
-            score += 1 + (wordStart ? 8 : 0) + (previousMatch == i - 1 ? 5 : 0);
-            previousMatch = i;
-            queryIndex++;
-        }
-
-        if (queryIndex < query.Length) return null;
-        // Prefer shorter candidates for equal matches.
-        return score * 100 - candidate.Length;
-    }
 }
 
 public partial class MainProjection {
@@ -85,10 +61,8 @@ public partial class MainProjection {
 
     // ----- Back / forward through visited commits (Alt+Left / Alt+Right, Ctrl+O / Ctrl+I). -----
 
-    private readonly List<string> _backStack = new();
-    private readonly List<string> _forwardStack = new();
-    private string? _historyCurrent;
-    private bool _navigatingHistory;
+    /// <summary>Commits visited, for back and forward (Alt+Left / Alt+Right).</summary>
+    private GitKay.Kit.Navigation<string> _navigation = GitKay.Kit.NavigationModule.empty<string>();
     /// <summary>An explicit jump to a file (file list, Ctrl+P): the diff puts its header at the top.</summary>
     public event Action<DiffFileProjection>? FileJumpRequested;
 
@@ -137,39 +111,29 @@ public partial class MainProjection {
     [ObservableProperty] private bool _canGoForward;
 
     private void RecordVisitedCommit(string? hash) {
-        if (hash == null || string.Equals(hash, _historyCurrent, StringComparison.Ordinal)) return;
-        if (!_navigatingHistory && _historyCurrent != null) {
-            _backStack.Add(_historyCurrent);
-            if (_backStack.Count > 200) _backStack.RemoveAt(0);
-            _forwardStack.Clear();
-        }
-
-        _navigatingHistory = false;
-        _historyCurrent = hash;
-        CanGoBack = _backStack.Count > 0;
-        CanGoForward = _forwardStack.Count > 0;
+        if (hash != null) SetNavigation(GitKay.Kit.NavigationModule.visit(hash, _navigation));
     }
 
     [RelayCommand]
-    private void GoBack() => StepHistory(_backStack, _forwardStack);
+    private void GoBack() => MoveThroughHistory(GitKay.Kit.NavigationModule.back(IsLoadedCommit, _navigation));
 
     [RelayCommand]
-    private void GoForward() => StepHistory(_forwardStack, _backStack);
+    private void GoForward() => MoveThroughHistory(GitKay.Kit.NavigationModule.forward(IsLoadedCommit, _navigation));
 
-    private void StepHistory(List<string> from, List<string> to) {
-        while (from.Count > 0) {
-            var hash = from[^1];
-            from.RemoveAt(from.Count - 1);
-            var commit = Commits.FirstOrDefault(candidate => candidate.FullHash == hash);
-            if (commit == null) continue;
-            if (_historyCurrent != null) to.Add(_historyCurrent);
-            _navigatingHistory = true;
-            SelectedCommit = commit;
-            break;
-        }
+    private Microsoft.FSharp.Core.FSharpFunc<string, bool> IsLoadedCommit =>
+        Microsoft.FSharp.Core.FuncConvert.FromFunc<string, bool>(hash => Commits.Any(commit => commit.FullHash == hash));
 
-        CanGoBack = _backStack.Count > 0;
-        CanGoForward = _forwardStack.Count > 0;
+    private void MoveThroughHistory(Microsoft.FSharp.Core.FSharpOption<Tuple<string, GitKay.Kit.Navigation<string>>>? step) {
+        if (step is not { } moved) return;
+        // The navigation already points at the commit, so selecting it records no new visit.
+        SetNavigation(moved.Value.Item2);
+        SelectedCommit = Commits.First(commit => commit.FullHash == moved.Value.Item1);
+    }
+
+    private void SetNavigation(GitKay.Kit.Navigation<string> navigation) {
+        _navigation = navigation;
+        CanGoBack = GitKay.Kit.NavigationModule.canGoBack(navigation);
+        CanGoForward = GitKay.Kit.NavigationModule.canGoForward(navigation);
     }
 
     // ----- Palette: commands (Ctrl+Shift+P or :), refs and commits (Ctrl+G), changed files (Ctrl+P). -----
@@ -217,18 +181,9 @@ public partial class MainProjection {
 
     private void FilterPalette() {
         var query = PaletteQuery.TrimStart('>', '@', '#').Trim();
-        var ranked = new List<PaletteItem>();
-        foreach (var item in _paletteSource) {
-            var score = FuzzyMatch.Score(item.Title, query) ?? (FuzzyMatch.Score(item.Detail, query) is { } detail ? detail - 5000 : null);
-            if (score is not { } value) continue;
-            item.Score = value;
-            ranked.Add(item);
-        }
-
+        var candidates = Microsoft.FSharp.Collections.ListModule.OfSeq(_paletteSource.Select(item => (item.Title, item.Detail)));
         PaletteItems.Clear();
-        foreach (var item in (query.Length == 0 ? ranked : (IEnumerable<PaletteItem>)ranked.OrderByDescending(item => item.Score)).Take(60)) {
-            PaletteItems.Add(item);
-        }
+        foreach (var index in GitKay.Kit.Fuzzy.rank(60, query, candidates)) PaletteItems.Add(_paletteSource[index]);
 
         // Refilling the list clears its selection; re-announce even when the index is unchanged.
         PaletteSelectedIndex = -1;

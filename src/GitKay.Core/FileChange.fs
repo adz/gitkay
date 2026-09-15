@@ -37,6 +37,9 @@ module FileChange =
         | Renamed -> "→"
         | Modified -> "•"
 
+    /// <summary>Where the file is now, or where it was when it was deleted.</summary>
+    let currentPath (oldPath: string) (newPath: string) = if newPath = Missing then oldPath else newPath
+
     /// <summary>The path a reader knows the file by: "old -> new" for renames, otherwise the side that exists.</summary>
     let path (oldPath: string) (newPath: string) =
         match kind oldPath newPath with

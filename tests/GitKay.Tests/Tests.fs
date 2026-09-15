@@ -2741,9 +2741,9 @@ module PaletteTests =
 
     [<Fact>]
     let ``fuzzy match should prefer word starts and consecutive letters`` () =
-        test <@ FuzzyMatch.Score("Go to changed file…", "gcf").HasValue @>
-        test <@ FuzzyMatch.Score("Settings", "xyz") = Nullable() @>
-        test <@ FuzzyMatch.Score("View: side-by-side", "side").Value > FuzzyMatch.Score("Show stashes inside", "side").Value @>
+        test <@ GitKay.Kit.Fuzzy.score "gcf" "Go to changed file…" >= 0 @>
+        test <@ GitKay.Kit.Fuzzy.score "xyz" "Settings" = -1 @>
+        test <@ GitKay.Kit.Fuzzy.score "side" "View: side-by-side" > GitKay.Kit.Fuzzy.score "side" "Show stashes inside" @>
 
     [<Fact>]
     let ``palette should rank commands, switch modes by prefix and run the selection`` () =

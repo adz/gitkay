@@ -112,3 +112,42 @@ let ``a diff mark prefers the changed-line term and follows the search's regex s
     test <@ not (GitSearch.marksPath paths "lib/src/x" "lib/src/x" "lib/src/x") && not (GitSearch.marksLine paths "src/") @>
     test <@ (GitSearch.diffMark GitSearch.Commit false "fix").Scope = GitSearch.AnyChange @>
 
+[<Fact>]
+let ``fuzzy ranking puts title matches first, then detail matches; a blank query keeps order`` () =
+    let candidates = [ struct ("Show stashes", "refs"); struct ("Open file", "side panel"); struct ("View: side-by-side", "layout") ]
+    test <@ Fuzzy.rank 10 "side" candidates = [ 2; 1 ] @>
+    test <@ Fuzzy.rank 10 " " candidates = [ 0; 1; 2 ] && Fuzzy.rank 1 "" candidates = [ 0 ] @>
+    test <@ Fuzzy.score "sbs" "side-by-side" > Fuzzy.score "sbs" "subsystems" && Fuzzy.score "" "x" = 0 @>
+
+[<Fact>]
+let ``navigation goes back and forward, skipping places that are gone`` () =
+    let visited = Navigation.empty |> Navigation.visit "a" |> Navigation.visit "b" |> Navigation.visit "c" |> Navigation.visit "c"
+    test <@ visited = { Back = [ "b"; "a" ]; Current = Some "c"; Forward = [] } @>
+    let available place = place <> "b"
+    let backed = Navigation.back available visited
+    test <@ backed |> Option.map fst = Some "a" @>
+    let _, atA = backed.Value
+    test <@ atA = { Back = []; Current = Some "a"; Forward = [ "c" ] } && not (Navigation.canGoBack atA) @>
+    let forwarded = Navigation.forward available atA
+    test <@ forwarded |> Option.map (fun (place, nav) -> place, nav.Back, nav.Forward) = Some("c", [ "a" ], []) @>
+    test <@ (Navigation.visit "d" atA).Forward = [] && Navigation.back (fun _ -> false) visited = None @>
+
+[<Fact>]
+let ``path trees merge single-folder chains, sort, and hide collapsed folders`` () =
+    let entries =
+        [ "src/App/Main.fs", Some 1
+          "src/App/util.fs", None
+          "dev-docs/releases/0.3.0.md", Some 2
+          "README.md", None ]
+    let describe row =
+        match row with
+        | FolderRow(name, _, depth, expanded, items) ->
+            let marker = if expanded then "" else "+"
+            $"{depth}:[{name}]{marker}{items}"
+        | FileRow(name, _, depth, Some item) -> $"{depth}:{name}#{item}"
+        | FileRow(name, _, depth, None) -> $"{depth}:{name}"
+    let open' = PathTree.rows (fun _ _ -> true) entries |> List.map describe
+    test <@ open' = [ "0:[dev-docs/releases][2]"; "1:0.3.0.md#2"; "0:[src/App][1]"; "1:Main.fs#1"; "1:util.fs"; "0:README.md" ] @>
+    let changedOnly = PathTree.rows (fun path hasItem -> hasItem && path <> "src/App") entries |> List.map describe
+    test <@ changedOnly = [ "0:[dev-docs/releases][2]"; "1:0.3.0.md#2"; "0:[src/App]+[1]"; "0:README.md" ] @>
+
