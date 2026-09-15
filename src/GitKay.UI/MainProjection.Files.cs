@@ -28,7 +28,7 @@ public partial class MainProjection {
     public string? WorkingDirectory => _workingDirectory ??= RepositoryPath == null ? null : GitKay.Core.GitService.workingDirectory(RepositoryPath);
     private string? _workingDirectory;
 
-    public string? SelectedCommitHash => _selectedDiffHash;
+    public string? SelectedCommitHash => IsWorkingTreeDiffShown ? null : _selectedDiffHash;
 
     /// <summary>Font size of diff code only; zoomed with Ctrl+= / Ctrl+- / Ctrl+0 or Ctrl+wheel.</summary>
     [ObservableProperty] private double _diffFontSize = DiffSurfaceControl.DefaultCodeFontSize;
@@ -81,7 +81,8 @@ public partial class MainProjection {
     private void RebuildDiffFileListRows() {
         List<object> rows;
         if (IsAllFilesMode) {
-            var hash = _selectedDiffHash;
+            // The uncommitted changes sit on HEAD's tree.
+            var hash = IsWorkingTreeDiffShown ? "HEAD" : _selectedDiffHash;
             if (hash != null && _allFilesHash != hash) LoadAllFiles(hash);
             rows = DiffFileTree.BuildAllFilesRows(SelectedDiffFiles, _allFilesHash == hash ? _allFiles ?? [] : [], _toggledAllFilesFolders);
         }
@@ -115,13 +116,13 @@ public partial class MainProjection {
 
             _allFilesHash = hash;
             _allFiles = result.ResultValue.ToArray();
-            if (IsAllFilesMode && _selectedDiffHash == hash) RebuildDiffFileListRows();
+            if (IsAllFilesMode && (_selectedDiffHash == hash || hash == "HEAD" && IsWorkingTreeDiffShown)) RebuildDiffFileListRows();
         }));
     }
 
     /// <summary>Every file of the selected commit when "All files" has loaded it; otherwise only changed files.</summary>
     public IEnumerable<string> UnchangedFilePaths() {
-        if (_allFilesHash != _selectedDiffHash || _allFiles == null) return [];
+        if (_allFilesHash != (IsWorkingTreeDiffShown ? "HEAD" : _selectedDiffHash) || _allFiles == null) return [];
         var changed = SelectedDiffFiles.Select(DiffFileTree.PathOf).ToHashSet(StringComparer.Ordinal);
         return _allFiles.Where(path => !changed.Contains(path));
     }
@@ -229,7 +230,7 @@ public partial class MainProjection {
         System.IO.Path.GetFullPath(System.IO.Path.Combine(WorkingDirectory ?? "", target.Path.Replace('/', System.IO.Path.DirectorySeparatorChar)));
 
     public void ShowWholeFile(FileTarget target) {
-        if (_selectedDiffHash == null || RepositoryPath == null) return;
+        if (_selectedDiffHash is null or WorkingTreeDiffId || RepositoryPath == null) return;
         WholeFileRequested?.Invoke(target);
     }
 

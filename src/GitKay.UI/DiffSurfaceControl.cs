@@ -92,6 +92,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private const double HunkHeight = 28;
     private const double GapHeight = 40;
     private const double FileHeight = 50;
+    private const double SectionHeight = 34;
     private const double FileCardTop = 12;
     private const double FileChevronWidth = 32;
     private const int HeaderChevronAction = 100;
@@ -580,12 +581,13 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         var header = -1;
         for (var i = Math.Min(first, _rows.Length - 1); i >= 0; i--) {
             if (_rows[i] is DiffFileHeaderProjection) { header = i; break; }
+            if (_rows[i] is DiffSectionHeaderProjection) break;
         }
 
         if (header < 0 || _tops[header] + FileCardTop >= offset) return;
 
         var next = header + 1;
-        while (next < _rows.Length && _rows[next] is not DiffFileHeaderProjection) next++;
+        while (next < _rows.Length && _rows[next] is not (DiffFileHeaderProjection or DiffSectionHeaderProjection)) next++;
         var cardHeight = FileHeight - FileCardTop;
         var rowTop = offset - FileCardTop;
         if (next < _rows.Length)
@@ -631,7 +633,33 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             case DiffLineProjection line:
                 DrawLine(context, line, y);
                 break;
+            case DiffSectionHeaderProjection section:
+                DrawSectionHeader(context, section, y);
+                break;
         }
+    }
+
+    /// <summary>An uncommitted changes section: chevron, name and file count on a rule, above its file cards.</summary>
+    private void DrawSectionHeader(DrawingContext context, DiffSectionHeaderProjection section, double y) {
+        var secondary = ThemeBrush("GitKaySecondaryTextBrush", HunkBrush);
+        var centerY = y + 20;
+        var chevronPen = new Pen(secondary, 1.5, lineCap: PenLineCap.Round);
+        var cx = FileChevronWidth / 2 + 1;
+        if (section.IsCollapsed) {
+            context.DrawLine(chevronPen, new Point(cx - 2, centerY - 4), new Point(cx + 2, centerY));
+            context.DrawLine(chevronPen, new Point(cx + 2, centerY), new Point(cx - 2, centerY + 4));
+        }
+        else {
+            context.DrawLine(chevronPen, new Point(cx - 4, centerY - 2), new Point(cx, centerY + 2));
+            context.DrawLine(chevronPen, new Point(cx, centerY + 2), new Point(cx + 4, centerY - 2));
+        }
+        var labelX = FileChevronWidth + 8;
+        var label = Layout(section.Name, 13, ThemeBrush("GitKayTextBrush", FileBrush), false);
+        context.DrawText(label, new Point(labelX, centerY - label.Height / 2));
+        var count = Layout(section.FileCount == 1 ? "1 file" : $"{section.FileCount} files", 11, secondary, false);
+        context.DrawText(count, new Point(labelX + label.Width + 10, centerY - count.Height / 2));
+        var ruleX = labelX + label.Width + 10 + count.Width + 10;
+        context.FillRectangle(ThemeBrush("GitKayBorderBrush", secondary), new Rect(ruleX, centerY, Math.Max(0, Bounds.Width - ruleX - 8), 1));
     }
 
     private Rect FileCardRect(double y) => new(0.5, y + FileCardTop + 0.5, Math.Max(0, Bounds.Width - 1), FileHeight - FileCardTop - 1);
@@ -1127,6 +1155,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             DiffFileHeaderProjection => FileHeight,
             DiffHunkHeaderProjection => HunkHeight,
             DiffGapProjection => GapHeight,
+            DiffSectionHeaderProjection => SectionHeight,
             _ => LineHeight
         };
         return _growProgress < 1 && _growingRows.Contains(row) ? height * EaseOut(_growProgress) : height;
@@ -1201,7 +1230,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         }
         else {
             var index = RowAt(position, out _);
-            if ((uint)index < (uint)_rows.Length && _rows[index] is not (DiffHunkHeaderProjection or DiffGapProjection))
+            if ((uint)index < (uint)_rows.Length && _rows[index] is DiffSectionHeaderProjection section)
+                section.Toggle();
+            else if ((uint)index < (uint)_rows.Length && _rows[index] is not (DiffHunkHeaderProjection or DiffGapProjection))
                 SelectedItem = _rows[index];
             if ((uint)index < (uint)_rows.Length && _rows[index] is DiffFileHeaderProjection clickedHeader && e.ClickCount == 2)
                 ToggleFileAnchored(clickedHeader, ToggleFileCommand);

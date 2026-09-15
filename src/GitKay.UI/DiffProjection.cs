@@ -11,14 +11,15 @@ using DiffLineType = GitKay.Core.Models.LineType;
 
 namespace GitKay.UI;
 
-public readonly record struct DiffFileKey(string OldPath, string NewPath);
+/// <summary>A file in the shown diff. Section names the uncommitted changes section ("Staged", ...); empty for a commit.</summary>
+public readonly record struct DiffFileKey(string OldPath, string NewPath, string Section = "");
 
 public interface IDiffRowProjection {
 }
 
 public partial class DiffFileProjection : ObservableObject {
-    public DiffFileProjection(GitKay.Core.GitService.DiffFileSummary summary) {
-        Key = new DiffFileKey(summary.OldPath, summary.NewPath);
+    public DiffFileProjection(GitKay.Core.GitService.DiffFileSummary summary, string section = "") {
+        Key = new DiffFileKey(summary.OldPath, summary.NewPath, section);
         DisplayPath = summary.DisplayPath;
         ListLabel = summary.DisplayPath;
         Header = new DiffFileHeaderProjection(this);
@@ -34,6 +35,11 @@ public partial class DiffFileProjection : ObservableObject {
     /// <summary>The commit search's path term matches this file; shown as a dotted underline.</summary>
     [ObservableProperty] private bool _isPathSearchMatch;
     [ObservableProperty] private Avalonia.Thickness _listIndent;
+    /// <summary>Uncommitted state marker (● staged, ○ unstaged, ◐ both, + untracked), shown in the all-files tree.</summary>
+    public string Marker { get; set; } = "";
+    [ObservableProperty] private string _listMarker = "";
+    public bool HasListMarker => ListMarker.Length > 0;
+    partial void OnListMarkerChanged(string value) => OnPropertyChanged(nameof(HasListMarker));
     [ObservableProperty] private int _addedLines;
     [ObservableProperty] private int _removedLines;
     /// <summary>"added", "deleted", "renamed" or "modified", derived from the file identity.</summary>
@@ -118,6 +124,9 @@ public partial class DiffFileProjection : ObservableObject {
                     Hunks.Add(hunk);
                     _blocks.Add(hunk);
                     break;
+                // Uncommitted files have no revision to read hidden context from, so they show no gaps.
+                case GitKay.Core.DiffExpansion.DiffBlock.GapBlock when Key.Section.Length > 0:
+                    break;
                 case GitKay.Core.DiffExpansion.DiffBlock.GapBlock gapBlock:
                     _blocks.Add(new DiffGapProjection(gapBlock.Item, isLoading));
                     break;
@@ -161,6 +170,20 @@ public sealed partial class DiffFileFolderRow : ObservableObject {
     }
 }
 
+/// <summary>A section heading (Staged, Unstaged, Untracked) in the uncommitted changes file list.</summary>
+public sealed class DiffFileSectionRow(string name, int count) {
+    public string Name { get; } = name;
+    public string CountText { get; } = count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+}
+
+/// <summary>A section heading in the diff pane for uncommitted changes; clicking collapses the section's files.</summary>
+public sealed class DiffSectionHeaderProjection(string name, int count, bool isCollapsed, Action toggle) : IDiffRowProjection {
+    public string Name { get; } = name;
+    public int FileCount { get; } = count;
+    public bool IsCollapsed { get; } = isCollapsed;
+    public void Toggle() => toggle();
+}
+
 /// <summary>An unchanged file in the "All files" tree; it has no diff, so it opens as a whole file.</summary>
 public sealed class RepoFileRow {
     public RepoFileRow(string path, string name, int depth) {
@@ -181,6 +204,23 @@ public static class DiffFileTree {
     public static string PathOf(DiffFileProjection file) => GitKay.Core.FileChange.currentPath(file.Key.OldPath, file.Key.NewPath);
 
     public static List<object> BuildRows(IEnumerable<DiffFileProjection> files, bool treeMode, ISet<string> collapsedFolders) {
+        var list = files.ToList();
+        foreach (var file in list) file.ListMarker = "";
+        // Uncommitted changes: each section lists its own files, flat or as a tree.
+        if (list.Any(file => file.Key.Section.Length > 0)) {
+            var sectioned = new List<object>();
+            foreach (var group in list.GroupBy(file => file.Key.Section)) {
+                var inSection = group.ToList();
+                sectioned.Add(new DiffFileSectionRow(group.Key, inSection.Count));
+                sectioned.AddRange(BuildFileRows(inSection, treeMode, collapsedFolders));
+            }
+            return sectioned;
+        }
+
+        return BuildFileRows(list, treeMode, collapsedFolders);
+    }
+
+    private static List<object> BuildFileRows(IEnumerable<DiffFileProjection> files, bool treeMode, ISet<string> collapsedFolders) {
         var rows = new List<object>();
         if (!treeMode) {
             foreach (var file in files) {
@@ -198,8 +238,12 @@ public static class DiffFileTree {
     /// Every file in the commit's tree, with changed files in place. Folders holding changes start expanded and
     /// the rest collapsed; <paramref name="toggledFolders"/> flips that default.
     /// </summary>
-    public static List<object> BuildAllFilesRows(IEnumerable<DiffFileProjection> files, IEnumerable<string> allPaths, ISet<string> toggledFolders) =>
-        BuildTree(files, allPaths, null, toggledFolders);
+    public static List<object> BuildAllFilesRows(IEnumerable<DiffFileProjection> files, IEnumerable<string> allPaths, ISet<string> toggledFolders) {
+        // A file in two uncommitted sections is one entry in the tree, marked with both states.
+        var distinct = files.GroupBy(PathOf, StringComparer.Ordinal).Select(group => group.First()).ToList();
+        foreach (var file in distinct) file.ListMarker = file.Marker;
+        return BuildTree(distinct, allPaths, null, toggledFolders);
+    }
 
     private static List<object> BuildTree(IEnumerable<DiffFileProjection> files, IEnumerable<string>? allPaths, Func<string, bool>? isExpanded, ISet<string>? toggledFolders = null) {
         var changed = files.ToList();

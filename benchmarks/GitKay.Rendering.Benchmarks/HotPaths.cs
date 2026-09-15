@@ -138,10 +138,10 @@ internal static class UiInteractions {
         var hash = args.ElementAtOrDefault(1) ?? "48db7ad8";
         var label = args.ElementAtOrDefault(2) ?? "run";
         var env = GitService.environment(repo);
-        var commits = Unwrap(Flow.run(env, GitService.fetchHistory(FSharpOption<int>.None, false, FSharpList<GitStartup.StartupTarget>.Empty)));
+        var commits = Unwrap(System.Threading.Tasks.Task.Run(() => Flow.run(env, GitService.fetchHistory(FSharpOption<int>.None, false, FSharpList<GitStartup.StartupTarget>.Empty))).Result);
         var full = commits.First(c => c.Hash.StartsWith(hash, StringComparison.Ordinal)).Hash;
-        var files = Unwrap(Flow.run(env, GitService.fetchDiffFileList(full)));
-        var diff = Unwrap(Flow.run(env, GitService.fetchDiff(3, full)));
+        var files = Unwrap(System.Threading.Tasks.Task.Run(() => Flow.run(env, GitService.fetchDiffFileList(full))).Result);
+        var diff = Unwrap(System.Threading.Tasks.Task.Run(() => Flow.run(env, GitService.fetchDiff(3, full))).Result);
         var (baseModel, _) = App.init(Array.Empty<string>()).ToValueTuple();
         var graph = Graph.calculateLanes(commits);
         var model = new App.Model(App.StartupSelection.NoStartupSelection, false, baseModel.GitEnv, "Loaded", baseModel.StartupTargets, false, false, 3, DiffLayout.Unified, "", "commit", false,
@@ -156,11 +156,28 @@ internal static class UiInteractions {
         projection.Update(model);
         Pump(window);
         Console.WriteLine($"# ui label={label} files={files.Length} rows={projection.SelectedDiffRows.Count}");
+        if (label.StartsWith("worktree", StringComparison.Ordinal)) {
+            var changes = Unwrap(System.Threading.Tasks.Task.Run(() => Flow.run(env, GitService.fetchWorkingTreeChanges(3))).Result);
+            projection.IsAllFilesMode = label.Contains("allfiles");
+            projection.IsDiffFileTreeMode = label.Contains("tree");
+            projection.Update(new App.Model(model.StartupSelection, false, model.GitEnv, "Loaded", model.StartupTargets, false, false, 3, DiffLayout.Unified, "", "commit", false,
+                model.SearchResults, model.Commits, true, App.Selection.WorkingTreeSelected, FSharpOption<string>.None,
+                FSharpOption<FSharpList<GitService.DiffFileSummary>>.None, FSharpOption<FSharpList<Models.FileDiff>>.None, FSharpOption<GitService.DiffFileKey>.None,
+                model.DiffExpansions, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None,
+                changes.Entries, FSharpOption<GitService.WorkingTreeChanges>.Some(changes), FSharpOption<long>.None));
+            Pump(window);
+            Pump(window);
+            using var frame = Avalonia.Headless.HeadlessWindowExtensions.CaptureRenderedFrame(window);
+            var output = args.ElementAtOrDefault(3) ?? $"{label}.png";
+            frame!.Save(output);
+            Console.WriteLine($"saved {output} files={projection.SelectedDiffFiles.Count} rows={projection.SelectedDiffRows.Count}");
+            return;
+        }
         if (label.StartsWith("screenshot", StringComparison.Ordinal)) {
             var pathDiff = label.Contains("pathdiff");
             var searchText = pathDiff ? "path:DiffSurface Typeface" : "font";
             var searchMode = pathDiff ? GitSearch.Mode.Diff : GitSearch.Mode.Commit;
-            var results = Unwrap(Flow.run(env, GitService.searchCommits(3, commits, searchMode, false, searchText)));
+            var results = Unwrap(System.Threading.Tasks.Task.Run(() => Flow.run(env, GitService.searchCommits(3, commits, searchMode, false, searchText))).Result);
             var searched = new App.Model(App.StartupSelection.NoStartupSelection, false, model.GitEnv, model.Status, model.StartupTargets, false, false, 3, DiffLayout.Unified, searchText, GitSearch.modeKey(searchMode), false,
                 FSharpOption<FSharpList<GitSearch.Result>>.Some(results), model.Commits, true, model.Selection, model.SelectedDiffHash,
                 model.SelectedDiffFiles, model.SelectedDiff, model.SelectedDiffFileKey, model.DiffExpansions, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, model.WorkingTree, model.WorkingTreeChanges, model.WorkingTreeStartedAtTicks);

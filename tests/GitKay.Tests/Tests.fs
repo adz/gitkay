@@ -2890,6 +2890,34 @@ module DiffSearchBorrowTests =
         projection.Update { dirty with WorkingTree = [] }
         test <@ projection.Commits.Count = 1 && not projection.Commits.[0].IsWorkingTree @>
 
+    [<Fact>]
+    let ``uncommitted changes show Staged, Unstaged and Untracked sections in the files list and diff`` () =
+        let projection = MainProjection()
+        let model0, _ = App.init [||]
+        let line content : Models.DiffLine = { Type = Models.Added; Content = content; OldLineNo = None; NewLineNo = Some 1 }
+        let fileDiff oldPath newPath : Models.FileDiff =
+            { OldPath = oldPath; NewPath = newPath; Hunks = [ { Header = "@@ -0,0 +1 @@"; Lines = [ line "x" ] } ]; NewLineCount = None }
+        let entry path staged unstaged untracked : WorkingTree.Entry =
+            { Path = path; OriginalPath = path; Staged = staged; Unstaged = unstaged; Untracked = untracked }
+        let changes : GitService.WorkingTreeChanges =
+            { Entries = [ entry "a.txt" WorkingTree.Modified WorkingTree.Modified false; entry "new.txt" WorkingTree.Unchanged WorkingTree.Unchanged true ]
+              Staged = [ fileDiff "a.txt" "a.txt" ]
+              Unstaged = [ fileDiff "a.txt" "a.txt" ]
+              Untracked = [ fileDiff "/dev/null" "new.txt" ] }
+        projection.Update { model0 with Selection = App.WorkingTreeSelected; WorkingTree = changes.Entries; WorkingTreeChanges = Some changes }
+
+        test <@ projection.IsWorkingTreeDiffShown && projection.SelectedCommitHash = null @>
+        test <@ projection.SelectedDiffFiles.Count = 3 @>
+        let sections = projection.DiffFileListRows |> Seq.choose (function :? DiffFileSectionRow as row -> Some row.Name | _ -> None) |> List.ofSeq
+        test <@ sections = [ "Staged"; "Unstaged"; "Untracked" ] @>
+        let diffSections = projection.SelectedDiffRows |> Seq.choose (function :? DiffSectionHeaderProjection as row -> Some row.Name | _ -> None) |> List.ofSeq
+        test <@ diffSections = [ "Staged"; "Unstaged"; "Untracked" ] @>
+        test <@ projection.SelectedDiffFiles.[0].Marker = "◐" @>
+
+        projection.ToggleDiffSection "Staged"
+        let headers = projection.SelectedDiffRows |> Seq.filter (fun row -> row :? DiffFileHeaderProjection) |> Seq.length
+        test <@ headers = 2 @>
+
 module PaletteTests =
 
     let private commitOf hash subject (refs: Models.CommitRef list) : Models.Commit =

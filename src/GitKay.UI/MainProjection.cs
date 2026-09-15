@@ -364,7 +364,66 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
     }
 
+    /// <summary>Stands in for a commit hash while the uncommitted changes are shown; never passed to git.</summary>
+    private const string WorkingTreeDiffId = "\u0001working-tree";
+    private readonly HashSet<string> _collapsedDiffSections = new(StringComparer.Ordinal);
+
+    public bool IsWorkingTreeDiffShown => _selectedDiffHash == WorkingTreeDiffId;
+
+    /// <summary>Shows the uncommitted changes as Staged, Unstaged and Untracked files, keeping collapsed files and the selected file across refreshes.</summary>
+    private void UpdateWorkingTreeDiffState(GitKay.Core.App.Model model) {
+        var changes = model.WorkingTreeChanges?.Value;
+        var wasShown = IsWorkingTreeDiffShown;
+        if (wasShown && ReferenceEquals(_selectedDiffFilesSource, changes)) return;
+
+        if (!wasShown) {
+            SaveCommitViewState();
+            _collapsedDiffSections.Clear();
+        }
+        var previousKey = wasShown ? SelectedDiffFile?.Key : null;
+        var collapsed = wasShown ? SelectedDiffFiles.Where(file => file.IsCollapsed).Select(file => file.Key).ToHashSet() : [];
+        var existing = SelectedDiffFiles.ToDictionary(file => file.Key);
+
+        SyncSelectedDiffSelection(null);
+        SelectedDiffRows.Clear();
+        SelectedDiffFiles.Clear();
+        _selectedDiffHash = WorkingTreeDiffId;
+        _selectedDiffFilesSource = changes;
+        _selectedDiffFileSource = changes;
+        _diffExpansionsSource = model.DiffExpansions;
+
+        if (changes != null) {
+            var markers = changes.Entries.ToDictionary(entry => entry.Path, GitKay.Core.WorkingTree.marker, StringComparer.Ordinal);
+            foreach (var (section, files) in GitKay.Core.GitService.workingTreeSections(changes)) {
+                var sectionName = GitKay.Core.WorkingTree.sectionName(section);
+                foreach (var diff in files) {
+                    var key = new DiffFileKey(diff.OldPath, diff.NewPath, sectionName);
+                    var summary = new GitKay.Core.GitService.DiffFileSummary(diff.OldPath, diff.NewPath, GitKay.Core.FileChange.displayPath(diff.OldPath, diff.NewPath));
+                    if (!existing.TryGetValue(key, out var file)) file = new DiffFileProjection(summary, sectionName);
+                    else file.UpdateSummary(summary);
+                    file.ApplyContent(diff);
+                    file.IsCollapsed = collapsed.Contains(key);
+                    file.Marker = markers.GetValueOrDefault(DiffFileTree.PathOf(file), "");
+                    SelectedDiffFiles.Add(file);
+                }
+            }
+        }
+
+        RebuildDiffFileListRows();
+        RenderSelectedDiffRows();
+        var selected = SelectedDiffFiles.FirstOrDefault(file => file.Key == previousKey) ?? SelectedDiffFiles.FirstOrDefault();
+        SyncSelectedDiffSelection(selected);
+        _selectedDiffFileKey = selected?.Key;
+        ApplyDiffMark();
+        OnPropertyChanged(nameof(IsWorkingTreeDiffShown));
+    }
+
     private void UpdateDiffState(GitKay.Core.App.Model model) {
+        if (model.IsWorkingTreeSelected) {
+            UpdateWorkingTreeDiffState(model);
+            return;
+        }
+        var leavingWorkingTree = IsWorkingTreeDiffShown;
         var selectedDiffHash =
             model.SelectedCommitHash != null
             && model.SelectedDiffHash != null
@@ -395,8 +454,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             !string.Equals(_selectedDiffHash, selectedDiffHash, StringComparison.Ordinal)
             || !ReferenceEquals(_selectedDiffFilesSource, selectedDiffFilesSource);
 
+        if (leavingWorkingTree) OnPropertyChanged(nameof(IsWorkingTreeDiffShown));
         if (selectedDiffHash == null) {
-            SaveCommitViewState();
+            if (!leavingWorkingTree) SaveCommitViewState();
             if (SelectedDiffFiles.Count > 0 || SelectedDiffRows.Count > 0 || _selectedDiffHash != null) {
                 SyncSelectedDiffSelection(null);
                 SelectedDiffFiles.Clear();
@@ -412,7 +472,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
 
         if (diffCollectionChanged) {
-            SaveCommitViewState();
+            if (!leavingWorkingTree) SaveCommitViewState();
             var previousSelectedDiffFileKey = SelectedDiffFile?.Key;
 
             SyncSelectedDiffSelection(null);
@@ -1379,11 +1439,26 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private void RenderSelectedDiffRows() {
         var rows = new List<IDiffRowProjection>();
         var mode = DiffLayout;
-        foreach (var file in SelectedDiffFiles)
-            DiffRowBuilder.AppendFile(rows, file, mode);
+        foreach (var section in SelectedDiffFiles.GroupBy(file => file.Key.Section)) {
+            var sectionCollapsed = false;
+            if (section.Key.Length > 0) {
+                var name = section.Key;
+                sectionCollapsed = _collapsedDiffSections.Contains(name);
+                rows.Add(new DiffSectionHeaderProjection(name, section.Count(), sectionCollapsed, () => ToggleDiffSection(name)));
+            }
+            if (sectionCollapsed) continue;
+            foreach (var file in section)
+                DiffRowBuilder.AppendFile(rows, file, mode);
+        }
 
         SelectedDiffRows.Clear();
         SelectedDiffRows.AddRange(rows);
+    }
+
+    /// <summary>Collapses or expands an uncommitted changes section in the diff pane.</summary>
+    public void ToggleDiffSection(string section) {
+        if (!_collapsedDiffSections.Remove(section)) _collapsedDiffSections.Add(section);
+        RenderSelectedDiffRows();
     }
 
     [RelayCommand]
@@ -1394,7 +1469,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     [RelayCommand]
     private void ToggleDiffFileContext(DiffFileProjection file) {
-        if (_selectedDiffHash == null) {
+        if (_selectedDiffHash is null or WorkingTreeDiffId) {
             return;
         }
 
@@ -1409,7 +1484,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     [RelayCommand]
     private void ExpandDiffGap(DiffGapExpansionRequest request) {
-        if (_selectedDiffHash == null) {
+        if (_selectedDiffHash is null or WorkingTreeDiffId) {
             return;
         }
 

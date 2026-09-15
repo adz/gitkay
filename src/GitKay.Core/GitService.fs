@@ -656,6 +656,11 @@ module GitService =
           Unstaged: FileDiff list
           Untracked: FileDiff list }
 
+    /// <summary>The sections with changes, in display order, each with its file diffs.</summary>
+    let workingTreeSections (changes: WorkingTreeChanges) : (WorkingTree.Section * FileDiff list) list =
+        [ WorkingTree.Staged, changes.Staged; WorkingTree.Unstaged, changes.Unstaged; WorkingTree.Untracked, changes.Untracked ]
+        |> List.filter (fun (_, files) -> not files.IsEmpty)
+
     // Paths are printed as-is (not octal-escaped) and diffs ignore external diff drivers and colour configuration.
     let private plainGit (arguments: string list) =
         executeGitCommand ([ "-c"; "core.quotePath=false"; "-c"; "color.ui=false"; "-c"; "diff.noprefix=false"; "-c"; "diff.mnemonicPrefix=false" ] @ arguments)
