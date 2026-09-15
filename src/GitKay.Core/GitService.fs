@@ -647,6 +647,49 @@ module GitService =
         with _ ->
             null
 
+    // ----- Uncommitted changes, read through the git command line (see dev-docs/uncommitted-changes-plan.md) -----
+
+    /// <summary>Uncommitted changes: each section's file diffs.</summary>
+    type WorkingTreeChanges =
+        { Entries: WorkingTree.Entry list
+          Staged: FileDiff list
+          Unstaged: FileDiff list
+          Untracked: FileDiff list }
+
+    // Paths are printed as-is (not octal-escaped) and diffs ignore external diff drivers and colour configuration.
+    let private plainGit (arguments: string list) =
+        executeGitCommand ([ "-c"; "core.quotePath=false"; "-c"; "color.ui=false"; "-c"; "diff.noprefix=false"; "-c"; "diff.mnemonicPrefix=false" ] @ arguments)
+
+    /// <summary>What <c>git status</c> reports for the working tree and index.</summary>
+    let fetchWorkingTreeStatus : Flow<GitEnv, GitError, WorkingTree.Entry list> =
+        plainGit [ "status"; "--porcelain=v2"; "-z"; "--untracked-files=all" ] |> Flow.map WorkingTree.parseStatus
+
+    let private untrackedSizeLimit = 2L * 1024L * 1024L
+
+    let private readUntracked (repoPath: string) (path: string) : FileDiff =
+        let full = IO.Path.Combine((match workingDirectory repoPath with null -> repoPath | directory -> directory), path)
+        try
+            let info = IO.FileInfo full
+            if not info.Exists || info.Length > untrackedSizeLimit then
+                { OldPath = "/dev/null"; NewPath = path; Hunks = []; NewLineCount = None }
+            else
+                WorkingTree.untrackedDiff path (IO.File.ReadAllText full) // axial-allow-effect: filesystem
+        with :? IO.IOException | :? UnauthorizedAccessException ->
+            { OldPath = "/dev/null"; NewPath = path; Hunks = []; NewLineCount = None }
+
+    /// <summary>The staged, unstaged and untracked diffs, with <paramref name="contextLines"/> lines of context.</summary>
+    let fetchWorkingTreeChanges (contextLines: int) : Flow<GitEnv, GitError, WorkingTreeChanges> =
+        flow {
+            let context = $"-U{normalizeContextLines contextLines}"
+            let! entries = fetchWorkingTreeStatus
+            let! staged = plainGit [ "diff"; "--cached"; "--no-ext-diff"; "--find-renames"; context ] |> Flow.map WorkingTree.parsePatch
+            let! unstaged = plainGit [ "diff"; "--no-ext-diff"; context ] |> Flow.map WorkingTree.parsePatch
+            let! repoPath = Flow.envWith _.RepoPath
+            let untracked =
+                entries |> List.filter _.Untracked |> List.map (fun entry -> readUntracked repoPath entry.Path)
+            return { Entries = entries; Staged = staged; Unstaged = unstaged; Untracked = untracked }
+        }
+
     /// Every file path in a commit's tree, for the "All files" list. Submodules and other non-blob entries are skipped.
     let listCommitFiles (repoPath: string) (hash: string) : Result<string list, GitError> =
         result {

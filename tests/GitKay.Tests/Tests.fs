@@ -775,6 +775,78 @@ summary Another line
         test <@ GitSearch.formatQuery GitSearch.Commit terms = "fonts author:\"Jane Doe\" path:src/ bogus:x" @>
         test <@ GitSearch.formatQuery GitSearch.Path (GitSearch.parseQuery GitSearch.Path "src/ author:jane") = "src/ author:jane" @>
 
+    [<Fact>]
+    let ``working tree status parses porcelain v2 records`` () =
+        let output =
+            String.concat "\000"
+                [ "1 MM N... 100644 100644 100644 aaaa bbbb a.txt"
+                  "2 R. N... 100644 100644 100644 cccc cccc R100 renamed file.txt"
+                  "r.txt"
+                  "u UU N... 100644 100644 100644 100644 dd ee ff conflict.txt"
+                  "? d/sp ace.txt"
+                  "! ignored.log"
+                  "" ]
+        let entries = WorkingTree.parseStatus output
+        test <@ entries |> List.map (fun e -> e.Path, e.OriginalPath, e.Staged, e.Unstaged, e.Untracked) =
+                    [ "a.txt", "a.txt", WorkingTree.Modified, WorkingTree.Modified, false
+                      "renamed file.txt", "r.txt", WorkingTree.Renamed, WorkingTree.Unchanged, false
+                      "conflict.txt", "conflict.txt", WorkingTree.Conflicted, WorkingTree.Conflicted, false
+                      "d/sp ace.txt", "d/sp ace.txt", WorkingTree.Unchanged, WorkingTree.Unchanged, true ] @>
+        test <@ WorkingTree.summary entries = "3 staged · 2 unstaged · 1 untracked" @>
+        test <@ entries |> List.map WorkingTree.marker = [ "◐"; "●"; "◐"; "+" ] @>
+        test <@ WorkingTree.summary [] = "" && WorkingTree.parseStatus "" = [] @>
+
+    [<Fact>]
+    let ``patch parsing keeps header-like content, spaces in paths and pure renames`` () =
+        let patch =
+            String.concat "\n"
+                [ "diff --git a/sp ace.txt b/sp ace.txt"
+                  "index 1..2 100644"
+                  "--- a/sp ace.txt\t"
+                  "+++ b/sp ace.txt\t"
+                  "@@ -1,2 +1,2 @@"
+                  "--- removed dashes"
+                  "+++ added pluses"
+                  " kept"
+                  "\\ No newline at end of file"
+                  "diff --git a/old.txt b/new.txt"
+                  "similarity index 100%"
+                  "rename from old.txt"
+                  "rename to new.txt"
+                  "diff --git a/gone.txt b/gone.txt"
+                  "deleted file mode 100644"
+                  "--- a/gone.txt"
+                  "+++ /dev/null"
+                  "@@ -1 +0,0 @@"
+                  "-bye"
+                  "" ]
+        let files = WorkingTree.parsePatch patch
+        test <@ files |> List.map (fun f -> f.OldPath, f.NewPath, f.Hunks.Length) = [ "sp ace.txt", "sp ace.txt", 1; "old.txt", "new.txt", 0; "gone.txt", "/dev/null", 1 ] @>
+        let lines = files.Head.Hunks.Head.Lines |> List.map (fun l -> l.Type, l.Content, l.OldLineNo, l.NewLineNo)
+        test <@ lines = [ Models.Removed, "-- removed dashes", Some 1, None; Models.Added, "++ added pluses", None, Some 1; Models.Context, "kept", Some 2, Some 2 ] @>
+
+    [<Fact>]
+    let ``working tree changes load staged, unstaged and untracked diffs`` () =
+        withTempRepository (fun root repo ->
+            commitFile repo root "a.txt" "one\ntwo\n" "init" |> ignore
+            commitFile repo root "old name.txt" "same\n" "second" |> ignore
+            writeFile root "a.txt" "one\nTWO\n"
+            Commands.Stage(repo, "a.txt")
+            writeFile root "a.txt" "one\nTWO\nthree\n"
+            Commands.Move(repo, "old name.txt", "new name.txt")
+            writeFile root "notes/draft file.md" "# Draft\nhello\n"
+            match runFlow root (GitService.fetchWorkingTreeChanges 3) with
+            | Error error -> failwith (GitError.describe error)
+            | Ok changes ->
+                let paths (files: Models.FileDiff list) = files |> List.map (fun f -> f.OldPath, f.NewPath)
+                test <@ WorkingTree.summary changes.Entries = "2 staged · 1 unstaged · 1 untracked" @>
+                test <@ paths changes.Staged = [ "a.txt", "a.txt"; "old name.txt", "new name.txt" ] @>
+                test <@ paths changes.Unstaged = [ "a.txt", "a.txt" ] && paths changes.Untracked = [ "/dev/null", "notes/draft file.md" ] @>
+                let stagedLines = changes.Staged.Head.Hunks |> List.collect _.Lines |> List.filter (fun l -> l.Type <> Models.Context) |> List.map _.Content
+                let unstagedLines = changes.Unstaged.Head.Hunks |> List.collect _.Lines |> List.filter (fun l -> l.Type <> Models.Context) |> List.map _.Content
+                test <@ stagedLines = [ "two"; "TWO" ] && unstagedLines = [ "three" ] @>
+                test <@ changes.Untracked.Head.Hunks.Head.Lines |> List.map _.Content = [ "# Draft"; "hello" ] @>)
+
 module AppTests =
 
     let private sampleCommit hash subject : Models.Commit =
