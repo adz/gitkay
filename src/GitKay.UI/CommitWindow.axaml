@@ -54,7 +54,7 @@
                     <TextBlock Text="Current Branch:" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" VerticalAlignment="Center" />
                     <TextBlock Grid.Column="1" Text="{Binding Branch}" FontSize="12" FontWeight="SemiBold"
                                Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                    <TextBlock Grid.Column="2" Text="F1 or ? for keys" FontSize="11" Foreground="{DynamicResource GitKayMutedTextBrush}" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2" Text="F1 for keys" FontSize="11" Foreground="{DynamicResource GitKayMutedTextBrush}" VerticalAlignment="Center" />
                 </Grid>
             </Border>
 
@@ -112,6 +112,18 @@
                 <!-- The diff above the commit message, both beside the file lists. -->
                 <Grid Grid.Column="2" RowDefinitions="*,Auto,Auto,Auto">
                     <DockPanel Grid.Row="0">
+                        <!-- vim's / and ? over the diff: incremental, Enter keeps it for n / N, Esc goes back. -->
+                        <Border DockPanel.Dock="Bottom" IsVisible="{Binding IsSearchOpen}" Background="{DynamicResource GitKaySurfaceBrush}"
+                                BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="0,1,0,0" Padding="10,4">
+                            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6">
+                                <TextBlock x:Name="SearchPrefix" Text="/" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="13"
+                                           Foreground="{DynamicResource GitKayAccentBrush}" VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1" x:Name="SearchBox" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12"
+                                         MinHeight="0" Padding="4,2" BorderThickness="0" Background="Transparent" />
+                                <TextBlock Grid.Column="2" x:Name="SearchInfo" FontSize="11" Foreground="{DynamicResource GitKayMutedTextBrush}"
+                                           VerticalAlignment="Center" Text="Enter keep · Esc cancel · ↑↓ history · Alt+R regex · Alt+C case" />
+                            </Grid>
+                        </Border>
                         <Border DockPanel.Dock="Top" Classes="bar">
                             <Grid ColumnDefinitions="*,Auto">
                                 <TextBlock Text="{Binding DiffTitle}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}"
@@ -122,7 +134,7 @@
                                         <TextBlock Text="{Binding SelectionActionLabel}" FontSize="11" />
                                     </Button>
                                     <Button Classes="action" Padding="8,1" Command="{Binding ToggleFileCommand}"
-                                            ToolTip.Tip="Move the whole file to the other list (Enter, Ctrl+T / Ctrl+U)">
+                                            ToolTip.Tip="Move the whole file to the other list (Enter, Ctrl+S / Ctrl+U)">
                                         <TextBlock Text="{Binding FileActionLabel}" FontSize="11" />
                                     </Button>
                                     <Button Classes="action" Padding="8,1" Command="{Binding DiscardCommand}" IsVisible="{Binding CanDiscard}"
@@ -174,7 +186,7 @@
                                     <TextBlock Text="Rescan" FontSize="12" />
                                 </Button>
                                 <CheckBox Grid.Column="1" IsChecked="{Binding SignOff, Mode=TwoWay}" Content="Sign off" FontSize="12"
-                                          ToolTip.Tip="Add a Signed-off-by trailer with your configured name and email (Ctrl+S)" />
+                                          ToolTip.Tip="Add a Signed-off-by trailer with your configured name and email (Ctrl+S in the message, Ctrl+Shift+S anywhere)" />
                                 <TextBlock Grid.Column="2" Text="{Binding Status}" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}"
                                            VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                                 <Button Grid.Column="3" Padding="14,4" Command="{Binding CommitCommand}" IsEnabled="{Binding CanCommit}"
@@ -192,7 +204,31 @@
             </Grid>
         </Grid>
 
-        <!-- Keys, opened with F1 or ?. -->
+        <!-- Ctrl+P: any changed file, staged or not. -->
+        <Border IsVisible="{Binding IsFilePaletteOpen}" Background="#33000000" ZIndex="41" PointerPressed="OnPaletteBackdropPressed">
+            <Border HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,70,0,0" Width="620" MaxHeight="480" CornerRadius="8" Padding="6"
+                    Background="{DynamicResource GitKaySurfaceBrush}" BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="1"
+                    BoxShadow="0 12 32 0 #50000000">
+                <DockPanel>
+                    <TextBox DockPanel.Dock="Top" x:Name="PaletteBox" Text="{Binding PaletteQuery, Mode=TwoWay}" Watermark="Go to changed file"
+                             FontSize="13" Margin="0,0,0,6" />
+                    <ListBox x:Name="PaletteList" ItemsSource="{Binding PaletteFiles}" SelectedIndex="{Binding PaletteIndex, Mode=TwoWay}"
+                             Background="Transparent" DoubleTapped="OnPaletteDoubleTapped">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="local:CommitFileRow">
+                                <Grid ColumnDefinitions="18,*,Auto" ColumnSpacing="6">
+                                    <TextBlock Text="{Binding Marker}" FontSize="12" Classes.stagedMarker="{Binding IsStaged}" Classes.unstagedMarker="{Binding !IsStaged}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Text="{Binding Label}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="2" Text="{Binding ListName}" FontSize="11" Foreground="{DynamicResource GitKayMutedTextBrush}" VerticalAlignment="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </Border>
+        </Border>
+
+        <!-- Keys, opened with F1. -->
         <Border IsVisible="{Binding IsKeysOpen}" Background="#33000000" ZIndex="40" PointerPressed="OnKeysBackdropPressed">
             <Border HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="880" MaxHeight="720" CornerRadius="8" Padding="18,14"
                     Background="{DynamicResource GitKaySurfaceBrush}" BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="1"
@@ -200,7 +236,7 @@
                 <DockPanel>
                     <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,10">
                         <TextBlock Text="Commit window keys" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource GitKayTextBrush}" />
-                        <TextBlock Grid.Column="1" Text="F1, ? or Esc to close" FontSize="11" Foreground="{DynamicResource GitKayMutedTextBrush}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="F1 or Esc to close" FontSize="11" Foreground="{DynamicResource GitKayMutedTextBrush}" VerticalAlignment="Center" />
                     </Grid>
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <ItemsControl ItemsSource="{Binding KeyGroups}">

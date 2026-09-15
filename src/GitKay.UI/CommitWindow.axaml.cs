@@ -26,6 +26,8 @@ public sealed class CommitFileRow(CoreWindow.ListKind list, GitKay.Core.Models.F
     public string Path { get; } = CoreWindow.pathOf(diff);
     public string Label { get; } = GitKay.Core.FileChange.displayPath(diff.OldPath, diff.NewPath);
     public string Marker => IsUntracked ? "+" : List.IsStagedList ? "●" : "○";
+    public bool IsStaged => List.IsStagedList;
+    public string ListName => IsUntracked ? "untracked" : List.IsStagedList ? "staged" : "unstaged";
 }
 
 /// <summary>A key or key sequence and what it does, for the commit window's keys sheet.</summary>
@@ -65,6 +67,86 @@ public sealed partial class CommitWindowProjection : ObservableObject {
     [ObservableProperty] private string _emptyDiffText = "Scanning…";
     [ObservableProperty] private string _branch = "";
     [ObservableProperty] private bool _isKeysOpen;
+    [ObservableProperty] private bool _isSearchOpen;
+    [ObservableProperty] private bool _isFilePaletteOpen;
+    [ObservableProperty] private string _paletteQuery = "";
+    [ObservableProperty] private int _paletteIndex;
+    public AvaloniaList<CommitFileRow> PaletteFiles { get; } = new();
+
+    /// <summary>Ctrl+P: every changed file from both lists, best fuzzy matches first; a file in both lists appears twice.</summary>
+    public void OpenFilePalette() {
+        PaletteQuery = "";
+        FilterPalette();
+        IsFilePaletteOpen = true;
+    }
+
+    partial void OnPaletteQueryChanged(string value) => FilterPalette();
+
+    private void FilterPalette() {
+        var query = PaletteQuery.Trim();
+        var ranked = UnstagedFiles.Concat(StagedFiles)
+            .Select((row, order) => (row, order, score: query.Length == 0 ? 0 : GitKay.Kit.Fuzzy.score(query, row.Path)))
+            .Where(entry => entry.score >= 0)
+            .OrderByDescending(entry => entry.score)
+            .ThenBy(entry => entry.order)
+            .Select(entry => entry.row)
+            .ToList();
+        PaletteFiles.Clear();
+        PaletteFiles.AddRange(ranked);
+        PaletteIndex = ranked.Count > 0 ? 0 : -1;
+    }
+
+    /// <summary>Shows the chosen palette file's diff.</summary>
+    public void RunPalette() {
+        if (PaletteIndex >= 0 && PaletteIndex < PaletteFiles.Count) {
+            var row = PaletteFiles[PaletteIndex];
+            _dispatch?.Invoke(CoreWindow.Msg.NewSelect(row.List, row.Path));
+        }
+        IsFilePaletteOpen = false;
+    }
+
+    // ----- Searching the diff: / ? n N * #, as in the main window. -----
+
+    private GitKay.Kit.TextQuery? _find;
+    private string _findText = "";
+    private bool _findForward = true;
+
+    /// <summary>Selects the nearest row matching <paramref name="regex"/> from <paramref name="from"/>; returns the match summary.</summary>
+    public string SearchDiff(string regex, bool forward, IDiffRowProjection? from, bool includeStart) {
+        _find = GitKay.Kit.TextQuery.Create(true, regex);
+        _findText = regex;
+        _findForward = forward;
+        return StepFind(from, forward ? GitKay.Kit.Direction.Forward : GitKay.Kit.Direction.Backward, includeStart);
+    }
+
+    /// <summary>n / N: the next match in the search's direction, or against it.</summary>
+    public string? FindNext(bool sameDirection) {
+        if (_find == null) return null;
+        var direction = sameDirection == _findForward ? GitKay.Kit.Direction.Forward : GitKay.Kit.Direction.Backward;
+        return StepFind(SelectedRow, direction, includeStart: false);
+    }
+
+    public void ClearFind() {
+        _find = null;
+        if (Surface != null) Surface.FindQuery = null;
+    }
+
+    private string StepFind(IDiffRowProjection? from, GitKay.Kit.Direction direction, bool includeStart) {
+        if (_find is not { } query) return "";
+        if (Surface != null) {
+            Surface.FindUseRegex = true;
+            Surface.FindQuery = _findText;
+        }
+        var matches = GitKay.Kit.Cycle.positionsWhere(Rows.Count, index => Rows[index] switch {
+            DiffLineProjection line => query.IsMatch(line.Content),
+            DiffHunkHeaderProjection header => query.IsMatch(header.Header),
+            _ => false,
+        });
+        var focus = from == null ? -1 : Rows.IndexOf(from);
+        var next = GitKay.Kit.Cycle.step(matches, focus, direction, includeStart);
+        if (next >= 0) SelectedRow = Rows[matches[next]];
+        return GitKay.Kit.Cycle.summary(next, matches.Length);
+    }
     [ObservableProperty] private double _diffFontSize = DiffSurfaceControl.DefaultCodeFontSize;
 
     public string MessageTitle => Amend ? "Amended Commit Message:" : "Commit Message:";
@@ -73,26 +155,33 @@ public sealed partial class CommitWindowProjection : ObservableObject {
     public IReadOnlyList<CommitKeyGroup> KeyGroups { get; } = [
         new("Staging and committing", [
             new("Enter · double-click", "In a file list: move the file to the other list"),
-            new("s / u · Ctrl+T / Ctrl+U", "Stage / unstage: the selected lines or the hunk at the cursor in the diff, the file in a list"),
+            new("s / u · Ctrl+S / Ctrl+U", "Stage / unstage: the selected lines or the hunk at the cursor in the diff, the file in a list (Ctrl+U is half a page up in the diff)"),
             new("Ctrl+I", "Stage all unstaged and untracked files"),
             new("Delete", "Discard the selected lines, or the file's unstaged changes (asks first)"),
             new("Ctrl+Enter", "Commit (or amend)"),
-            new("Ctrl+Shift+A · Ctrl+S", "Toggle amend · toggle sign off"),
+            new("Ctrl+S in the message · Ctrl+Shift+S", "Toggle sign off"),
+            new("Ctrl+Shift+A", "Toggle amend"),
             new("F5", "Rescan the working tree and index"),
             new("Right-click", "File and line actions: stage, unstage, discard, copy path, open in VS Code"),
+        ]),
+        new("Finding", [
+            new("Ctrl+P", "Go to a changed file, staged or unstaged; a file in both lists appears in both"),
+            new("/ · ? · Ctrl+F", "Search the diff forwards · backwards (regex, smartcase; /i ignores case, \\V literal, Alt+R / Alt+C toggle, ↑↓ history); Enter keeps it, Esc goes back"),
+            new("n / N · * / #", "Next / previous match · the word under the caret forwards / backwards"),
         ]),
         new("Panes", [
             new("Ctrl+1 / 2 / 3 / 4", "Unstaged files / staged files / diff / commit message"),
             new("Ctrl+h / j / k / l", "Pane left / down / up / right"),
             new("Ctrl+W  h j k l · w W · p", "Pane in a direction · next / previous pane · the pane before"),
             new("Tab / Shift+Tab", "Next / previous pane (in the message box, Esc first)"),
-            new("Esc", "Close this sheet · leave the message box for the diff"),
+            new("Esc", "Close this sheet or a prompt · leave the message box for the diff"),
+            new("F1", "Show or hide these keys"),
         ]),
         new("Moving", [
             new("j / k   ↓ / ↑", "Next / previous file or diff row"),
             new("gg / G   Home / End", "First / last"),
             new("{count}G", "Row or file N"),
-            new("Ctrl+D / Ctrl+U · PageDown / PageUp", "Half page / page down and up in the diff (Ctrl+U unstages in a file list)"),
+            new("Ctrl+D / Ctrl+U · PageDown / PageUp", "Half page / page down and up in the diff"),
             new("]c / [c", "Next / previous hunk"),
             new("H / M / L · zz / zt / zb · Ctrl+E / Ctrl+Y", "Screen rows · scroll the cursor to centre / top / bottom · scroll a row"),
         ]),
@@ -102,8 +191,8 @@ public sealed partial class CommitWindowProjection : ObservableObject {
             new("yy / Y · y{motion} · yi / ya", "Copy the line, to a motion, or inside / around a text object"),
             new("Ctrl+= / Ctrl+- / Ctrl+0", "Zoom the diff text"),
         ]),
-        new("Not here", [
-            new("/ ? n N * # · Ctrl+P · Ctrl+G · p / c", "Search, palettes and history navigation stay in the main window; ? opens this sheet"),
+        new("In the main window only", [
+            new("Ctrl+G · Ctrl+Shift+P · p / c · Alt+← / →", "Refs and commands palettes, and history navigation"),
         ]),
     ];
 
@@ -260,6 +349,7 @@ public sealed partial class CommitWindowProjection : ObservableObject {
     public CommitFileRow? SelectedFile => SelectedStaged ?? SelectedUnstaged;
 
     public void SetAmendFromKeyboard() => Amend = !Amend;
+    public void SelectRow(IDiffRowProjection? row) => SelectedRow = row;
     public void ToggleSignOff() => SignOff = !SignOff;
 
     /// <summary>Stages (or unstages) whatever the key means where the focus is: lines or a hunk in the diff, the file in a list.</summary>
@@ -408,6 +498,7 @@ public partial class CommitWindow : Window, IVimCommands {
         Surface.KeyUp += (_, _) => projection.RefreshSelectionLabels();
         Surface.LineMenuOpening += AddLineMenuItems;
         AddHandler(KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
+        InitializeSearch();
         AddHandler(GotFocusEvent, (_, _) => TrackPane(), RoutingStrategies.Bubble);
 
         var env = GitKay.Core.GitService.environment(repositoryPath);
@@ -488,15 +579,8 @@ public partial class CommitWindow : Window, IVimCommands {
 
     // The main window's commit-level keys have nothing to act on here.
     void IVimCommands.CopyCommitReference(bool subject) { }
-    void IVimCommands.FindWord(string word, bool forward) => NotHere("Search");
-    void IVimCommands.FindNext(GitKay.Core.Vim.VimPane pane, bool forward) => NotHere("Search");
     void IVimCommands.GoToParent(int index) { }
     void IVimCommands.GoToChild() { }
-    void IVimCommands.OpenSearch(GitKay.Core.Vim.VimPane pane, bool forward) => NotHere("Search");
-
-    private void NotHere(string what) {
-        if (Projection != null) Projection.Status = $"{what} is in the main window";
-    }
 
     // ----- Keys -----
 
@@ -515,10 +599,16 @@ public partial class CommitWindow : Window, IVimCommands {
 
         // The keys sheet swallows keys until it closes.
         if (projection.IsKeysOpen) {
-            if (e.Key is Key.Escape or Key.F1 || (e.KeySymbol == "?" && !inMessage)) projection.IsKeysOpen = false;
+            if (e.Key is Key.Escape or Key.F1) projection.IsKeysOpen = false;
             Handled();
             return;
         }
+        if (projection.IsFilePaletteOpen) {
+            OnPaletteKey(e);
+            return;
+        }
+        // The search prompt handles its own keys.
+        if (projection.IsSearchOpen) return;
 
         // A pending count, operator or prefix owns the next key.
         if (_vim.IsAwaitingKey && !inMessage && HostFor(pane) is { } pendingHost) {
@@ -561,8 +651,22 @@ public partial class CommitWindow : Window, IVimCommands {
                 projection.SetAmendFromKeyboard();
                 Handled();
                 return;
-            case Key.S when ctrl:
+            // In the message box Ctrl+S signs off, as in git gui; elsewhere it stages, like s.
+            case Key.S when ctrlShift || (ctrl && inMessage):
                 projection.ToggleSignOff();
+                Handled();
+                return;
+            case Key.P when ctrl:
+                projection.OpenFilePalette();
+                Avalonia.Threading.Dispatcher.UIThread.Post(() => PaletteBox.Focus(), Avalonia.Threading.DispatcherPriority.Input);
+                Handled();
+                return;
+            case Key.F when ctrl:
+                ((IVimCommands)this).OpenSearch(GitKay.Core.Vim.VimPane.Diff, true);
+                Handled();
+                return;
+            case Key.S when ctrl:
+                projection.Stage(pane == Pane.Diff, stage: true);
                 Handled();
                 return;
             case Key.I when ctrl && !inMessage:
@@ -573,7 +677,7 @@ public partial class CommitWindow : Window, IVimCommands {
                 projection.Stage(pane == Pane.Diff, stage: true);
                 Handled();
                 return;
-            case Key.U when ctrl && pane is Pane.Unstaged or Pane.Staged:
+            case Key.U when ctrl && pane is Pane.Unstaged or Pane.Staged or Pane.Message:
                 projection.Stage(false, stage: false);
                 Handled();
                 return;
@@ -595,11 +699,6 @@ public partial class CommitWindow : Window, IVimCommands {
 
         if (e.Key == Key.Tab && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift) {
             CyclePane(e.KeyModifiers == KeyModifiers.Shift ? -1 : 1);
-            Handled();
-            return;
-        }
-        if (e.KeySymbol == "?") {
-            projection.IsKeysOpen = true;
             Handled();
             return;
         }

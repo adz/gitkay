@@ -412,6 +412,27 @@ internal static class UiInteractions {
             Pump(window);
             Console.WriteLine($"after j selected={projection.SelectedFile?.Path}");
         }
+        if (label.Contains("search")) {
+            var surface = Avalonia.Controls.NameScopeExtensions.Find<DiffSurfaceControl>(window, "Surface")!;
+            Avalonia.Headless.HeadlessWindowExtensions.KeyPressQwerty(window, Avalonia.Input.PhysicalKey.Digit3, Avalonia.Input.RawInputModifiers.Control);
+            Pump(window);
+            Avalonia.Headless.HeadlessWindowExtensions.KeyPressQwerty(window, Avalonia.Input.PhysicalKey.Slash, Avalonia.Input.RawInputModifiers.None);
+            Pump(window);
+            Avalonia.Headless.HeadlessWindowExtensions.KeyTextInput(window, "fourt");
+            Pump(window);
+            Console.WriteLine($"search open={projection.IsSearchOpen} row={(surface.SelectedItem as DiffLineProjection)?.Content}");
+            Avalonia.Headless.HeadlessWindowExtensions.KeyPressQwerty(window, Avalonia.Input.PhysicalKey.Enter, Avalonia.Input.RawInputModifiers.None);
+            Pump(window);
+            Console.WriteLine($"after enter open={projection.IsSearchOpen} status={projection.Status}");
+            Avalonia.Headless.HeadlessWindowExtensions.KeyPressQwerty(window, Avalonia.Input.PhysicalKey.P, Avalonia.Input.RawInputModifiers.Control);
+            Pump(window);
+            Avalonia.Headless.HeadlessWindowExtensions.KeyTextInput(window, "note");
+            Pump(window);
+            Console.WriteLine($"palette open={projection.IsFilePaletteOpen} first={(projection.PaletteFiles.Count > 0 ? projection.PaletteFiles[0].Path : "-")} count={projection.PaletteFiles.Count}");
+            Avalonia.Headless.HeadlessWindowExtensions.KeyPressQwerty(window, Avalonia.Input.PhysicalKey.Enter, Avalonia.Input.RawInputModifiers.None);
+            Settle();
+            Console.WriteLine($"palette chose={projection.SelectedFile?.Path} open={projection.IsFilePaletteOpen}");
+        }
         if (label.Contains("keys")) projection.IsKeysOpen = true;
         if (label.Contains("message")) projection.Message = "Stage the first hunk\n\nShows the commit window in a screenshot.";
         Pump(window);
