@@ -1,6 +1,6 @@
 # Rendered markdown
 
-Status: proposed. Not implemented. Target: 0.6.0.
+Status: accepted. Not implemented. Builds after uncommitted changes and the commit window.
 
 ## Problem
 
@@ -156,9 +156,11 @@ placeholder, and adjust when loaded. The scroll anchor already keeps the view st
 - A **Rendered / Source** toggle appears on the file header of markdown files (`.md`, `.markdown`) in the diff, and in
   the whole-file popup's layout buttons.
 - `Ctrl+Shift+V` toggles the focused file, as in VS Code.
-- The choice sticks per file path for the session. Setting: **Render markdown by default** (off).
-- Diff layouts that don't apply (side-by-side, old/new file) show the rendered document for that side: new file shows
-  the new document unmarked; old file the old one; side-by-side is not offered for rendered files.
+- The choice persists per file path per repository, across restarts (UI state). Setting: **Render markdown by
+  default** (off). Uncommitted markdown files get the toggle too.
+- Old file and new file layouts show that side's rendered document unmarked.
+- **Side-by-side rendered:** the old document on the left and the new on the right, with aligned leaves on the same
+  row (a removed leaf leaves a blank on the right, an added one on the left) and word changes marked on each side.
 
 ### Links
 
@@ -221,14 +223,14 @@ Parsing and alignment run off the UI thread when a markdown file's diff or conte
 1. **Model and alignment in F#,** with tests (no UI).
 2. **Renderer in the whole-file popup** (goal 1): blocks, rich text, code, lists, quotes, tables; repository images;
    toggle.
-3. **Rendered diff in the diff pane** (goal 2): rendered rows, change marks, word spans, overview marks, `]c`.
+3. **Rendered diff in the diff pane** (goal 2): rendered rows, change marks, word spans, overview marks, `]c`; then
+   side-by-side rendered.
 4. **Links, `Ctrl+Shift+V`, copying source, `/` search** over rendered text.
 5. **Remote images** behind their setting; **changes only** collapsing; limits and fallbacks.
 6. Follow-ups: SVG, text selection inside rendered blocks, move detection.
 
-## Open questions
+## Decisions
 
-1. Remote images off by default with click-to-load — or on by default?
-2. Should the toggle's per-file choice persist across restarts (per repository), or only for the session?
-3. Should side-by-side rendered (old document left, new right, blocks aligned) be in scope, or is the marked single
-   document enough?
+1. Remote images are off by default, with click-to-load per image and a setting to load them everywhere.
+2. The Rendered/Source choice persists per file per repository across restarts.
+3. Side-by-side rendered is in scope.

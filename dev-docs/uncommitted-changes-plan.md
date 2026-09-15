@@ -1,6 +1,6 @@
 # Uncommitted changes
 
-Status: in progress. Target: 0.6.0.
+Status: implemented (phases 1–6). Target: 0.6.0.
 
 ## What users see
 
@@ -39,17 +39,20 @@ Status: in progress. Target: 0.6.0.
 - The Elmish model replaces `SelectedCommitHash: string option` with a `Selection` union
   (`NoSelection | CommitSelected of hash | WorkingTreeSelected`), so nothing that needs a real commit (parents, copy
   hash, branch actions, search) can act on the working tree by accident.
-- Diff file keys gain the section they belong to (`CommitChange | Staged | Unstaged | Untracked`), so the same path in
-  two sections is two files.
+- The diff pane's file keys carry the section (`DiffFileKey.Section`, empty for a commit), so the same path in two
+  sections is two files. The core model's commit diff keys are unchanged: uncommitted diffs arrive whole in
+  `WorkingTreeChanges`, and their context expansion is presentation state in the projection.
 - Loading: status loads with history, on refresh messages, and after watcher events (debounced 300 ms). The working
   tree diff loads when its row is selected and reloads when status changes while selected.
 
 ### Presentation
 
-- Commit list: the row is a projection with `IsWorkingTree`; the commit surface draws it with the dashed node and
+- Commit list: the row is shown when the loaded history starts at the checked-out branch (or while it's selected); the
+  row is a projection with `IsWorkingTree`; the commit surface draws it with the dashed node and
   count badges. `j`/`k`, `gg`, `/` quick find and navigation treat it as a row; commit-only actions are absent from its
   menu.
-- Diff pane: `DiffRows` gains a section header row; the diff view draws it and makes it sticky above file headers.
+- Diff pane: a section header row before each section's files; clicking it collapses the section. File headers stick
+  within a section; section headers themselves don't stick yet.
 - Files list: section header rows in flat and tree modes; markers in all-files mode.
 
 ## Phases
@@ -61,7 +64,16 @@ Status: in progress. Target: 0.6.0.
 5. Watcher and focus refresh.
 6. Whole-file popup, VS Code, context menus and context expansion for working-tree files.
 
+## Notes from building it
+
+- `RepoPath` is the git directory; `git status` and `git diff` fail there, so working tree commands run in the
+  working directory. The tests and the AOT self-test load changes through the git directory to guard this.
+- Status runs with `--no-optional-locks` so it never rewrites the index, which the watcher would see as a change.
+- When everything is committed or discarded while the row is selected, the newest commit is selected.
+
 ## Later
+
+- Sticky section headers.
 
 - The commit window (git gui style): stage and unstage files, hunks and lines, amend, sign off, commit, push.
 - Commit search over uncommitted changes.
