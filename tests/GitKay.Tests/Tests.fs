@@ -676,7 +676,7 @@ summary Another line
         let model0, _ = App.init [||]
         let running = { model0 with SearchQuery = "needle"; SearchStartedAtTicks = Some 42L }
         let result : GitSearch.Result =
-            { Commit = (searchCommits ()).Head; MatchKinds = [ "text" ]; MatchSummary = "text"; MatchedPaths = []; MatchedRefs = [] }
+            { Commit = (searchCommits ()).Head; MatchKinds = [ GitSearch.TextMatch ]; MatchSummary = "text"; MatchedPaths = []; MatchedRefs = [] }
         let partial, _ = App.update (App.Msg.SearchPartialResults(42L, [ result ])) running
         test <@ partial.SearchResults = Some [ result ] && partial.SearchStartedAtTicks = Some 42L @>
         let stale, _ = App.update (App.Msg.SearchPartialResults(7L, [ result ])) running
@@ -723,7 +723,10 @@ summary Another line
         test <@ hashes (search GitSearch.Commit false "Smith") = [] @>
         test <@ hashes (search GitSearch.Commit false "findCommit") = [] @>
         let hit = (search GitSearch.Commit false "release").Head
-        test <@ hit.MatchKinds = [ "ref" ] && hit.MatchedRefs = [ "origin/release/1.0" ] @>
+        test <@ hit.MatchKinds = [ GitSearch.RefMatch ] && hit.MatchedRefs = [ "origin/release/1.0" ] @>
+        test <@ hit.MatchSummary = "ref; refs: origin/release/1.0" @>
+        // A term that doesn't match excludes the commit even when an earlier term matched.
+        test <@ hashes (search GitSearch.Commit false "release author:nobody") = [] @>
 
     [<Fact>]
     let ``path and diff modes should search changed files and only added or removed lines`` () =
@@ -1402,7 +1405,7 @@ module AppTests =
                 emptyModel with
                     SearchQuery = "old"
                     SearchScopeKey = "message"
-                    SearchResults = Some [ sampleSearchResult (sampleCommit "oldhash" "Old") [ "message" ] "message" ]
+                    SearchResults = Some [ sampleSearchResult (sampleCommit "oldhash" "Old") [ GitSearch.MessageMatch ] "message" ]
                     SearchStartedAtTicks = Some 1L
             }
 
@@ -1429,7 +1432,7 @@ module AppTests =
 
         let next, _ =
             App.update
-                (App.Msg.SearchResultsLoaded("needle", "all", 42L, Ok [ sampleSearchResult commit [ "message"; "path" ] "message; paths: src/needle.txt" ]))
+                (App.Msg.SearchResultsLoaded("needle", "all", 42L, Ok [ sampleSearchResult commit [ GitSearch.MessageMatch; GitSearch.PathMatch ] "message; paths: src/needle.txt" ]))
                 initial
 
         test <@ next.SearchResults.IsSome @>
@@ -1601,7 +1604,7 @@ module AppTests =
                             [
                                 sampleSearchResultWithContext
                                     commit
-                                    [ "message"; "path" ]
+                                    [ GitSearch.MessageMatch; GitSearch.PathMatch ]
                                     "message; paths: src/needle.txt"
                                     [ "src/needle.txt" ]
                                     []
@@ -1856,7 +1859,7 @@ module AppTests =
         projection.Update
             (sampleSearchResultWithContext
                 commit
-                [ "message"; "path" ]
+                [ GitSearch.MessageMatch; GitSearch.PathMatch ]
                 "message; paths: src/needle.txt, docs/needle.txt"
                 [ "src/needle.txt"; "docs/needle.txt"; "README.md" ]
                 [ "main" ])
@@ -1886,7 +1889,7 @@ module AppTests =
                     Commits = Graph.calculateLanes [ matchingCommit; otherCommit ]
                     SearchQuery = "needle"
                     SearchScopeKey = "all"
-                    SearchResults = Some [ sampleSearchResult matchingCommit [ "message"; "path" ] "message; paths: src/needle.txt" ]
+                    SearchResults = Some [ sampleSearchResult matchingCommit [ GitSearch.MessageMatch; GitSearch.PathMatch ] "message; paths: src/needle.txt" ]
             }
 
         projection.Update model
@@ -2632,7 +2635,7 @@ module SearchProjectionTests =
         test <@ selections () = [] @>
 
         // Results arrive: the first match is selected without another Enter.
-        let result (commit: Models.Commit) : GitSearch.Result = { Commit = commit; MatchKinds = [ "message" ]; MatchSummary = "message"; MatchedPaths = []; MatchedRefs = [] }
+        let result (commit: Models.Commit) : GitSearch.Result = { Commit = commit; MatchKinds = [ GitSearch.MessageMatch ]; MatchSummary = "message"; MatchedPaths = []; MatchedRefs = [] }
         let searched = { baseModel with SearchQuery = "needle"; SearchResults = Some [ result second; result third ] }
         projection.Update searched
         test <@ selections () = [ second.Hash ] @>
@@ -2687,7 +2690,7 @@ module DiffSearchBorrowTests =
                 SelectedDiff = Some [ file ]
                 SearchQuery = "font"
                 SearchScopeKey = "diff"
-                SearchResults = Some [ { Commit = commit; MatchKinds = [ "text" ]; MatchSummary = "text"; MatchedPaths = []; MatchedRefs = [] } ] }
+                SearchResults = Some [ { Commit = commit; MatchKinds = [ GitSearch.TextMatch ]; MatchSummary = "text"; MatchedPaths = []; MatchedRefs = [] } ] }
         let projection = MainProjection()
         projection.Update model
 

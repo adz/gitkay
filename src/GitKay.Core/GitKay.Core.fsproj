@@ -9,6 +9,7 @@
     <Compile Include="Diagnostics.fs" />
     <Compile Include="Models.fs" />
     <Compile Include="FileChange.fs" />
+    <Compile Include="CommitFormat.fs" />
     <Compile Include="DiffFind.fs" />
     <Compile Include="Settings.fs" />
     <Compile Include="DiffExpansion.fs" />

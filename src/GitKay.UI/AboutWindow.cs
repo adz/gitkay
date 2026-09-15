@@ -23,7 +23,7 @@ public sealed class AboutWindow : Window {
             var plus = informational.IndexOf('+');
             if (plus < 0) return (informational, null);
             var commit = informational[(plus + 1)..];
-            return (informational[..plus], commit.Length > 8 ? commit[..8] : commit);
+            return (informational[..plus], GitKay.Core.CommitFormat.shortHash(commit));
         }
     }
 

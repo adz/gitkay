@@ -36,56 +36,19 @@ public partial class SearchResultProjection : ObservableObject, IProjection<GitK
     [ObservableProperty] private string _matchedRefsLabel = "";
 
     public void Update(GitKay.Core.GitSearch.Result result) {
-        var shortHashLength = System.Math.Min(8, result.Commit.Hash.Length);
         FullHash = result.Commit.Hash;
-        Hash = result.Commit.Hash.Substring(0, shortHashLength);
+        Hash = GitKay.Core.CommitFormat.shortHash(result.Commit.Hash);
         Subject = result.Commit.Subject;
         Author = result.Commit.AuthorName;
         Date = System.DateTimeOffset.FromUnixTimeSeconds(result.Commit.Timestamp).LocalDateTime.ToString("yyyy-MM-dd HH:mm");
         MatchSummary = result.MatchSummary;
-        UpdateMatchContext(result.MatchKinds, result.MatchedPaths, result.MatchedRefs);
-    }
-
-    private void UpdateMatchContext(IEnumerable<string> matchKinds, IEnumerable<string> matchedPaths, IEnumerable<string> matchedRefs) {
-        var fieldLabels = matchKinds
-            .Select(FormatMatchKind)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        HasMatchedFields = fieldLabels.Length > 0;
-        MatchedFieldsLabel = HasMatchedFields ? FormatMatchLabel("Field", fieldLabels) : "";
-
-        var pathLabels = matchedPaths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        HasMatchedPaths = pathLabels.Length > 0;
-        MatchedPathsLabel = HasMatchedPaths ? FormatMatchLabel("File", pathLabels) : "";
-
-        var refLabels = matchedRefs.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        HasMatchedRefs = refLabels.Length > 0;
-        MatchedRefsLabel = HasMatchedRefs ? FormatMatchLabel("Ref", refLabels) : "";
-    }
-
-    private static string FormatMatchLabel(string singularLabel, IReadOnlyList<string> values) {
-        var countLabel = values.Count == 1 ? singularLabel : singularLabel + "s";
-        var visibleValues = values.Take(3).ToArray();
-        var label = $"{countLabel} ({values.Count}): {string.Join(", ", visibleValues)}";
-
-        if (values.Count > visibleValues.Length) {
-            label += $" +{values.Count - visibleValues.Length} more";
-        }
-
-        return label;
-    }
-
-    private static string FormatMatchKind(string kind) {
-        return kind.ToLowerInvariant() switch {
-            "hash" => "Commit hash",
-            "message" => "Message / subject",
-            "author" => "Author",
-            "path" => "File / path",
-            "text" => "Diff text",
-            "ref" => "Ref / tag / branch",
-            _ => kind,
-        };
+        MatchedFieldsLabel = GitKay.Core.CommitFormat.countedList("Field", Microsoft.FSharp.Collections.ListModule.Map(
+            Microsoft.FSharp.Core.FuncConvert.FromFunc<GitKay.Core.GitSearch.MatchKind, string>(GitKay.Core.GitSearch.matchKindLabel), result.MatchKinds));
+        MatchedPathsLabel = GitKay.Core.CommitFormat.countedList("File", result.MatchedPaths);
+        MatchedRefsLabel = GitKay.Core.CommitFormat.countedList("Ref", result.MatchedRefs);
+        HasMatchedFields = MatchedFieldsLabel.Length > 0;
+        HasMatchedPaths = MatchedPathsLabel.Length > 0;
+        HasMatchedRefs = MatchedRefsLabel.Length > 0;
     }
 }
 
@@ -93,7 +56,7 @@ public partial class SearchResultProjection : ObservableObject, IProjection<GitK
 public sealed class CommitLinkProjection {
     public CommitLinkProjection(string fullHash, string subject) {
         FullHash = fullHash;
-        ShortHash = fullHash.Length > 8 ? fullHash[..8] : fullHash;
+        ShortHash = GitKay.Core.CommitFormat.shortHash(fullHash);
         Subject = subject;
     }
 

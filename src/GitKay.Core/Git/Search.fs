@@ -34,9 +34,18 @@ module GitSearch =
 
     type Term = { Field: Field; Text: string }
 
+    /// <summary>What part of a commit a search matched.</summary>
+    type MatchKind =
+        | MessageMatch
+        | HashMatch
+        | RefMatch
+        | AuthorMatch
+        | PathMatch
+        | TextMatch
+
     type Result =
         { Commit: Models.Commit
-          MatchKinds: string list
+          MatchKinds: MatchKind list
           MatchSummary: string
           MatchedPaths: string list
           MatchedRefs: string list }
@@ -302,6 +311,59 @@ module GitSearch =
           /// Called for each match as soon as it is found (from worker threads, in no particular order).
           Found: Result -> unit }
 
+    /// <summary>The key a match kind has in a result's summary: "message", "hash", "ref", "author", "path", "text".</summary>
+    let matchKindKey kind =
+        match kind with
+        | MessageMatch -> "message"
+        | HashMatch -> "hash"
+        | RefMatch -> "ref"
+        | AuthorMatch -> "author"
+        | PathMatch -> "path"
+        | TextMatch -> "text"
+
+    /// <summary>How a match kind reads in the search results list.</summary>
+    let matchKindLabel kind =
+        match kind with
+        | MessageMatch -> "Message / subject"
+        | HashMatch -> "Commit hash"
+        | RefMatch -> "Ref / tag / branch"
+        | AuthorMatch -> "Author"
+        | PathMatch -> "File / path"
+        | TextMatch -> "Diff text"
+
+    /// <summary>What one metadata term matched in a commit (kinds and ref names), or None when it doesn't match.</summary>
+    let private matchMetadataTerm now (term: Term) (matches: string -> bool) (commit: Models.Commit) =
+        let matchedRefs () = commit.Refs |> List.filter (fun reference -> matches reference.Name) |> List.map _.Name
+        let hitWhen kind hit = if hit then Some([ kind ], []) else None
+        let inRange isInside = if tryParseDate now term.Text |> Option.forall isInside then Some([], []) else None
+        match term.Field with
+        | CommitInfo ->
+            let refs = matchedRefs ()
+            let kinds =
+                [ if matches commit.Subject || matches commit.Message then MessageMatch
+                  if matches commit.Hash then HashMatch
+                  if not refs.IsEmpty then RefMatch ]
+            if kinds.IsEmpty then None else Some(kinds, refs)
+        | Message -> hitWhen MessageMatch (matches commit.Subject || matches commit.Message)
+        | Author -> hitWhen AuthorMatch (matches commit.AuthorName || matches commit.AuthorEmail)
+        | Hash -> hitWhen HashMatch (matches commit.Hash)
+        | Ref ->
+            let refs = matchedRefs ()
+            if refs.IsEmpty then None else Some([ RefMatch ], refs)
+        // A date that doesn't parse is ignored rather than excluding every commit.
+        | After -> inRange (fun date -> commit.Timestamp >= date)
+        | Before -> inRange (fun date -> commit.Timestamp < date)
+        | ChangedPath
+        | ChangedLine -> Some([], [])
+
+    /// <summary>What the metadata terms matched in a commit, or None when any of them doesn't match.</summary>
+    let private matchMetadata now (terms: (Term * (string -> bool)) list) (commit: Models.Commit) =
+        (Some([], []), terms)
+        ||> List.fold (fun matched (term, matches) ->
+            matched
+            |> Option.bind (fun (kinds, refs) ->
+                matchMetadataTerm now term matches commit |> Option.map (fun (moreKinds, moreRefs) -> kinds @ moreKinds, refs @ moreRefs)))
+
     /// Searches commits: every term must match. Metadata terms filter all commits in one cheap pass; only the
     /// remaining candidates have their changed paths and then changed lines checked, split across parallel workers.
     /// Results keep history order.
@@ -328,62 +390,26 @@ module GitSearch =
                 // Phase 1: metadata, pure and fast.
                 let candidates =
                     commits
-                    |> List.choose (fun commit ->
-                        let kinds = Collections.Generic.List<string>()
-                        let matchedRefs = Collections.Generic.List<string>()
-                        let addKind kind = if not (kinds.Contains kind) then kinds.Add kind
-
-                        let metadataMatches =
-                            metadataTerms
-                            |> List.forall (fun (term, matches) ->
-                                let refMatches () = commit.Refs |> List.filter (fun r -> matches r.Name) |> List.map _.Name
-                                match term.Field with
-                                | CommitInfo ->
-                                    let refs = refMatches ()
-                                    let message = matches commit.Subject || matches commit.Message
-                                    let hash = matches commit.Hash
-                                    if message then addKind "message"
-                                    if hash then addKind "hash"
-                                    if not refs.IsEmpty then addKind "ref"; matchedRefs.AddRange refs
-                                    message || hash || not refs.IsEmpty
-                                | Message ->
-                                    let hit = matches commit.Subject || matches commit.Message
-                                    if hit then addKind "message"
-                                    hit
-                                | Author ->
-                                    let hit = matches commit.AuthorName || matches commit.AuthorEmail
-                                    if hit then addKind "author"
-                                    hit
-                                | Hash ->
-                                    let hit = matches commit.Hash
-                                    if hit then addKind "hash"
-                                    hit
-                                | Ref ->
-                                    let refs = refMatches ()
-                                    if not refs.IsEmpty then addKind "ref"; matchedRefs.AddRange refs
-                                    not refs.IsEmpty
-                                | After -> tryParseDate now term.Text |> Option.forall (fun date -> commit.Timestamp >= date)
-                                | Before -> tryParseDate now term.Text |> Option.forall (fun date -> commit.Timestamp < date)
-                                | ChangedPath
-                                | ChangedLine -> true)
-
-                        if metadataMatches then Some(commit, kinds, matchedRefs) else None)
+                    |> List.choose (fun commit -> matchMetadata now metadataTerms commit |> Option.map (fun (kinds, refs) -> commit, kinds, refs))
                     |> Array.ofList
 
-                let toResult (commit: Models.Commit, kinds: Collections.Generic.List<string>, matchedRefs: Collections.Generic.List<string>, matchedPaths: Collections.Generic.List<string>) =
-                    let details = ResizeArray<string>(kinds)
-                    if matchedPaths.Count > 0 then details.Add("paths: " + String.Join(", ", matchedPaths))
-                    if matchedRefs.Count > 0 then details.Add("refs: " + String.Join(", ", Seq.distinct matchedRefs))
+                let toResult (commit: Models.Commit) (kinds: MatchKind list) (matchedRefs: string list) (matchedPaths: string list) =
+                    let kinds = List.distinct kinds
+                    let matchedRefs = List.distinct matchedRefs
+                    let details =
+                        [ yield! kinds |> List.map matchKindKey
+                          if not matchedPaths.IsEmpty then "paths: " + String.Join(", ", matchedPaths)
+                          if not matchedRefs.IsEmpty then "refs: " + String.Join(", ", matchedRefs) ]
 
                     { Commit = commit
-                      MatchKinds = List.ofSeq kinds
+                      MatchKinds = kinds
                       MatchSummary = String.Join("; ", details)
-                      MatchedPaths = List.ofSeq matchedPaths
-                      MatchedRefs = matchedRefs |> Seq.distinct |> List.ofSeq }
+                      MatchedPaths = matchedPaths
+                      MatchedRefs = matchedRefs }
 
                 if diffTerms.IsEmpty then
                     loaders.Progress total total
-                    return candidates |> Array.map (fun (commit, kinds, refs) -> toResult (commit, kinds, refs, Collections.Generic.List())) |> List.ofArray
+                    return candidates |> Array.map (fun (commit, kinds, refs) -> toResult commit kinds refs []) |> List.ofArray
                 else
                     // Phase 2: contents of the candidates, in parallel.
                     let outcomes : Result option array = Array.zeroCreate candidates.Length
@@ -393,47 +419,41 @@ module GitSearch =
                     let evaluate (reader: ContentReader<'env>) index =
                         flow {
                             let commit, kinds, matchedRefs = candidates.[index]
-                            let addKind kind = if not (kinds.Contains kind) then kinds.Add kind
-                            let matchedPaths = Collections.Generic.List<string>()
 
-                            let! pathsMatch =
+                            // Every path term must match some changed path; the matched paths are reported.
+                            let! pathsMatched =
                                 if pathTerms.IsEmpty then
-                                    Flow.ok true
+                                    Flow.ok (Some [])
                                 else
                                     flow {
                                         let! files = reader.ChangedPaths commit.Hash
-
-                                        return
-                                            pathTerms
-                                            |> List.forall (fun (_, matches) ->
-                                                let paths =
-                                                    files
-                                                    |> List.filter (fun (oldPath, newPath) -> matches oldPath || matches newPath)
-                                                    |> List.map (fun (oldPath, newPath) -> FileChange.path oldPath newPath)
-                                                if not paths.IsEmpty then
-                                                    addKind "path"
-                                                    for path in paths do
-                                                        if not (matchedPaths.Contains path) then matchedPaths.Add path
-                                                not paths.IsEmpty)
+                                        let pathsFor (matches: string -> bool) =
+                                            files
+                                            |> List.filter (fun (oldPath, newPath) -> matches oldPath || matches newPath)
+                                            |> List.map (fun (oldPath, newPath) -> FileChange.path oldPath newPath)
+                                        let perTerm = pathTerms |> List.map (snd >> pathsFor)
+                                        return if perTerm |> List.forall (List.isEmpty >> not) then Some(perTerm |> List.concat |> List.distinct) else None
                                     }
 
                             let! linesMatch =
-                                if not pathsMatch then
-                                    Flow.ok false
-                                elif lineTerms.IsEmpty then
-                                    Flow.ok true
-                                else
+                                match pathsMatched with
+                                | None -> Flow.ok false
+                                | Some _ when lineTerms.IsEmpty -> Flow.ok true
+                                | Some _ ->
                                     flow {
                                         let! hits = reader.MatchChangedLines commit.Hash (lineTerms |> List.map snd)
-                                        let all = List.forall id hits
-                                        if all then addKind "text"
-                                        return all
+                                        return List.forall id hits
                                     }
 
-                            if pathsMatch && linesMatch then
-                                let result = toResult (commit, kinds, matchedRefs, matchedPaths)
+                            match pathsMatched with
+                            | Some paths when linesMatch ->
+                                let contentKinds =
+                                    [ if not pathTerms.IsEmpty then PathMatch
+                                      if not lineTerms.IsEmpty then TextMatch ]
+                                let result = toResult commit (kinds @ contentKinds) matchedRefs paths
                                 outcomes.[index] <- Some result
                                 loaders.Found result
+                            | _ -> ()
                             let checkedNow = Threading.Interlocked.Increment(&checkedCount)
                             if checkedNow % 64 = 0 then loaders.Progress checkedNow total
                         }

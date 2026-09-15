@@ -64,9 +64,8 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
             return;
         }
 
-        var shortHashLength = System.Math.Min(8, commit.Hash.Length);
         FullHash = commit.Hash;
-        Hash = commit.Hash.Substring(0, shortHashLength);
+        Hash = GitKay.Core.CommitFormat.shortHash(commit.Hash);
         Subject = commit.Subject;
         Author = commit.AuthorName;
         var timestamp = System.DateTimeOffset.FromUnixTimeSeconds(commit.Timestamp).ToLocalTime();
@@ -77,7 +76,7 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         Parents = commit.Parents.IsEmpty ? "(root commit)" : string.Join("  ", commit.Parents);
         _refs = commit.Refs.ToArray();
         HasRefs = _refs.Any();
-        RefsSummary = HasRefs ? FormatRefsSummary(_refs) : "";
+        RefsSummary = GitKay.Core.CommitFormat.refsSummary(Microsoft.FSharp.Collections.ListModule.OfSeq(_refs.Select(reference => reference.Name)));
         UpdateRefBadges();
         Lane = info.Lane;
 
@@ -98,13 +97,13 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         SearchMatchSummary = result?.MatchSummary ?? "";
 
         if (result != null) {
-            var kinds = new HashSet<string>(result.MatchKinds, StringComparer.OrdinalIgnoreCase);
-            HasHashMatch = kinds.Contains("hash");
-            HasSubjectMatch = kinds.Contains("message");
-            HasAuthorMatch = kinds.Contains("author");
-            HasRefMatch = kinds.Contains("ref");
+            var kinds = result.MatchKinds;
+            HasHashMatch = kinds.Contains(GitKay.Core.GitSearch.MatchKind.HashMatch);
+            HasSubjectMatch = kinds.Contains(GitKay.Core.GitSearch.MatchKind.MessageMatch);
+            HasAuthorMatch = kinds.Contains(GitKay.Core.GitSearch.MatchKind.AuthorMatch);
+            HasRefMatch = kinds.Contains(GitKay.Core.GitSearch.MatchKind.RefMatch);
             RefMatchCount = result.MatchedRefs.Length;
-            HasDiffMatch = kinds.Contains("path") || kinds.Contains("text");
+            HasDiffMatch = kinds.Contains(GitKay.Core.GitSearch.MatchKind.PathMatch) || kinds.Contains(GitKay.Core.GitSearch.MatchKind.TextMatch);
             PathMatchCount = result.MatchedPaths.Length;
         }
         else {
@@ -141,13 +140,7 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     partial void OnShowStashesChanged(bool value) => UpdateRefBadges();
 
     private void UpdateRefBadges() {
-        var visibleRefs = _refs
-            .Where(ShouldDisplayRef)
-            .OrderBy(refItem => refItem.Kind == GitKay.Core.Models.CommitRefKind.Tag ? 0 : 1)
-            .ThenBy(refItem => refItem.IsCurrentHead ? 0 : 1)
-            .ThenBy(refItem => (int)refItem.Kind)
-            .ThenBy(refItem => refItem.Name, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var visibleRefs = GitKay.Core.CommitFormat.shownRefs(ShowBranchRefs, ShowStashes, Microsoft.FSharp.Collections.ListModule.OfSeq(_refs)).ToArray();
 
         if (RefBadges.Count == visibleRefs.Length) {
             var isSame = true;
@@ -170,30 +163,6 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         }
 
         HasRefBadges = RefBadges.Count > 0;
-    }
-
-    private static string FormatRefsSummary(System.Collections.Generic.IEnumerable<GitKay.Core.Models.CommitRef> refs) {
-        var visibleRefs = refs.Select(reference => reference.Name).Take(3).ToArray();
-        var summary = string.Join(" · ", visibleRefs);
-
-        var totalCount = refs.Count();
-
-        if (totalCount > visibleRefs.Length) {
-            var remainingCount = totalCount - visibleRefs.Length;
-            summary = string.IsNullOrEmpty(summary) ? $"+{remainingCount}" : $"{summary} +{remainingCount}";
-        }
-
-        return summary;
-    }
-
-    private bool ShouldDisplayRef(GitKay.Core.Models.CommitRef reference) {
-        return reference.Kind switch {
-            GitKay.Core.Models.CommitRefKind.Tag => true,
-            GitKay.Core.Models.CommitRefKind.Stash => ShowStashes,
-            GitKay.Core.Models.CommitRefKind.Branch => ShowBranchRefs || reference.IsCurrentHead,
-            GitKay.Core.Models.CommitRefKind.Remote => true,
-            _ => true
-        };
     }
 
     private static CommitRefProjection CreateRefBadge(GitKay.Core.Models.CommitRef reference) {

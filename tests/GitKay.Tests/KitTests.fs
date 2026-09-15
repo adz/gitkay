@@ -151,3 +151,23 @@ let ``path trees merge single-folder chains, sort, and hide collapsed folders`` 
     let changedOnly = PathTree.rows (fun path hasItem -> hasItem && path <> "src/App") entries |> List.map describe
     test <@ changedOnly = [ "0:[dev-docs/releases][2]"; "1:0.3.0.md#2"; "0:[src/App]+[1]"; "0:README.md" ] @>
 
+[<Fact>]
+let ``commit formatting: short hashes, ref summaries, badges and counted lists`` () =
+    test <@ CommitFormat.shortHash "0123456789abcdef" = "01234567" && CommitFormat.shortHash "abc" = "abc" && CommitFormat.shortHash null = "" @>
+    test <@ CommitFormat.refsSummary [ "a"; "b"; "c"; "d"; "e" ] = "a · b · c +2" && CommitFormat.refsSummary [] = "" @>
+    let reference name kind head : Models.CommitRef = { Name = name; Kind = kind; IsCurrentHead = head }
+    let refs =
+        [ reference "feature" Models.CommitRefKind.Branch false
+          reference "main" Models.CommitRefKind.Branch true
+          reference "stash@{0}" Models.CommitRefKind.Stash false
+          reference "origin/main" Models.CommitRefKind.Remote false
+          reference "v2" Models.CommitRefKind.Tag false
+          reference "V1" Models.CommitRefKind.Tag false ]
+    test <@ CommitFormat.shownRefs false false refs |> List.map _.Name = [ "V1"; "v2"; "main"; "origin/main" ] @>
+    test <@ CommitFormat.shownRefs true true refs |> List.map _.Name = [ "V1"; "v2"; "main"; "feature"; "origin/main"; "stash@{0}" ] @>
+    test <@ CommitFormat.countedList "File" [ "a"; "A"; "b"; "c"; "d" ] = "Files (4): a, b, c +1 more" @>
+    test <@ CommitFormat.countedList "Ref" [ "x" ] = "Ref (1): x" && CommitFormat.countedList "Ref" [] = "" @>
+
+[<Fact>]
+let ``match kinds have summary keys and list labels`` () =
+    test <@ GitSearch.matchKindLabel GitSearch.PathMatch = "File / path" && GitSearch.matchKindKey GitSearch.TextMatch = "text" @>
