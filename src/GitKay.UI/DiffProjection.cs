@@ -60,17 +60,15 @@ public partial class DiffFileProjection : ObservableObject {
     [ObservableProperty] private int _addedLines;
     [ObservableProperty] private int _removedLines;
     /// <summary>"added", "deleted", "renamed" or "modified", derived from the file identity.</summary>
-    public string ChangeKind => Key.OldPath == "/dev/null" ? "added"
-        : Key.NewPath == "/dev/null" ? "deleted"
-        : Key.OldPath != Key.NewPath ? "renamed"
-        : "modified";
-    public string ChangeGlyph => ChangeKind switch { "added" => "+", "deleted" => "−", "renamed" => "→", _ => "•" };
+    public string ChangeKind => GitKay.Core.FileChange.kindName(Change);
+    public string ChangeGlyph => GitKay.Core.FileChange.glyph(Change);
+    private GitKay.Core.FileChange.Kind Change => GitKay.Core.FileChange.kind(Key.OldPath, Key.NewPath);
     public string ChangeToolTip => IsLoaded
         ? $"{char.ToUpperInvariant(ChangeKind[0])}{ChangeKind[1..]} · +{AddedLines} −{RemovedLines}"
         : $"{char.ToUpperInvariant(ChangeKind[0])}{ChangeKind[1..]}";
-    public bool IsAddedFile => ChangeKind == "added";
-    public bool IsDeletedFile => ChangeKind == "deleted";
-    public bool IsModifiedFile => ChangeKind is "modified" or "renamed";
+    public bool IsAddedFile => Change.IsAdded;
+    public bool IsDeletedFile => Change.IsDeleted;
+    public bool IsModifiedFile => Change.IsModified || Change.IsRenamed;
     /// <summary>True when collapsed context remains that "expand all" can reveal.</summary>
     public bool HasHiddenContext => _blocks.Any(block => block is DiffGapProjection);
     /// <summary>True when context beyond the configured diff has been revealed and can be collapsed.</summary>
@@ -734,23 +732,5 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection {
         OnPropertyChanged(nameof(ContentInlines));
 
         return isSearchMatch;
-    }
-}
-
-internal static class DiffFormatting {
-    public static string BuildDisplayPath(string oldPath, string newPath) {
-        if (oldPath == "/dev/null") {
-            return $"{newPath} (new file)";
-        }
-
-        if (newPath == "/dev/null") {
-            return $"{oldPath} (deleted)";
-        }
-
-        if (oldPath == newPath) {
-            return newPath;
-        }
-
-        return $"{oldPath} -> {newPath}";
     }
 }

@@ -5,6 +5,7 @@ open System.Text
 open System.Text.RegularExpressions
 open Axial
 open GitKay.Core.Models
+open GitKay.Kit
 
 /// Commit search: a query of prefixed terms (author:, path:, diff:, after: ...) combined with AND, where
 /// plain words search the field chosen by the Commit | Path | Diff mode.
@@ -124,20 +125,45 @@ module GitSearch =
             | _ -> quote term.Text)
         |> String.concat " "
 
-    let private containsIgnoreCase (haystack: string) (needle: string) =
-        not (isNull haystack) && haystack.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0
+    /// <summary>The query a term's text asks for: literal, or a regular expression when the search uses regex.</summary>
+    let termQuery (useRegex: bool) (term: Term) = TextQuery.Create(useRegex, term.Text)
 
-    /// A case-insensitive text matcher, or a regular expression when useRegex is set. An invalid expression falls
-    /// back to literal matching so a half-typed pattern still behaves sensibly.
-    let matcher (useRegex: bool) (text: string) : string -> bool =
-        if useRegex then
-            try
-                let regex = Regex(text, RegexOptions.IgnoreCase ||| RegexOptions.CultureInvariant)
-                fun value -> not (isNull value) && regex.IsMatch value
-            with :? ArgumentException ->
-                fun value -> containsIgnoreCase value text
-        else
-            fun value -> containsIgnoreCase value text
+    /// <summary>
+    /// An applied search split by what each part underlines: commit headline, hash, author and ref names, file paths and
+    /// changed lines. Plain words of the Commit mode count for headline, hash and refs.
+    /// </summary>
+    type Highlight =
+        { Subject: TextQuery list
+          Hash: TextQuery list
+          Ref: TextQuery list
+          Author: TextQuery list
+          Path: TextQuery list
+          Line: TextQuery list }
+
+        member this.IsEmpty =
+            [ this.Subject; this.Hash; this.Ref; this.Author; this.Path; this.Line ] |> List.forall List.isEmpty
+
+    let emptyHighlight = { Subject = []; Hash = []; Ref = []; Author = []; Path = []; Line = [] }
+
+    let highlight (mode: Mode) (useRegex: bool) (query: string) : Highlight =
+        let terms = parseQuery mode query
+        let queriesFor (fields: Field list) =
+            terms |> List.filter (fun term -> List.contains term.Field fields) |> List.map (termQuery useRegex)
+        { Subject = queriesFor [ CommitInfo; Message ]
+          Hash = queriesFor [ CommitInfo; Hash ]
+          Ref = queriesFor [ CommitInfo; Ref ]
+          Author = queriesFor [ Author ]
+          Path = queriesFor [ ChangedPath ]
+          Line = queriesFor [ ChangedLine ] }
+
+    /// <summary>A highlight that underlines one query in headlines, hashes and authors, for a quick find over commits.</summary>
+    let commitHighlight (query: TextQuery) =
+        if query.IsEmpty then emptyHighlight
+        else { emptyHighlight with Subject = [ query ]; Hash = [ query ]; Author = [ query ] }
+
+    /// <summary>Every span of <paramref name="text"/> any of the queries matches, in query order.</summary>
+    let spans (queries: TextQuery list) (text: string) : struct (int * int) list =
+        queries |> List.collect (fun query -> query.Spans text)
 
     /// Absolute dates, or git-style relative ones: "2 weeks ago", "3.days.ago", "yesterday".
     let tryParseDate (now: DateTimeOffset) (text: string) =
@@ -171,12 +197,6 @@ module GitSearch =
             | After | Before when (tryParseDate now term.Text).IsNone ->
                 Some((if term.Field = After then "after" else "before"), term.Text)
             | _ -> None)
-
-    let private buildDisplayPath oldPath newPath =
-        if oldPath = newPath then newPath
-        elif oldPath = "/dev/null" then newPath
-        elif newPath = "/dev/null" then oldPath
-        else $"{oldPath} -> {newPath}"
 
     let private needsDiff (term: Term) = term.Field = ChangedPath || term.Field = ChangedLine
 
@@ -216,7 +236,7 @@ module GitSearch =
             if terms.IsEmpty then
                 return! Error GitError.EmptySearchQuery
             else
-                let compiled = terms |> List.map (fun term -> term, matcher useRegex term.Text)
+                let compiled = terms |> List.map (fun term -> term, (termQuery useRegex term).IsMatch)
                 let metadataTerms, diffTerms = compiled |> List.partition (fst >> needsDiff >> not)
                 let pathTerms, lineTerms = diffTerms |> List.partition (fun (term, _) -> term.Field = ChangedPath)
                 let total = commits.Length
@@ -307,7 +327,7 @@ module GitSearch =
                                                 let paths =
                                                     files
                                                     |> List.filter (fun (oldPath, newPath) -> matches oldPath || matches newPath)
-                                                    |> List.map (fun (oldPath, newPath) -> buildDisplayPath oldPath newPath)
+                                                    |> List.map (fun (oldPath, newPath) -> FileChange.path oldPath newPath)
                                                 if not paths.IsEmpty then
                                                     addKind "path"
                                                     for path in paths do

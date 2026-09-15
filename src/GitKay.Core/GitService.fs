@@ -115,21 +115,11 @@ module GitService =
         options.ContextLines <- normalizeContextLines contextLines
         options
 
-    let private buildDisplayPath oldPath newPath =
-        if oldPath = "/dev/null" then
-            newPath + " (new file)"
-        elif newPath = "/dev/null" then
-            oldPath + " (deleted)"
-        elif oldPath = newPath then
-            newPath
-        else
-            $"{oldPath} -> {newPath}"
-
     let private toDiffFileSummary (file: FileDiff) =
         {
             OldPath = file.OldPath
             NewPath = file.NewPath
-            DisplayPath = buildDisplayPath file.OldPath file.NewPath
+            DisplayPath = FileChange.displayPath file.OldPath file.NewPath
         }
 
     let private toDiffFileSummaryFromChange (entry: TreeEntryChanges) =
@@ -149,7 +139,7 @@ module GitService =
         {
             OldPath = oldPath
             NewPath = newPath
-            DisplayPath = buildDisplayPath oldPath newPath
+            DisplayPath = FileChange.displayPath oldPath newPath
         }
 
     let buildDiffCacheEntry (hash: string) (files: FileDiff list) =

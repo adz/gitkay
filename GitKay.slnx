@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Axial.Elmish/Axial.Elmish.fsproj" />
     <Project Path="src/GitKay.Core/GitKay.Core.fsproj" />
+    <Project Path="src/GitKay.Kit/GitKay.Kit.fsproj" />
     <Project Path="src/GitKay.Serialization/GitKay.Serialization.fsproj" />
     <Project Path="src/GitKay.UI/GitKay.UI.csproj" />
   </Folder>

@@ -693,6 +693,8 @@ public partial class MainWindow : Window, IVimCommands {
     }
 
     private void OnProjectionPropertyChanged(object? sender, PropertyChangedEventArgs e) {
+        // Applying a commit search replaces a / search's underline and its n / N.
+        if (e.PropertyName == nameof(MainProjection.CommitSearchHighlight)) ClearCommitQuickFind();
         if (e.PropertyName == nameof(MainProjection.SelectedCommit) && _projection != null) {
             // Remember where the diff was scrolled for the commit we're leaving; restore it when returning.
             if (_diffScrollCommit != null) _diffScrollOffsets[_diffScrollCommit] = DiffRowsListBox.CurrentScrollOffset;

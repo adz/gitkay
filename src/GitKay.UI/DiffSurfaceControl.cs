@@ -53,8 +53,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
         var search = SearchHighlightQuery?.Trim();
         var find = FindQuery?.Trim();
-        var searchMatches = string.IsNullOrEmpty(search) ? null : GitKay.Core.GitSearch.matcher(SearchHighlightUseRegex, search);
-        var findMatches = string.IsNullOrEmpty(find) ? null : GitKay.Core.GitSearch.matcher(FindUseRegex, find);
+        var searchQuery = _queries.Get(SearchHighlightUseRegex, search ?? "");
+        var findQuery = _queries.Get(FindUseRegex, find ?? "");
         var runStart = -1;
         OverviewMarkKind runKind = OverviewMarkKind.Added;
 
@@ -76,8 +76,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
             var top = _tops[i] / total;
             var height = (_tops[i + 1] - _tops[i]) / total;
-            if (searchMatches != null && searchMatches.Invoke(line.Content)) _overviewMarks.Add(new OverviewMark(top, height, OverviewMarkKind.SearchMatch));
-            if (findMatches != null && findMatches.Invoke(line.Content)) _overviewMarks.Add(new OverviewMark(top, height, OverviewMarkKind.FindMatch));
+            if (searchQuery.IsMatch(line.Content)) _overviewMarks.Add(new OverviewMark(top, height, OverviewMarkKind.SearchMatch));
+            if (findQuery.IsMatch(line.Content)) _overviewMarks.Add(new OverviewMark(top, height, OverviewMarkKind.FindMatch));
         }
 
         CloseRun(_rows.Length);
@@ -1000,19 +1000,11 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         ForEachMatch(text, FindQuery, FindUseRegex, (start, length) => DrawChangedSpan(context, text, start, length, x, y, highlight));
     }
 
-    private void ForEachMatch(string text, string? rawQuery, bool useRegex, Action<int, int> onMatch) {
-        var query = rawQuery?.Trim();
-        if (string.IsNullOrEmpty(query)) return;
-        if (useRegex) {
-            if (TryRegex(query) is not { } regex) return;
-            foreach (System.Text.RegularExpressions.Match match in regex.Matches(text))
-                if (match.Length > 0) onMatch(match.Index, match.Length);
-            return;
-        }
+    private readonly GitKay.Kit.TextQueryCache _queries = new();
 
-        for (var index = text.IndexOf(query, StringComparison.OrdinalIgnoreCase); index >= 0;
-             index = text.IndexOf(query, index + query.Length, StringComparison.OrdinalIgnoreCase))
-            onMatch(index, query.Length);
+    private void ForEachMatch(string text, string? rawQuery, bool useRegex, Action<int, int> onMatch) {
+        foreach (var (start, length) in _queries.Get(useRegex, rawQuery?.Trim() ?? "").Spans(text))
+            onMatch(start, length);
     }
 
     private void DrawDottedUnderline(DrawingContext context, string text, int start, int length, double x, double baseline, IBrush brush, double size) {
@@ -1020,25 +1012,6 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         var width = Layout(text.Substring(start, length), size, Brushes.Transparent, false).Width;
         for (var dot = left; dot < left + width; dot += 3)
             context.FillRectangle(brush, new Rect(dot, baseline, 1.5, 1.5));
-    }
-
-    private readonly Dictionary<string, System.Text.RegularExpressions.Regex?> _regexCache = new(StringComparer.Ordinal);
-
-    private System.Text.RegularExpressions.Regex? TryRegex(string pattern) {
-        if (_regexCache.TryGetValue(pattern, out var cached)) return cached;
-        if (_regexCache.Count > 16) _regexCache.Clear();
-        System.Text.RegularExpressions.Regex? regex;
-        try {
-            regex = new System.Text.RegularExpressions.Regex(pattern,
-                System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant,
-                TimeSpan.FromMilliseconds(50));
-        }
-        catch (ArgumentException) {
-            regex = null;
-        }
-
-        _regexCache[pattern] = regex;
-        return regex;
     }
 
     private void DrawChangedSpan(DrawingContext context, string text, int start, int length, double x, double y, IBrush brush) {

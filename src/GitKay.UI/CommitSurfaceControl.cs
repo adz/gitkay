@@ -56,8 +56,10 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         AvaloniaProperty.Register<CommitSurfaceControl, CommitProjection?>(nameof(SelectedItem), defaultBindingMode: Avalonia.Data.BindingMode.TwoWay);
     public static readonly StyledProperty<bool> ShowOnlyMatchesProperty =
         AvaloniaProperty.Register<CommitSurfaceControl, bool>(nameof(ShowOnlyMatches));
-    public static readonly StyledProperty<SearchHighlight?> SearchHighlightProperty =
-        AvaloniaProperty.Register<CommitSurfaceControl, SearchHighlight?>(nameof(SearchHighlight));
+    public static readonly StyledProperty<GitKay.Core.GitSearch.Highlight?> SearchHighlightProperty =
+        AvaloniaProperty.Register<CommitSurfaceControl, GitKay.Core.GitSearch.Highlight?>(nameof(SearchHighlight));
+    public static readonly StyledProperty<GitKay.Core.GitSearch.Highlight?> QuickFindHighlightProperty =
+        AvaloniaProperty.Register<CommitSurfaceControl, GitKay.Core.GitSearch.Highlight?>(nameof(QuickFindHighlight));
     public static readonly StyledProperty<bool> SearchActiveProperty =
         AvaloniaProperty.Register<CommitSurfaceControl, bool>(nameof(SearchActive));
     public static readonly StyledProperty<double> GraphWidthProperty = AvaloniaProperty.Register<CommitSurfaceControl, double>(nameof(GraphWidth), 48);
@@ -81,7 +83,9 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
     public CommitProjection? SelectedItem { get => GetValue(SelectedItemProperty); set => SetValue(SelectedItemProperty, value); }
     public bool ShowOnlyMatches { get => GetValue(ShowOnlyMatchesProperty); set => SetValue(ShowOnlyMatchesProperty, value); }
     /// <summary>Applied search terms; matched text in matching rows gets a dotted underline.</summary>
-    public SearchHighlight? SearchHighlight { get => GetValue(SearchHighlightProperty); set => SetValue(SearchHighlightProperty, value); }
+    public GitKay.Core.GitSearch.Highlight? SearchHighlight { get => GetValue(SearchHighlightProperty); set => SetValue(SearchHighlightProperty, value); }
+    /// <summary>A / search in the commit list: underlined on every commit it matches, whether or not a search is applied.</summary>
+    public GitKay.Core.GitSearch.Highlight? QuickFindHighlight { get => GetValue(QuickFindHighlightProperty); set => SetValue(QuickFindHighlightProperty, value); }
     public bool SearchActive { get => GetValue(SearchActiveProperty); set => SetValue(SearchActiveProperty, value); }
 
     /// <summary>Raised by the row context menu: (field, value) where a null value asks the host to prompt for one.</summary>
@@ -98,6 +102,7 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         ShowOnlyMatchesProperty.Changed.AddClassHandler<CommitSurfaceControl>((control, _) => control.ApplyFilter());
         SearchActiveProperty.Changed.AddClassHandler<CommitSurfaceControl>((control, _) => control.ApplyFilter());
         SearchHighlightProperty.Changed.AddClassHandler<CommitSurfaceControl>((control, _) => control.InvalidateVisual());
+        QuickFindHighlightProperty.Changed.AddClassHandler<CommitSurfaceControl>((control, _) => control.InvalidateVisual());
         SelectedItemProperty.Changed.AddClassHandler<CommitSurfaceControl>((control, _) => {
             control._keyboardSelection = null;
             control.InvalidateVisual();
@@ -242,7 +247,8 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         var hashX = subjectX + subjectWidth;
         var authorX = hashX + hashWidth;
         var dateX = authorX + authorWidth;
-        var highlight = commit.HasSearchMatch ? SearchHighlight : null;
+        // A / search underlines wherever it matches; an applied search only on the commits it matched.
+        var highlight = QuickFindHighlight is { IsEmpty: false } quick ? quick : commit.HasSearchMatch ? SearchHighlight : null;
         var underline = ThemeBrush("GitKayAccentBrush", UnderlineFallback);
         var badgeX = subjectX + 5;
         foreach (var badge in commit.RefBadges) {
@@ -284,8 +290,9 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
     private static readonly IBrush UnderlineFallback = new SolidColorBrush(Color.FromRgb(88, 166, 255)).ToImmutable();
 
     /// <summary>Dotted underline beneath each matched span; the shared search-match marker.</summary>
-    private void Underline(DrawingContext context, string text, IReadOnlyList<string> terms, double x, double baseline, double size, Typeface typeface, SearchHighlight highlight, IBrush brush) {
-        foreach (var (start, length) in highlight.Matches(terms, text)) {
+    private void Underline(DrawingContext context, string text, Microsoft.FSharp.Collections.FSharpList<GitKay.Kit.TextQuery> queries, double x, double baseline, double size, Typeface typeface, GitKay.Core.GitSearch.Highlight highlight, IBrush brush) {
+        if (string.IsNullOrEmpty(text) || queries.IsEmpty) return;
+        foreach (var (start, length) in GitKay.Core.GitSearch.spans(queries, text)) {
             var left = x + (start == 0 ? 0 : Layout(text[..start], size, Brushes.Transparent, typeface).Width);
             var width = Layout(text.Substring(start, length), size, Brushes.Transparent, typeface).Width;
             for (var dot = left; dot < left + width; dot += 3)
@@ -457,7 +464,7 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         EnsureRows();
         if (_rows.Length == 0) return;
         var currentItem = _keyboardSelection ?? SelectedItem;
-        var current = currentItem == null ? 0 : Math.Max(0, Array.IndexOf(_rows, currentItem));
+        var current = currentItem == null ? -1 : Array.IndexOf(_rows, currentItem);
         MoveSelection(Math.Clamp(position - 1, 0, _rows.Length - 1) - current);
     }
 
@@ -490,8 +497,9 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         EnsureRows();
         var target = Array.IndexOf(_rows, commit);
         if (target < 0) return;
+        // MoveSelection counts from the focused row, or from before the first row when none is focused.
         var current = FocusedCommit is { } focused ? Array.IndexOf(_rows, focused) : -1;
-        MoveSelection(target - Math.Max(0, current));
+        MoveSelection(target - current);
     }
 
     public double ScrollOffset {

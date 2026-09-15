@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.RegularExpressions;
+using GitKay.Kit;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using GitKay.Core;
@@ -19,7 +19,8 @@ public partial class MainWindow {
     private bool _promptClosing;
 
     /// <summary>The commit list's / search: a quick match over loaded commits, stepped by n / N until the next search.</summary>
-    private Regex? _commitQuickFind;
+    private TextQuery? _commitQuickFind;
+    private string _commitQuickFindInput = "";
     private bool _commitQuickFindForward = true;
 
     /// <summary>The / or ? that opened the prompt, whose text input can arrive after focus moves into it.</summary>
@@ -73,9 +74,10 @@ public partial class MainWindow {
     private string RunSearch(SearchOrigin origin, Vim.SearchPattern pattern, bool fromOrigin) {
         if (_projection is not { } projection) return "";
         if (origin.Pane == Vim.VimPane.Commits) {
-            var regex = new Regex(pattern.Regex, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50));
+            var query = TextQuery.Create(true, pattern.Regex);
+            CommitListBox.QuickFindHighlight = GitSearch.commitHighlight(query);
             var start = fromOrigin ? origin.Commit : CommitListBox.FocusedCommit;
-            return FindCommit(regex, origin.Forward, start, includeStart: fromOrigin);
+            return FindCommit(query, origin.Forward ? Direction.Forward : Direction.Backward, start, includeStart: fromOrigin);
         }
 
         projection.SearchDiffFrom(pattern.Regex, origin.Forward, fromOrigin ? origin.Diff.Row : DiffRowsListBox.SelectedItem);
@@ -83,21 +85,16 @@ public partial class MainWindow {
         return projection.CommitFindStatusText;
     }
 
-    private string FindCommit(Regex regex, bool forward, CommitProjection? start, bool includeStart) {
+    private string FindCommit(TextQuery query, Direction direction, CommitProjection? start, bool includeStart) {
         var commits = CommitListBox.VisibleCommits;
-        if (commits.Count == 0) return "no commits";
-        bool Matches(CommitProjection commit) =>
-            regex.IsMatch(commit.Subject) || regex.IsMatch(commit.Author) || regex.IsMatch(commit.AuthorEmail) || regex.IsMatch(commit.FullHash);
-        var matches = commits.Where(Matches).ToList();
-        if (matches.Count == 0) return "no matches";
-        var from = start == null ? (forward ? -1 : commits.Count) : IndexOf(commits, start);
-        for (var step = includeStart ? 0 : 1; step <= commits.Count; step++) {
-            var index = ((from + (forward ? step : -step)) % commits.Count + commits.Count) % commits.Count;
-            if (!Matches(commits[index])) continue;
-            CommitListBox.FocusCommit(commits[index]);
-            return $"{matches.IndexOf(commits[index]) + 1} of {matches.Count}";
-        }
-        return "no matches";
+        var matches = Cycle.positionsWhere(commits.Count, index => {
+            var commit = commits[index];
+            return query.IsMatch(commit.Subject) || query.IsMatch(commit.Author) || query.IsMatch(commit.AuthorEmail) || query.IsMatch(commit.FullHash);
+        });
+        var focus = start == null ? -1 : IndexOf(commits, start);
+        var next = Cycle.step(matches, focus, direction, includeStart);
+        if (next >= 0) CommitListBox.FocusCommit(commits[matches[next]]);
+        return Cycle.summary(next, matches.Length);
     }
 
     private static int IndexOf(IReadOnlyList<CommitProjection> commits, CommitProjection commit) {
@@ -106,11 +103,18 @@ public partial class MainWindow {
         return -1;
     }
 
+    private void ClearCommitQuickFind() {
+        _commitQuickFind = null;
+        _commitQuickFindInput = "";
+        CommitListBox.QuickFindHighlight = null;
+    }
+
     /// <summary>n / N in the commit list after a / search there.</summary>
     private bool TryStepCommitQuickFind(bool forward) {
-        if (_commitQuickFind is not { } regex) return false;
-        var summary = FindCommit(regex, forward ? _commitQuickFindForward : !_commitQuickFindForward, CommitListBox.FocusedCommit, includeStart: false);
-        if (_projection != null) _projection.Status = $"/{regex} · {summary}";
+        if (_commitQuickFind is not { } query) return false;
+        var direction = forward == _commitQuickFindForward ? Direction.Forward : Direction.Backward;
+        var summary = FindCommit(query, direction, CommitListBox.FocusedCommit, includeStart: false);
+        if (_projection != null) _projection.Status = $"{(_commitQuickFindForward ? "/" : "?")}{_commitQuickFindInput} · {summary}";
         return true;
     }
 
@@ -154,7 +158,8 @@ public partial class MainWindow {
             if (_searchHistory.Count > 50) _searchHistory.RemoveAt(0);
             var summary = RunSearch(origin, pattern, fromOrigin: true);
             if (origin.Pane == Vim.VimPane.Commits) {
-                _commitQuickFind = new Regex(pattern.Regex, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50));
+                _commitQuickFind = TextQuery.Create(true, pattern.Regex);
+                _commitQuickFindInput = input;
                 _commitQuickFindForward = origin.Forward;
             }
             projection.Status = $"{(origin.Forward ? "/" : "?")}{input} · {summary}";
@@ -172,6 +177,8 @@ public partial class MainWindow {
     private void RestoreSearchOrigin(SearchOrigin origin) {
         if (_projection is not { } projection) return;
         if (origin.Pane == Vim.VimPane.Commits) {
+            // Back to the previous / search's underline, or none.
+            CommitListBox.QuickFindHighlight = _commitQuickFind is { } previous ? GitSearch.commitHighlight(previous) : null;
             if (origin.Commit != null) CommitListBox.FocusCommit(origin.Commit);
             CommitListBox.ScrollOffset = origin.CommitOffset;
             return;

@@ -376,3 +376,40 @@ module SearchPromptTests =
             window.Close()
             Headless.pump ()
             test <@ [ opened; incremental; accepted; afterN; movedWhileTyping; restored ] = List.replicate 6 true @>)
+
+module CommitQuickFindTests =
+    [<Fact>]
+    let ``slash in the commit list focuses and underlines matches; n steps; Esc restores`` () =
+        Headless.run (fun () ->
+            let projection = MainProjection()
+            let commit (subject: string) (author: string) =
+                CommitProjection(Subject = subject, Author = author, FullHash = Guid.NewGuid().ToString("N"), Hash = "abc")
+            let commits = [ commit "Initial import" "ada"; commit "Fix parser" "bob"; commit "Refactor" "ada"; commit "fix tests" "cy" ]
+            for c in commits do projection.Commits.Add c
+            let window = MainWindow(Width = 1200.0, Height = 800.0, DataContext = projection)
+            window.Show()
+            Headless.pump ()
+            let list = window.FindControl<CommitSurfaceControl>("CommitListBox")
+            let prompt = window.FindControl<TextBox>("SearchPromptBox")
+            list.Focus() |> ignore
+            Headless.pump ()
+            let focused () = commits |> List.findIndex (fun c -> Object.ReferenceEquals(c, list.FocusedCommit))
+            let press key symbol =
+                window.KeyPress(key, RawInputModifiers.None, PhysicalKey.None, symbol)
+                Headless.pump ()
+
+            press Key.Oem2 "/"
+            prompt.Text <- "fix"
+            Headless.pump ()
+            let whileTyping = focused (), not (isNull (box list.QuickFindHighlight)) && not list.QuickFindHighlight.IsEmpty
+            press Key.Enter null
+            press Key.N "n"
+            let afterN = focused ()
+            press Key.Oem2 "/"
+            prompt.Text <- "refactor"
+            Headless.pump ()
+            press Key.Escape null
+            let afterEscape = focused (), not (isNull (box list.QuickFindHighlight))
+            window.Close()
+            Headless.pump ()
+            test <@ (whileTyping, afterN, afterEscape) = ((1, true), 3, (3, true)) @>)

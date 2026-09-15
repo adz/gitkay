@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Small, general-purpose building blocks with no GitKay or UI dependencies: text queries, wrap-around stepping,
+    most-recent lists, navigation history, fuzzy ranking and path trees. Kept free of app types so it can move to its
+    own package.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="TextQuery.fs" />
+    <Compile Include="Cycle.fs" />
+  </ItemGroup>
+
+</Project>

@@ -63,7 +63,7 @@
                     <!-- The prompt's keys, so they needn't be remembered; trimmed before the input when the window is narrow. -->
                     <TextBlock x:Name="SearchPromptKeys" Grid.Column="3" FontSize="11" Foreground="{DynamicResource GitKayMutedTextBrush}"
                                VerticalAlignment="Center" Margin="16,0,0,0" TextTrimming="CharacterEllipsis"
-                               Text="Enter keep for n / N · Esc cancel · ↑↓ history · Alt+R regex · Alt+C case · /i ignore case · \V literal · \&lt; \&gt; word" />
+                               Text="Esc cancel · ↑↓ history · Alt+R regex · Alt+C case · /i ignore case · \V literal · \&lt; \&gt; word" />
                 </Grid>
             </Panel>
         </Border>

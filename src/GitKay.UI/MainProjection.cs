@@ -177,7 +177,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private string _commitSearchDiffTerm = "";
     [ObservableProperty] private bool _commitSearchDiffTermUseRegex;
     [ObservableProperty] private string _commitSearchPathTerm = "";
-    [ObservableProperty] private SearchHighlight? _commitSearchHighlight;
+    [ObservableProperty] private GitKay.Core.GitSearch.Highlight? _commitSearchHighlight;
     /// <summary>Parent and child commits of the selection, for links and p / c navigation.</summary>
     public ObservableCollection<CommitLinkProjection> SelectedCommitParents { get; } = new();
     public ObservableCollection<CommitLinkProjection> SelectedCommitChildren { get; } = new();
@@ -1152,40 +1152,20 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     /// <summary>Moves the diff selection to the next or previous row containing the find text, wrapping.</summary>
     private void StepDiffFind(int direction, bool includeCurrent = false) {
-        // Your own find text wins; an empty box borrows the commit search's diff term without writing to the box.
-        var ownQuery = CommitFindQuery.Trim();
-        var borrowed = string.IsNullOrWhiteSpace(ownQuery);
-        var query = borrowed ? CommitSearchDiffTerm.Trim() : ownQuery;
-        if (string.IsNullOrWhiteSpace(query)) {
+        if (GitKay.Core.DiffFind.choose(CommitFindQuery, CommitFindUseRegex, CommitSearchDiffTerm, CommitSearchDiffTermUseRegex) is not { } found) {
             CommitFindStatusText = "";
             return;
         }
 
-        var useRegex = borrowed ? CommitSearchDiffTermUseRegex : CommitFindUseRegex;
-        var matcher = GitKay.Core.GitSearch.matcher(useRegex, query);
-        var matches = SelectedDiffRows.Where(row => row is DiffLineProjection && RowMatchesFindQuery(row, text => matcher.Invoke(text))
-                                                    || !borrowed && RowMatchesFindQuery(row, text => matcher.Invoke(text))).ToList();
-        if (matches.Count == 0) {
-            CommitFindStatusText = "No matches";
-            return;
-        }
-
-        var currentIndex = SelectedDiffRow != null ? matches.FindIndex(row => ReferenceEquals(row, SelectedDiffRow)) : -1;
-        int nextIndex;
-        if (currentIndex >= 0) {
-            nextIndex = includeCurrent ? currentIndex : (currentIndex + direction + matches.Count) % matches.Count;
-        }
-        else if (SelectedDiffRow != null && SelectedDiffRows.IndexOf(SelectedDiffRow) is var focused && focused >= 0) {
-            // From a row that doesn't match, step to the nearest match past it rather than restarting at the top.
-            var positions = matches.Select(row => SelectedDiffRows.IndexOf(row)).ToList();
-            nextIndex = direction > 0 ? positions.FindIndex(position => position > focused) : positions.FindLastIndex(position => position < focused);
-            if (nextIndex < 0) nextIndex = direction > 0 ? 0 : matches.Count - 1;
-        }
-        else {
-            nextIndex = direction > 0 ? 0 : matches.Count - 1;
-        }
-        SelectedDiffRow = matches[nextIndex];
-        CommitFindStatusText = borrowed ? $"{nextIndex + 1} of {matches.Count} · search" : $"{nextIndex + 1} of {matches.Count}";
+        var find = found.Value;
+        var rows = SelectedDiffRows;
+        var includesHeaders = GitKay.Core.DiffFind.includesHeaders(find);
+        var matches = GitKay.Kit.Cycle.positionsWhere(rows.Count, index =>
+            rows[index] is DiffLineProjection || includesHeaders ? RowMatchesFindQuery(rows[index], find.Query.IsMatch) : false);
+        var focus = SelectedDiffRow == null ? -1 : rows.IndexOf(SelectedDiffRow);
+        var next = GitKay.Kit.Cycle.step(matches, focus, direction > 0 ? GitKay.Kit.Direction.Forward : GitKay.Kit.Direction.Backward, includeCurrent);
+        if (next >= 0) SelectedDiffRow = rows[matches[next]];
+        CommitFindStatusText = GitKay.Core.DiffFind.status(find, next, matches.Length);
     }
 
     partial void OnCommitSearchDiffTermChanged(string value) => UpdateCommitFindPlaceholder();
@@ -1194,7 +1174,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         var term = CommitSearchDiffTerm.Trim();
         CommitFindPlaceholder = term.Length > 0
             ? $"Enter steps through “{term}”"
-            : "Find in diff  (Ctrl+F or /)";
+            : "Find in diff  (Ctrl+F)";
         if (string.IsNullOrWhiteSpace(CommitFindQuery) && term.Length == 0) CommitFindStatusText = "";
     }
 
@@ -1387,23 +1367,16 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private void FindPreviousCommit() => StepCommitMatch(-1);
 
     /// <summary>Selects the next or previous matching commit in history order, wrapping.</summary>
-    private void StepCommitMatch(int direction) {
-        if (Commits.Count == 0) {
-            return;
-        }
+    private int[] CommitMatchPositions() => GitKay.Kit.Cycle.positionsWhere(Commits.Count, index => Commits[index].HasSearchMatch);
 
-        var count = Commits.Count;
-        var current = SelectedCommit == null ? -1 : Commits.IndexOf(SelectedCommit);
-        var start = current >= 0 ? current : direction > 0 ? -1 : count;
-        for (var step = 1; step <= count; step++) {
-            var index = ((start + direction * step) % count + count) % count;
-            if (Commits[index].HasSearchMatch) {
-                // Land on the change: once this commit's diff loads, select its first match.
-                _revealSearchMatchInDiff = !string.IsNullOrWhiteSpace(CommitFindQuery) || !string.IsNullOrWhiteSpace(CommitSearchDiffTerm);
-                SelectedCommit = Commits[index];
-                return;
-            }
-        }
+    private void StepCommitMatch(int direction) {
+        var positions = CommitMatchPositions();
+        var focus = SelectedCommit == null ? -1 : Commits.IndexOf(SelectedCommit);
+        var next = GitKay.Kit.Cycle.step(positions, focus, direction > 0 ? GitKay.Kit.Direction.Forward : GitKay.Kit.Direction.Backward, false);
+        if (next < 0) return;
+        // Land on the change: once this commit's diff loads, select its first match.
+        _revealSearchMatchInDiff = !string.IsNullOrWhiteSpace(CommitFindQuery) || !string.IsNullOrWhiteSpace(CommitSearchDiffTerm);
+        SelectedCommit = Commits[positions[next]];
     }
 
     private void UpdateCommitSearchStatus(GitKay.Core.App.Model model) {
@@ -1417,7 +1390,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                 _commitSearchHighlightKey = highlightKey;
                 CommitSearchHighlight = string.IsNullOrWhiteSpace(model.SearchQuery)
                     ? null
-                    : new SearchHighlight(model.SearchQuery, model.SearchScopeKey, model.SearchUseRegex);
+                    : GitKay.Core.GitSearch.highlight(GitKay.Core.GitSearch.parseMode(model.SearchScopeKey), model.SearchUseRegex, model.SearchQuery);
             }
             CommitSearchDiffTermUseRegex = model.SearchUseRegex;
         }
@@ -1458,15 +1431,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             return;
         }
 
-        var position = 0;
-        if (SelectedCommit is { HasSearchMatch: true }) {
-            foreach (var commit in Commits) {
-                if (commit.HasSearchMatch) position++;
-                if (ReferenceEquals(commit, SelectedCommit)) break;
-            }
-        }
-
-        CommitSearchStatusText = position > 0 ? $"{position} of {matches}" : matches == 1 ? "1 match" : $"{matches} matches";
+        var positions = CommitMatchPositions();
+        var selected = SelectedCommit is { HasSearchMatch: true } ? Array.BinarySearch(positions, Commits.IndexOf(SelectedCommit)) : -1;
+        CommitSearchStatusText = GitKay.Kit.Cycle.summary(selected < 0 ? -1 : selected, matches);
     }
 
     public void RereadRefs() => _dispatch?.Invoke(GitKay.Core.App.Msg.RereadRefs);

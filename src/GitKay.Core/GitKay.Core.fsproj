@@ -8,6 +8,8 @@
   <ItemGroup>
     <Compile Include="Diagnostics.fs" />
     <Compile Include="Models.fs" />
+    <Compile Include="FileChange.fs" />
+    <Compile Include="DiffFind.fs" />
     <Compile Include="DiffExpansion.fs" />
     <Compile Include="Vim.fs" />
     <Compile Include="Graph.fs" />
@@ -24,6 +26,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Axial.Elmish\Axial.Elmish.fsproj" />
+    <ProjectReference Include="..\GitKay.Kit\GitKay.Kit.fsproj" />
   </ItemGroup>
 
   <ItemGroup>
