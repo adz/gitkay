@@ -51,7 +51,7 @@ module App =
             ShowBranchRefs: bool
             ShowStashes: bool
             DiffContextLines: int
-            DiffPresentationModeKey: string
+            DiffLayout: DiffLayout
             SearchQuery: string
             SearchScopeKey: string
             /// Treat search text as regular expressions.
@@ -79,7 +79,7 @@ module App =
         /// Replaces the history's revisions and paths (all branches toggle, file filter) and reloads it.
         | SetHistoryTargets of GitStartup.StartupTarget list
         | SetDiffContextLines of int
-        | SetDiffPresentationMode of string
+        | SetDiffLayout of DiffLayout
         | HistoryLoaded of isFull:bool * Result<Models.Commit list, GitError>
         | SelectCommit of hash:string * startedAtTicks:int64
         | DiffFilesLoaded of hash:string * startedAtTicks:int64 * Result<GitService.DiffFileSummary list, GitError>
@@ -337,7 +337,7 @@ module App =
                 ShowBranchRefs = false
                 ShowStashes = false
                 DiffContextLines = 3
-                DiffPresentationModeKey = "diff"
+                DiffLayout = Settings.defaults.DiffLayout
                 SearchQuery = ""
                 SearchScopeKey = "commit"
                 SearchUseRegex = false
@@ -374,7 +374,7 @@ module App =
                     ShowBranchRefs = startupOptions.ShowBranchRefs
                     ShowStashes = startupOptions.ShowStashes
                     DiffContextLines = startupOptions.DiffContextLines
-                    DiffPresentationModeKey = startupOptions.DiffPresentationModeKey
+                    DiffLayout = startupOptions.DiffLayout
                     SearchQuery = startupOptions.SearchQuery
                     SearchScopeKey = startupOptions.SearchScopeKey
                     SearchUseRegex = startupOptions.SearchUseRegex
@@ -450,8 +450,7 @@ module App =
                 | None ->
                     diffJob.Cancel()
                     nextModel, Cmd.none
-        | SetDiffPresentationMode diffPresentationModeKey ->
-            { model with DiffPresentationModeKey = diffPresentationModeKey }, Cmd.none
+        | SetDiffLayout layout -> { model with DiffLayout = layout }, Cmd.none
         | HistoryLoaded (isFull, Ok commits) ->
             // A path-limited first page scans a bounded number of commits, so few matches doesn't mean it's complete.
             let hasPaths = model.StartupTargets |> List.exists (function GitStartup.StartupTarget.Path _ -> true | _ -> false)

@@ -477,7 +477,7 @@ public sealed partial class DiffFileHeaderProjection : ObservableObject, IDiffRo
 
 /// <summary>Flattens a file's header, hunks and gaps into diff surface rows for a presentation mode.</summary>
 public static class DiffRowBuilder {
-    public static void AppendFile(List<IDiffRowProjection> rows, DiffFileProjection file, string mode) {
+    public static void AppendFile(List<IDiffRowProjection> rows, DiffFileProjection file, GitKay.Core.DiffLayout layout) {
         rows.Add(file.Header);
         if (!file.IsLoaded || file.IsCollapsed) return;
 
@@ -490,17 +490,15 @@ public static class DiffRowBuilder {
 
             if (block is not DiffHunkProjection hunk) continue;
 
-            if (mode == "side-by-side") {
+            if (layout.IsSideBySide) {
                 AddHunkHeader(rows, hunk);
                 AddSideBySideLines(rows, hunk.Lines);
                 continue;
             }
 
-            var lines = mode switch {
-                "new" => hunk.Lines.Where(line => !line.IsRemoved).ToArray(),
-                "old" => hunk.Lines.Where(line => !line.IsAdded).ToArray(),
-                _ => hunk.Lines.ToArray(),
-            };
+            var lines = layout.IsNewFile ? hunk.Lines.Where(line => !line.IsRemoved).ToArray()
+                : layout.IsOldFile ? hunk.Lines.Where(line => !line.IsAdded).ToArray()
+                : hunk.Lines.ToArray();
             if (lines.Length == 0) continue;
 
             AddHunkHeader(rows, hunk);

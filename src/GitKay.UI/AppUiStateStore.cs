@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using GitKay.Core;
 using GitKay.Serialization;
 
 namespace GitKay.UI;
@@ -15,72 +16,28 @@ public sealed class AppUiStateStore {
 
     public string StatePath => _statePath;
 
-    public AppUiState Load() {
+    /// <summary>The saved UI state, or an empty one when there is none or the file can't be read.</summary>
+    public UiState Load() {
         try {
-            if (!File.Exists(_statePath)) {
-                return AppUiState.Default;
-            }
-
-            var json = File.ReadAllText(_statePath);
-            var document = GitKayJson.DeserializeUiState(json);
-            var state = AppUiState.Default.WithWindowSize(document.WindowWidth, document.WindowHeight);
-            if (document.Layout != null) {
-                state = state.WithLayout(new UiLayoutState {
-                    HistoryPaneRatio = document.Layout.HistoryPaneRatio,
-                    FileListWidth = document.Layout.FileListWidth,
-                    GraphColumnWidth = document.Layout.GraphColumnWidth,
-                    HashColumnWidth = document.Layout.HashColumnWidth,
-                    AuthorColumnWidth = document.Layout.AuthorColumnWidth,
-                    DateColumnWidth = document.Layout.DateColumnWidth,
-                });
-            }
-
-            foreach (var repoSelection in document.RepoSelections) {
-                state = state.WithRepoSelection(repoSelection.Key, repoSelection.Value);
-            }
-
-            return state.Normalize();
+            if (!File.Exists(_statePath)) return UiStateModule.empty;
+            var decoded = UiStateJson.decode(File.ReadAllText(_statePath));
+            if (decoded.IsOk) return decoded.ResultValue;
+            System.Diagnostics.Trace.WriteLine($"[ui-state] {_statePath} ignored: {decoded.ErrorValue}");
         }
-        catch {
-            return AppUiState.Default;
+        catch (Exception exception) {
+            System.Diagnostics.Trace.WriteLine($"[ui-state] {_statePath} unreadable: {exception.Message}");
         }
+        return UiStateModule.empty;
     }
 
-    public void Save(AppUiState state) {
+    public void Save(UiState state) {
         try {
-            var normalized = state.Normalize();
             var directory = Path.GetDirectoryName(_statePath);
-
-            if (!string.IsNullOrWhiteSpace(directory)) {
-                Directory.CreateDirectory(directory);
-            }
-
-            var repoSelections = new List<KeyValuePair<string, string>>();
-
-            foreach (var repoState in normalized.RepoStates) {
-                var selectedCommitHash = RepoUiState.NormalizeHash(repoState.Value.LastSelectedCommitHash);
-
-                if (selectedCommitHash != null) {
-                    repoSelections.Add(new KeyValuePair<string, string>(repoState.Key, selectedCommitHash));
-                }
-            }
-
-            var layout = normalized.Layout;
-            var json = GitKayJson.SerializeUiState(
-                normalized.WindowWidth,
-                normalized.WindowHeight,
-                repoSelections,
-                new UiLayoutDocument(
-                    layout.HistoryPaneRatio,
-                    layout.FileListWidth,
-                    layout.GraphColumnWidth,
-                    layout.HashColumnWidth,
-                    layout.AuthorColumnWidth,
-                    layout.DateColumnWidth));
-
-            File.WriteAllText(_statePath, json);
+            if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
+            File.WriteAllText(_statePath, UiStateJson.encode(state));
         }
-        catch {
+        catch (Exception exception) {
+            System.Diagnostics.Trace.WriteLine($"[ui-state] {_statePath} not saved: {exception.Message}");
         }
     }
 

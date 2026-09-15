@@ -110,8 +110,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         AvaloniaProperty.Register<DiffSurfaceControl, IDiffRowProjection?>(nameof(SelectedItem), defaultBindingMode: Avalonia.Data.BindingMode.TwoWay);
     public static readonly StyledProperty<double> CodeFontSizeProperty =
         AvaloniaProperty.Register<DiffSurfaceControl, double>(nameof(CodeFontSize), DefaultCodeFontSize);
-    public static readonly StyledProperty<string> ModeProperty =
-        AvaloniaProperty.Register<DiffSurfaceControl, string>(nameof(Mode), "diff");
+    public static readonly StyledProperty<GitKay.Core.DiffLayout> DiffLayoutProperty =
+        AvaloniaProperty.Register<DiffSurfaceControl, GitKay.Core.DiffLayout>(nameof(DiffLayout), GitKay.Core.DiffLayout.Unified);
     public static readonly StyledProperty<string?> FindQueryProperty =
         AvaloniaProperty.Register<DiffSurfaceControl, string?>(nameof(FindQuery));
     public static readonly StyledProperty<bool> FindUseRegexProperty =
@@ -159,7 +159,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     public IEnumerable<IDiffRowProjection>? ItemsSource { get => GetValue(ItemsSourceProperty); set => SetValue(ItemsSourceProperty, value); }
     public IDiffRowProjection? SelectedItem { get => GetValue(SelectedItemProperty); set => SetValue(SelectedItemProperty, value); }
-    public string Mode { get => GetValue(ModeProperty); set => SetValue(ModeProperty, value); }
+    public GitKay.Core.DiffLayout DiffLayout { get => GetValue(DiffLayoutProperty); set => SetValue(DiffLayoutProperty, value); }
     /// <summary>Font size of diff code and line numbers only; file headers and hunk labels keep their size.</summary>
     public double CodeFontSize { get => GetValue(CodeFontSizeProperty); set => SetValue(CodeFontSizeProperty, value); }
     /// <summary>Find-in-diff text; every occurrence in visible lines is highlighted.</summary>
@@ -177,7 +177,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     static DiffSurfaceControl() {
         ItemsSourceProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => control.RebuildRows());
         SelectedItemProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => control.InvalidateVisual());
-        ModeProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => control.InvalidateVisual());
+        DiffLayoutProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => control.InvalidateVisual());
         CodeFontSizeProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => control.OnCodeFontSizeChanged());
         FindQueryProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => { control.InvalidateVisual(); control.InvalidateOverview(); });
         FindUseRegexProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => control.InvalidateVisual());
@@ -482,12 +482,12 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         foreach (var row in _growingRows) {
             if (row is not DiffLineProjection line) continue;
             var foreground = ThemeBrush("GitKayTextBrush", line.Foreground);
-            if (Mode == "side-by-side") {
+            if (DiffLayout.IsSideBySide) {
                 HighlightNow(line.OldContent, foreground);
                 HighlightNow(line.NewContent, foreground);
             }
-            else if (Mode == "new") HighlightNow(line.NewContent, foreground);
-            else if (Mode == "old") HighlightNow(line.OldContent, foreground);
+            else if (DiffLayout.IsNewFile) HighlightNow(line.NewContent, foreground);
+            else if (DiffLayout.IsOldFile) HighlightNow(line.OldContent, foreground);
             else HighlightNow(line.Content, foreground);
         }
     }
@@ -877,20 +877,10 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         if (rowBackground != Brushes.Transparent)
             context.FillRectangle(rowBackground, new Rect(0, y, Bounds.Width, LineHeight - 1));
 
-        switch (Mode) {
-            case "side-by-side":
-                DrawSideBySideLine(context, line, y);
-                break;
-            case "new":
-                DrawSingleSideLine(context, line.NewLineNoText, line.NewContent, y, line);
-                break;
-            case "old":
-                DrawSingleSideLine(context, line.OldLineNoText, line.OldContent, y, line);
-                break;
-            default:
-                DrawUnifiedLine(context, line, y);
-                break;
-        }
+        if (DiffLayout.IsSideBySide) DrawSideBySideLine(context, line, y);
+        else if (DiffLayout.IsNewFile) DrawSingleSideLine(context, line.NewLineNoText, line.NewContent, y, line);
+        else if (DiffLayout.IsOldFile) DrawSingleSideLine(context, line.OldLineNoText, line.OldContent, y, line);
+        else DrawUnifiedLine(context, line, y);
     }
 
     private void DrawUnifiedLine(DrawingContext context, DiffLineProjection line, double y) {
@@ -1050,13 +1040,13 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
         for (var index = start; index < end; index++) {
             if (_rows[index] is not DiffLineProjection line) continue;
-            if (Mode == "side-by-side") {
+            if (DiffLayout.IsSideBySide) {
                 ScheduleHighlight(line.OldContent, ThemeBrush("GitKayTextBrush", line.Foreground));
                 ScheduleHighlight(line.NewContent, ThemeBrush("GitKayTextBrush", line.Foreground));
             }
-            else if (Mode == "new")
+            else if (DiffLayout.IsNewFile)
                 ScheduleHighlight(line.NewContent, ThemeBrush("GitKayTextBrush", line.Foreground));
-            else if (Mode == "old")
+            else if (DiffLayout.IsOldFile)
                 ScheduleHighlight(line.OldContent, ThemeBrush("GitKayTextBrush", line.Foreground));
             else
                 ScheduleHighlight(line.Content, ThemeBrush("GitKayTextBrush", line.Foreground));
@@ -1262,18 +1252,17 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         (uint)index < (uint)rows.Length && rows[index] is DiffLineProjection;
 
     /// <summary>Which content column a point is in: 0 for the only / old side, 1 for the new side in side-by-side.</summary>
-    private int SideAt(double x) => Mode == "side-by-side" && x >= Bounds.Width / 2 ? 1 : 0;
+    private int SideAt(double x) => DiffLayout.IsSideBySide && x >= Bounds.Width / 2 ? 1 : 0;
 
     /// <summary>Where a content column's text starts, before horizontal scrolling.</summary>
-    private double ColumnOrigin(int side) => Mode switch {
-        "side-by-side" => side == 0 ? Z(56) : Bounds.Width / 2 + Z(57),
-        "new" or "old" => Z(52),
-        _ => Z(54),
-    };
+    private double ColumnOrigin(int side) =>
+        DiffLayout.IsSideBySide ? (side == 0 ? Z(56) : Bounds.Width / 2 + Z(57))
+        : DiffLayout.IsUnified ? Z(54)
+        : Z(52);
 
     private double ContentOrigin(int side) => ColumnOrigin(side) - _horizontalOffset;
 
-    private double ColumnWidth(int side) => Mode == "side-by-side"
+    private double ColumnWidth(int side) => DiffLayout.IsSideBySide
         ? side == 0 ? Bounds.Width / 2 - Z(64) : Bounds.Width / 2 - Z(57)
         : Bounds.Width - ColumnOrigin(0);
 
@@ -1300,7 +1289,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         var widest = 0.0;
         for (var index = start; index < end; index++) {
             if (_rows[index] is not DiffLineProjection line) continue;
-            if (Mode == "side-by-side") {
+            if (DiffLayout.IsSideBySide) {
                 widest = Math.Max(widest, TextWidth(line.OldContent) - ColumnWidth(0));
                 widest = Math.Max(widest, TextWidth(line.NewContent) - ColumnWidth(1));
             }
@@ -1334,12 +1323,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         InvalidateVisual();
     }
 
-    private string TextFor(DiffLineProjection line, int side) => Mode switch {
-        "side-by-side" => side == 0 ? line.OldContent : line.NewContent,
-        "new" => line.NewContent,
-        "old" => line.OldContent,
-        _ => line.Content,
-    };
+    private string TextFor(DiffLineProjection line, int side) =>
+        GitKay.Core.DiffLayoutModule.columnText(DiffLayout, side, line.Content, line.OldContent, line.NewContent);
 
     private int CharIndexAt(string text, double originX, double x) {
         var target = x - originX;
@@ -1433,7 +1418,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         if (OrderedSelection() is not var (start, end) || _textSelection == null) return;
         var row = _drawingRowIndex;
         if (row < start.Row || row > end.Row) return;
-        var side = Mode == "side-by-side" && x + _horizontalOffset >= Bounds.Width / 2 ? 1 : 0;
+        var side = DiffLayout.IsSideBySide && x + _horizontalOffset >= Bounds.Width / 2 ? 1 : 0;
         if (side != _textSelection.Side) return;
 
         var from = row == start.Row ? Math.Min(start.Char, text.Length) : 0;
@@ -1466,7 +1451,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     }
 
     private string LineText(DiffLineProjection line) =>
-        Mode == "side-by-side" && !string.IsNullOrEmpty(line.NewContent) ? line.NewContent : TextFor(line, 0);
+        DiffLayout.IsSideBySide && !string.IsNullOrEmpty(line.NewContent) ? line.NewContent : TextFor(line, 0);
 
     public async void CopySelection() {
         if (GetCopyText() is not { } text || TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard) return;
@@ -1497,7 +1482,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     /// <summary>The caret's column: side-by-side starts on the new side, and an empty side (an added or removed line) yields to the other.</summary>
     private int CaretSide(DiffLineProjection line) {
-        if (Mode != "side-by-side") return 0;
+        if (!DiffLayout.IsSideBySide) return 0;
         var side = _caretSide < 0 ? 1 : _caretSide;
         if (TextFor(line, side).Length == 0 && TextFor(line, 1 - side).Length > 0) side = 1 - side;
         return side;
@@ -1505,7 +1490,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     private void DrawCaret(DrawingContext context, string text, double x, double y) {
         if (!IsKeyboardFocusWithin || _drawingRowIndex != SelectedLineIndex || SelectedItem is not DiffLineProjection line) return;
-        var side = Mode == "side-by-side" && x + _horizontalOffset >= Bounds.Width / 2 ? 1 : 0;
+        var side = DiffLayout.IsSideBySide && x + _horizontalOffset >= Bounds.Width / 2 ? 1 : 0;
         if (side != CaretSide(line)) return;
         var column = Math.Min(_caretChar, text.Length);
         var left = x + (column == 0 ? 0 : Layout(text[..column], CodeFontSize, Brushes.Transparent, false).Width);
@@ -1574,7 +1559,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         if (row < 0 || _rows[row] is not DiffLineProjection line) return;
         var (query, regex) = string.IsNullOrWhiteSpace(FindQuery) ? (SearchHighlightQuery, SearchHighlightUseRegex) : (FindQuery, FindUseRegex);
         var preferred = CaretSide(line);
-        foreach (var side in Mode == "side-by-side" ? new[] { preferred, 1 - preferred } : new[] { 0 }) {
+        foreach (var side in DiffLayout.IsSideBySide ? new[] { preferred, 1 - preferred } : new[] { 0 }) {
             var first = -1;
             ForEachMatch(TextFor(line, side), query, regex, (start, _) => { if (first < 0) first = start; });
             if (first < 0) continue;
@@ -1608,7 +1593,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         var bestNumber = int.MaxValue;
         for (var index = fileStart + 1; index < _rows.Length && _rows[index] is not DiffFileHeaderProjection; index++) {
             if (_rows[index] is not DiffLineProjection line) continue;
-            var lineNumber = (Mode == "old" ? line.OldLineNo : line.NewLineNo) ?? line.OldLineNo ?? int.MaxValue;
+            var lineNumber = (DiffLayout.IsOldFile ? line.OldLineNo : line.NewLineNo) ?? line.OldLineNo ?? int.MaxValue;
             // The exact line, or the nearest shown line after it when that line is hidden context.
             if (lineNumber >= number && lineNumber < bestNumber) {
                 best = line;
@@ -1652,7 +1637,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     string GitKay.Core.Vim.IVimHost.OtherSideText {
         get {
-            if (Mode != "side-by-side" || SelectedItem is not DiffLineProjection line) return null!;
+            if (!DiffLayout.IsSideBySide || SelectedItem is not DiffLineProjection line) return null!;
             var other = TextFor(line, 1 - CaretSide(line));
             return other.Length == 0 ? null! : other;
         }
@@ -1825,7 +1810,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
                 while (first <= last && _rows[first] is not DiffLineProjection) first++;
                 while (last >= first && _rows[last] is not DiffLineProjection) last--;
                 if (first <= last && _rows[last] is DiffLineProjection lastLine) {
-                    var side = Mode == "side-by-side" ? 1 : 0;
+                    var side = DiffLayout.IsSideBySide ? 1 : 0;
                     _textSelection = new TextSelection(new TextPosition(first, 0), new TextPosition(last, TextFor(lastLine, side).Length), side);
                     InvalidateVisual();
                 }

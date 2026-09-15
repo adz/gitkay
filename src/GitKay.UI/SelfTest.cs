@@ -51,22 +51,21 @@ public static class SelfTest {
 
         Check("settings round-trip through the Reified codec", () => {
             // Eleven fields: records this wide threw TypeLoadException under NativeAOT before Reified 0.8.1.
-            var document = new GitKay.Serialization.AppSettingsDocument(true, true, 7, "side-by-side", "Inter", "Iosevka", 14.5, 12, 10, 0.25, "dark");
-            var read = GitKay.Serialization.GitKayJson.DeserializeSettings(GitKay.Serialization.GitKayJson.SerializeSettings(document));
-            if (read.DiffContextLines != 7 || read.DiffPresentationModeKey != "side-by-side" || read.CommitRowTextFontSize != 14.5 || read.ThemeMode != "dark")
-                return "values changed in the round trip";
-            var defaults = GitKay.Serialization.GitKayJson.DeserializeSettings("{\"ShowStashes\":true}");
-            return defaults.ShowStashes && defaults.DiffContextLines == 3 && defaults.ThemeMode == "system" ? null : "missing fields did not take defaults";
+            var settings = new GitKay.Core.Settings(true, true, 7, GitKay.Core.DiffLayout.SideBySide, "Inter", "Iosevka", 14.5, 12, 10, 0.25, GitKay.Core.ThemeMode.DarkTheme);
+            var read = GitKay.Serialization.SettingsJson.decode(GitKay.Serialization.SettingsJson.encode(settings));
+            if (!read.IsOk || !read.ResultValue.Equals(settings)) return "values changed in the round trip";
+            var defaults = GitKay.Serialization.SettingsJson.decode("{\"ShowStashes\":true}");
+            return defaults.IsOk && defaults.ResultValue.ShowStashes && defaults.ResultValue.DiffContextLines == 3 && defaults.ResultValue.Theme.IsSystemTheme
+                ? null
+                : "missing fields did not take defaults";
         });
 
         Check("UI state round-trips through the Reified codec", () => {
-            var layout = new GitKay.Serialization.UiLayoutDocument(0.4, 300, null, null, null, null);
-            var selections = new[] { new System.Collections.Generic.KeyValuePair<string, string>("/repo", "abc123") };
-            var json = GitKay.Serialization.GitKayJson.SerializeUiState(1200, 800, selections, layout);
-            var read = GitKay.Serialization.GitKayJson.DeserializeUiState(json);
-            return read.WindowWidth == 1200 && read.RepoSelections["/repo"] == "abc123" && read.Layout.FileListWidth == 300 && read.Layout.GraphColumnWidth == null
-                ? null
-                : "values changed in the round trip";
+            var layout = new GitKay.Core.UiLayout(0.4, 300.0, null, null, null, null);
+            var state = GitKay.Core.UiStateModule.withSelectedCommit("/repo", "abc123",
+                GitKay.Core.UiStateModule.withWindowSize(1200.0, 800.0, GitKay.Core.UiStateModule.withLayout(layout, GitKay.Core.UiStateModule.empty)));
+            var read = GitKay.Serialization.UiStateJson.decode(GitKay.Serialization.UiStateJson.encode(state));
+            return read.IsOk && read.ResultValue.Equals(GitKay.Core.UiStateModule.normalize(state)) ? null : "values changed in the round trip";
         });
 
         Check("diagnostics window data refreshes", () => {

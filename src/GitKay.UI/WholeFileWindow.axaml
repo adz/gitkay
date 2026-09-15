@@ -66,7 +66,7 @@
                 <local:DiffSurfaceControl x:Name="Surface"
                                           ItemsSource="{Binding Rows}"
                                           SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
-                                          Mode="{Binding Mode}"
+                                          DiffLayout="{Binding Layout}"
                                           CodeFontSize="{Binding Main.DiffFontSize, Mode=TwoWay}"
                                           ToggleFileCommand="{Binding ToggleCollapsedCommand}"
                                           HorizontalAlignment="Stretch" />

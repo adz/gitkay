@@ -10,6 +10,7 @@
     <Compile Include="Models.fs" />
     <Compile Include="FileChange.fs" />
     <Compile Include="DiffFind.fs" />
+    <Compile Include="Settings.fs" />
     <Compile Include="DiffExpansion.fs" />
     <Compile Include="Vim.fs" />
     <Compile Include="Graph.fs" />

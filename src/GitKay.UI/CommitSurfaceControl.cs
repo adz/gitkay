@@ -33,8 +33,8 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
 
     private const double RowHeight = 22;
     private const double LaneWidth = 9;
-    private static readonly Typeface TextTypeface = new(FontStacks.Resolve(AppSettings.DefaultCommitRowFontFamily));
-    private static readonly Typeface MonoTypeface = new(FontStacks.Resolve(AppSettings.DefaultCommitRowMonoFontFamily));
+    private static readonly Typeface TextTypeface = new(FontStacks.Resolve(GitKay.Core.SettingsModule.defaults.CommitRowFontFamily));
+    private static readonly Typeface MonoTypeface = new(FontStacks.Resolve(GitKay.Core.SettingsModule.defaults.CommitRowMonoFontFamily));
     // Search matches are shown in bold, like gitk.
     private static readonly Typeface BoldTextTypeface = new(TextTypeface.FontFamily, FontStyle.Normal, FontWeight.Bold);
     private static readonly Typeface BoldMonoTypeface = new(MonoTypeface.FontFamily, FontStyle.Normal, FontWeight.Bold);

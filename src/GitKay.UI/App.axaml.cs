@@ -55,7 +55,7 @@ public partial class App : Application {
             var settingsStore = new AppSettingsStore();
             var uiStateStore = new AppUiStateStore();
             var currentUiState = persistedUiState;
-            var startupArgs = persistedSettings.ToStartupArgs();
+            var startupArgs = Microsoft.FSharp.Collections.ListModule.ToArray(GitKay.Core.GitStartup.settingsArguments(persistedSettings));
 
             if (StartupArgs.Length > 0) {
                 var mergedArgs = new string[startupArgs.Length + StartupArgs.Length];
@@ -65,13 +65,8 @@ public partial class App : Application {
             }
 
             var mainWindow = new MainWindow();
-            if (persistedUiState.WindowWidth.HasValue) {
-                mainWindow.Width = persistedUiState.WindowWidth.Value;
-            }
-
-            if (persistedUiState.WindowHeight.HasValue) {
-                mainWindow.Height = persistedUiState.WindowHeight.Value;
-            }
+            if (persistedUiState.WindowWidth is { } savedWidth) mainWindow.Width = savedWidth.Value;
+            if (persistedUiState.WindowHeight is { } savedHeight) mainWindow.Height = savedHeight.Value;
 
             mainWindow.ApplyLayout(persistedUiState.Layout);
 
@@ -105,7 +100,7 @@ public partial class App : Application {
                         return;
                     }
 
-                    currentUiState = currentUiState.WithRepoSelection(repoKey, projection.SelectedCommit.FullHash);
+                    currentUiState = UiStateModule.withSelectedCommit(repoKey, projection.SelectedCommit.FullHash, currentUiState);
                     uiStateStore.Save(currentUiState);
                     return;
                 }
@@ -128,12 +123,11 @@ public partial class App : Application {
 
             desktop.Exit += (s, e) => {
                 if (!string.IsNullOrWhiteSpace(repoKey) && projection.SelectedCommit != null) {
-                    currentUiState = currentUiState.WithRepoSelection(repoKey, projection.SelectedCommit.FullHash);
+                    currentUiState = UiStateModule.withSelectedCommit(repoKey, projection.SelectedCommit.FullHash, currentUiState);
                 }
 
-                currentUiState = currentUiState
-                    .WithWindowSize(mainWindow.Bounds.Width, mainWindow.Bounds.Height)
-                    .WithLayout(mainWindow.CaptureLayout());
+                currentUiState = UiStateModule.withLayout(mainWindow.CaptureLayout(),
+                    UiStateModule.withWindowSize(mainWindow.Bounds.Width, mainWindow.Bounds.Height, currentUiState));
                 uiStateStore.Save(currentUiState);
                 uiStateStore.SaveSearchHistory(projection.RecentSearches);
                 uiStateStore.SaveViewPreferences(projection.CaptureViewPreferences());

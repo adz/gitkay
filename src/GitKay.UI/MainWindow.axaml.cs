@@ -1,3 +1,4 @@
+using Microsoft.FSharp.Core;
 using GitKay.Core;
 using System;
 using System.ComponentModel;
@@ -972,44 +973,44 @@ public partial class MainWindow : Window, IVimCommands {
     }
 
     /// <summary>Captures the current splitter positions and history column widths for persistence.</summary>
-    public UiLayoutState CaptureLayout() {
+    public UiLayout CaptureLayout() {
         var top = MainSplitGrid.RowDefinitions[0].ActualHeight;
         var bottom = MainSplitGrid.RowDefinitions[2].ActualHeight;
         var columns = HistoryHeaderGrid.ColumnDefinitions;
-        double? Width(int index) => columns[index].ActualWidth > 0 ? columns[index].ActualWidth : null;
+        static FSharpOption<double>? Option(double? value) => value is { } some ? FSharpOption<double>.Some(some) : null;
+        static FSharpOption<double>? Positive(double value) => Option(value > 0 ? value : null);
+        // While a pane is maximised, keep the normal layout rather than the maximised one.
         var normal = SavedNormalLayout;
-        return new UiLayoutState {
-            HistoryPaneRatio = normal is { } saved ? saved.HistoryPaneRatio : top + bottom > 0 ? top / (top + bottom) : null,
-            FileListWidth = normal is { } savedWidth ? savedWidth.FileListWidth
-                : DiffSplitGrid.ColumnDefinitions[2].ActualWidth > 0 ? DiffSplitGrid.ColumnDefinitions[2].ActualWidth : null,
-            GraphColumnWidth = Width(0),
-            HashColumnWidth = Width(2),
-            AuthorColumnWidth = Width(3),
-            DateColumnWidth = Width(4),
-        };
+        return new UiLayout(
+            normal is { } saved ? Option(saved.HistoryPaneRatio) : Option(top + bottom > 0 ? top / (top + bottom) : null),
+            normal is { } savedWidth ? Option(savedWidth.FileListWidth) : Positive(DiffSplitGrid.ColumnDefinitions[2].ActualWidth),
+            Positive(columns[0].ActualWidth),
+            Positive(columns[2].ActualWidth),
+            Positive(columns[3].ActualWidth),
+            Positive(columns[4].ActualWidth));
     }
 
     /// <summary>Restores persisted layout; the subject column stays proportional so it absorbs window resizes.</summary>
-    public void ApplyLayout(UiLayoutState layout) {
-        layout = layout.Normalize();
+    public void ApplyLayout(UiLayout layout) {
+        layout = UiLayoutModule.normalize(layout);
         if (layout.HistoryPaneRatio is { } ratio) {
-            MainSplitGrid.RowDefinitions[0].Height = new GridLength(ratio, GridUnitType.Star);
-            MainSplitGrid.RowDefinitions[2].Height = new GridLength(1 - ratio, GridUnitType.Star);
+            MainSplitGrid.RowDefinitions[0].Height = new GridLength(ratio.Value, GridUnitType.Star);
+            MainSplitGrid.RowDefinitions[2].Height = new GridLength(1 - ratio.Value, GridUnitType.Star);
         }
 
         if (layout.FileListWidth is { } fileListWidth)
-            DiffSplitGrid.ColumnDefinitions[2].Width = new GridLength(Math.Max(DiffSplitGrid.ColumnDefinitions[2].MinWidth, fileListWidth), GridUnitType.Pixel);
+            DiffSplitGrid.ColumnDefinitions[2].Width = new GridLength(Math.Max(DiffSplitGrid.ColumnDefinitions[2].MinWidth, fileListWidth.Value), GridUnitType.Pixel);
 
         var columns = HistoryHeaderGrid.ColumnDefinitions;
-        void Restore(int index, double? width) {
+        void Restore(int index, FSharpOption<double>? width) {
             if (width is { } value)
-                columns[index].Width = new GridLength(Math.Max(columns[index].MinWidth, value), GridUnitType.Pixel);
+                columns[index].Width = new GridLength(Math.Max(columns[index].MinWidth, value.Value), GridUnitType.Pixel);
         }
 
         Restore(0, layout.GraphColumnWidth);
         Restore(2, layout.HashColumnWidth);
         // The author column now shows the email too; a width at or below the old 110px default takes the new default.
-        Restore(3, layout.AuthorColumnWidth is <= 110 ? null : layout.AuthorColumnWidth);
+        Restore(3, layout.AuthorColumnWidth is { Value: <= 110 } ? null : layout.AuthorColumnWidth);
         Restore(4, layout.DateColumnWidth);
         columns[1].Width = new GridLength(1, GridUnitType.Star);
     }

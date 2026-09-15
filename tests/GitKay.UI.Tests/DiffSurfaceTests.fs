@@ -34,7 +34,7 @@ module private Headless =
     let pump () = Dispatcher.UIThread.RunJobs()
 
 /// A diff surface over three files whose lines are identical, as the diff pane hosts it.
-type private DiffFixture(mode: string) =
+type private DiffFixture(layout: DiffLayout) =
     let files =
         [ for name in [ "a.txt"; "b.txt"; "c.txt" ] ->
               let file = DiffFileProjection({ OldPath = name; NewPath = name; DisplayPath = name } : GitService.DiffFileSummary)
@@ -62,7 +62,7 @@ type private DiffFixture(mode: string) =
         rows.Clear()
         rows.AddRange next
 
-    let surface = DiffSurfaceControl(Mode = mode, ItemsSource = rows)
+    let surface = DiffSurfaceControl(DiffLayout = layout, ItemsSource = rows)
     let scroller = ScrollViewer(Height = 300.0, Content = surface, HorizontalScrollBarVisibility = Primitives.ScrollBarVisibility.Disabled)
     let window = Window(Width = 800.0, Height = 300.0, Content = scroller)
 
@@ -98,7 +98,7 @@ type private DiffFixture(mode: string) =
 module DiffSurfaceTests =
     let private toggleKeepsHeaderInPlace (headerTop: float) =
         Headless.run (fun () ->
-            use fixture = new DiffFixture "diff"
+            use fixture = new DiffFixture(DiffLayout.Unified)
             let header = fixture.Header 1
             fixture.Scroller.Offset <- Vector(0.0, fixture.ViewportTop header - headerTop)
             Headless.pump ()
@@ -124,7 +124,7 @@ module DiffSurfaceTests =
     [<Fact>]
     let ``v selects from the caret on the side the caret is on`` () =
         Headless.run (fun () ->
-            use fixture = new DiffFixture "side-by-side"
+            use fixture = new DiffFixture(DiffLayout.SideBySide)
             fixture.Surface.Focus() |> ignore
             // Line 2 is added: only the new side has text, so the caret starts there.
             fixture.Surface.SelectedItem <- fixture.Line 0 1
@@ -143,7 +143,7 @@ module DiffSurfaceTests =
     [<Fact>]
     let ``h at the start of the new side crosses to the end of the old side`` () =
         Headless.run (fun () ->
-            use fixture = new DiffFixture "side-by-side"
+            use fixture = new DiffFixture(DiffLayout.SideBySide)
             fixture.Surface.Focus() |> ignore
             // Line 3 is context, with text on both sides; the caret starts on the new side.
             fixture.Surface.SelectedItem <- fixture.Line 0 2
@@ -156,7 +156,7 @@ module DiffSurfaceTests =
     [<Fact>]
     let ``shift+wheel scrolls long lines sideways and the caret keeps itself in view`` () =
         Headless.run (fun () ->
-            use fixture = new DiffFixture "diff"
+            use fixture = new DiffFixture(DiffLayout.Unified)
             let point = Point(400.0, 60.0)
             fixture.Window.MouseWheel(point, Vector(0.0, -3.0), RawInputModifiers.Shift)
             Headless.pump ()
@@ -177,7 +177,7 @@ module DiffSurfaceTests =
     [<Fact>]
     let ``f t W B e and repeats move the caret like vim`` () =
         Headless.run (fun () ->
-            use fixture = new DiffFixture "diff"
+            use fixture = new DiffFixture(DiffLayout.Unified)
             fixture.Surface.Focus() |> ignore
             // "call(first.second, third) + x"
             fixture.Surface.SelectedItem <- fixture.Line 0 6
@@ -216,7 +216,7 @@ module DiffSurfaceTests =
     [<Fact>]
     let ``y takes a motion, a find, or an inside or around text object`` () =
         Headless.run (fun () ->
-            use fixture = new DiffFixture "diff"
+            use fixture = new DiffFixture(DiffLayout.Unified)
             let line = "call(first.second, third) + x"
             fixture.Surface.Focus() |> ignore
             fixture.Surface.SelectedItem <- fixture.Line 0 6
@@ -236,7 +236,7 @@ module DiffSurfaceTests =
     [<Fact>]
     let ``counts repeat motions, finds and yanks`` () =
         Headless.run (fun () ->
-            use fixture = new DiffFixture "diff"
+            use fixture = new DiffFixture(DiffLayout.Unified)
             let line = "call(first.second, third) + x"
             fixture.Surface.Focus() |> ignore
             fixture.Surface.SelectedItem <- fixture.Line 0 6
@@ -259,7 +259,7 @@ module DiffSurfaceTests =
     [<Fact>]
     let ``caret, percent, first non-blank, word under caret and G`` () =
         Headless.run (fun () ->
-            use fixture = new DiffFixture "diff"
+            use fixture = new DiffFixture(DiffLayout.Unified)
             let line = "    if (a[i] == b) { go(); }"
             fixture.Surface.Focus() |> ignore
             fixture.Surface.SelectedItem <- fixture.Line 0 8
@@ -279,7 +279,7 @@ module DiffSurfaceTests =
     [<Fact>]
     let ``H M L focus screen rows and Ctrl+E scrolls without moving the focus`` () =
         Headless.run (fun () ->
-            use fixture = new DiffFixture "diff"
+            use fixture = new DiffFixture(DiffLayout.Unified)
             fixture.Surface.Focus() |> ignore
             let focusedTop () =
                 let row = fixture.Surface.SelectedItem

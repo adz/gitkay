@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using GitKay.Core;
 using GitKay.Serialization;
 
 namespace GitKay.UI;
@@ -13,59 +14,28 @@ public sealed class AppSettingsStore {
 
     public string SettingsPath => _settingsPath;
 
-    public AppSettings Load() {
+    /// <summary>The saved settings, or the defaults when there are none or the file can't be read.</summary>
+    public Settings Load() {
         try {
-            if (!File.Exists(_settingsPath)) {
-                return AppSettings.Default;
-            }
-
-            var json = File.ReadAllText(_settingsPath);
-            var document = GitKayJson.DeserializeSettings(json);
-
-            return AppSettings.Create(
-                showBranchRefs: document.ShowBranchRefs,
-                showStashes: document.ShowStashes,
-                diffContextLines: document.DiffContextLines,
-                diffPresentationModeKey: document.DiffPresentationModeKey,
-                commitRowFontFamily: document.CommitRowFontFamily,
-                commitRowMonoFontFamily: document.CommitRowMonoFontFamily,
-                commitRowTextFontSize: document.CommitRowTextFontSize,
-                commitRowMetaFontSize: document.CommitRowMetaFontSize,
-                commitRowBadgeFontSize: document.CommitRowBadgeFontSize,
-                searchDebounceSeconds: document.SearchDebounceSeconds,
-                themeMode: document.ThemeMode).Normalize();
+            if (!File.Exists(_settingsPath)) return SettingsModule.defaults;
+            var decoded = SettingsJson.decode(File.ReadAllText(_settingsPath));
+            if (decoded.IsOk) return decoded.ResultValue;
+            System.Diagnostics.Trace.WriteLine($"[settings] {_settingsPath} ignored: {decoded.ErrorValue}");
         }
-        catch {
-            return AppSettings.Default;
+        catch (Exception exception) {
+            System.Diagnostics.Trace.WriteLine($"[settings] {_settingsPath} unreadable: {exception.Message}");
         }
+        return SettingsModule.defaults;
     }
 
-    public void Save(AppSettings settings) {
+    public void Save(Settings settings) {
         try {
-            var normalized = settings.Normalize();
             var directory = Path.GetDirectoryName(_settingsPath);
-
-            if (!string.IsNullOrWhiteSpace(directory)) {
-                Directory.CreateDirectory(directory);
-            }
-
-            var document = new AppSettingsDocument(
-                normalized.ShowBranchRefs,
-                normalized.ShowStashes,
-                normalized.DiffContextLines,
-                normalized.DiffPresentationModeKey,
-                normalized.CommitRowFontFamily,
-                normalized.CommitRowMonoFontFamily,
-                normalized.CommitRowTextFontSize,
-                normalized.CommitRowMetaFontSize,
-                normalized.CommitRowBadgeFontSize,
-                normalized.SearchDebounceSeconds,
-                normalized.ThemeMode);
-
-            var json = GitKayJson.SerializeSettings(document);
-            File.WriteAllText(_settingsPath, json);
+            if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
+            File.WriteAllText(_settingsPath, SettingsJson.encode(settings));
         }
-        catch {
+        catch (Exception exception) {
+            System.Diagnostics.Trace.WriteLine($"[settings] {_settingsPath} not saved: {exception.Message}");
         }
     }
 

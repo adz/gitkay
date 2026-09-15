@@ -13,4 +13,8 @@
     <PackageReference Include="Reified" Version="0.8.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\GitKay.Core\GitKay.Core.fsproj" />
+  </ItemGroup>
+
 </Project>

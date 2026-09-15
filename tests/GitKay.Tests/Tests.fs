@@ -278,7 +278,7 @@ summary Another line
             test <@ options.ShowBranchRefs @>
             test <@ options.ShowStashes @>
             test <@ options.DiffContextLines = 10 @>
-            test <@ options.DiffPresentationModeKey = "side-by-side" @>
+            test <@ options.DiffLayout = DiffLayout.SideBySide @>
             test <@ options.SearchQuery = "needle" @>
             test <@ options.SearchScopeKey = "commit" @>
             test <@ options.SelectedCommitHash = Some "abc123" @>
@@ -1011,7 +1011,7 @@ module AppTests =
             ShowBranchRefs = false
             ShowStashes = false
             DiffContextLines = 3
-            DiffPresentationModeKey = "diff"
+            DiffLayout = DiffLayout.Unified
             SearchQuery = ""
             SearchScopeKey = "all"
             SearchUseRegex = false
@@ -1052,7 +1052,7 @@ module AppTests =
         test <@ model.ShowBranchRefs @>
         test <@ model.ShowStashes @>
         test <@ model.DiffContextLines = 10 @>
-        test <@ model.DiffPresentationModeKey = "side-by-side" @>
+        test <@ model.DiffLayout = DiffLayout.SideBySide @>
         test <@ model.SearchQuery = "needle" @>
         test <@ model.SearchScopeKey = "commit" @>
         test <@ model.SearchStartedAtTicks = None @>
@@ -1147,10 +1147,10 @@ module AppTests =
         test <@ next.SelectedDiffStartedAtTicks.IsSome @>
 
     [<Fact>]
-    let ``SetDiffPresentationMode should update the view state`` () =
-        let next, _ = App.update (App.Msg.SetDiffPresentationMode "side-by-side") emptyModel
+    let ``SetDiffLayout should update the view state`` () =
+        let next, _ = App.update (App.Msg.SetDiffLayout DiffLayout.SideBySide) emptyModel
 
-        test <@ next.DiffPresentationModeKey = "side-by-side" @>
+        test <@ next.DiffLayout = DiffLayout.SideBySide @>
 
     [<Fact>]
     let ``HistoryLoaded should keep an existing selected commit when it still exists`` () =
@@ -1671,14 +1671,14 @@ module AppTests =
 
         test <@ projection.IsSideBySideDiffMode @>
         test <@ projection.SelectedDiffPresentationModeLabel = "Side-by-side" @>
-        test <@ messages.ToArray() = [| App.Msg.SetDiffPresentationMode "side-by-side" |] @>
+        test <@ messages.ToArray() = [| App.Msg.SetDiffLayout DiffLayout.SideBySide |] @>
 
     [<Fact>]
     let ``MainProjection should sync diff presentation mode from model startup state`` () =
         let projection = MainProjection()
         projection.SetDispatch ignore
 
-        projection.Update { emptyModel with DiffPresentationModeKey = "side-by-side" }
+        projection.Update { emptyModel with DiffLayout = DiffLayout.SideBySide }
 
         test <@ projection.IsSideBySideDiffMode @>
         test <@ projection.SelectedDiffPresentationModeLabel = "Side-by-side" @>
@@ -1710,17 +1710,17 @@ module AppTests =
         projection.SetDispatch (fun msg -> messages.Enqueue msg |> ignore)
 
         let settings =
-            AppSettings.Create(
-                showBranchRefs = true,
-                showStashes = true,
-                diffContextLines = 10,
-                diffPresentationModeKey = "side-by-side",
-                commitRowFontFamily = "Avenir Next",
-                commitRowMonoFontFamily = "Iosevka",
-                commitRowTextFontSize = 11.5,
-                commitRowMetaFontSize = 9.5,
-                commitRowBadgeFontSize = 8.5,
-                searchDebounceSeconds = 1.25)
+            { Settings.defaults with
+                ShowBranchRefs = true
+                ShowStashes = true
+                DiffContextLines = 10
+                DiffLayout = DiffLayout.SideBySide
+                CommitRowFontFamily = "Avenir Next"
+                CommitRowMonoFontFamily = "Iosevka"
+                CommitRowTextFontSize = 11.5
+                CommitRowMetaFontSize = 9.5
+                CommitRowBadgeFontSize = 8.5
+                SearchDebounceSeconds = 1.25 }
 
         projection.ApplySettings settings
 
@@ -1738,7 +1738,7 @@ module AppTests =
 
         let captured = projection.CaptureSettings()
 
-        test <@ captured = settings.Normalize() @>
+        test <@ captured = Settings.normalize settings @>
 
     [<Fact>]
     let ``AppSettingsStore should round-trip settings and produce startup args`` () =
@@ -1749,25 +1749,28 @@ module AppTests =
             let path = Path.Combine(root, "settings.json")
             let store = AppSettingsStore(path)
             let settings =
-                AppSettings.Create(
-                    showBranchRefs = true,
-                    showStashes = true,
-                    diffContextLines = 10,
-                    diffPresentationModeKey = "side-by-side",
-                    commitRowFontFamily = "Avenir Next",
-                    commitRowMonoFontFamily = "Iosevka",
-                    commitRowTextFontSize = 11.5,
-                    commitRowMetaFontSize = 9.5,
-                    commitRowBadgeFontSize = 8.5,
-                    searchDebounceSeconds = 1.25)
+                { Settings.defaults with
+                    ShowBranchRefs = true
+                    ShowStashes = true
+                    DiffContextLines = 10
+                    DiffLayout = DiffLayout.SideBySide
+                    CommitRowFontFamily = "Avenir Next"
+                    CommitRowMonoFontFamily = "Iosevka"
+                    CommitRowTextFontSize = 11.5
+                    CommitRowMetaFontSize = 9.5
+                    CommitRowBadgeFontSize = 8.5
+                    SearchDebounceSeconds = 1.25 }
 
             store.Save(settings)
 
             let loaded = store.Load()
 
-            test <@ loaded = settings.Normalize() @>
+            test <@ loaded = Settings.normalize settings @>
             test <@ File.Exists(path) @>
-            test <@ loaded.ToStartupArgs() = [| "--show-branch-refs"; "--show-stashes"; "--diff-context=10"; "--diff-presentation=side-by-side" |] @>
+            test <@ GitStartup.settingsArguments loaded = [ "--show-branch-refs"; "--show-stashes"; "--diff-context=10"; "--diff-presentation=side-by-side" ] @>
+            test <@ GitStartup.settingsArguments Settings.defaults = [] @>
+            let parsed = GitStartup.parseStartupOptions (GitStartup.settingsArguments loaded |> Array.ofList)
+            test <@ parsed |> Result.map (fun o -> o.ShowBranchRefs, o.ShowStashes, o.DiffContextLines, o.DiffLayout) = Ok(true, true, 10, DiffLayout.SideBySide) @>
         finally
             try
                 Directory.Delete(root, true)
@@ -1784,29 +1787,30 @@ module AppTests =
             let store = AppUiStateStore(path)
             let repoKey = Path.Combine(root, ".git")
             let state =
-                AppUiState.Default
-                    .WithWindowSize(1280.0, 720.0)
-                    .WithRepoSelection(repoKey, "abc123")
+                UiState.empty
+                |> UiState.withWindowSize (Some 1280.0) (Some 720.0)
+                |> UiState.withSelectedCommit repoKey "abc123"
 
             store.Save(state)
 
             let loaded = store.Load()
 
-            test <@ loaded.WindowWidth = Nullable 1280.0 @>
-            test <@ loaded.WindowHeight = Nullable 720.0 @>
-            test <@ loaded.GetLastSelectedCommitHash(repoKey) = "abc123" @>
+            test <@ loaded.WindowWidth = Some 1280.0 && loaded.WindowHeight = Some 720.0 @>
+            test <@ UiState.selectedCommit repoKey loaded = Some "abc123" @>
+            // Another spelling of the same repository path finds the same selection.
+            test <@ UiState.selectedCommit (repoKey + string Path.DirectorySeparatorChar) loaded = Some "abc123" @>
             test <@ File.Exists(path) @>
-            test <@ loaded.Layout.HistoryPaneRatio = Nullable() @>
+            test <@ loaded.Layout.HistoryPaneRatio = None @>
 
-            let layout = UiLayoutState(HistoryPaneRatio = Nullable 0.3, FileListWidth = Nullable 260.0, HashColumnWidth = Nullable 70.0, DateColumnWidth = Nullable 2.0e6)
-            store.Save(state.WithLayout(layout))
+            let layout = { UiLayout.empty with HistoryPaneRatio = Some 0.3; FileListWidth = Some 260.0; HashColumnWidth = Some 70.0; DateColumnWidth = Some 2.0e6 }
+            store.Save(UiState.withLayout layout state)
             let reloaded = store.Load()
-            test <@ reloaded.Layout.HistoryPaneRatio = Nullable 0.3 @>
-            test <@ reloaded.Layout.FileListWidth = Nullable 260.0 @>
-            test <@ reloaded.Layout.HashColumnWidth = Nullable 70.0 @>
-            test <@ reloaded.Layout.GraphColumnWidth = Nullable() @>
-            test <@ reloaded.Layout.DateColumnWidth = Nullable 10000.0 @>
-            test <@ reloaded.GetLastSelectedCommitHash(repoKey) = "abc123" @>
+            test <@ reloaded.Layout = { UiLayout.empty with HistoryPaneRatio = Some 0.3; FileListWidth = Some 260.0; HashColumnWidth = Some 70.0; DateColumnWidth = Some 10000.0 } @>
+            test <@ UiState.selectedCommit repoKey reloaded = Some "abc123" @>
+
+            // A file that isn't UI state is ignored rather than failing.
+            File.WriteAllText(path, "not json")
+            test <@ store.Load() = UiState.empty @>
         finally
             try
                 Directory.Delete(root, true)
@@ -3081,23 +3085,33 @@ module CliTests =
 module SettingsSerializationTests =
     open GitKay.Serialization
 
+    let private decoded json =
+        match SettingsJson.decode json with
+        | Ok settings -> settings
+        | Error message -> failwith message
+
     [<Fact>]
     let ``settings round-trip every field`` () =
-        let document = AppSettingsDocument(true, true, 7, "side-by-side", "Inter", "Iosevka", 14.5, 12.0, 10.0, 0.25, "dark")
-        let read = document |> GitKayJson.SerializeSettings |> GitKayJson.DeserializeSettings
-        test <@ (read.ShowBranchRefs, read.ShowStashes, read.DiffContextLines, read.DiffPresentationModeKey) = (true, true, 7, "side-by-side") @>
-        test <@ (read.CommitRowFontFamily, read.CommitRowMonoFontFamily, read.ThemeMode) = ("Inter", "Iosevka", "dark") @>
-        test <@ (read.CommitRowTextFontSize, read.CommitRowMetaFontSize, read.CommitRowBadgeFontSize, read.SearchDebounceSeconds) = (14.5, 12.0, 10.0, 0.25) @>
+        let settings =
+            { ShowBranchRefs = true; ShowStashes = true; DiffContextLines = 7; DiffLayout = DiffLayout.SideBySide
+              CommitRowFontFamily = "Inter"; CommitRowMonoFontFamily = "Iosevka"; CommitRowTextFontSize = 14.5
+              CommitRowMetaFontSize = 12.0; CommitRowBadgeFontSize = 10.0; SearchDebounceSeconds = 0.25; Theme = DarkTheme }
+        test <@ settings |> SettingsJson.encode |> SettingsJson.decode = Ok settings @>
 
     [<Fact>]
     let ``settings missing from the file take their defaults`` () =
-        let read = GitKayJson.DeserializeSettings """{"ShowBranchRefs":true,"CommitRowTextFontSize":15}"""
-        test <@ read.ShowBranchRefs && read.CommitRowTextFontSize = 15.0 @>
-        test <@ (read.ShowStashes, read.DiffContextLines, read.DiffPresentationModeKey, read.ThemeMode) = (false, 3, "diff", "system") @>
+        let read = decoded """{"ShowBranchRefs":true,"CommitRowTextFontSize":15}"""
+        test <@ read = { Settings.defaults with ShowBranchRefs = true; CommitRowTextFontSize = 15.0 } @>
 
     [<Fact>]
     let ``settings written by GitKay 0.3.0 still load`` () =
         let json = """{"ShowBranchRefs":true,"ShowStashes":false,"DiffContextLines":3,"DiffPresentationModeKey":"diff","CommitRowFontFamily":"Courier New","CommitRowMonoFontFamily":"Inconsolata","CommitRowTextFontSize":13,"CommitRowMetaFontSize":13,"CommitRowBadgeFontSize":11,"SearchDebounceSeconds":0.5,"ThemeMode":"system"}"""
-        let read = GitKayJson.DeserializeSettings json
-        test <@ read.ShowBranchRefs && read.CommitRowMonoFontFamily = "Inconsolata" && read.CommitRowMetaFontSize = 13.0 @>
+        let read = decoded json
+        test <@ read.ShowBranchRefs && read.CommitRowMonoFontFamily = "Inconsolata" && read.CommitRowMetaFontSize = 13.0 && read.DiffLayout = DiffLayout.Unified @>
+
+    [<Fact>]
+    let ``unknown names and out-of-range values normalize; malformed text is an error`` () =
+        let read = decoded """{"DiffPresentationModeKey":"sideways","ThemeMode":"LIGHT","DiffContextLines":-4,"CommitRowTextFontSize":0,"CommitRowFontFamily":"  "}"""
+        test <@ read = { Settings.defaults with Theme = LightTheme; DiffContextLines = 0 } @>
+        test <@ (SettingsJson.decode "not json" |> Result.isError) && (SettingsJson.decode """{"DiffContextLines":"three"}""" |> Result.isError) @>
 

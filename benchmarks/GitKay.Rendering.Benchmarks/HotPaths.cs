@@ -104,7 +104,7 @@ internal static class HotPaths {
 
     private static App.Model WithSelection(App.Model model, string hash, FSharpList<GitService.DiffFileSummary> files, FSharpList<Models.FileDiff> diff) =>
         new(App.StartupSelection.NoStartupSelection, false, model.GitEnv, "Loaded", model.StartupTargets, model.ShowBranchRefs, model.ShowStashes, model.DiffContextLines,
-            model.DiffPresentationModeKey, model.SearchQuery, model.SearchScopeKey, model.SearchUseRegex, model.SearchResults, model.Commits,
+            model.DiffLayout, model.SearchQuery, model.SearchScopeKey, model.SearchUseRegex, model.SearchResults, model.Commits,
             true, FSharpOption<string>.Some(hash), FSharpOption<string>.Some(hash),
             FSharpOption<FSharpList<GitService.DiffFileSummary>>.Some(files), FSharpOption<FSharpList<Models.FileDiff>>.Some(diff),
             FSharpOption<GitService.DiffFileKey>.None, MapModule.Empty<GitService.DiffFileKey, App.FileExpansion>(),
@@ -144,7 +144,7 @@ internal static class UiInteractions {
         var diff = Unwrap(Flow.run(env, GitService.fetchDiff(3, full)));
         var (baseModel, _) = App.init(Array.Empty<string>()).ToValueTuple();
         var graph = Graph.calculateLanes(commits);
-        var model = new App.Model(App.StartupSelection.NoStartupSelection, false, baseModel.GitEnv, "Loaded", baseModel.StartupTargets, false, false, 3, "diff", "", "commit", false,
+        var model = new App.Model(App.StartupSelection.NoStartupSelection, false, baseModel.GitEnv, "Loaded", baseModel.StartupTargets, false, false, 3, DiffLayout.Unified, "", "commit", false,
             FSharpOption<FSharpList<GitSearch.Result>>.None, graph, true, FSharpOption<string>.Some(full), FSharpOption<string>.Some(full),
             FSharpOption<FSharpList<GitService.DiffFileSummary>>.Some(files), FSharpOption<FSharpList<Models.FileDiff>>.Some(diff),
             FSharpOption<GitService.DiffFileKey>.None, MapModule.Empty<GitService.DiffFileKey, App.FileExpansion>(),
@@ -161,7 +161,7 @@ internal static class UiInteractions {
             var searchText = pathDiff ? "path:DiffSurface Typeface" : "font";
             var searchMode = pathDiff ? GitSearch.Mode.Diff : GitSearch.Mode.Commit;
             var results = Unwrap(Flow.run(env, GitService.searchCommits(3, commits, searchMode, false, searchText)));
-            var searched = new App.Model(App.StartupSelection.NoStartupSelection, false, model.GitEnv, model.Status, model.StartupTargets, false, false, 3, "diff", searchText, GitSearch.modeKey(searchMode), false,
+            var searched = new App.Model(App.StartupSelection.NoStartupSelection, false, model.GitEnv, model.Status, model.StartupTargets, false, false, 3, DiffLayout.Unified, searchText, GitSearch.modeKey(searchMode), false,
                 FSharpOption<FSharpList<GitSearch.Result>>.Some(results), model.Commits, true, model.SelectedCommitHash, model.SelectedDiffHash,
                 model.SelectedDiffFiles, model.SelectedDiff, model.SelectedDiffFileKey, model.DiffExpansions, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None);
             projection.Update(searched);

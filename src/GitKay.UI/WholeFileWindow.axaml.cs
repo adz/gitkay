@@ -21,7 +21,7 @@ public sealed partial class WholeFileProjection : ObservableObject {
         Subject = subject;
         _target = target;
         _file = new DiffFileProjection(new GitKay.Core.GitService.DiffFileSummary(target.OldPath, target.NewPath, target.DisplayPath));
-        _mode = main.SelectedDiffPresentationMode?.Key ?? "diff";
+        _layout = main.DiffLayout;
         WindowTitle = $"{target.DisplayPath} @ {shortHash}";
         Rebuild();
     }
@@ -32,15 +32,15 @@ public sealed partial class WholeFileProjection : ObservableObject {
     public string WindowTitle { get; }
     public AvaloniaList<IDiffRowProjection> Rows { get; } = new();
     [ObservableProperty] private IDiffRowProjection? _selectedRow;
-    [ObservableProperty] private string _mode;
+    [ObservableProperty] private GitKay.Core.DiffLayout _layout;
     [ObservableProperty] private string _loadStatus = "Loading…";
 
-    public bool IsUnifiedMode => Mode == "diff";
-    public bool IsSideBySideMode => Mode == "side-by-side";
-    public bool IsNewMode => Mode == "new";
-    public bool IsOldMode => Mode == "old";
+    public bool IsUnifiedMode => Layout.IsUnified;
+    public bool IsSideBySideMode => Layout.IsSideBySide;
+    public bool IsNewMode => Layout.IsNewFile;
+    public bool IsOldMode => Layout.IsOldFile;
 
-    partial void OnModeChanged(string value) {
+    partial void OnLayoutChanged(GitKay.Core.DiffLayout value) {
         OnPropertyChanged(nameof(IsUnifiedMode));
         OnPropertyChanged(nameof(IsSideBySideMode));
         OnPropertyChanged(nameof(IsNewMode));
@@ -49,7 +49,9 @@ public sealed partial class WholeFileProjection : ObservableObject {
     }
 
     [RelayCommand]
-    private void SetMode(string mode) => Mode = mode;
+    private void SetMode(string key) {
+        if (GitKay.Core.DiffLayoutModule.tryParse(key) is { } layout) Layout = layout.Value;
+    }
 
     [RelayCommand]
     private void ToggleCollapsed(DiffFileProjection file) {
@@ -78,7 +80,7 @@ public sealed partial class WholeFileProjection : ObservableObject {
 
     private void Rebuild() {
         var rows = new List<IDiffRowProjection>();
-        DiffRowBuilder.AppendFile(rows, _file, Mode);
+        DiffRowBuilder.AppendFile(rows, _file, Layout);
         Rows.Clear();
         Rows.AddRange(rows);
     }

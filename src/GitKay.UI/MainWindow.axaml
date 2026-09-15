@@ -621,7 +621,7 @@
                                                           SearchHighlightQuery="{Binding CommitSearchDiffTerm}"
                                                           SearchPathQuery="{Binding CommitSearchPathTerm}"
                                                           SearchHighlightUseRegex="{Binding CommitSearchDiffTermUseRegex}"
-                                                          Mode="{Binding SelectedDiffPresentationMode.Key}"
+                                                          DiffLayout="{Binding DiffLayout}"
                                                           CodeFontSize="{Binding DiffFontSize, Mode=TwoWay}"
                                                           FileContextRequested="OnDiffFileHeaderContextRequested"
                                                           ExpandGapCommand="{Binding ExpandDiffGapCommand}"

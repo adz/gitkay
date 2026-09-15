@@ -24,7 +24,7 @@ module GitStartup =
             ShowBranchRefs: bool
             ShowStashes: bool
             DiffContextLines: int
-            DiffPresentationModeKey: string
+            DiffLayout: DiffLayout
             SearchQuery: string
             SearchScopeKey: string
             SelectedCommitHash: string option
@@ -37,13 +37,24 @@ module GitStartup =
             VersionRequested: bool
         }
 
+    /// <summary>
+    /// The command-line arguments for the settings the command line also accepts, so saved settings start GitKay the
+    /// way the same flags would. Settings at their defaults add nothing.
+    /// </summary>
+    let settingsArguments (settings: Settings) : string list =
+        let settings = Settings.normalize settings
+        [ if settings.ShowBranchRefs then "--show-branch-refs"
+          if settings.ShowStashes then "--show-stashes"
+          if settings.DiffContextLines <> Settings.defaults.DiffContextLines then $"--diff-context={settings.DiffContextLines}"
+          if settings.DiffLayout <> Settings.defaults.DiffLayout then $"--diff-presentation={DiffLayout.key settings.DiffLayout}" ]
+
     let defaultStartupOptions =
         {
             StartupTargets = []
             ShowBranchRefs = false
             ShowStashes = false
             DiffContextLines = 3
-            DiffPresentationModeKey = "diff"
+            DiffLayout = Settings.defaults.DiffLayout
             SearchQuery = ""
             SearchScopeKey = "commit"
             SelectedCommitHash = None
@@ -59,14 +70,6 @@ module GitStartup =
         match value.Trim().ToLowerInvariant() with
         | "commit" | "path" | "diff" | "fields" | "all" | "message" | "author" | "hash" | "ref" | "text" as key ->
             Some(GitSearch.modeKey (GitSearch.parseMode key))
-        | _ -> None
-
-    let private tryParseDiffPresentationModeKey (value: string) =
-        match value.Trim().ToLowerInvariant() with
-        | "diff" -> Some "diff"
-        | "side-by-side" -> Some "side-by-side"
-        | "new" -> Some "new"
-        | "old" -> Some "old"
         | _ -> None
 
     let private tryConsumeValue (args: string array) index (optionName: string) (valueLabel: string) allowEmpty =
@@ -153,7 +156,7 @@ module GitStartup =
         let mutable showBranchRefs = defaultStartupOptions.ShowBranchRefs
         let mutable showStashes = defaultStartupOptions.ShowStashes
         let mutable diffContextLines = defaultStartupOptions.DiffContextLines
-        let mutable diffPresentationModeKey = defaultStartupOptions.DiffPresentationModeKey
+        let mutable diffLayout = defaultStartupOptions.DiffLayout
         let mutable searchQuery = defaultStartupOptions.SearchQuery
         let mutable searchScopeKey = defaultStartupOptions.SearchScopeKey
         let mutable selectedCommitHash = defaultStartupOptions.SelectedCommitHash
@@ -195,7 +198,7 @@ module GitStartup =
                         ShowBranchRefs = showBranchRefs
                         ShowStashes = showStashes
                         DiffContextLines = diffContextLines
-                        DiffPresentationModeKey = diffPresentationModeKey
+                        DiffLayout = diffLayout
                         SearchQuery = combinedQuery
                         SearchScopeKey = searchScopeKey
                         SelectedCommitHash = selectedCommitHash
@@ -260,9 +263,9 @@ module GitStartup =
                     match tryConsumeValue args index "--diff-presentation" "diff presentation mode" false with
                     | Error err -> Error err
                     | Ok (value, nextIndex) ->
-                        match tryParseDiffPresentationModeKey value with
-                        | Some modeKey ->
-                            diffPresentationModeKey <- modeKey
+                        match DiffLayout.tryParse value with
+                        | Some layout ->
+                            diffLayout <- layout
                             index <- nextIndex
                             loop ()
                         | None ->
@@ -270,9 +273,9 @@ module GitStartup =
                 | arg when arg.StartsWith("--diff-presentation=") ->
                     let value = arg.Substring("--diff-presentation=".Length)
 
-                    match tryParseDiffPresentationModeKey value with
-                    | Some modeKey ->
-                        diffPresentationModeKey <- modeKey
+                    match DiffLayout.tryParse value with
+                    | Some layout ->
+                        diffLayout <- layout
                         index <- index + 1
                         loop ()
                     | None ->
