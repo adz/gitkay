@@ -14,22 +14,6 @@ using GitKay.Core;
 
 namespace GitKay.UI;
 
-internal readonly record struct DiffSearchStatusStyle(IBrush Foreground, IBrush Background);
-
-internal static class DiffSearchStatusBrushes {
-    public static readonly DiffSearchStatusStyle Pending = new(
-        new SolidColorBrush(Color.FromRgb(242, 201, 125)),
-        new SolidColorBrush(Color.FromArgb(36, 90, 66, 20)));
-
-    public static readonly DiffSearchStatusStyle Applied = new(
-        new SolidColorBrush(Color.FromRgb(78, 201, 176)),
-        new SolidColorBrush(Color.FromArgb(30, 78, 201, 176)));
-
-    public static readonly DiffSearchStatusStyle Empty = new(
-        new SolidColorBrush(Color.FromRgb(215, 186, 125)),
-        new SolidColorBrush(Color.FromArgb(28, 76, 58, 18)));
-}
-
 public sealed class DiffPresentationModeProjection(GitKay.Core.DiffLayout layout) {
     public GitKay.Core.DiffLayout Layout { get; } = layout;
     public string Key => GitKay.Core.DiffLayoutModule.key(Layout);
@@ -72,13 +56,10 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private object? _diffExpansionsSource;
     private object? _searchResultsSource;
     private string? _selectedSearchResultHash;
-    private string? _diffSearchQuery;
-    private string? _diffSearchScopeKey;
-    private string? _pendingDiffSearchQuery;
-    private string? _pendingDiffSearchScopeKey;
-    private long _pendingDiffSearchReadyAtTicks;
+    /// <summary>What the applied commit search marks in the diff, and the search it was built from.</summary>
+    private GitKay.Core.GitSearch.DiffMark _diffMark = GitKay.Core.GitSearch.noDiffMark;
+    private string? _diffMarkKey;
     private CancellationTokenSource? _searchDebounceCancellation;
-    private CancellationTokenSource? _diffSearchDebounceCancellation;
 
     public ObservableCollection<DiffPresentationModeProjection> DiffPresentationModes { get; } =
         new(GitKay.Core.DiffLayoutModule.all.Select(layout => new DiffPresentationModeProjection(layout)));
@@ -121,11 +102,6 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private SearchScopeProjection? _selectedSearchScope;
     [ObservableProperty] private bool _hasSearchResults;
     [ObservableProperty] private bool _isSearchPanelExpanded;
-    [ObservableProperty] private bool _hasDiffSearchStatus;
-    [ObservableProperty] private bool _isDiffSearchPending;
-    [ObservableProperty] private string _diffSearchStatusText = "";
-    [ObservableProperty] private IBrush _diffSearchStatusForeground = Brushes.Transparent;
-    [ObservableProperty] private IBrush _diffSearchStatusBackground = Brushes.Transparent;
     [ObservableProperty] private DiffPresentationModeProjection? _selectedDiffPresentationMode;
     [ObservableProperty] private DiffContextLineCountProjection? _selectedDiffContextLineCount;
     [ObservableProperty] private ThemeModeProjection? _selectedThemeMode;
@@ -148,8 +124,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [RelayCommand]
     private void ToggleShortcutHelp() => IsShortcutHelpOpen = !IsShortcutHelpOpen;
     public ObservableCollection<string> RecentSearchMatches { get; } = new();
-    private readonly List<string> _recentSearches = new();
-    private const int MaxRecentSearches = 30;
+    private Microsoft.FSharp.Collections.FSharpList<string> _recentSearches = Microsoft.FSharp.Collections.FSharpList<string>.Empty;
     public bool IsCommitSearchMode => SelectedSearchScope?.Key is null or "commit";
     public bool IsPathSearchMode => SelectedSearchScope?.Key == "path";
     public bool IsDiffSearchMode => SelectedSearchScope?.Key == "diff";
@@ -408,11 +383,13 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                 ? (object?)model.SelectedDiff.Value
                 : null;
 
-        // Highlight in the diff only what the commit search looked for in diffs (its diff: or path: terms).
-        var (searchQuery, diffSearchScopeKey) = DiffHighlightFor(model);
-        var searchStateChanged =
-            !string.Equals(_diffSearchQuery, searchQuery, StringComparison.Ordinal)
-            || !string.Equals(_diffSearchScopeKey, diffSearchScopeKey, StringComparison.Ordinal);
+        // Mark in the diff only what the commit search looked for in diffs (its diff: or path: terms).
+        var diffMarkKey = $"{model.SearchScopeKey}\u0001{model.SearchUseRegex}\u0001{model.SearchQuery}";
+        var searchStateChanged = !string.Equals(_diffMarkKey, diffMarkKey, StringComparison.Ordinal);
+        if (searchStateChanged) {
+            _diffMark = GitKay.Core.GitSearch.diffMark(GitKay.Core.GitSearch.parseMode(model.SearchScopeKey), model.SearchUseRegex, model.SearchQuery);
+            _diffMarkKey = diffMarkKey;
+        }
 
         var diffCollectionChanged =
             !string.Equals(_selectedDiffHash, selectedDiffHash, StringComparison.Ordinal)
@@ -431,9 +408,6 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             _selectedDiffFilesSource = null;
             _selectedDiffFileKey = null;
             _selectedDiffFileSource = null;
-            RefreshDiffSearchState(model, searchQuery, searchStateChanged, false, false);
-            _diffSearchQuery = searchQuery;
-            _diffSearchScopeKey = diffSearchScopeKey;
             return;
         }
 
@@ -501,14 +475,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                 _selectedDiffFileKey = selectedDiffFileKey;
             }
 
-            RefreshDiffSearchState(model, searchQuery, searchStateChanged, diffContentChanged, true);
+            if (searchStateChanged || diffContentChanged || diffCollectionChanged) ApplyDiffMark();
         }
-        else {
-            RefreshDiffSearchState(model, searchQuery, searchStateChanged, diffCollectionChanged, false);
-        }
-
-        _diffSearchQuery = searchQuery;
-        _diffSearchScopeKey = diffSearchScopeKey;
 
         if (_revealSearchMatchInDiff && model.SelectedDiff != null && SelectedDiffRows.Any(row => row is DiffLineProjection)) {
             _revealSearchMatchInDiff = false;
@@ -551,191 +519,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
     }
 
-    private void RefreshDiffSearchState(
-        GitKay.Core.App.Model model,
-        string searchQuery,
-        bool searchStateChanged,
-        bool diffContentChanged,
-        bool hasSelectedDiff) {
-        if (string.IsNullOrWhiteSpace(searchQuery)) {
-            CancelDiffSearchDebounce();
-            _pendingDiffSearchQuery = null;
-            _pendingDiffSearchScopeKey = null;
-            _pendingDiffSearchReadyAtTicks = 0;
-            IsDiffSearchPending = false;
-            SetDiffSearchStatus("", Brushes.Transparent, Brushes.Transparent);
-
-            if (hasSelectedDiff) {
-                ClearSearchStateToSelectedDiff(DiffHighlightFor(model).ScopeKey);
-            }
-
-            return;
-        }
-
-        if (searchStateChanged) {
-            StartDiffSearchDebounce(model, searchQuery);
-            return;
-        }
-
-        if (TryApplyPendingDiffSearch(model, searchQuery, hasSelectedDiff)) {
-            return;
-        }
-
-        if (hasSelectedDiff && diffContentChanged && !IsDiffSearchPending) {
-            ApplySearchStateToSelectedDiff(searchQuery, DiffHighlightFor(model).ScopeKey);
-            SetDiffSearchAppliedStatus(searchQuery);
-        }
-        else if (IsDiffSearchPending) {
-            SetDiffSearchPendingStatus(searchQuery);
-        }
-        else if (SelectedDiffFiles.Count > 0) {
-            SetDiffSearchAppliedStatus(searchQuery);
-        }
+    private void ApplyDiffMark() {
+        foreach (var file in SelectedDiffFiles) file.ApplyDiffMark(_diffMark);
     }
-
-    private void StartDiffSearchDebounce(GitKay.Core.App.Model model, string searchQuery) {
-        CancelDiffSearchDebounce();
-
-        _pendingDiffSearchQuery = searchQuery;
-        _pendingDiffSearchScopeKey = DiffHighlightFor(model).ScopeKey;
-        _pendingDiffSearchReadyAtTicks = Stopwatch.GetTimestamp() + SecondsToStopwatchTicks(SearchDebounceSeconds);
-        IsDiffSearchPending = true;
-
-        if (SelectedDiffFiles.Count > 0) {
-            ClearSearchStateToSelectedDiff(DiffHighlightFor(model).ScopeKey);
-        }
-
-        SetDiffSearchPendingStatus(searchQuery);
-
-        if (SearchDebounceSeconds > 0d) {
-            ScheduleDiffSearchDebounce();
-        }
-
-        _ = TryApplyPendingDiffSearch(model, searchQuery, true);
-    }
-
-    private bool TryApplyPendingDiffSearch(GitKay.Core.App.Model model, string searchQuery, bool hasSelectedDiff) {
-        if (!IsDiffSearchPending || _pendingDiffSearchQuery == null || _pendingDiffSearchScopeKey == null) {
-            return false;
-        }
-
-        if (!string.Equals(_pendingDiffSearchQuery, searchQuery, StringComparison.Ordinal)
-            || !string.Equals(_pendingDiffSearchScopeKey, DiffHighlightFor(model).ScopeKey, StringComparison.Ordinal)) {
-            return false;
-        }
-
-        if (Stopwatch.GetTimestamp() < _pendingDiffSearchReadyAtTicks) {
-            return false;
-        }
-
-        if (!hasSelectedDiff || SelectedDiffFiles.Count == 0) {
-            SetDiffSearchPendingStatus(searchQuery);
-            return false;
-        }
-
-        CancelDiffSearchDebounce();
-        _pendingDiffSearchQuery = null;
-        _pendingDiffSearchScopeKey = null;
-        _pendingDiffSearchReadyAtTicks = 0;
-        IsDiffSearchPending = false;
-
-        ApplySearchStateToSelectedDiff(searchQuery, DiffHighlightFor(model).ScopeKey);
-        SetDiffSearchAppliedStatus(searchQuery);
-        return true;
-    }
-
-    private void SetDiffSearchPendingStatus(string searchQuery) {
-        SetDiffSearchStatus(
-            $"Searching diff for \"{searchQuery}\"...",
-            DiffSearchStatusBrushes.Pending.Foreground,
-            DiffSearchStatusBrushes.Pending.Background);
-    }
-
-    private void SetDiffSearchAppliedStatus(string searchQuery) {
-        var fileMatchCount = SelectedDiffFiles.Count(file => file.HasSearchMatch);
-        var lineMatchCount = SelectedDiffFiles.Sum(
-            file => file.Hunks.Sum(hunk => hunk.Lines.Count(line => line.IsSearchMatch)));
-
-        var statusText =
-            fileMatchCount == 0 && lineMatchCount == 0
-                ? $"Diff search: no matches for \"{searchQuery}\""
-                : $"Diff search: {FormatSearchCount(fileMatchCount, "file")} and {FormatSearchCount(lineMatchCount, "line")} matched";
-
-        var statusBrushes =
-            fileMatchCount == 0 && lineMatchCount == 0
-                ? DiffSearchStatusBrushes.Empty
-                : DiffSearchStatusBrushes.Applied;
-
-        SetDiffSearchStatus(statusText, statusBrushes.Foreground, statusBrushes.Background);
-    }
-
-    private void SetDiffSearchStatus(string text, IBrush foreground, IBrush background) {
-        DiffSearchStatusText = text;
-        DiffSearchStatusForeground = foreground;
-        DiffSearchStatusBackground = background;
-        HasDiffSearchStatus = !string.IsNullOrWhiteSpace(text);
-    }
-
-    private void ClearSearchStateToSelectedDiff(string scopeKey) {
-        foreach (var file in SelectedDiffFiles) {
-            file.ApplySearchState("", scopeKey);
-        }
-    }
-
-    private void ApplySearchStateToSelectedDiff(string query, string scopeKey) {
-        foreach (var file in SelectedDiffFiles) {
-            file.ApplySearchState(query, scopeKey);
-        }
-    }
-
-    private void ScheduleDiffSearchDebounce() {
-        if (string.IsNullOrWhiteSpace(_pendingDiffSearchQuery)) {
-            return;
-        }
-
-        var cancellation = new CancellationTokenSource();
-        _diffSearchDebounceCancellation = cancellation;
-
-        _ = DebounceDiffSearchAsync(cancellation, TimeSpan.FromSeconds(Math.Max(0d, SearchDebounceSeconds)));
-    }
-
-    private async Task DebounceDiffSearchAsync(CancellationTokenSource cancellation, TimeSpan delay) {
-        try {
-            await Task.Delay(delay, cancellation.Token);
-
-            if (cancellation.IsCancellationRequested || !ReferenceEquals(_diffSearchDebounceCancellation, cancellation)) {
-                return;
-            }
-
-            _dispatch?.Invoke(GitKay.Core.App.Msg.NoOp);
-        }
-        catch (OperationCanceledException) {
-        }
-        finally {
-            if (ReferenceEquals(_diffSearchDebounceCancellation, cancellation)) {
-                _diffSearchDebounceCancellation = null;
-            }
-
-            cancellation.Dispose();
-        }
-    }
-
-    private void CancelDiffSearchDebounce() {
-        if (_diffSearchDebounceCancellation == null) {
-            return;
-        }
-
-        _diffSearchDebounceCancellation.Cancel();
-        _diffSearchDebounceCancellation = null;
-    }
-
-    private static long SecondsToStopwatchTicks(double seconds) =>
-        seconds <= 0d
-            ? 0L
-            : (long)(seconds * Stopwatch.Frequency);
-
-    private static string FormatSearchCount(int count, string singularLabel) =>
-        count == 1 ? $"1 {singularLabel}" : $"{count} {singularLabel}s";
 
     private void UpdateCommits(GitKay.Core.App.Model model) {
         var searchResultsSource = model.SearchResults != null ? (object?)model.SearchResults.Value : null;
@@ -925,13 +711,10 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     partial void OnSearchValidationMessageChanged(string value) => OnPropertyChanged(nameof(HasSearchValidationMessage));
 
     private void ValidateSearchQuery(string query) {
-        var mode = GitKay.Core.GitSearch.parseMode(SelectedSearchScope?.Key ?? "commit");
-        var invalid = GitKay.Core.GitSearch.invalidDateTerms(DateTimeOffset.Now, mode, query).ToList();
-        IsAfterDateInvalid = invalid.Any(term => term.Item1 == "after");
-        IsBeforeDateInvalid = invalid.Any(term => term.Item1 == "before");
-        SearchValidationMessage = invalid.Count == 0
-            ? ""
-            : string.Join("  ·  ", invalid.Select(term => $"“{term.Item2}” isn't a date, so {term.Item1}: is ignored — try 2024-05-01, “2 weeks ago” or yesterday"));
+        var problems = GitKay.Core.GitSearch.invalidDates(DateTimeOffset.Now, CurrentSearchMode, query).ToList();
+        IsAfterDateInvalid = problems.Any(problem => problem.Field.IsAfter);
+        IsBeforeDateInvalid = problems.Any(problem => problem.Field.IsBefore);
+        SearchValidationMessage = string.Join("  ·  ", problems.Select(GitKay.Core.GitSearch.describeDateProblem));
     }
 
     partial void OnSearchQueryChanged(string value) {
@@ -1158,34 +941,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         if (string.IsNullOrWhiteSpace(CommitFindQuery) && term.Length == 0) CommitFindStatusText = "";
     }
 
-    private static string PathTermFor(GitKay.Core.App.Model model) {
-        foreach (var term in GitKay.Core.GitSearch.parseQuery(GitKay.Core.GitSearch.parseMode(model.SearchScopeKey), model.SearchQuery)) {
-            if (term.Field.IsChangedPath) return term.Text;
-        }
-
-        return "";
-    }
-
-    private static string DiffTermFor(GitKay.Core.App.Model model) {
-        foreach (var term in GitKay.Core.GitSearch.parseQuery(GitKay.Core.GitSearch.parseMode(model.SearchScopeKey), model.SearchQuery)) {
-            if (term.Field.IsChangedLine) return term.Text;
-        }
-
-        return "";
-    }
-
-    private static (string Query, string ScopeKey) DiffHighlightFor(GitKay.Core.App.Model model) {
-        var terms = GitKay.Core.GitSearch.parseQuery(GitKay.Core.GitSearch.parseMode(model.SearchScopeKey), model.SearchQuery);
-        foreach (var term in terms) {
-            if (term.Field.IsChangedLine) return (term.Text, "text");
-        }
-
-        foreach (var term in terms) {
-            if (term.Field.IsChangedPath) return (term.Text, "path");
-        }
-
-        return ("", "all");
-    }
+    private static string FirstTermOf(GitKay.Core.App.Model model, GitKay.Core.GitSearch.Field field) =>
+        GitKay.Core.GitSearch.firstTermText(GitKay.Core.GitSearch.parseMode(model.SearchScopeKey), model.SearchQuery, field) is { } text ? text.Value : "";
 
     private GitKay.Core.GitSearch.Mode CurrentSearchMode => GitKay.Core.GitSearch.parseMode(SelectedSearchScope?.Key ?? "commit");
 
@@ -1204,18 +961,10 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     // ----- Advanced search: one input per field, kept in sync with prefixed terms in the query text. -----
 
     private string GetFieldText(GitKay.Core.GitSearch.Field field) =>
-        string.Join(" ", GitKay.Core.GitSearch.parseQuery(CurrentSearchMode, SearchQuery).Where(term => term.Field.Equals(field)).Select(term => term.Text));
+        GitKay.Core.GitSearch.fieldText(CurrentSearchMode, SearchQuery, field);
 
-    private void SetFieldText(GitKay.Core.GitSearch.Field field, string? value) {
-        var mode = CurrentSearchMode;
-        var terms = GitKay.Core.GitSearch.parseQuery(mode, SearchQuery).Where(term => !term.Field.Equals(field)).ToList();
-        if (!string.IsNullOrWhiteSpace(value)) {
-            // Advanced inputs are always explicit fields, so a value with spaces stays one quoted term.
-            terms.Add(new GitKay.Core.GitSearch.Term(field, value.Trim()));
-        }
-
-        SearchQuery = GitKay.Core.GitSearch.formatQuery(mode, Microsoft.FSharp.Collections.ListModule.OfSeq(terms));
-    }
+    private void SetFieldText(GitKay.Core.GitSearch.Field field, string? value) =>
+        SearchQuery = GitKay.Core.GitSearch.withFieldText(CurrentSearchMode, SearchQuery, field, value ?? "");
 
     public string AdvancedMessage { get => GetFieldText(GitKay.Core.GitSearch.Field.Message); set => SetFieldText(GitKay.Core.GitSearch.Field.Message, value); }
     public string AdvancedAuthor { get => GetFieldText(GitKay.Core.GitSearch.Field.Author); set => SetFieldText(GitKay.Core.GitSearch.Field.Author, value); }
@@ -1246,16 +995,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     /// <summary>Adds or replaces a field filter (e.g. "author", "Jane") and runs the search showing only matches.</summary>
     public void ApplyColumnFilter(string field, string value) {
-        var parsed = field switch {
-            "author" => GitKay.Core.GitSearch.Field.Author,
-            "message" => GitKay.Core.GitSearch.Field.Message,
-            "hash" => GitKay.Core.GitSearch.Field.Hash,
-            "ref" => GitKay.Core.GitSearch.Field.Ref,
-            "after" => GitKay.Core.GitSearch.Field.After,
-            "before" => GitKay.Core.GitSearch.Field.Before,
-            _ => GitKay.Core.GitSearch.Field.CommitInfo,
-        };
-        SetFieldText(parsed, value);
+        SetFieldText(GitKay.Core.GitSearch.fieldNamed(field), value);
         ShowOnlySearchMatches = true;
         Search();
     }
@@ -1278,32 +1018,19 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     // ----- Recent searches, shown under the search box while typing (like JetBrains). -----
 
-    public void LoadRecentSearches(IEnumerable<string> searches) {
-        _recentSearches.Clear();
-        _recentSearches.AddRange(searches.Where(s => !string.IsNullOrWhiteSpace(s)).Distinct(StringComparer.Ordinal).Take(MaxRecentSearches));
-    }
+    public void LoadRecentSearches(IEnumerable<string> searches) => _recentSearches = GitKay.Core.GitSearch.recentSearches(searches);
 
-    public IReadOnlyList<string> RecentSearches => _recentSearches;
+    public IReadOnlyList<string> RecentSearches => _recentSearches.ToList();
 
     private void RememberSearch(string query) {
-        var trimmed = query.Trim();
-        if (string.IsNullOrWhiteSpace(trimmed)) return;
-        _recentSearches.RemoveAll(existing => string.Equals(existing, trimmed, StringComparison.Ordinal));
-        _recentSearches.Insert(0, trimmed);
-        if (_recentSearches.Count > MaxRecentSearches) _recentSearches.RemoveRange(MaxRecentSearches, _recentSearches.Count - MaxRecentSearches);
+        _recentSearches = GitKay.Core.GitSearch.rememberSearch(query, _recentSearches);
         OnPropertyChanged(nameof(RecentSearches));
     }
 
     /// <summary>Refreshes the recent-search suggestions for the current text; opens them when any match.</summary>
     public void UpdateRecentSearchMatches(bool open) {
-        var text = SearchQuery.Trim();
         RecentSearchMatches.Clear();
-        foreach (var recent in _recentSearches.Where(recent =>
-                     !string.Equals(recent, text, StringComparison.Ordinal)
-                     && (text.Length == 0 || recent.Contains(text, StringComparison.OrdinalIgnoreCase))).Take(6)) {
-            RecentSearchMatches.Add(recent);
-        }
-
+        foreach (var recent in GitKay.Core.GitSearch.suggestSearches(SearchQuery, _recentSearches)) RecentSearchMatches.Add(recent);
         IsRecentSearchesOpen = open && RecentSearchMatches.Count > 0;
     }
 
@@ -1362,9 +1089,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private void UpdateCommitSearchStatus(GitKay.Core.App.Model model) {
         // Only an applied search (with results) highlights the diff, so half-typed text doesn't flicker there.
         if (model.SearchResults != null || string.IsNullOrWhiteSpace(model.SearchQuery)) {
-            var term = string.IsNullOrWhiteSpace(model.SearchQuery) ? "" : DiffTermFor(model);
+            var term = FirstTermOf(model, GitKay.Core.GitSearch.Field.ChangedLine);
             CommitSearchDiffTerm = term;
-            CommitSearchPathTerm = string.IsNullOrWhiteSpace(model.SearchQuery) ? "" : PathTermFor(model);
+            CommitSearchPathTerm = FirstTermOf(model, GitKay.Core.GitSearch.Field.ChangedPath);
             var highlightKey = $"{model.SearchScopeKey}\u0001{model.SearchUseRegex}\u0001{model.SearchQuery}";
             if (!string.Equals(_commitSearchHighlightKey, highlightKey, StringComparison.Ordinal)) {
                 _commitSearchHighlightKey = highlightKey;

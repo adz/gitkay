@@ -10,17 +10,12 @@ namespace GitKay.UI;
 internal static class SyntaxHighlighting {
     private const int MaxTokenizedLineLength = 240;
 
-    private static readonly Regex HunkHeaderRegex = new(
-        @"^(@@)\s+(-\d+(?:,\d+)?)\s+(\+\d+(?:,\d+)?)\s+(@@)(.*)$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly IBrush KeywordBrush = new SolidColorBrush(Color.FromRgb(86, 156, 214)).ToImmutable();
     private static readonly IBrush StringBrush = new SolidColorBrush(Color.FromRgb(206, 145, 120)).ToImmutable();
     private static readonly IBrush NumberBrush = new SolidColorBrush(Color.FromRgb(181, 206, 168)).ToImmutable();
     private static readonly IBrush CommentBrush = new SolidColorBrush(Color.FromRgb(87, 166, 74)).ToImmutable();
     private static readonly IBrush TypeBrush = new SolidColorBrush(Color.FromRgb(78, 201, 176)).ToImmutable();
-    private static readonly IBrush HunkMarkerBrush = new SolidColorBrush(Color.FromRgb(180, 180, 180)).ToImmutable();
-    private static readonly IBrush HunkRangeBrush = new SolidColorBrush(Color.FromRgb(215, 186, 125)).ToImmutable();
 
     private static readonly HashSet<string> Keywords = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -38,111 +33,6 @@ internal static class SyntaxHighlighting {
     public static IBrush GetNumberBrush() => NumberBrush;
     public static IBrush GetCommentBrush() => CommentBrush;
     public static IBrush GetTypeBrush() => TypeBrush;
-    public static IBrush GetHunkMarkerBrush() => HunkMarkerBrush;
-    public static IBrush GetHunkRangeBrush() => HunkRangeBrush;
-
-    public static InlineCollection BuildCodeInlines(string text, IBrush baseForeground, string? searchQuery = null) {
-        var collection = new InlineCollection();
-
-        if (string.IsNullOrEmpty(text)) {
-            return collection;
-        }
-
-        if (!string.IsNullOrWhiteSpace(searchQuery)) {
-            var index = text.IndexOf(searchQuery, StringComparison.OrdinalIgnoreCase);
-            if (index >= 0) {
-                AppendSegment(collection, text[..index], baseForeground);
-                AppendSearchMatch(collection, text.Substring(index, searchQuery.Length));
-                AppendSegment(collection, text[(index + searchQuery.Length)..], baseForeground);
-                return collection;
-            }
-        }
-
-        AppendSegment(collection, text, baseForeground);
-        return collection;
-    }
-
-    public static InlineCollection BuildHunkHeaderInlines(string header) {
-        var collection = new InlineCollection();
-
-        if (string.IsNullOrEmpty(header)) {
-            return collection;
-        }
-
-        var match = HunkHeaderRegex.Match(header);
-        if (!match.Success) {
-            collection.Add(new Run { Text = header, Foreground = HunkMarkerBrush });
-            return collection;
-        }
-
-        collection.Add(new Run { Text = match.Groups[1].Value, Foreground = HunkMarkerBrush, FontWeight = FontWeight.SemiBold });
-        collection.Add(new Run { Text = " ", Foreground = HunkMarkerBrush });
-        collection.Add(new Run { Text = match.Groups[2].Value, Foreground = HunkRangeBrush });
-        collection.Add(new Run { Text = " ", Foreground = HunkMarkerBrush });
-        collection.Add(new Run { Text = match.Groups[3].Value, Foreground = HunkRangeBrush });
-        collection.Add(new Run { Text = " ", Foreground = HunkMarkerBrush });
-        collection.Add(new Run { Text = match.Groups[4].Value, Foreground = HunkMarkerBrush, FontWeight = FontWeight.SemiBold });
-
-        var tail = match.Groups[5].Value;
-        if (!string.IsNullOrEmpty(tail)) {
-            collection.Add(new Run { Text = tail, Foreground = CommentBrush });
-        }
-
-        return collection;
-    }
-
-    private static void AppendSearchMatch(InlineCollection collection, string text) {
-        if (string.IsNullOrEmpty(text)) {
-            return;
-        }
-
-        collection.Add(new Run {
-            Text = text,
-            Foreground = DiffSearchPresentation.MatchForeground,
-            FontWeight = DiffSearchPresentation.MatchFontWeight,
-            TextDecorations = TextDecorations.Underline
-        });
-    }
-
-    private static void AppendTokenizedSegment(InlineCollection collection, string text, IBrush baseForeground) {
-        var tokens = Tokenize(text);
-
-        if (tokens.Count == 1 && tokens[0].Kind == HighlightKind.Plain) {
-            collection.Add(new Run { Text = text, Foreground = baseForeground });
-            return;
-        }
-
-        foreach (var token in tokens) {
-            collection.Add(CreateRun(token, baseForeground));
-        }
-    }
-
-    private static void AppendSegment(InlineCollection collection, string text, IBrush baseForeground) {
-        if (string.IsNullOrEmpty(text)) {
-            return;
-        }
-
-        if (text.Length > MaxTokenizedLineLength) {
-            collection.Add(new Run { Text = text, Foreground = baseForeground });
-            return;
-        }
-
-        AppendTokenizedSegment(collection, text, baseForeground);
-    }
-
-    private static Run CreateRun(HighlightToken token, IBrush baseForeground) {
-        return new Run {
-            Text = token.Text,
-            Foreground = token.Kind switch {
-                HighlightKind.Keyword => KeywordBrush,
-                HighlightKind.String => StringBrush,
-                HighlightKind.Number => NumberBrush,
-                HighlightKind.Comment => CommentBrush,
-                HighlightKind.TypeName => TypeBrush,
-                _ => baseForeground,
-            }
-        };
-    }
 
     private static readonly Dictionary<string, IReadOnlyList<HighlightToken>> TokenCache = new(StringComparer.Ordinal);
     private static readonly object TokenCacheLock = new();

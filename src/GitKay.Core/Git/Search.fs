@@ -188,15 +188,97 @@ module GitSearch =
             | true, date -> Some(date.ToUnixTimeSeconds())
             | _ -> None
 
-    /// `after:`/`before:` values that aren't dates, as (field prefix, text). A search ignores these terms, so the UI
-    /// reports them instead of silently widening the results.
-    let invalidDateTerms (now: DateTimeOffset) (mode: Mode) (query: string) : (string * string) list =
+    /// <summary>An <c>after:</c> or <c>before:</c> value that isn't a date, which a search ignores.</summary>
+    type DateProblem = { Field: Field; Text: string }
+
+    /// <summary>The date terms a search would ignore, so the UI can say so instead of silently widening the results.</summary>
+    let invalidDates (now: DateTimeOffset) (mode: Mode) (query: string) : DateProblem list =
         parseQuery mode query
         |> List.choose (fun term ->
             match term.Field with
-            | After | Before when (tryParseDate now term.Text).IsNone ->
-                Some((if term.Field = After then "after" else "before"), term.Text)
+            | After | Before when (tryParseDate now term.Text).IsNone -> Some { Field = term.Field; Text = term.Text }
             | _ -> None)
+
+    let describeDateProblem (problem: DateProblem) =
+        let prefix = prefixOf problem.Field |> Option.defaultValue "date"
+        $"“{problem.Text}” isn't a date, so {prefix}: is ignored — try 2024-05-01, “2 weeks ago” or yesterday"
+
+    // ----- Editing one field of a query, for the advanced search inputs and column filters -----
+
+    /// <summary>The text of every term of <paramref name="field"/>, space-separated.</summary>
+    let fieldText (mode: Mode) (query: string) (field: Field) =
+        parseQuery mode query |> List.filter (fun term -> term.Field = field) |> List.map _.Text |> String.concat " "
+
+    /// <summary>
+    /// The query with <paramref name="field"/>'s terms replaced by one term of <paramref name="value"/>, or removed when
+    /// it's blank. A value with spaces stays one quoted term.
+    /// </summary>
+    let withFieldText (mode: Mode) (query: string) (field: Field) (value: string) =
+        let others = parseQuery mode query |> List.filter (fun term -> term.Field <> field)
+        let replaced =
+            if String.IsNullOrWhiteSpace value then others
+            else others @ [ { Field = field; Text = value.Trim() } ]
+        formatQuery mode replaced
+
+    /// <summary>A column filter's field by name ("author", "hash", ...); anything else filters on commit info.</summary>
+    let fieldNamed (name: string) =
+        let normalized = if isNull name then "" else name.Trim().ToLowerInvariant()
+        prefixes |> List.tryFind (fun (prefix, _) -> prefix = normalized) |> Option.map snd |> Option.defaultValue CommitInfo
+
+    /// <summary>The text of the first term of <paramref name="field"/>, if any.</summary>
+    let firstTermText (mode: Mode) (query: string) (field: Field) =
+        parseQuery mode query |> List.tryFind (fun term -> term.Field = field) |> Option.map _.Text
+
+    // ----- Recent searches, suggested under the search box -----
+
+    [<Literal>]
+    let private MaxRecentSearches = 30
+
+    /// <summary>Stored searches, trimmed and without blanks or duplicates, most recent first.</summary>
+    let recentSearches (stored: string seq) =
+        stored |> Seq.filter (String.IsNullOrWhiteSpace >> not) |> Seq.map _.Trim() |> Recent.ofSeq MaxRecentSearches
+
+    /// <summary>The recent searches with <paramref name="query"/> run most recently; a blank query changes nothing.</summary>
+    let rememberSearch (query: string) (recent: string list) =
+        if String.IsNullOrWhiteSpace query then recent else Recent.add MaxRecentSearches (query.Trim()) recent
+
+    /// <summary>Up to six earlier searches containing what's typed, not counting the text itself.</summary>
+    let suggestSearches (typed: string) (recent: string list) =
+        let typed = if isNull typed then "" else typed.Trim()
+        recent
+        |> Recent.matching 6 (fun search ->
+            search <> typed && (typed.Length = 0 || search.Contains(typed, StringComparison.OrdinalIgnoreCase)))
+
+    // ----- What an applied search marks in a commit's diff -----
+
+    /// <summary>Which part of a changed file a search term is about.</summary>
+    type DiffScope =
+        | ChangedLines
+        | ChangedPaths
+        | AnyChange
+
+    /// <summary>The term marked in the diff: the first changed-line term, else the first path term, else nothing.</summary>
+    type DiffMark = { Query: TextQuery; Text: string; Scope: DiffScope }
+
+    let noDiffMark = { Query = TextQuery.None; Text = ""; Scope = AnyChange }
+
+    let diffMark (mode: Mode) (useRegex: bool) (query: string) =
+        let terms = parseQuery mode query
+        let mark scope (term: Term) = { Query = TextQuery.Create(useRegex, term.Text); Text = term.Text; Scope = scope }
+        match terms |> List.tryFind (fun term -> term.Field = ChangedLine) with
+        | Some term -> mark ChangedLines term
+        | None ->
+            match terms |> List.tryFind (fun term -> term.Field = ChangedPath) with
+            | Some term -> mark ChangedPaths term
+            | None -> noDiffMark
+
+    /// <summary>Whether a changed file's old, new or display path carries the mark.</summary>
+    let marksPath (mark: DiffMark) (oldPath: string) (newPath: string) (displayPath: string) =
+        mark.Scope <> ChangedLines
+        && (mark.Query.IsMatch oldPath || mark.Query.IsMatch newPath || mark.Query.IsMatch displayPath)
+
+    /// <summary>Whether a diff line's text carries the mark.</summary>
+    let marksLine (mark: DiffMark) (content: string) = mark.Scope <> ChangedPaths && mark.Query.IsMatch content
 
     let private needsDiff (term: Term) = term.Field = ChangedPath || term.Field = ChangedLine
 

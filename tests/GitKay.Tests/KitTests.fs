@@ -84,3 +84,31 @@ let ``a search highlight splits terms by what they underline`` () =
     let spans = GitSearch.spans highlight.Subject "Fix the fix" |> List.map (fun struct (s, l) -> s, l)
     test <@ spans = [ 0, 3; 8, 3 ] @>
     test <@ (GitSearch.highlight GitSearch.Commit false "").IsEmpty && (GitSearch.commitHighlight TextQuery.None).IsEmpty @>
+
+[<Fact>]
+let ``recent lists keep the newest first without duplicates`` () =
+    test <@ Recent.add 3 "b" [ "a"; "b"; "c" ] = [ "b"; "a"; "c" ] && Recent.add 2 "d" [ "a"; "b" ] = [ "d"; "a" ] @>
+    test <@ Recent.ofSeq 2 [ "a"; "a"; "b"; "c" ] = [ "a"; "b" ] && Recent.matching 1 ((<>) "a") [ "a"; "b"; "c" ] = [ "b" ] @>
+    test <@ GitSearch.recentSearches [ " x "; ""; "x"; "y" ] = [ "x"; "y" ] @>
+    test <@ GitSearch.rememberSearch "  " [ "x" ] = [ "x" ] && GitSearch.rememberSearch " y " [ "x"; "y" ] = [ "y"; "x" ] @>
+    test <@ GitSearch.suggestSearches "fo" [ "foo"; "bar"; "fo"; "FOX" ] = [ "foo"; "FOX" ] @>
+
+[<Fact>]
+let ``field text reads and replaces one field of a query`` () =
+    let query = "fix author:ada author:bob path:src"
+    test <@ GitSearch.fieldText GitSearch.Commit query GitSearch.Author = "ada bob" @>
+    test <@ GitSearch.withFieldText GitSearch.Commit query GitSearch.Author "Grace Hopper" = "fix path:src author:\"Grace Hopper\"" @>
+    test <@ GitSearch.withFieldText GitSearch.Commit query GitSearch.ChangedPath " " = "fix author:ada author:bob" @>
+    test <@ GitSearch.fieldNamed "Author" = GitSearch.Author && GitSearch.fieldNamed "subject" = GitSearch.CommitInfo @>
+    test <@ GitSearch.firstTermText GitSearch.Diff "needle path:a" GitSearch.ChangedLine = Some "needle" @>
+
+[<Fact>]
+let ``a diff mark prefers the changed-line term and follows the search's regex setting`` () =
+    let lines = GitSearch.diffMark GitSearch.Commit false "diff:todo path:src"
+    let paths = GitSearch.diffMark GitSearch.Commit true "path:^src/"
+    test <@ lines.Scope = GitSearch.ChangedLines && lines.Text = "todo" @>
+    test <@ GitSearch.marksLine lines "a TODO here" && not (GitSearch.marksPath lines "src/a" "src/a" "src/a") @>
+    test <@ paths.Scope = GitSearch.ChangedPaths && GitSearch.marksPath paths "/dev/null" "src/new.fs" "src/new.fs (new file)" @>
+    test <@ not (GitSearch.marksPath paths "lib/src/x" "lib/src/x" "lib/src/x") && not (GitSearch.marksLine paths "src/") @>
+    test <@ (GitSearch.diffMark GitSearch.Commit false "fix").Scope = GitSearch.AnyChange @>
+

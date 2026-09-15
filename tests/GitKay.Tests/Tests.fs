@@ -667,8 +667,9 @@ summary Another line
     [<Fact>]
     let ``invalid after and before dates should be reported, valid ones not`` () =
         let now = DateTimeOffset(2026, 9, 14, 0, 0, 0, TimeSpan.Zero)
-        test <@ GitSearch.invalidDateTerms now GitSearch.Commit "fix after:2024-05-01 before:\"2 weeks ago\"" = [] @>
-        test <@ GitSearch.invalidDateTerms now GitSearch.Commit "after:someday before:yesterday" = [ "after", "someday" ] @>
+        test <@ GitSearch.invalidDates now GitSearch.Commit "fix after:2024-05-01 before:\"2 weeks ago\"" = [] @>
+        test <@ GitSearch.invalidDates now GitSearch.Commit "after:someday before:yesterday" = [ { Field = GitSearch.After; Text = "someday" } ] @>
+        test <@ GitSearch.describeDateProblem { Field = GitSearch.Before; Text = "soon" } = "“soon” isn't a date, so before: is ignored — try 2024-05-01, “2 weeks ago” or yesterday" @>
 
     [<Fact>]
     let ``partial search results should show while the search runs and only for the current search`` () =
@@ -1901,10 +1902,9 @@ module AppTests =
         test <@ obj.ReferenceEquals(otherVm.RowBackground, Brushes.Transparent) @>
 
     [<Fact>]
-    let ``MainProjection should debounce diff search and surface matches inline in the diff view`` () =
+    let ``MainProjection marks diff files the applied search's path term matches`` () =
         let projection = MainProjection()
         projection.SetDispatch ignore
-        projection.SearchDebounceSeconds <- 0.1
 
         let commit =
             sampleCommit "12345678" "Subject"
@@ -1939,42 +1939,15 @@ module AppTests =
                     SearchScopeKey = "diff"
             }
 
+        projection.Update { model with SearchQuery = "path:needle"; SearchScopeKey = "commit" }
+        test <@ projection.SelectedDiffFiles.Count = 1 && projection.SelectedDiffFiles.[0].IsPathSearchMatch @>
+
+        projection.Update { model with SearchQuery = "path:elsewhere"; SearchScopeKey = "commit" }
+        test <@ not projection.SelectedDiffFiles.[0].IsPathSearchMatch @>
+
+        // A diff term marks lines (drawn by the diff view), not file paths.
         projection.Update model
-
-        test <@ projection.SelectedDiffFiles.Count = 1 @>
-        test <@ not projection.SelectedDiffFiles.[0].HasSearchMatch @>
-        test <@ projection.SelectedDiffFiles.[0].SearchMatchSummary = "" @>
-        test <@ projection.IsSearchPanelExpanded @>
-        test <@ projection.HasDiffSearchStatus @>
-        test <@ projection.DiffSearchStatusText = "Searching diff for \"needle\"..." @>
-        test <@ projection.SelectedDiffRows.Count = 4 @>
-
-        Task.Delay(50).Wait()
-        projection.Update model
-
-        test <@ not projection.SelectedDiffFiles.[0].HasSearchMatch @>
-        test <@ projection.SelectedDiffFiles.[0].SearchMatchSummary = "" @>
-        test <@ projection.SelectedDiffFiles.[0].MatchText = "" @>
-        test <@ not projection.SelectedDiffFiles.[0].Header.HasSearchMatch @>
-        test <@ projection.SelectedDiffFiles.[0].Header.MatchText = "" @>
-        test <@ projection.DiffSearchStatusText = "Searching diff for \"needle\"..." @>
-
-        Task.Delay(200).Wait()
-        projection.Update model
-
-        test <@ projection.SelectedDiffFiles.[0].HasSearchMatch @>
-        test <@ projection.SelectedDiffFiles.[0].SearchMatchSummary = "text" @>
-        test <@ projection.DiffSearchStatusText = "Diff search: 1 file and 1 line matched" @>
-
-        let diffLine =
-            projection.SelectedDiffRows
-            |> Seq.choose (function
-                | :? DiffLineProjection as line -> Some line
-                | _ -> None)
-            |> Seq.head
-
-        test <@ diffLine.IsSearchMatch @>
-        test <@ diffLine.MatchText = "needle" @>
+        test <@ not projection.SelectedDiffFiles.[0].IsPathSearchMatch @>
 
     [<Fact>]
     let ``MainProjection should omit opposite-side rows in old and new diff modes`` () =

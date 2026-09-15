@@ -14,6 +14,7 @@
   <ItemGroup>
     <Compile Include="TextQuery.fs" />
     <Compile Include="Cycle.fs" />
+    <Compile Include="Recent.fs" />
   </ItemGroup>
 
 </Project>
