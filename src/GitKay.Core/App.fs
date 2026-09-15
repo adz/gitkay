@@ -18,6 +18,8 @@ module App =
 
     let private selectionJob = AxialLatestSlot(runtime)
     let private diffJob = AxialLatestSlot(runtime)
+    let private workingTreeStatusJob = AxialLatestSlot(runtime)
+    let private workingTreeChangesJob = AxialLatestSlot(runtime)
     let private searchJob = AxialLatestSlot(runtime)
     let private contextJobs = AxialLatestSlotRegistry<GitService.DiffFileKey>(runtime)
 
@@ -40,6 +42,14 @@ module App =
         | SelectionFound of hash: string
         | SelectionNotFound of revision: string
 
+    /// What the commit list has selected: a commit, the uncommitted changes row, or nothing. Commit-only actions
+    /// (parents, branch actions, copying a hash) read the hash through `SelectedCommitHash`, which is None for the
+    /// working tree.
+    type Selection =
+        | NoSelection
+        | CommitSelected of hash: string
+        | WorkingTreeSelected
+
     type Model =
         {
             StartupSelection: StartupSelection
@@ -59,7 +69,7 @@ module App =
             SearchResults: GitSearch.Result list option
             Commits: Graph.CommitGraphInfo list
             HasFullHistory: bool
-            SelectedCommitHash: string option
+            Selection: Selection
             SelectedDiffHash: string option
             SelectedDiffFiles: GitService.DiffFileSummary list option
             SelectedDiff: Models.FileDiff list option
@@ -70,7 +80,20 @@ module App =
             SearchStartedAtTicks: int64 option
             /// Commits checked and total for the running search.
             SearchProgress: (int * int) option
+            /// Status of the working tree and index against HEAD; empty when clean or not yet read.
+            WorkingTree: WorkingTree.Entry list
+            /// Diffs of the uncommitted changes, loaded while the working tree row is selected.
+            WorkingTreeChanges: GitService.WorkingTreeChanges option
+            /// The in-flight working tree diff load, if any.
+            WorkingTreeStartedAtTicks: int64 option
         }
+
+        member model.SelectedCommitHash =
+            match model.Selection with
+            | CommitSelected hash -> Some hash
+            | NoSelection | WorkingTreeSelected -> None
+
+        member model.IsWorkingTreeSelected = model.Selection = WorkingTreeSelected
 
     type Msg =
         | RereadRefs
@@ -82,6 +105,12 @@ module App =
         | SetDiffLayout of DiffLayout
         | HistoryLoaded of isFull:bool * Result<Models.Commit list, GitError>
         | SelectCommit of hash:string * startedAtTicks:int64
+        /// Rereads git status (refresh, focus, file watcher).
+        | RefreshWorkingTree
+        | WorkingTreeStatusLoaded of Result<WorkingTree.Entry list, GitError>
+        /// Selects the uncommitted changes row and loads its diffs.
+        | SelectWorkingTree of startedAtTicks:int64
+        | WorkingTreeChangesLoaded of startedAtTicks:int64 * Result<GitService.WorkingTreeChanges, GitError>
         | DiffFilesLoaded of hash:string * startedAtTicks:int64 * Result<GitService.DiffFileSummary list, GitError>
         | DiffLoaded of hash:string * startedAtTicks:int64 * Result<Models.FileDiff list, GitError>
         | SelectDiffFile of hash:string * oldPath:string * newPath:string
@@ -158,6 +187,24 @@ module App =
             (fun result -> DiffLoaded(hash, startedAtTicks, Ok result))
             (fun err -> DiffLoaded(hash, startedAtTicks, Error err))
 
+    let private startWorkingTreeStatusLoad (env: GitService.GitEnv) =
+        Cmd.OfFlow.ofFlowLatest
+            "working tree status"
+            workingTreeStatusJob
+            env
+            GitService.fetchWorkingTreeStatus
+            (fun entries -> WorkingTreeStatusLoaded(Ok entries))
+            (fun err -> WorkingTreeStatusLoaded(Error err))
+
+    let private startWorkingTreeChangesLoad (env: GitService.GitEnv) (contextLines: int) (startedAtTicks: int64) =
+        Cmd.OfFlow.ofFlowLatest
+            "working tree changes"
+            workingTreeChangesJob
+            env
+            (GitService.fetchWorkingTreeChanges contextLines)
+            (fun changes -> WorkingTreeChangesLoaded(startedAtTicks, Ok changes))
+            (fun err -> WorkingTreeChangesLoaded(startedAtTicks, Error err))
+
     let private startSearchLoad (env: GitService.GitEnv) (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (useRegex: bool) (startedAtTicks: int64) =
         // Progress dispatches are throttled so a fast search doesn't flood the message queue.
         Cmd.ofEffect (fun dispatch ->
@@ -233,8 +280,11 @@ module App =
             | SelectionFound hash when commits |> List.exists (fun info -> info.Commit.Hash = hash) -> Some hash
             | _ -> None
 
+        let keepsWorkingTree = startupHash.IsNone && model.IsWorkingTreeSelected
+
         let selectedHash =
             match startupHash, model.SelectedCommitHash, selectionExistsInHistory, commits with
+            | _ when keepsWorkingTree -> None
             | Some hash, _, _, _ -> Some hash
             | None, Some hash, true, _ -> Some hash
             | _, _, _, firstCommit :: _ -> Some firstCommit.Commit.Hash
@@ -264,7 +314,11 @@ module App =
                     SearchResults = None
                     SearchStartedAtTicks = None
                     SearchProgress = None
-                    SelectedCommitHash = selectedHash
+                    Selection =
+                        match selectedHash with
+                        | Some hash -> CommitSelected hash
+                        | None when keepsWorkingTree -> WorkingTreeSelected
+                        | None -> NoSelection
                     SelectedDiffHash = if diffReadyForSelection then model.SelectedDiffHash else None
                     SelectedDiffFiles = if diffReadyForSelection then model.SelectedDiffFiles else None
                     SelectedDiff = if diffReadyForSelection then model.SelectedDiff else None
@@ -278,6 +332,7 @@ module App =
             match selectedHash, nextSelectionStartedAtTicks with
             | Some hash, Some startedAtTicks ->
                 Cmd.batch [ startDiffFilesLoad model.GitEnv hash startedAtTicks; startDiffLoad model.GitEnv hash startedAtTicks model.DiffContextLines ]
+            | _ when keepsWorkingTree -> Cmd.none
             | _ ->
                 selectionJob.Cancel()
                 if not diffReadyForSelection then
@@ -344,7 +399,7 @@ module App =
                 SearchResults = None
                 Commits = []
                 HasFullHistory = false
-                SelectedCommitHash = None
+                Selection = NoSelection
                 SelectedDiffHash = None
                 SelectedDiffFiles = None
                 SelectedDiff = None
@@ -354,6 +409,9 @@ module App =
                 SelectedDiffStartedAtTicks = None
                 SearchStartedAtTicks = None
                 SearchProgress = None
+                WorkingTree = []
+                WorkingTreeChanges = None
+                WorkingTreeStartedAtTicks = None
             },
             Cmd.none
         | Ok startupOptions ->
@@ -378,7 +436,10 @@ module App =
                     SearchQuery = startupOptions.SearchQuery
                     SearchScopeKey = startupOptions.SearchScopeKey
                     SearchUseRegex = startupOptions.SearchUseRegex
-                    SelectedCommitHash = startupOptions.SelectedCommitHash
+                    Selection =
+                        match startupOptions.SelectedCommitHash with
+                        | Some revision -> CommitSelected revision
+                        | None -> NoSelection
                     SearchResults = None
                     Commits = []
                     HasFullHistory = false
@@ -391,6 +452,9 @@ module App =
                     SelectedDiffStartedAtTicks = None
                     SearchStartedAtTicks = None
                     SearchProgress = None
+                    WorkingTree = []
+                    WorkingTreeChanges = None
+                    WorkingTreeStartedAtTicks = None
                 }
 
             if String.IsNullOrEmpty gitEnv.RepoPath then
@@ -404,14 +468,58 @@ module App =
                             (fun err -> SelectionRevisionResolved(revision, Error err))
                     | None -> Cmd.none
 
-                model, Cmd.batch [ loadHistory gitEnv (Some historyLimit) startupOptions.ShowStashes startupOptions.StartupTargets; resolveSelection ]
+                model,
+                Cmd.batch
+                    [ loadHistory gitEnv (Some historyLimit) startupOptions.ShowStashes startupOptions.StartupTargets
+                      startWorkingTreeStatusLoad gitEnv
+                      resolveSelection ]
 
     let update msg model : Model * Cmd<Msg> =
         match msg with
         | RereadRefs ->
             searchJob.Cancel()
             let nextModel = { model with Status = "Refreshing..."; HasFullHistory = false }
-            nextModel, loadHistory model.GitEnv (Some historyLimit) model.ShowStashes model.StartupTargets
+            nextModel, Cmd.batch [ loadHistory model.GitEnv (Some historyLimit) model.ShowStashes model.StartupTargets; startWorkingTreeStatusLoad model.GitEnv ]
+        | RefreshWorkingTree ->
+            model, startWorkingTreeStatusLoad model.GitEnv
+        | WorkingTreeStatusLoaded (Ok entries) ->
+            let changed = entries <> model.WorkingTree
+
+            if model.IsWorkingTreeSelected && changed then
+                let startedAtTicks = Stopwatch.GetTimestamp()
+                { model with WorkingTree = entries; WorkingTreeStartedAtTicks = Some startedAtTicks },
+                startWorkingTreeChangesLoad model.GitEnv model.DiffContextLines startedAtTicks
+            elif changed then
+                { model with WorkingTree = entries }, Cmd.none
+            else
+                model, Cmd.none
+        | WorkingTreeStatusLoaded (Error err) ->
+            // Without git (or outside a work tree) the row simply doesn't appear.
+            logTiming $"working tree status error={GitError.describe err}"
+            { model with WorkingTree = [] }, Cmd.none
+        | SelectWorkingTree startedAtTicks ->
+            selectionJob.Cancel()
+            diffJob.Cancel()
+            contextJobs.CancelAll()
+            { model with
+                Selection = WorkingTreeSelected
+                SelectedDiffHash = None
+                SelectedDiffFiles = None
+                SelectedDiff = None
+                SelectedDiffFileKey = None
+                DiffExpansions = Map.empty
+                SelectionStartedAtTicks = None
+                SelectedDiffStartedAtTicks = None
+                WorkingTreeStartedAtTicks = Some startedAtTicks },
+            startWorkingTreeChangesLoad model.GitEnv model.DiffContextLines startedAtTicks
+        | WorkingTreeChangesLoaded (startedAtTicks, result) when model.IsWorkingTreeSelected && model.WorkingTreeStartedAtTicks = Some startedAtTicks ->
+            match result with
+            | Ok changes ->
+                { model with WorkingTree = changes.Entries; WorkingTreeChanges = Some changes; WorkingTreeStartedAtTicks = None }, Cmd.none
+            | Error err ->
+                { model with Status = "Diff Error: " + GitError.describe err; WorkingTreeChanges = None; WorkingTreeStartedAtTicks = None }, Cmd.none
+        | WorkingTreeChangesLoaded _ ->
+            model, Cmd.none
         | SetHistoryTargets targets ->
             searchJob.Cancel()
             let nextModel = { model with StartupTargets = targets; Status = "Loading history..."; HasFullHistory = false }
@@ -443,11 +551,15 @@ module App =
                             SelectedDiffStartedAtTicks = model.SelectedCommitHash |> Option.map (fun _ -> Stopwatch.GetTimestamp())
                     }
 
-                match model.SelectedCommitHash with
-                | Some hash ->
+                match model.Selection with
+                | CommitSelected hash ->
                     let startedAtTicks = nextModel.SelectedDiffStartedAtTicks.Value
                     nextModel, startDiffLoad model.GitEnv hash startedAtTicks normalizedContextLines
-                | None ->
+                | WorkingTreeSelected ->
+                    let startedAtTicks = Stopwatch.GetTimestamp()
+                    { nextModel with WorkingTreeStartedAtTicks = Some startedAtTicks },
+                    startWorkingTreeChangesLoad model.GitEnv normalizedContextLines startedAtTicks
+                | NoSelection ->
                     diffJob.Cancel()
                     nextModel, Cmd.none
         | SetDiffLayout layout -> { model with DiffLayout = layout }, Cmd.none
@@ -536,7 +648,7 @@ module App =
             let nextModel =
                 {
                     model with
-                        SelectedCommitHash = Some hash
+                        Selection = CommitSelected hash
                         SelectedDiffHash = None
                         SelectedDiffFiles = None
                         SelectedDiff = None
@@ -544,8 +656,11 @@ module App =
                         DiffExpansions = Map.empty
                         SelectionStartedAtTicks = Some startedAtTicks
                         SelectedDiffStartedAtTicks = Some startedAtTicks
+                        WorkingTreeChanges = None
+                        WorkingTreeStartedAtTicks = None
                 }
 
+            workingTreeChangesJob.Cancel()
             let cmd = Cmd.batch [ startDiffFilesLoad model.GitEnv hash startedAtTicks; startDiffLoad model.GitEnv hash startedAtTicks model.DiffContextLines ]
             nextModel, cmd
         | SetSearchQuery query ->

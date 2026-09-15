@@ -1108,7 +1108,7 @@ module AppTests =
             SearchResults = None
             Commits = []
             HasFullHistory = false
-            SelectedCommitHash = None
+            Selection = App.NoSelection
             SelectedDiffHash = None
             SelectedDiffFiles = None
             SelectedDiff = None
@@ -1118,6 +1118,9 @@ module AppTests =
             SelectedDiffStartedAtTicks = None
             SearchStartedAtTicks = None
             SearchProgress = None
+            WorkingTree = []
+            WorkingTreeChanges = None
+            WorkingTreeStartedAtTicks = None
         }
 
     [<Fact>]
@@ -1219,7 +1222,7 @@ module AppTests =
         let initial =
             {
                 emptyModel with
-                    SelectedCommitHash = Some "commit"
+                    Selection = App.CommitSelected "commit"
                     SelectedDiffHash = Some "commit"
                     SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
                     SelectedDiff = Some [ selectedFile ]
@@ -1266,7 +1269,7 @@ module AppTests =
         let initial =
             {
                 emptyModel with
-                    SelectedCommitHash = Some "second"
+                    Selection = App.CommitSelected "second"
                     SelectedDiffHash = Some "second"
                     SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
                     SelectedDiff = Some [ selectedFile ]
@@ -1307,7 +1310,7 @@ module AppTests =
         let initial =
             {
                 emptyModel with
-                    SelectedCommitHash = Some "missing"
+                    Selection = App.CommitSelected "missing"
                     SelectedDiffHash = Some "missing"
                     SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
                     SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" }
@@ -1345,7 +1348,7 @@ module AppTests =
         let initial =
             {
                 emptyModel with
-                    SelectedCommitHash = Some "old"
+                    Selection = App.CommitSelected "old"
                     SelectedDiffHash = Some "old"
                     SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
                     SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" }
@@ -1364,6 +1367,43 @@ module AppTests =
         test <@ next.SelectionStartedAtTicks = Some 42L @>
         test <@ next.SelectedDiffStartedAtTicks = Some 42L @>
 
+    let private workingEntry path : WorkingTree.Entry =
+        { Path = path; OriginalPath = path; Staged = WorkingTree.Unchanged; Unstaged = WorkingTree.Modified; Untracked = false }
+
+    [<Fact>]
+    let ``SelectWorkingTree clears the commit selection and has no commit hash`` () =
+        let initial = { emptyModel with Selection = App.CommitSelected "old"; SelectedDiffHash = Some "old"; SelectedDiff = Some [] }
+        let next, _ = App.update (App.Msg.SelectWorkingTree 5L) initial
+        test <@ next.Selection = App.WorkingTreeSelected && next.SelectedCommitHash = None @>
+        test <@ next.SelectedDiffHash = None && next.SelectedDiff = None && next.WorkingTreeStartedAtTicks = Some 5L @>
+
+    [<Fact>]
+    let ``WorkingTreeChangesLoaded applies only the current load`` () =
+        let selected, _ = App.update (App.Msg.SelectWorkingTree 5L) emptyModel
+        let changes : GitService.WorkingTreeChanges = { Entries = [ workingEntry "a.txt" ]; Staged = []; Unstaged = []; Untracked = [] }
+        let stale, _ = App.update (App.Msg.WorkingTreeChangesLoaded(4L, Ok changes)) selected
+        test <@ stale.WorkingTreeChanges = None @>
+        let current, _ = App.update (App.Msg.WorkingTreeChangesLoaded(5L, Ok changes)) selected
+        test <@ current.WorkingTreeChanges = Some changes && current.WorkingTree = changes.Entries && current.WorkingTreeStartedAtTicks = None @>
+
+    [<Fact>]
+    let ``WorkingTreeStatusLoaded reloads changes only when selected and changed`` () =
+        let entries = [ workingEntry "a.txt" ]
+        let unselected, _ = App.update (App.Msg.WorkingTreeStatusLoaded(Ok entries)) emptyModel
+        test <@ unselected.WorkingTree = entries && unselected.WorkingTreeStartedAtTicks = None @>
+        let selected = { unselected with Selection = App.WorkingTreeSelected }
+        let same, _ = App.update (App.Msg.WorkingTreeStatusLoaded(Ok entries)) selected
+        test <@ same.WorkingTreeStartedAtTicks = None @>
+        let changed, _ = App.update (App.Msg.WorkingTreeStatusLoaded(Ok [ workingEntry "b.txt" ])) selected
+        test <@ changed.WorkingTreeStartedAtTicks.IsSome @>
+
+    [<Fact>]
+    let ``history reload keeps the working tree row selected`` () =
+        let a = sampleCommit "a" "subject"
+        let selected = { emptyModel with Selection = App.WorkingTreeSelected }
+        let next, _ = App.update (App.Msg.HistoryLoaded(false, Ok [ a ])) selected
+        test <@ next.Selection = App.WorkingTreeSelected @>
+
     [<Fact>]
     let ``DiffFilesLoaded should select the first file while the unified diff is still loading`` () =
         let files =
@@ -1375,7 +1415,7 @@ module AppTests =
         let initial =
             {
                 emptyModel with
-                    SelectedCommitHash = Some "commit"
+                    Selection = App.CommitSelected "commit"
                     SelectionStartedAtTicks = Some 7L
                     SelectedDiffStartedAtTicks = Some 7L
             }
@@ -1421,7 +1461,7 @@ module AppTests =
         let initial =
             {
                 emptyModel with
-                    SelectedCommitHash = Some "commit"
+                    Selection = App.CommitSelected "commit"
                     SelectedDiffHash = Some "commit"
                     SelectedDiffFiles = Some files
                     SelectedDiffStartedAtTicks = Some 42L
@@ -1471,7 +1511,7 @@ module AppTests =
         let initial =
             {
                 emptyModel with
-                    SelectedCommitHash = Some "commit"
+                    Selection = App.CommitSelected "commit"
                     SelectedDiffHash = Some "commit"
                     SelectedDiffFiles = Some files
                     SelectedDiff = Some [ sampleFile "foo.txt" "foo.txt" [] ]
@@ -1572,7 +1612,7 @@ module AppTests =
                 emptyModel with
                     Status = "Loaded"
                     Commits = Graph.calculateLanes [ commit ]
-                    SelectedCommitHash = Some commit.Hash
+                    Selection = App.CommitSelected commit.Hash
                     SelectedDiffHash = Some commit.Hash
                     SelectedDiffFiles = Some [ fooSummary; barSummary ]
                     SelectedDiff = Some [ fooFile; barFile ]
@@ -1643,7 +1683,7 @@ module AppTests =
                 emptyModel with
                     Status = "Loaded"
                     Commits = Graph.calculateLanes [ commit ]
-                    SelectedCommitHash = Some commit.Hash
+                    Selection = App.CommitSelected commit.Hash
                     SelectedDiffHash = Some commit.Hash
                     SelectedDiffFiles = Some [ fooSummary; barSummary ]
                     SelectedDiff = Some [ fooFile; barFile ]
@@ -2019,7 +2059,7 @@ module AppTests =
                 emptyModel with
                     Status = "Loaded"
                     Commits = Graph.calculateLanes [ commit ]
-                    SelectedCommitHash = Some commit.Hash
+                    Selection = App.CommitSelected commit.Hash
                     SelectedDiffHash = Some commit.Hash
                     SelectedDiffFiles = Some [ summary ]
                     SelectedDiff = Some [ file ]
@@ -2054,7 +2094,7 @@ module AppTests =
             { emptyModel with
                 Status = "Loaded"
                 Commits = Graph.calculateLanes [ commit ]
-                SelectedCommitHash = Some commit.Hash
+                Selection = App.CommitSelected commit.Hash
                 SelectedDiffHash = Some commit.Hash
                 SelectedDiffFiles = Some [ summary ]
                 SelectedDiff = Some [ file ]
@@ -2087,7 +2127,7 @@ module AppTests =
             { emptyModel with
                 Status = "Loaded"
                 Commits = Graph.calculateLanes [ commit ]
-                SelectedCommitHash = Some commit.Hash
+                Selection = App.CommitSelected commit.Hash
                 SelectedDiffHash = Some commit.Hash
                 SelectedDiffFiles = Some [ summary ]
                 SelectedDiff = Some [ file ]
@@ -2112,7 +2152,7 @@ module AppTests =
               Hunks = [ { Header = "@@ -20 +20 @@"; Lines = [ line 20 ] } ] }
         projection.Update
             { emptyModel with
-                SelectedCommitHash = Some commit.Hash
+                Selection = App.CommitSelected commit.Hash
                 SelectedDiffHash = Some commit.Hash
                 SelectedDiffFiles = Some [ sampleSummary "sample.txt" "sample.txt" "sample.txt" ]
                 SelectedDiff = Some [ file ] }
@@ -2137,7 +2177,7 @@ module AppTests =
         let fullA : Models.FileDiff = { fileA with Hunks = [ { Header = "@@ -1,40 +1,40 @@"; Lines = [ 1 .. 40 ] |> List.map ctx } ] }
         let baseModel =
             { emptyModel with
-                SelectedCommitHash = Some commit.Hash
+                Selection = App.CommitSelected commit.Hash
                 SelectedDiffHash = Some commit.Hash
                 SelectedDiffFiles = Some [ sampleSummary "a.txt" "a.txt" "a.txt"; sampleSummary "b.txt" "b.txt" "b.txt" ]
                 SelectedDiff = Some [ fileA; fileB ] }
@@ -2269,7 +2309,7 @@ module AppTests =
         let initial =
             {
                 emptyModel with
-                    SelectedCommitHash = Some "new"
+                    Selection = App.CommitSelected "new"
                     SelectedDiffHash = Some "new"
                     SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
                     SelectedDiffStartedAtTicks = Some 42L
@@ -2292,7 +2332,7 @@ module AppTests =
         let initial =
             {
                 emptyModel with
-                    SelectedCommitHash = Some "new"
+                    Selection = App.CommitSelected "new"
                     SelectedDiffHash = Some "new"
                     SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
                     SelectedDiffStartedAtTicks = Some 42L
@@ -2424,7 +2464,7 @@ module DiffExpansionFlowTests =
     let private selectedModel () =
         let model, _ = App.init [||]
         { model with
-            SelectedCommitHash = Some hash
+            Selection = App.CommitSelected hash
             SelectedDiffHash = Some hash
             SelectedDiffFiles = Some [ { OldPath = "f"; NewPath = "f"; DisplayPath = "f" } ]
             SelectedDiff = Some [ file ] }
@@ -2485,7 +2525,7 @@ module FileHeaderTests =
     let private selectedModel () =
         let model, _ = App.init [||]
         { model with
-            SelectedCommitHash = Some hash
+            Selection = App.CommitSelected hash
             SelectedDiffHash = Some hash
             SelectedDiffFiles = Some [ { OldPath = "f"; NewPath = "f"; DisplayPath = "f" } ]
             SelectedDiff = Some [ file ] }
@@ -2634,7 +2674,7 @@ module DiffFileTreeTests =
             [ { OldPath = "a/x.fs"; NewPath = "a/x.fs"; DisplayPath = "a/x.fs" }
               { OldPath = "a/y.fs"; NewPath = "a/y.fs"; DisplayPath = "a/y.fs" } ]
         let model, _ = App.init [||]
-        projection.Update { model with SelectedCommitHash = Some "abc"; SelectedDiffHash = Some "abc"; SelectedDiffFiles = Some summaries }
+        projection.Update { model with Selection = App.CommitSelected "abc"; SelectedDiffHash = Some "abc"; SelectedDiffFiles = Some summaries }
         projection.SetDiffFileListModeCommand.Execute "tree"
         test <@ projection.DiffFileListRows.Count = 3 @>
         let selected = projection.SelectedDiffFile
@@ -2709,7 +2749,7 @@ module SearchProjectionTests =
         let projection = MainProjection()
         let messages = ResizeArray<App.Msg>()
         let model0, _ = App.init [||]
-        let baseModel = { model0 with Commits = Graph.calculateLanes [ first; second; third ]; SelectedCommitHash = Some first.Hash }
+        let baseModel = { model0 with Commits = Graph.calculateLanes [ first; second; third ]; Selection = App.CommitSelected first.Hash }
         projection.Update baseModel
         projection.SetDispatch (fun message -> messages.Add message)
 
@@ -2727,7 +2767,7 @@ module SearchProjectionTests =
         test <@ selections () = [ second.Hash ] @>
 
         // Next Enter moves on to the following match.
-        projection.Update { searched with SelectedCommitHash = Some second.Hash }
+        projection.Update { searched with Selection = App.CommitSelected second.Hash }
         projection.SearchOrNextCommitCommand.Execute null
         test <@ selections () = [ second.Hash; third.Hash ] @>
 
@@ -2770,7 +2810,7 @@ module DiffSearchBorrowTests =
         let model =
             { model0 with
                 Commits = Graph.calculateLanes [ commit ]
-                SelectedCommitHash = Some commit.Hash
+                Selection = App.CommitSelected commit.Hash
                 SelectedDiffHash = Some commit.Hash
                 SelectedDiffFiles = Some [ { OldPath = "a.fs"; NewPath = "a.fs"; DisplayPath = "a.fs" } ]
                 SelectedDiff = Some [ file ]
@@ -2810,7 +2850,7 @@ module DiffSearchBorrowTests =
         let root = commitOf (h 1) [] "root"
         let projection = MainProjection()
         let model0, _ = App.init [||]
-        let model = { model0 with Commits = Graph.calculateLanes [ merge; side; root ]; SelectedCommitHash = Some merge.Hash }
+        let model = { model0 with Commits = Graph.calculateLanes [ merge; side; root ]; Selection = App.CommitSelected merge.Hash }
         let selections = ResizeArray<string>()
         projection.Update model
         projection.SetDispatch (function App.Msg.SelectCommit (hash, _) -> selections.Add hash | _ -> ())
@@ -2818,7 +2858,7 @@ module DiffSearchBorrowTests =
         test <@ projection.SelectedCommitChildren.Count = 0 @>
         projection.GoToParent 1
         test <@ List.ofSeq selections = [ root.Hash ] @>
-        projection.Update { model with SelectedCommitHash = Some root.Hash }
+        projection.Update { model with Selection = App.CommitSelected root.Hash }
         test <@ projection.SelectedCommitChildren |> Seq.map (fun l -> l.Subject) |> List.ofSeq = [ "merge"; "side" ] @>
         projection.GoToChild ()
         test <@ List.ofSeq selections = [ root.Hash; merge.Hash ] @>
@@ -2840,7 +2880,7 @@ module PaletteTests =
         let model0, _ = App.init [||]
         let a = commitOf (String.replicate 40 "a") "Add fonts" [ RefHelpers.branchRef "main" ]
         let b = commitOf (String.replicate 40 "b") "Fix parser" [ RefHelpers.tagRef "v1.0" ]
-        projection.Update { model0 with Commits = Graph.calculateLanes [ a; b ]; SelectedCommitHash = Some a.Hash; ShowBranchRefs = true }
+        projection.Update { model0 with Commits = Graph.calculateLanes [ a; b ]; Selection = App.CommitSelected a.Hash; ShowBranchRefs = true }
         let selections = ResizeArray<string>()
         projection.SetDispatch (function App.Msg.SelectCommit (hash, _) -> selections.Add hash | _ -> ())
 
@@ -2863,7 +2903,7 @@ module PaletteTests =
         let commits = [ for n in 1 .. 3 -> commitOf (String.replicate 40 (string n)) $"c{n}" [] ]
         let model = { model0 with Commits = Graph.calculateLanes commits }
         let selections = ResizeArray<string>()
-        let visit (hash: string) = projection.Update { model with SelectedCommitHash = Some hash }
+        let visit (hash: string) = projection.Update { model with Selection = App.CommitSelected hash }
         visit commits.[0].Hash
         visit commits.[1].Hash
         visit commits.[2].Hash
@@ -2889,7 +2929,7 @@ module PaletteTests =
         let modelFor (commit: Models.Commit) =
             { model0 with
                 Commits = Graph.calculateLanes [ a; b ]
-                SelectedCommitHash = Some commit.Hash
+                Selection = App.CommitSelected commit.Hash
                 SelectedDiffHash = Some commit.Hash
                 SelectedDiffFiles = Some [ summary "one.fs"; summary "two.fs" ]
                 SelectedDiff = Some [ fileOf "one.fs"; fileOf "two.fs" ] }
