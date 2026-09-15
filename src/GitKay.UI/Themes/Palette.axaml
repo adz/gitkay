@@ -62,9 +62,9 @@
             <SolidColorBrush x:Key="GitKayHoverBrush" Color="#EAEEF2" />
             <SolidColorBrush x:Key="GitKaySelectionBrush" Color="#CCE5FF" />
             <SolidColorBrush x:Key="GitKayBorderBrush" Color="#D0D7DE" />
-            <SolidColorBrush x:Key="GitKayTextBrush" Color="#1F2328" />
-            <SolidColorBrush x:Key="GitKaySecondaryTextBrush" Color="#59636E" />
-            <SolidColorBrush x:Key="GitKayMutedTextBrush" Color="#6E7781" />
+            <SolidColorBrush x:Key="GitKayTextBrush" Color="#0B0D10" />
+            <SolidColorBrush x:Key="GitKaySecondaryTextBrush" Color="#3D444D" />
+            <SolidColorBrush x:Key="GitKayMutedTextBrush" Color="#4F5761" />
             <SolidColorBrush x:Key="GitKayAccentBrush" Color="#0969DA" />
             <SolidColorBrush x:Key="GitKayAccentMutedBrush" Color="#DDF4FF" />
             <SolidColorBrush x:Key="GitKayAddedBrush" Color="#EFFBF2" />

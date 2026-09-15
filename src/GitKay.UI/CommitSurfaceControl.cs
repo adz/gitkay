@@ -287,7 +287,7 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         var badgeX = subjectX + 5;
         if (!_filtered && commit.RefBadges.Count > 0) {
             // Like gitk: a line from the commit's node runs out to its branches and tags and strings them together.
-            var badgesEnd = badgeX + commit.RefBadges.Sum(badge => Layout(badge.Text, 11, Brushes.Transparent, TextTypeface).Width + 16) - 10;
+            var badgesEnd = badgeX + commit.RefBadges.Sum(badge => Layout(badge.Text, 11, Brushes.Transparent, TextTypeface).Width + (badge.Kind == CommitRefKind.Tag ? 19 : 16)) - 10;
             var connector = new Pen(_laneBrushes[Math.Abs(commit.GraphColor) % _laneBrushes.Length], 1.25);
             var nodeX = LaneX(commit.Lane);
             using (context.PushOpacity(0.7))
@@ -433,10 +433,33 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         var background = ThemeBrush($"GitKayRef{key}Background", RefPillFallbacks[index].Background);
         var foreground = ThemeBrush($"GitKayRef{key}Foreground", RefPillFallbacks[index].Foreground);
         var text = Layout(badge.Text, 11, foreground, TextTypeface);
-        var width = text.Width + 12;
-        context.DrawRectangle(background, null, new Rect(x, y + 3, width, 16), 8, 8);
+        const double top = 3, height = 16, point = 7;
+        if (badge.Kind == CommitRefKind.Tag) {
+            // A luggage tag, as gitk draws them: pointed left end with a hole, text in the body.
+            var width = point + text.Width + 8;
+            var geometry = new StreamGeometry();
+            using (var sink = geometry.Open()) {
+                var middle = y + top + height / 2;
+                sink.BeginFigure(new Point(x, middle), true);
+                sink.LineTo(new Point(x + point, y + top));
+                sink.LineTo(new Point(x + width - 2, y + top));
+                sink.ArcTo(new Point(x + width, y + top + 2), new Size(2, 2), 0, false, SweepDirection.Clockwise);
+                sink.LineTo(new Point(x + width, y + top + height - 2));
+                sink.ArcTo(new Point(x + width - 2, y + top + height), new Size(2, 2), 0, false, SweepDirection.Clockwise);
+                sink.LineTo(new Point(x + point, y + top + height));
+                sink.EndFigure(true);
+            }
+            context.DrawGeometry(background, new Pen(foreground, 1, lineJoin: PenLineJoin.Round), geometry);
+            context.DrawEllipse(ThemeBrush("GitKayWindowBrush", WindowFallback), new Pen(foreground, 1), new Point(x + point - 1, y + top + height / 2), 1.6, 1.6);
+            context.DrawText(text, new Point(x + point + 3, y + 4));
+            return width + 4;
+        }
+
+        var pillWidth = text.Width + 12;
+        // Branches and remotes are boxes, as in gitk.
+        context.DrawRectangle(background, null, new Rect(x + 0.5, y + top + 0.5, pillWidth - 1, height - 1), 3, 3);
         context.DrawText(text, new Point(x + 6, y + 4));
-        return width + 4;
+        return pillWidth + 4;
     }
 
     private void DrawText(DrawingContext context, string text, double x, double y, double size, IBrush brush, Typeface typeface) =>
