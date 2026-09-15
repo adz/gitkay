@@ -19,6 +19,15 @@
 - Keep commit selection fast. Expensive work should be lazy, cancellable, and scoped to the current selection.
 - File selection in the diff view should drive focus in the left pane rather than only rendering a list.
 
+## Visual Stability (non-negotiable)
+- **Nothing the user is looking at may jump.** Disorienting jolts are a major antipattern: treat them as bugs, not polish.
+- Opening a prompt, bar, banner or panel must not resize or shift the content under it. Overlay transient UI (search
+  prompts, palettes, status messages) on top of content, or reserve its space up front.
+- Never lose the scroll position or the focused row: collapsing, expanding, refreshing, rescanning, reloading or
+  re-rendering keeps what was on screen in the same place (anchor to the row the user sees, as sticky file headers do).
+- Content that loads late (images, diffs, counts) must not push what's already visible; anchor or reserve space.
+- Check it: take a before/after headless screenshot of any change that shows, hides or reloads UI, and compare positions.
+
 ## Error Handling Conventions
 - Prefer `Result` for expected failures and recoverable backend errors.
 - Use exceptions only for truly unexpected failures or for a top-level crash path that can be surfaced in a dialog.

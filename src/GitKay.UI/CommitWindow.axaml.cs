@@ -67,6 +67,8 @@ public sealed partial class CommitWindowProjection : ObservableObject {
     [ObservableProperty] private string _emptyDiffText = "Scanning…";
     [ObservableProperty] private string _branch = "";
     [ObservableProperty] private bool _isKeysOpen;
+    /// <summary>Ctrl held for a moment: each pane shows its Ctrl keys.</summary>
+    [ObservableProperty] private bool _isCtrlHintsVisible;
     [ObservableProperty] private bool _isSearchOpen;
     [ObservableProperty] private bool _isFilePaletteOpen;
     [ObservableProperty] private string _paletteQuery = "";
@@ -498,6 +500,8 @@ public partial class CommitWindow : Window, IVimCommands {
         Surface.KeyUp += (_, _) => projection.RefreshSelectionLabels();
         Surface.LineMenuOpening += AddLineMenuItems;
         AddHandler(KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
+        AddHandler(KeyUpEvent, OnWindowKeyUp, RoutingStrategies.Tunnel);
+        Deactivated += (_, _) => HideCtrlHints();
         InitializeSearch();
         AddHandler(GotFocusEvent, (_, _) => TrackPane(), RoutingStrategies.Bubble);
 
@@ -584,8 +588,44 @@ public partial class CommitWindow : Window, IVimCommands {
 
     // ----- Keys -----
 
+    // ----- Hold Ctrl for hints, as in the main window. -----
+
+    private int _ctrlHintGeneration;
+    private int _ctrlReleaseGeneration;
+    private bool _ctrlHintPending;
+
+    private void HideCtrlHints() {
+        _ctrlHintPending = false;
+        _ctrlHintGeneration++;
+        if (Projection != null) Projection.IsCtrlHintsVisible = false;
+    }
+
+    private async void ShowCtrlHintsAfterHold() {
+        var generation = ++_ctrlHintGeneration;
+        _ctrlHintPending = true;
+        await Task.Delay(400);
+        // Any other key or releasing Ctrl bumps the generation and cancels this.
+        if (generation != _ctrlHintGeneration || Projection == null) return;
+        _ctrlHintPending = false;
+        Projection.IsCtrlHintsVisible = true;
+    }
+
+    private async void OnWindowKeyUp(object? sender, KeyEventArgs e) {
+        if (e.Key is not (Key.LeftCtrl or Key.RightCtrl)) return;
+        // X11 auto-repeat can deliver a held key as release+press pairs; only a release not followed by a press counts.
+        var release = ++_ctrlReleaseGeneration;
+        await Task.Delay(60);
+        if (release == _ctrlReleaseGeneration) HideCtrlHints();
+    }
+
     private void OnWindowKeyDown(object? sender, KeyEventArgs e) {
         if (Projection is not { } projection) return;
+        if (e.Key is Key.LeftCtrl or Key.RightCtrl) {
+            _ctrlReleaseGeneration++;
+            if (!projection.IsCtrlHintsVisible && !_ctrlHintPending) ShowCtrlHintsAfterHold();
+            return;
+        }
+        HideCtrlHints();
         var pane = FocusedPane;
         var inMessage = pane == Pane.Message;
         var none = e.KeyModifiers == KeyModifiers.None;

@@ -433,7 +433,19 @@ internal static class UiInteractions {
             Settle();
             Console.WriteLine($"palette chose={projection.SelectedFile?.Path} open={projection.IsFilePaletteOpen}");
         }
+        if (label.Contains("jolt")) {
+            Avalonia.Headless.HeadlessWindowExtensions.KeyPressQwerty(window, Avalonia.Input.PhysicalKey.Digit3, Avalonia.Input.RawInputModifiers.Control);
+            Settle();
+            using (var before = Avalonia.Headless.HeadlessWindowExtensions.CaptureRenderedFrame(window)) before!.Save(output.Replace(".png", "-before.png"));
+            Avalonia.Headless.HeadlessWindowExtensions.KeyPressQwerty(window, Avalonia.Input.PhysicalKey.Slash, Avalonia.Input.RawInputModifiers.None);
+            Settle();
+        }
         if (label.Contains("keys")) projection.IsKeysOpen = true;
+        if (label.Contains("hints")) {
+            using (var before = Avalonia.Headless.HeadlessWindowExtensions.CaptureRenderedFrame(window)) before!.Save(output.Replace(".png", "-before.png"));
+            projection.IsCtrlHintsVisible = true;
+            Settle();
+        }
         if (label.Contains("message")) projection.Message = "Stage the first hunk\n\nShows the commit window in a screenshot.";
         Pump(window);
         using var frame = Avalonia.Headless.HeadlessWindowExtensions.CaptureRenderedFrame(window);

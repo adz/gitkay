@@ -83,6 +83,8 @@
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
+                    <!-- Hold Ctrl: hints overlay their panes without moving anything. -->
+                    <Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Row="1" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,10,0"><TextBlock Text="Ctrl+1  unstaged · Ctrl+I  stage all" /></Border>
                     <Border Grid.Row="2" Classes="bar stagedTitle" BorderThickness="0,1,0,1">
                         <Grid ColumnDefinitions="*,Auto">
                             <TextBlock Classes="sectionTitle" Text="{Binding StagedTitle}" />
@@ -105,6 +107,7 @@
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
+                    <Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Row="3" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,10,0"><TextBlock Text="Ctrl+2  staged · Ctrl+U  unstage" /></Border>
                 </Grid>
 
                 <GridSplitter Grid.Column="1" Width="1" Background="{DynamicResource GitKayBorderBrush}" ResizeDirection="Columns" />
@@ -112,18 +115,6 @@
                 <!-- The diff above the commit message, both beside the file lists. -->
                 <Grid Grid.Column="2" RowDefinitions="*,Auto,Auto,Auto">
                     <DockPanel Grid.Row="0">
-                        <!-- vim's / and ? over the diff: incremental, Enter keeps it for n / N, Esc goes back. -->
-                        <Border DockPanel.Dock="Bottom" IsVisible="{Binding IsSearchOpen}" Background="{DynamicResource GitKaySurfaceBrush}"
-                                BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="0,1,0,0" Padding="10,4">
-                            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6">
-                                <TextBlock x:Name="SearchPrefix" Text="/" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="13"
-                                           Foreground="{DynamicResource GitKayAccentBrush}" VerticalAlignment="Center" />
-                                <TextBox Grid.Column="1" x:Name="SearchBox" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12"
-                                         MinHeight="0" Padding="4,2" BorderThickness="0" Background="Transparent" />
-                                <TextBlock Grid.Column="2" x:Name="SearchInfo" FontSize="11" Foreground="{DynamicResource GitKayMutedTextBrush}"
-                                           VerticalAlignment="Center" Text="Enter keep · Esc cancel · ↑↓ history · Alt+R regex · Alt+C case" />
-                            </Grid>
-                        </Border>
                         <Border DockPanel.Dock="Top" Classes="bar">
                             <Grid ColumnDefinitions="*,Auto">
                                 <TextBlock Text="{Binding DiffTitle}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}"
@@ -154,6 +145,19 @@
                             </ScrollViewer>
                             <TextBlock Text="{Binding EmptyDiffText}" IsVisible="{Binding !HasSelectedFile}" FontSize="13"
                                        Foreground="{DynamicResource GitKayMutedTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,16,0"><TextBlock Text="Ctrl+3  diff · Ctrl+S  stage · Ctrl+F  find · Ctrl+P  go to file" /></Border>
+                            <!-- vim's / and ? overlaid on the diff's bottom edge, so opening it never moves the diff. -->
+                            <Border VerticalAlignment="Bottom" ZIndex="10" IsVisible="{Binding IsSearchOpen}" Background="{DynamicResource GitKaySurfaceBrush}"
+                                    BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="0,1,0,0" Padding="10,4">
+                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6">
+                                    <TextBlock x:Name="SearchPrefix" Text="/" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="13"
+                                               Foreground="{DynamicResource GitKayAccentBrush}" VerticalAlignment="Center" />
+                                    <TextBox Grid.Column="1" x:Name="SearchBox" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12"
+                                             MinHeight="0" Padding="4,2" BorderThickness="0" Background="Transparent" />
+                                    <TextBlock Grid.Column="2" x:Name="SearchInfo" FontSize="11" Foreground="{DynamicResource GitKayMutedTextBrush}"
+                                               VerticalAlignment="Center" Text="Enter keep · Esc cancel · ↑↓ history · Alt+R regex · Alt+C case" />
+                                </Grid>
+                            </Border>
                         </Panel>
                     </DockPanel>
 
@@ -178,6 +182,7 @@
                                 <CheckBox Grid.Column="2" IsChecked="{Binding Amend, Mode=TwoWay}" Content="Amend last commit" FontSize="12"
                                           ToolTip.Tip="Replace the last commit (Ctrl+Shift+A)" />
                             </Grid>
+                            <Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Row="1" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,10,0"><TextBlock Text="Ctrl+4  message · Ctrl+Enter  commit · Ctrl+S  sign off" /></Border>
                             <TextBox Grid.Row="1" x:Name="MessageBox" Text="{Binding Message, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap"
                                      Height="120" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12"
                                      Watermark="Subject line&#10;&#10;Why the change was made" />
