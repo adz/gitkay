@@ -18,7 +18,7 @@
                 <Style Selector="Border.statusBar">
                     <Setter Property="Background" Value="{DynamicResource GitKayWindowBrush}" />
                 </Style>
-                <Style Selector="Border.statusBar > TextBlock">
+                <Style Selector="Border.statusBar > Panel > TextBlock">
                     <Setter Property="Foreground" Value="{DynamicResource GitKaySecondaryTextBrush}" />
                 </Style>
                 <!-- Errors are easy to miss in a quiet footer: tint it and pulse when a new one arrives. -->
@@ -26,7 +26,7 @@
                     <Setter Property="Background" Value="{DynamicResource GitKayRemovedAccentBrush}" />
                     <Setter Property="BorderBrush" Value="{DynamicResource GitKayRemovedAccentBrush}" />
                 </Style>
-                <Style Selector="Border.statusBar.error > TextBlock">
+                <Style Selector="Border.statusBar.error > Panel > TextBlock">
                     <Setter Property="Foreground" Value="White" />
                     <Setter Property="FontWeight" Value="SemiBold" />
                 </Style>
@@ -39,7 +39,29 @@
                     </Style.Animations>
                 </Style>
             </Border.Styles>
-            <TextBlock Text="{Binding Status}" FontSize="11" />
+            <Panel>
+                <TextBlock Text="{Binding Status}" FontSize="11" IsVisible="{Binding !IsSearchPromptOpen}" />
+                <!-- vim's / and ? prompt: incremental search; Enter keeps it for n / N, Esc cancels. -->
+                <Grid x:Name="SearchPrompt" ColumnDefinitions="Auto,*,Auto" IsVisible="{Binding IsSearchPromptOpen}">
+                    <TextBlock x:Name="SearchPromptPrefix" Grid.Column="0" Text="/" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12"
+                               Foreground="{DynamicResource GitKayAccentBrush}" VerticalAlignment="Center" Margin="0,0,4,0" />
+                    <TextBox x:Name="SearchPromptBox" Grid.Column="1" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12"
+                             MinHeight="0" Padding="0" BorderThickness="0" Background="Transparent" VerticalAlignment="Center">
+                        <TextBox.Styles>
+                            <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
+                                <Setter Property="Background" Value="Transparent" />
+                                <Setter Property="BorderThickness" Value="0" />
+                            </Style>
+                            <Style Selector="TextBox:pointerover /template/ Border#PART_BorderElement">
+                                <Setter Property="Background" Value="Transparent" />
+                                <Setter Property="BorderThickness" Value="0" />
+                            </Style>
+                        </TextBox.Styles>
+                    </TextBox>
+                    <TextBlock x:Name="SearchPromptInfo" Grid.Column="2" FontSize="11" Foreground="{DynamicResource GitKaySecondaryTextBrush}"
+                               VerticalAlignment="Center" Margin="8,0,0,0" ToolTip.Tip="Alt+R regex / literal · Alt+C case · /i ignore case · \V literal · Up / Down history" />
+                </Grid>
+            </Panel>
         </Border>
 
         <Grid>
@@ -874,7 +896,7 @@
             </Border>
         </Border>
 
-        <!-- Keyboard shortcut sheet: ? or F1. -->
+        <!-- Keyboard shortcut sheet: F1 (or ? outside the panes). -->
         <Border IsVisible="{Binding IsShortcutHelpOpen}" Classes="fadeIn"
                 Background="#66000000"
                 ZIndex="30"
@@ -887,7 +909,7 @@
                 <StackPanel>
                     <Grid ColumnDefinitions="*,Auto">
                         <TextBlock Text="Keyboard shortcuts" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource GitKayTextBrush}" />
-                        <TextBlock Grid.Column="1" Text="? or Esc to close" FontSize="11" VerticalAlignment="Center" Foreground="{DynamicResource GitKayMutedTextBrush}" />
+                        <TextBlock Grid.Column="1" Text="F1 or Esc to close" FontSize="11" VerticalAlignment="Center" Foreground="{DynamicResource GitKayMutedTextBrush}" />
                     </Grid>
                     <StackPanel>
                         <TextBlock Text="General" FontWeight="SemiBold" FontSize="12" Margin="0,10,0,4" Foreground="{DynamicResource GitKayAccentBrush}" />
@@ -896,7 +918,7 @@
                             <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Search commits — or the diff, when the diff has focus" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
                         </Grid>
                         <Grid ColumnDefinitions="200,*" Margin="0,2">
-                            <TextBlock Text="?  or  F1" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="F1" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Show or hide these shortcuts — or hold Ctrl to see Ctrl shortcuts on screen" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
                         </Grid>
                         <Grid ColumnDefinitions="200,*" Margin="0,2">
@@ -1001,7 +1023,7 @@
                         </Grid>
                         <Grid ColumnDefinitions="200,*" Margin="0,2">
                             <TextBlock Text="/ · ?" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Find in diff forwards · backwards (in the commit list, ? still opens this sheet; F1 anywhere)" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Search forwards · backwards in the status bar (regex, smartcase; /i ignores case, \V literal, Alt+R / Alt+C toggle); Enter keeps it for n / N, Esc cancels. Ctrl+F opens the find box. F1 opens this sheet" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
                         </Grid>
                         <Grid ColumnDefinitions="200,*" Margin="0,2">
                             <TextBlock Text="zz / zt / zb" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />

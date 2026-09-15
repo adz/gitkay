@@ -12,6 +12,7 @@ public interface IVimCommands {
     void GoToParent(int index);
     void GoToChild();
     void PaneCommand(Vim.VimPaneCommand command);
+    void OpenSearch(Vim.VimPane pane, bool forward);
 }
 
 internal static class VimKeys {
@@ -66,4 +67,5 @@ internal sealed class ListBoxVimHost(ListBox list, IVimCommands commands) : Vim.
     public void GoToParent(int index) => commands.GoToParent(index);
     public void GoToChild() => commands.GoToChild();
     public void PaneCommand(Vim.VimPaneCommand command) => commands.PaneCommand(command);
+    public void OpenSearch(bool forward) => commands.OpenSearch(Vim.VimPane.Files, forward);
 }

@@ -93,10 +93,24 @@ public partial class MainProjection {
     public event Action<DiffFileProjection>? FileJumpRequested;
 
     /// <summary>The status bar only appears for errors, progress and notices — not for "Loaded N commits".</summary>
-    public bool IsStatusVisible => !string.IsNullOrWhiteSpace(Status) && !Status.StartsWith("Loaded", StringComparison.Ordinal);
+    public bool IsStatusVisible => IsSearchPromptOpen || !string.IsNullOrWhiteSpace(Status) && !Status.StartsWith("Loaded", StringComparison.Ordinal);
+
+    /// <summary>The / or ? search prompt is showing in the status bar.</summary>
+    public bool IsSearchPromptOpen {
+        get => _isSearchPromptOpen;
+        set {
+            if (_isSearchPromptOpen == value) return;
+            _isSearchPromptOpen = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsStatusVisible));
+            OnPropertyChanged(nameof(IsStatusError));
+        }
+    }
+
+    private bool _isSearchPromptOpen;
 
     /// <summary>The status reports a failure, so the footer should draw attention to it.</summary>
-    public bool IsStatusError => IsErrorStatus(Status);
+    public bool IsStatusError => !IsSearchPromptOpen && IsErrorStatus(Status);
 
     internal static bool IsErrorStatus(string status) =>
         status.StartsWith("Error", StringComparison.OrdinalIgnoreCase)
@@ -304,7 +318,7 @@ public partial class MainProjection {
             Command("Copy commit hash", SelectedCommit?.FullHash ?? "", () => WindowCommandRequested?.Invoke("copy-hash"), "y"),
             Command("Copy commit subject", SelectedCommit?.Subject ?? "", () => WindowCommandRequested?.Invoke("copy-subject"), "Y"),
             Command("Reread refs", "Reload history from the repository", RereadRefs, "F5"),
-            Command("Keyboard shortcuts", "", () => IsShortcutHelpOpen = true, "?"),
+            Command("Keyboard shortcuts", "", () => IsShortcutHelpOpen = true, "F1"),
             Command("Settings…", "", () => WindowCommandRequested?.Invoke("settings")),
             Command("Show diagnostics", "Live Axial fibers, flows, failures, messages and log", () => WindowCommandRequested?.Invoke("diagnostics"), "Ctrl+Shift+D"),
         };

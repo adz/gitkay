@@ -96,6 +96,8 @@ module Vim =
         abstract GoToParent: index: int -> unit
         abstract GoToChild: unit -> unit
         abstract PaneCommand: command: VimPaneCommand -> unit
+        /// <summary>Opens the / (forward) or ? (backward) search prompt.</summary>
+        abstract OpenSearch: forward: bool -> unit
 
     [<Struct>]
     type CharFind =
@@ -123,6 +125,7 @@ module Vim =
         | GoToParent of index: int
         | GoToChild
         | PaneCommand of command: VimPaneCommand
+        | OpenSearch of forward: bool
 
         // Hand-written: the default structural ToString uses reflection that NativeAOT does not support.
         override this.ToString() =
@@ -146,6 +149,7 @@ module Vim =
             | GoToParent index -> $"GoToParent {index}"
             | GoToChild -> "GoToChild"
             | PaneCommand command -> $"PaneCommand {int command}"
+            | OpenSearch forward -> if forward then "OpenSearch forward" else "OpenSearch backward"
 
     /// <summary>A key waiting for the next one.</summary>
     type Pending =
@@ -397,6 +401,106 @@ module Vim =
                     until <- until + 1
                 text.Substring(start, until - start)
 
+    // ----- The / and ? search prompt -----
+
+    /// <summary>A search typed at the / or ? prompt, translated to a .NET regular expression.</summary>
+    /// <param name="Regex">
+    /// The expression to match with. Matchers compile it ignoring case, so a case-sensitive search starts with (?-i).
+    /// </param>
+    /// <param name="Error">Why the expression is invalid; null when it compiles.</param>
+    [<Struct>]
+    type SearchPattern =
+        { Regex: string
+          IgnoreCase: bool
+          Literal: bool
+          IsEmpty: bool
+          Error: string }
+
+    /// <summary>The index of the last / not escaped by a backslash, or -1.</summary>
+    let private lastUnescapedSlash (text: string) =
+        let mutable found = -1
+        let mutable i = 0
+        while i < text.Length do
+            if text[i] = '\\' then i <- i + 2
+            else
+                if text[i] = '/' then found <- i
+                i <- i + 1
+        found
+
+    /// <summary>
+    /// Parses prompt input the way vim reads a search, plus a trailing flag: regex by default with smartcase (all
+    /// lowercase ignores case), \c / \C or a trailing /i / /c to choose case, \V at the start for literal text,
+    /// \&lt; and \&gt; for word boundaries and \/ for a slash.
+    /// </summary>
+    let parseSearch (input: string) : SearchPattern =
+        let mutable text = if isNull input then "" else input
+        let mutable ignoreCase = ValueNone
+        let slash = lastUnescapedSlash text
+        if slash >= 0 && text.Substring(slash + 1) |> Seq.forall (fun c -> c = 'i' || c = 'c') then
+            for flag in text.Substring(slash + 1) do
+                ignoreCase <- ValueSome(flag = 'i')
+            text <- text.Substring(0, slash)
+
+        let literal = text.StartsWith "\\V"
+        if literal || text.StartsWith "\\v" then text <- text.Substring 2
+
+        let body = Text.StringBuilder()
+        let mutable hasUpper = false
+        let mutable i = 0
+        while i < text.Length do
+            let c = text[i]
+            if c = '\\' && i + 1 < text.Length then
+                match text[i + 1] with
+                | 'c' -> ignoreCase <- ValueSome true
+                | 'C' -> ignoreCase <- ValueSome false
+                | '/' -> body.Append '/' |> ignore
+                | ('<' | '>') when not literal -> body.Append @"\b" |> ignore
+                | '\\' when literal -> body.Append '\\' |> ignore
+                | next when literal -> body.Append('\\').Append(next) |> ignore
+                | next -> body.Append('\\').Append(next) |> ignore
+                i <- i + 2
+            else
+                if Char.IsUpper c then hasUpper <- true
+                body.Append c |> ignore
+                i <- i + 1
+
+        let caseInsensitive = ignoreCase |> ValueOption.defaultValue (not hasUpper)
+        let expression = if literal then Text.RegularExpressions.Regex.Escape(body.ToString()) else body.ToString()
+        let regex = (if caseInsensitive then "" else "(?-i)") + expression
+        let error =
+            if expression.Length = 0 then null
+            else
+                try
+                    Text.RegularExpressions.Regex(regex, Text.RegularExpressions.RegexOptions.IgnoreCase) |> ignore
+                    null
+                with :? ArgumentException as invalid -> invalid.Message
+        { Regex = regex
+          IgnoreCase = caseInsensitive
+          Literal = literal
+          IsEmpty = expression.Length = 0
+          Error = error }
+
+    /// <summary>The prompt's indicator text, e.g. "regex · ignore case".</summary>
+    let describeSearch (pattern: SearchPattern) =
+        (if pattern.Literal then "literal" else "regex") + " · " + (if pattern.IgnoreCase then "ignore case" else "match case")
+
+    /// <summary>Alt+C at the prompt: flips case sensitivity by rewriting the input's case flags.</summary>
+    let toggleSearchCase (input: string) =
+        let current = parseSearch input
+        let mutable text = if isNull input then "" else input
+        let slash = lastUnescapedSlash text
+        if slash >= 0 && text.Substring(slash + 1) |> Seq.forall (fun c -> c = 'i' || c = 'c') then
+            text <- text.Substring(0, slash)
+        text <- text.Replace(@"\c", "").Replace(@"\C", "")
+        text + (if current.IgnoreCase then "/c" else "/i")
+
+    /// <summary>Alt+R at the prompt: switches between regex and literal text with a leading \V.</summary>
+    let toggleSearchRegex (input: string) =
+        let text = if isNull input then "" else input
+        if text.StartsWith @"\V" then text.Substring 2
+        elif text.StartsWith @"\v" then @"\V" + text.Substring 2
+        else @"\V" + text
+
     // ----- Key interpretation -----
 
     let private symbolOf (stroke: KeyStroke) = if isNull stroke.Symbol then "" else stroke.Symbol
@@ -585,6 +689,7 @@ module Vim =
                     | _, "M" when context.Pane <> VimPane.Files -> handled cleared [ FocusScreenRow(VimScreenRow.Middle, 0) ]
                     | _, "L" when context.Pane <> VimPane.Files -> handled cleared [ FocusScreenRow(VimScreenRow.Bottom, count - 1) ]
                     | _, ("]" | "[") when context.Pane = VimPane.Diff -> handled { state with Pending = Prefix symbol[0] } []
+                    | _, ("/" | "?") -> handled cleared [ OpenSearch(symbol = "/") ]
                     | _, ("n" | "N") -> handled cleared (List.replicate count (FindNext(symbol = "n")))
                     | _, ("p" | "P") -> handled cleared [ GoToParent(if symbol = "P" then 1 else 0) ]
                     | _, "c" -> handled cleared [ GoToChild ]
@@ -657,6 +762,7 @@ module Vim =
         | GoToParent index -> host.GoToParent index
         | GoToChild -> host.GoToChild()
         | PaneCommand command -> host.PaneCommand command
+        | OpenSearch forward -> host.OpenSearch forward
 
     /// <summary>The vim key state for one window, shared by its panes.</summary>
     [<Sealed; AllowNullLiteral>]

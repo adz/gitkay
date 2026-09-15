@@ -475,6 +475,30 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         _scrollViewer.Offset = _scrollViewer.Offset.WithY(Math.Clamp(offset, 0, Math.Max(0, _rows.Length * RowHeight - viewport)));
     }
 
+    /// <summary>The commits shown, in order (only matches when the list is filtered).</summary>
+    public IReadOnlyList<CommitProjection> VisibleCommits {
+        get {
+            EnsureRows();
+            return _rows;
+        }
+    }
+
+    /// <summary>The commit keys act on: a keyboard move that hasn't settled yet, or the selection.</summary>
+    public CommitProjection? FocusedCommit => _keyboardSelection ?? SelectedItem;
+
+    public void FocusCommit(CommitProjection commit) {
+        EnsureRows();
+        var target = Array.IndexOf(_rows, commit);
+        if (target < 0) return;
+        var current = FocusedCommit is { } focused ? Array.IndexOf(_rows, focused) : -1;
+        MoveSelection(target - Math.Max(0, current));
+    }
+
+    public double ScrollOffset {
+        get => _scrollViewer?.Offset.Y ?? 0;
+        set { if (_scrollViewer != null) _scrollViewer.Offset = _scrollViewer.Offset.WithY(value); }
+    }
+
     // ----- vim keys: the commit list moves rows; commit-level actions go to the window. -----
 
     public IVimCommands? VimCommands { get; set; }
@@ -537,6 +561,7 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
     void GitKay.Core.Vim.IVimHost.GoToParent(int index) => VimCommands?.GoToParent(index);
     void GitKay.Core.Vim.IVimHost.GoToChild() => VimCommands?.GoToChild();
     void GitKay.Core.Vim.IVimHost.PaneCommand(GitKay.Core.Vim.VimPaneCommand command) => VimCommands?.PaneCommand(command);
+    void GitKay.Core.Vim.IVimHost.OpenSearch(bool forward) => VimCommands?.OpenSearch(GitKay.Core.Vim.VimPane.Commits, forward);
 
     public void ScrollIntoView(CommitProjection item) {
         EnsureRows();

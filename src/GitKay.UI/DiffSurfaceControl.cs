@@ -1793,6 +1793,18 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     void GitKay.Core.Vim.IVimHost.PaneCommand(GitKay.Core.Vim.VimPaneCommand command) => VimCommands?.PaneCommand(command);
 
+    void GitKay.Core.Vim.IVimHost.OpenSearch(bool forward) => VimCommands?.OpenSearch(GitKay.Core.Vim.VimPane.Diff, forward);
+
+    /// <summary>The caret and scroll position, so a cancelled search can put them back.</summary>
+    public (IDiffRowProjection? Row, int Caret, double Offset) SaveViewPosition() => (SelectedItem, _caretChar, _scrollViewer?.Offset.Y ?? 0);
+
+    public void RestoreViewPosition((IDiffRowProjection? Row, int Caret, double Offset) position) {
+        SelectedItem = position.Row;
+        _caretChar = position.Caret;
+        if (_scrollViewer != null) _scrollViewer.Offset = _scrollViewer.Offset.WithY(position.Offset);
+        InvalidateVisual();
+    }
+
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e) {
         if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.Delta.Y != 0) {
             CodeFontSize = Math.Clamp(CodeFontSize + Math.Sign(e.Delta.Y), 7, 32);

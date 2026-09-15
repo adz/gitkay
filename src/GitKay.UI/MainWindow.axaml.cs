@@ -27,6 +27,7 @@ public partial class MainWindow : Window, IVimCommands {
         InitializeComponent();
         Icon = AppIcon.Window;
         _filesVimHost = new ListBoxVimHost(DiffFilesListBox, this);
+        InitializeSearchPrompt();
         DiffRowsListBox.SharedVim = _vim;
         DiffRowsListBox.VimCommands = this;
         CommitListBox.VimCommands = this;
@@ -254,17 +255,9 @@ public partial class MainWindow : Window, IVimCommands {
             return;
         }
 
-        // ? (shift+/) or F1 toggles the shortcut sheet; Esc closes it.
+        // F1 toggles the shortcut sheet; so does ? outside the panes, where vim's ? search doesn't apply. Esc closes it.
         if (_projection is { } help) {
-            var questionMark = e.Key == Key.Oem2 && e.KeyModifiers == KeyModifiers.Shift && !typingInTextBox;
-            // In the diff, ? is vim's backward find; F1 still opens the shortcut sheet from anywhere.
-            if (questionMark && FocusedPane == Pane.Diff && !help.IsShortcutHelpOpen) {
-                help.DiffFindBackward = true;
-                CommitFindBox.Focus();
-                CommitFindBox.SelectAll();
-                e.Handled = true;
-                return;
-            }
+            var questionMark = e.Key == Key.Oem2 && e.KeyModifiers == KeyModifiers.Shift && !typingInTextBox && (FocusedPane == Pane.None || help.IsShortcutHelpOpen);
             if (e.Key == Key.F1 || questionMark) {
                 help.IsShortcutHelpOpen = !help.IsShortcutHelpOpen;
                 e.Handled = true;
@@ -278,8 +271,9 @@ public partial class MainWindow : Window, IVimCommands {
             }
         }
 
+        // In a pane, / and ? open vim's search prompt (Vim.step); elsewhere / focuses the search box like Ctrl+F.
         var ctrlF = e.Key == Key.F && e.KeyModifiers == KeyModifiers.Control;
-        var slash = e.Key == Key.Oem2 && e.KeyModifiers == KeyModifiers.None && !typingInTextBox;
+        var slash = e.Key == Key.Oem2 && e.KeyModifiers == KeyModifiers.None && !typingInTextBox && FocusedPane == Pane.None;
         if (!ctrlF && !slash) return;
 
         var target = IsDiffPaneFocused ? CommitFindBox : SearchBox;
@@ -842,6 +836,7 @@ public partial class MainWindow : Window, IVimCommands {
 
     void IVimCommands.FindNext(Vim.VimPane pane, bool forward) {
         if (_projection is not { } projection) return;
+        if (pane == Vim.VimPane.Commits && TryStepCommitQuickFind(forward)) return;
         if (pane == Vim.VimPane.Commits)
             (forward ? projection.FindNextCommitCommand : projection.FindPreviousCommitCommand).Execute(null);
         else

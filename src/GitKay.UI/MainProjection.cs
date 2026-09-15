@@ -1119,8 +1119,39 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         StepDiffFind(+1);
     }
 
+    /// <summary>
+    /// The / and ? prompt: sets the find text to a regex without resetting the selection, then moves from
+    /// <paramref name="origin"/> to the nearest matching row in the search direction, including the origin itself.
+    /// </summary>
+    public void SearchDiffFrom(string regex, bool forward, IDiffRowProjection? origin) {
+        _steppingFromSelection = true;
+        try {
+            CommitFindUseRegex = true;
+            CommitFindQuery = regex;
+        }
+        finally {
+            _steppingFromSelection = false;
+        }
+        DiffFindBackward = !forward;
+        SelectedDiffRow = origin;
+        StepDiffFind(forward ? +1 : -1, includeCurrent: true);
+    }
+
+    /// <summary>Puts back the find text and regex setting a cancelled / search replaced, without moving the selection.</summary>
+    public void RestoreDiffFind(string query, bool useRegex, bool backward) {
+        _steppingFromSelection = true;
+        try {
+            CommitFindUseRegex = useRegex;
+            CommitFindQuery = query;
+        }
+        finally {
+            _steppingFromSelection = false;
+        }
+        DiffFindBackward = backward;
+    }
+
     /// <summary>Moves the diff selection to the next or previous row containing the find text, wrapping.</summary>
-    private void StepDiffFind(int direction) {
+    private void StepDiffFind(int direction, bool includeCurrent = false) {
         // Your own find text wins; an empty box borrows the commit search's diff term without writing to the box.
         var ownQuery = CommitFindQuery.Trim();
         var borrowed = string.IsNullOrWhiteSpace(ownQuery);
@@ -1142,7 +1173,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         var currentIndex = SelectedDiffRow != null ? matches.FindIndex(row => ReferenceEquals(row, SelectedDiffRow)) : -1;
         int nextIndex;
         if (currentIndex >= 0) {
-            nextIndex = (currentIndex + direction + matches.Count) % matches.Count;
+            nextIndex = includeCurrent ? currentIndex : (currentIndex + direction + matches.Count) % matches.Count;
         }
         else if (SelectedDiffRow != null && SelectedDiffRows.IndexOf(SelectedDiffRow) is var focused && focused >= 0) {
             // From a row that doesn't match, step to the nearest match past it rather than restarting at the top.

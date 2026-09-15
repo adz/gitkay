@@ -330,3 +330,46 @@ module MainWindowPaneTests =
             window.Close()
             Headless.pump ()
             test <@ maximised && commitsHidden && commitsBack && after = before @>)
+
+module SearchPromptTests =
+    let private line number (content: string) : IDiffRowProjection =
+        DiffLineProjection({ Type = Models.Context; Content = content; OldLineNo = Some number; NewLineNo = Some number } : Models.DiffLine)
+
+    [<Fact>]
+    let ``slash searches the diff from the status bar; Enter keeps it for n, Esc restores`` () =
+        Headless.run (fun () ->
+            let projection = MainProjection()
+            let window = MainWindow(Width = 1200.0, Height = 800.0, DataContext = projection)
+            window.Show()
+            Headless.pump ()
+            let rows = [ line 1 "let alpha = 1"; line 2 "let Beta = 2"; line 3 "alpha + beta"; line 4 "done" ]
+            projection.SelectedDiffRows.AddRange rows
+            let diff = window.FindControl<DiffSurfaceControl>("DiffRowsListBox")
+            let prompt = window.FindControl<TextBox>("SearchPromptBox")
+            Headless.pump ()
+            diff.Focus() |> ignore
+            diff.SelectedItem <- rows[3]
+            Headless.pump ()
+            let press key symbol =
+                window.KeyPress(key, RawInputModifiers.None, PhysicalKey.None, symbol)
+                Headless.pump ()
+
+            press Key.Oem2 "/"
+            let opened = projection.IsSearchPromptOpen && prompt.IsFocused && (prompt.Text = "" || isNull prompt.Text)
+            prompt.Text <- "beta"                                   // smartcase: matches "Beta" and "beta"
+            Headless.pump ()
+            let incremental = Object.ReferenceEquals(projection.SelectedDiffRow, rows[1])
+            press Key.Enter null
+            let accepted = not projection.IsSearchPromptOpen && diff.IsFocused && projection.CommitFindQuery = "beta"
+            press Key.N "n"
+            let afterN = Object.ReferenceEquals(projection.SelectedDiffRow, rows[2])
+
+            press Key.Oem2 "/"
+            prompt.Text <- "done"
+            Headless.pump ()
+            let movedWhileTyping = Object.ReferenceEquals(projection.SelectedDiffRow, rows[3])
+            press Key.Escape null
+            let restored = Object.ReferenceEquals(projection.SelectedDiffRow, rows[2]) && projection.CommitFindQuery = "beta"
+            window.Close()
+            Headless.pump ()
+            test <@ [ opened; incremental; accepted; afterN; movedWhileTyping; restored ] = List.replicate 6 true @>)

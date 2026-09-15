@@ -202,6 +202,7 @@ type private RecordingHost() =
         member this.GoToParent index = this.Calls.Add $"parent {index}"
         member this.GoToChild() = this.Calls.Add "child"
         member this.PaneCommand command = this.Calls.Add $"pane {int command}"
+        member this.OpenSearch forward = this.Calls.Add $"search {forward}"
 
 [<Fact>]
 let ``a session keeps pending keys between presses and applies actions to the host`` () =
@@ -247,4 +248,45 @@ let ``Ctrl+W then a key switches, maximises or restores panes`` () =
     test <@ actions (diffContext 0) [ "C-w"; "=" ] = [ pane VimPaneCommand.Equalize ] @>
     // An unknown key after Ctrl+W is swallowed and clears the prefix; the next key works normally.
     test <@ actions commits [ "C-w"; "q"; "j" ] = [ "MoveRows 1" ] @>
+
+[<Fact>]
+let ``slash and question mark open the search prompt in any pane`` () =
+    test <@ actions (paneContext VimPane.Commits) [ "/" ] = [ "OpenSearch forward" ] @>
+    test <@ actions (diffContext 0) [ "?" ] = [ "OpenSearch backward" ] @>
+
+[<Theory>]
+[<InlineData("foo", "foo", true, false)>]
+[<InlineData("Foo", "(?-i)Foo", false, false)>]
+[<InlineData("foo/i", "foo", true, false)>]
+[<InlineData("Foo/i", "Foo", true, false)>]
+[<InlineData("foo/c", "(?-i)foo", false, false)>]
+[<InlineData(@"Foo\c", "Foo", true, false)>]
+[<InlineData(@"foo\C", "(?-i)foo", false, false)>]
+[<InlineData(@"\<id\>", @"\bid\b", true, false)>]
+[<InlineData(@"\Va.b(c", @"a\.b\(c", true, true)>]
+[<InlineData(@"a\/b", "a/b", true, false)>]
+[<InlineData(@"\vx+", "x+", true, false)>]
+[<InlineData("path/to", "path/to", true, false)>]
+[<InlineData("foo/", "foo", true, false)>]
+[<InlineData(@"\d+ \S", @"\d+ \S", true, false)>]
+let ``search prompt input parses like vim`` (input: string, regex: string, ignoreCase: bool, literal: bool) =
+    let pattern = parseSearch input
+    let parsed = (pattern.Regex, pattern.IgnoreCase, pattern.Literal, isNull pattern.Error)
+    test <@ parsed = (regex, ignoreCase, literal, true) @>
+
+[<Fact>]
+let ``search prompt reports invalid expressions and describes flags`` () =
+    let brokenError = (parseSearch "a(b").Error
+    let emptyIsEmpty = (parseSearch "").IsEmpty
+    test <@ not (isNull brokenError) && emptyIsEmpty @>
+    test <@ describeSearch (parseSearch "Foo") = "regex · match case" @>
+    test <@ describeSearch (parseSearch @"\Vfoo") = "literal · ignore case" @>
+
+[<Fact>]
+let ``Alt+C and Alt+R rewrite the prompt input`` () =
+    test <@ toggleSearchCase "foo" = "foo/c" @>
+    test <@ toggleSearchCase "foo/c" = "foo/i" @>
+    test <@ toggleSearchCase @"Foo\c" = "Foo/c" @>
+    test <@ toggleSearchRegex "a.b" = @"\Va.b" @>
+    test <@ toggleSearchRegex @"\Va.b" = "a.b" @>
 
