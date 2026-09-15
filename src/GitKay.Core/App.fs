@@ -485,7 +485,13 @@ module App =
         | WorkingTreeStatusLoaded (Ok entries) ->
             let changed = entries <> model.WorkingTree
 
-            if model.IsWorkingTreeSelected && changed then
+            if model.IsWorkingTreeSelected && entries.IsEmpty then
+                // Everything was committed or discarded: the row goes, so select the newest commit instead.
+                let nextModel = { model with WorkingTree = []; WorkingTreeChanges = None; WorkingTreeStartedAtTicks = None; Selection = NoSelection }
+                match model.Commits with
+                | first :: _ -> nextModel, Cmd.ofMsg (SelectCommit(first.Commit.Hash, Stopwatch.GetTimestamp()))
+                | [] -> nextModel, Cmd.none
+            elif model.IsWorkingTreeSelected && changed then
                 let startedAtTicks = Stopwatch.GetTimestamp()
                 { model with WorkingTree = entries; WorkingTreeStartedAtTicks = Some startedAtTicks },
                 startWorkingTreeChangesLoad model.GitEnv model.DiffContextLines startedAtTicks

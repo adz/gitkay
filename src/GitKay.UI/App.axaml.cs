@@ -121,6 +121,10 @@ public partial class App : Application {
                 dispatch => projection.SetDispatch(dispatch)
             );
 
+            var watcher = WorkingTreeWatcher.TryStart(projection.WorkingDirectory, repoKey,
+                () => Dispatcher.UIThread.Post(projection.RefreshWorkingTree));
+            mainWindow.Activated += (_, _) => projection.RefreshWorkingTree();
+
             desktop.Exit += (s, e) => {
                 if (!string.IsNullOrWhiteSpace(repoKey) && projection.SelectedCommit is { IsWorkingTree: false }) {
                     currentUiState = UiStateModule.withSelectedCommit(repoKey, projection.SelectedCommit.FullHash, currentUiState);
@@ -131,6 +135,7 @@ public partial class App : Application {
                 uiStateStore.Save(currentUiState);
                 uiStateStore.SaveSearchHistory(projection.RecentSearches);
                 uiStateStore.SaveViewPreferences(projection.CaptureViewPreferences());
+                watcher?.Dispose();
                 ((IDisposable)host).Dispose();
                 GitKay.Core.App.stopRuntime();
             };

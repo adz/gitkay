@@ -662,8 +662,9 @@ module GitService =
         |> List.filter (fun (_, files) -> not files.IsEmpty)
 
     // Paths are printed as-is (not octal-escaped) and diffs ignore external diff drivers and colour configuration.
+    // --no-optional-locks: status mustn't rewrite the index, or the working tree watcher would see its own refresh.
     let private plainGit (arguments: string list) =
-        executeGitCommand ([ "-c"; "core.quotePath=false"; "-c"; "color.ui=false"; "-c"; "diff.noprefix=false"; "-c"; "diff.mnemonicPrefix=false" ] @ arguments)
+        executeGitCommand ([ "--no-optional-locks"; "-c"; "core.quotePath=false"; "-c"; "color.ui=false"; "-c"; "diff.noprefix=false"; "-c"; "diff.mnemonicPrefix=false" ] @ arguments)
 
     /// <summary>What <c>git status</c> reports for the working tree and index.</summary>
     let fetchWorkingTreeStatus : Flow<GitEnv, GitError, WorkingTree.Entry list> =

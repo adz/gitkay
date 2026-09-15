@@ -1398,6 +1398,13 @@ module AppTests =
         test <@ changed.WorkingTreeStartedAtTicks.IsSome @>
 
     [<Fact>]
+    let ``a clean working tree moves the selection off the uncommitted changes row`` () =
+        let a = sampleCommit "a" "subject"
+        let selected = { emptyModel with Commits = Graph.calculateLanes [ a ]; Selection = App.WorkingTreeSelected; WorkingTree = [ workingEntry "a.txt" ] }
+        let next, _ = App.update (App.Msg.WorkingTreeStatusLoaded(Ok [])) selected
+        test <@ next.Selection = App.NoSelection && next.WorkingTree.IsEmpty && next.WorkingTreeChanges.IsNone @>
+
+    [<Fact>]
     let ``history reload keeps the working tree row selected`` () =
         let a = sampleCommit "a" "subject"
         let selected = { emptyModel with Selection = App.WorkingTreeSelected }
@@ -2917,6 +2924,31 @@ module DiffSearchBorrowTests =
         projection.ToggleDiffSection "Staged"
         let headers = projection.SelectedDiffRows |> Seq.filter (fun row -> row :? DiffFileHeaderProjection) |> Seq.length
         test <@ headers = 2 @>
+
+    [<Fact>]
+    let ``working tree watcher reports edits once, index changes, and ignores other git files`` () =
+        let root = IO.Path.Combine(IO.Path.GetTempPath(), "gitkay-watch-" + Guid.NewGuid().ToString("N"))
+        let gitDir = IO.Path.Combine(root, ".git")
+        IO.Directory.CreateDirectory(IO.Path.Combine(gitDir, "objects")) |> ignore
+        try
+            let mutable count = 0
+            use watcher = WorkingTreeWatcher.TryStart(root, gitDir, fun () -> Threading.Interlocked.Increment(&count) |> ignore)
+            test <@ not (isNull watcher) @>
+            let settle () = Threading.Thread.Sleep 900
+
+            IO.File.WriteAllText(IO.Path.Combine(gitDir, "objects", "ab"), "x")
+            settle ()
+            test <@ count = 0 @>
+
+            for i in 1..5 do IO.File.WriteAllText(IO.Path.Combine(root, $"file{i}.txt"), "x")
+            settle ()
+            test <@ count = 1 @>
+
+            IO.File.WriteAllText(IO.Path.Combine(gitDir, "index"), "x")
+            settle ()
+            test <@ count = 2 @>
+        finally
+            IO.Directory.Delete(root, true)
 
 module PaletteTests =
 

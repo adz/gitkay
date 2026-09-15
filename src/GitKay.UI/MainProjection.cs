@@ -770,6 +770,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         _dispatch = dispatch;
     }
 
+    /// <summary>Rereads git status: the working tree changed on disk, or the window regained focus.</summary>
+    public void RefreshWorkingTree() => _dispatch?.Invoke(GitKay.Core.App.Msg.RefreshWorkingTree);
+
     public void LogFirstPaint() {
         if (_firstPaintLogged) {
             return;
