@@ -664,18 +664,21 @@ module GitService =
     // Paths are printed as-is (not octal-escaped) and diffs ignore external diff drivers and colour configuration.
     // --no-optional-locks: status mustn't rewrite the index, or the working tree watcher would see its own refresh.
     // Runs in the working tree: status and diff fail inside the git directory, which is what RepoPath names.
-    let private plainGit (arguments: string list) =
+    let private workTreeGit (input: string option) (arguments: string list) =
         flow {
             let! repoPath = Flow.envWith _.RepoPath
             let directory = match workingDirectory repoPath with null -> repoPath | directory -> directory
             let arguments = [ "--no-optional-locks"; "-c"; "core.quotePath=false"; "-c"; "color.ui=false"; "-c"; "diff.noprefix=false"; "-c"; "diff.mnemonicPrefix=false" ] @ arguments
+            let spec = Process.commandArgs "git" arguments |> Process.workingDirectory directory
+            let spec = match input with Some text -> spec |> Process.stdin (DSL.Input.text text) | None -> spec
             return!
-                Process.commandArgs "git" arguments
-                |> Process.workingDirectory directory
+                spec
                 |> Process.capture
                 |> Flow.map _.StdOut
                 |> Flow.mapError (fun error -> GitError.GitProcessFailed(arguments, error))
         }
+
+    let private plainGit (arguments: string list) = workTreeGit None arguments
 
     /// <summary>What <c>git status</c> reports for the working tree and index.</summary>
     let fetchWorkingTreeStatus : Flow<GitEnv, GitError, WorkingTree.Entry list> =
@@ -737,6 +740,85 @@ module GitService =
     /// <summary>Runs <see cref="fetchWorkingTreeFile"/> for a repository, for callers outside Elmish.</summary>
     let loadWorkingTreeFile (repoPath: string) (section: WorkingTree.Section) (oldPath: string) (newPath: string) : Result<FileDiff, GitError> =
         Flow.run (environment repoPath) (fetchWorkingTreeFile section oldPath newPath) |> Exit.toResult
+
+    // ----- Staging and committing, for the commit window (see dev-docs/commit-window-plan.md) -----
+
+    /// <summary>One file's raw diff in a section, with three lines of context, as patches are built from it.</summary>
+    let fetchRawFileDiff (section: WorkingTree.Section) (path: string) : Flow<GitEnv, GitError, string> =
+        let staged = if section = WorkingTree.Staged then [ "--cached" ] else []
+        plainGit ([ "diff" ] @ staged @ [ "--no-ext-diff"; "-U3"; "--"; path ])
+
+    /// <summary>Stages whole files, including deletions and untracked files.</summary>
+    let stageFiles (paths: string list) : Flow<GitEnv, GitError, unit> =
+        if paths.IsEmpty then Flow.succeed ()
+        else plainGit ([ "add"; "--all"; "--" ] @ paths) |> Flow.map ignore
+
+    /// <summary>Unstages whole files back to HEAD; before the first commit, removes them from the index.</summary>
+    let unstageFiles (paths: string list) : Flow<GitEnv, GitError, unit> =
+        if paths.IsEmpty then Flow.succeed ()
+        else
+            flow {
+                let! hasHead = plainGit [ "rev-parse"; "--verify"; "--quiet"; "HEAD" ] |> Flow.map (fun _ -> true) |> Flow.orElseWith (fun _ -> Flow.ok false)
+                if hasHead then
+                    do! plainGit ([ "restore"; "--staged"; "--" ] @ paths) |> Flow.map ignore
+                else
+                    do! plainGit ([ "rm"; "--cached"; "--quiet"; "--" ] @ paths) |> Flow.map ignore
+            }
+
+    /// <summary>How a built patch is applied.</summary>
+    type PatchTarget =
+        /// <summary>Adds the patch's changes to the index.</summary>
+        | StageInIndex
+        /// <summary>Takes the patch's changes back out of the index.</summary>
+        | UnstageFromIndex
+        /// <summary>Removes the patch's changes from the working tree files.</summary>
+        | DiscardFromWorkingTree
+
+    /// <summary>Applies a patch built by <see cref="PatchBuilder.build"/>.</summary>
+    let applyPatch (target: PatchTarget) (patch: string) : Flow<GitEnv, GitError, unit> =
+        let options =
+            match target with
+            | StageInIndex -> [ "--cached" ]
+            | UnstageFromIndex -> [ "--cached"; "--reverse" ]
+            | DiscardFromWorkingTree -> [ "--reverse" ]
+        workTreeGit (Some patch) ([ "apply"; "--whitespace=nowarn" ] @ options @ [ "-" ]) |> Flow.map ignore
+
+    /// <summary>Stages, unstages or discards the chosen lines of one file.</summary>
+    let applyLines (target: PatchTarget) (path: string) (lines: PatchBuilder.SelectedLine list) : Flow<GitEnv, GitError, unit> =
+        flow {
+            let section, direction =
+                match target with
+                | StageInIndex | DiscardFromWorkingTree -> WorkingTree.Unstaged, PatchBuilder.Forward
+                | UnstageFromIndex -> WorkingTree.Staged, PatchBuilder.Reverse
+            let! raw = fetchRawFileDiff section path
+            match PatchBuilder.build direction raw lines with
+            | Ok patch -> do! applyPatch target patch
+            | Error error -> return! Flow.fail (GitError.OperationFailed("Apply lines", PatchBuilder.describeError error))
+        }
+
+    /// <summary>Throws away working tree changes to whole files; untracked files are deleted.</summary>
+    let discardFiles (tracked: string list) (untracked: string list) : Flow<GitEnv, GitError, unit> =
+        flow {
+            if not tracked.IsEmpty then
+                do! plainGit ([ "restore"; "--worktree"; "--" ] @ tracked) |> Flow.map ignore
+            if not untracked.IsEmpty then
+                do! plainGit ([ "clean"; "--force"; "--quiet"; "--" ] @ untracked) |> Flow.map ignore
+        }
+
+    /// <summary>The last commit's full message, for amending; empty before the first commit.</summary>
+    let fetchLastCommitMessage : Flow<GitEnv, GitError, string> =
+        plainGit [ "log"; "-1"; "--format=%B" ] |> Flow.orElseWith (fun _ -> Flow.ok "")
+
+    type CommitOptions = { Amend: bool; SignOff: bool }
+
+    /// <summary>Commits the index with the message on stdin, running hooks; the error carries their output.</summary>
+    let commit (options: CommitOptions) (message: string) : Flow<GitEnv, GitError, unit> =
+        let flags =
+            [ if options.Amend then
+                  "--amend"
+              if options.SignOff then
+                  "--signoff" ]
+        workTreeGit (Some message) ([ "commit"; "--file=-"; "--cleanup=strip" ] @ flags) |> Flow.map ignore
 
     /// Every file path in a commit's tree, for the "All files" list. Submodules and other non-blob entries are skipped.
     let listCommitFiles (repoPath: string) (hash: string) : Result<string list, GitError> =

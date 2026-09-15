@@ -21,6 +21,7 @@
     <Compile Include="Git\Internal\RepositoryDiscovery.fs" />
     <Compile Include="Git\Search.fs" />
     <Compile Include="Git\WorkingTree.fs" />
+    <Compile Include="Git\PatchBuilder.fs" />
     <Compile Include="Git\Startup.fs" />
     <Compile Include="Git\Parsing.fs" />
     <Compile Include="Git\Internal\History.fs" />

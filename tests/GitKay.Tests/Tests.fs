@@ -865,6 +865,106 @@ summary Another line
                 test <@ changed unstaged = [ "29"; "twenty-nine" ] && lineCount unstaged = 30 @>
             | Error error, _ | _, Error error -> failwith (GitError.describe error))
 
+    // ----- Commit window: building partial patches and applying them with git -----
+
+    let private numbered (lines: string list) = String.concat "\n" lines + "\n"
+
+    /// Selected lines of a file's diff, by hunk and position, read from the parsed diff so the numbering matches the UI.
+    let private pick (raw: string) (choose: int -> int -> Models.DiffLine -> bool) =
+        match WorkingTree.parsePatch raw with
+        | file :: _ ->
+            file.Hunks
+            |> List.mapi (fun hunkIndex hunk ->
+                hunk.Lines
+                |> List.mapi (fun lineIndex line -> hunkIndex, lineIndex, line)
+                |> List.filter (fun (h, l, line) -> line.Type <> Models.Context && choose h l line))
+            |> List.concat
+            |> List.map (fun (h, l, line) -> ({ Hunk = h; Line = l; Type = line.Type; Content = line.Content } : PatchBuilder.SelectedLine))
+        | [] -> []
+
+    let private run gitDir flow =
+        match runFlow gitDir flow with
+        | Ok value -> value
+        | Error error -> failwith (GitError.describe error)
+
+    [<Fact>]
+    let ``staging chosen lines stages only those lines`` () =
+        withTempRepository (fun root repo ->
+            let gitDir = Path.Combine(root, ".git")
+            commitFile repo root "a.txt" (numbered [ "1"; "2"; "3"; "4"; "5"; "6"; "7"; "8"; "9"; "10"; "11"; "12" ]) "init" |> ignore
+            writeFile root "a.txt" (numbered [ "1"; "TWO"; "3"; "4"; "5"; "6"; "7"; "8"; "9"; "10"; "ELEVEN"; "12"; "13" ])
+            let raw = run gitDir (GitService.fetchRawFileDiff WorkingTree.Unstaged "a.txt")
+            // Stage only "ELEVEN" replacing "11" (the second hunk), leaving "TWO" and the added "13" unstaged.
+            let chosen = pick raw (fun _ _ line -> line.Content = "11" || line.Content = "ELEVEN")
+            run gitDir (GitService.applyLines GitService.StageInIndex "a.txt" chosen)
+            let staged = run gitDir (GitService.fetchRawFileDiff WorkingTree.Staged "a.txt")
+            let unstaged = run gitDir (GitService.fetchRawFileDiff WorkingTree.Unstaged "a.txt")
+            let changes (raw: string) = pick raw (fun _ _ _ -> true) |> List.map (fun line -> line.Type, line.Content)
+            test <@ changes staged = [ Models.Removed, "11"; Models.Added, "ELEVEN" ] @>
+            test <@ changes unstaged = [ Models.Removed, "2"; Models.Added, "TWO"; Models.Added, "13" ] @>
+            test <@ File.ReadAllText(Path.Combine(root, "a.txt")) = numbered [ "1"; "TWO"; "3"; "4"; "5"; "6"; "7"; "8"; "9"; "10"; "ELEVEN"; "12"; "13" ] @>)
+
+    [<Fact>]
+    let ``unstaging and discarding chosen lines touch only those lines`` () =
+        withTempRepository (fun root repo ->
+            let gitDir = Path.Combine(root, ".git")
+            commitFile repo root "a.txt" (numbered [ "one"; "two"; "three" ]) "init" |> ignore
+            writeFile root "a.txt" (numbered [ "one"; "TWO"; "three"; "four"; "five" ])
+            run gitDir (GitService.stageFiles [ "a.txt" ])
+            let staged = run gitDir (GitService.fetchRawFileDiff WorkingTree.Staged "a.txt")
+            // Unstage the added "five"; the rest stays staged.
+            run gitDir (GitService.applyLines GitService.UnstageFromIndex "a.txt" (pick staged (fun _ _ line -> line.Content = "five")))
+            let changes (raw: string) = pick raw (fun _ _ _ -> true) |> List.map (fun line -> line.Type, line.Content)
+            test <@ changes (run gitDir (GitService.fetchRawFileDiff WorkingTree.Staged "a.txt")) = [ Models.Removed, "two"; Models.Added, "TWO"; Models.Added, "four" ] @>
+            test <@ changes (run gitDir (GitService.fetchRawFileDiff WorkingTree.Unstaged "a.txt")) = [ Models.Added, "five" ] @>
+            // Discard the unstaged "five" from the file itself.
+            let unstaged = run gitDir (GitService.fetchRawFileDiff WorkingTree.Unstaged "a.txt")
+            run gitDir (GitService.applyLines GitService.DiscardFromWorkingTree "a.txt" (pick unstaged (fun _ _ _ -> true)))
+            test <@ File.ReadAllText(Path.Combine(root, "a.txt")) = numbered [ "one"; "TWO"; "three"; "four" ] @>)
+
+    [<Fact>]
+    let ``patch building keeps no-newline markers and refuses a changed diff`` () =
+        let raw =
+            numbered
+                [ "diff --git a/a.txt b/a.txt"
+                  "--- a/a.txt"
+                  "+++ b/a.txt"
+                  "@@ -1,2 +1,2 @@"
+                  " one"
+                  "-two"
+                  "\\ No newline at end of file"
+                  "+TWO"
+                  "\\ No newline at end of file" ]
+        let all = pick raw (fun _ _ _ -> true)
+        match PatchBuilder.build PatchBuilder.Forward raw all with
+        | Ok patch -> test <@ patch.Contains "-two\n\\ No newline at end of file\n+TWO\n\\ No newline at end of file" @>
+        | Error error -> failwith (PatchBuilder.describeError error)
+        let stale = all |> List.map (fun line -> { line with Content = line.Content + "!" })
+        test <@ PatchBuilder.build PatchBuilder.Forward raw stale = Error PatchBuilder.DiffChanged @>
+        test <@ PatchBuilder.build PatchBuilder.Forward raw [] = Error PatchBuilder.NothingSelected @>
+
+    [<Fact>]
+    let ``commit uses the message, amends, and reports hook failures`` () =
+        withTempRepository (fun root repo ->
+            let gitDir = Path.Combine(root, ".git")
+            commitFile repo root "a.txt" "one\n" "init" |> ignore
+            writeFile root "a.txt" "two\n"
+            run gitDir (GitService.stageFiles [ "a.txt" ])
+            run gitDir (GitService.commit { Amend = false; SignOff = true } "Change a\n\nBody line\n")
+            let message = run gitDir GitService.fetchLastCommitMessage
+            test <@ message.StartsWith "Change a\n\nBody line\n" && message.Contains "Signed-off-by: GitKay Tests <gitkay@example.com>" @>
+            run gitDir (GitService.commit { Amend = true; SignOff = false } "Change a, amended\n")
+            test <@ (run gitDir GitService.fetchLastCommitMessage).StartsWith "Change a, amended" @>
+            let hook = Path.Combine(gitDir, "hooks", "pre-commit")
+            Directory.CreateDirectory(Path.GetDirectoryName hook) |> ignore
+            File.WriteAllText(hook, "#!/bin/sh\necho 'lint failed: tabs' >&2\nexit 1\n")
+            File.SetUnixFileMode(hook, UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute)
+            writeFile root "a.txt" "three\n"
+            run gitDir (GitService.stageFiles [ "a.txt" ])
+            match runFlow gitDir (GitService.commit { Amend = false; SignOff = false } "Blocked\n") with
+            | Ok () -> failwith "the hook should have stopped the commit"
+            | Error error -> test <@ (GitError.describe error).Contains "lint failed: tabs" @>)
+
 module AppTests =
 
     let private sampleCommit hash subject : Models.Commit =
