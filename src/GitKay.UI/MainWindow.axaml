@@ -199,8 +199,21 @@
                                     </Button>
                                 </StackPanel>
                             </Border>
+<StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+<!-- History is limited to what a branch or tag reaches: its name, with ✕ to go back. -->
+<Border IsVisible="{Binding HasHistoryTipFilter}" VerticalAlignment="Center"
+        Background="{DynamicResource GitKayAccentBrush}" CornerRadius="9" Padding="7,1,2,1"
+        ToolTip.Tip="{Binding HistoryTipFilterTip}">
+    <StackPanel Orientation="Horizontal" Spacing="3">
+        <TextBlock Text="{Binding HistoryTipFilter}" FontSize="10" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="White" MaxWidth="180" TextTrimming="CharacterEllipsis" />
+        <Button Classes="inline" Width="16" Height="16" Padding="0" Command="{Binding ClearHistoryTipFilterCommand}"
+                ToolTip.Tip="Back to the full history">
+            <PathIcon Width="7" Height="7" Data="M2,2 L14,14 M14,2 L2,14" Foreground="White" />
+        </Button>
+    </StackPanel>
+</Border>
 <!-- History is limited to a file: a compact marker; hover names the file, right-click or ✕ acts on it. -->
-<Border x:Name="FileFilterChip" Grid.Column="5" IsVisible="{Binding HasHistoryPathFilter}" VerticalAlignment="Center"
+<Border x:Name="FileFilterChip" IsVisible="{Binding HasHistoryPathFilter}" VerticalAlignment="Center"
         Background="{DynamicResource GitKayAccentBrush}" CornerRadius="9" Padding="7,1,2,1" Cursor="Hand"
         ToolTip.Tip="{Binding HistoryPathFilterTip}"
         ContextRequested="OnFileFilterChipContextRequested"
@@ -213,6 +226,7 @@
         </Button>
     </StackPanel>
 </Border>
+</StackPanel>
 <ToggleButton Grid.Column="4" Classes="expander" IsChecked="{Binding IsAdvancedSearchExpanded}" ToolTip.Tip="Advanced search — one field per input">
     <Panel Width="10" Height="10" VerticalAlignment="Center">
         <PathIcon Width="10" Height="10" Data="M2,5 L8,11 L14,5 L12.6,3.6 L8,8.2 L3.4,3.6 Z" IsVisible="{Binding !IsAdvancedSearchExpanded}" Foreground="{DynamicResource GitKaySecondaryTextBrush}" />

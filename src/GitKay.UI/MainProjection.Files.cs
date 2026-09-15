@@ -165,6 +165,24 @@ public partial class MainProjection {
     [ObservableProperty] private string _historyPathFilter = "";
     public bool HasHistoryPathFilter => HistoryPathFilter.Length > 0;
     public string HistoryPathFilterTip => $"History limited to commits touching {HistoryPathFilter}\nRight-click for actions";
+    /// <summary>The branches, tags or revisions history is limited to, or empty for HEAD / all branches.</summary>
+    [ObservableProperty] private string _historyTipFilter = "";
+    public bool HasHistoryTipFilter => HistoryTipFilter.Length > 0;
+    public string HistoryTipFilterTip => $"History limited to commits reachable from {HistoryTipFilter}";
+
+    partial void OnHistoryTipFilterChanged(string value) {
+        OnPropertyChanged(nameof(HasHistoryTipFilter));
+        OnPropertyChanged(nameof(HistoryTipFilterTip));
+    }
+
+    /// <summary>Shows the commits a branch, tag or commit reaches, from its head back, keeping any file filter.</summary>
+    public void ShowHistoryOf(string revision) {
+        SetHistoryTargets(GitKay.Core.GitStartup.historyOf(revision, _historyTargets).ToList());
+        Status = $"History of {revision}";
+    }
+
+    [RelayCommand]
+    public void ClearHistoryTipFilter() => SetHistoryTargets(GitKay.Core.GitStartup.withoutTips(_historyTargets).ToList());
 
     partial void OnHistoryPathFilterChanged(string value) {
         OnPropertyChanged(nameof(HasHistoryPathFilter));
@@ -178,11 +196,13 @@ public partial class MainProjection {
         try { IsAllBranches = targets.Any(target => target.IsAll); }
         finally { _suppressAllBranchesDispatch = false; }
         HistoryPathFilter = string.Join(", ", targets.OfType<GitKay.Core.GitStartup.StartupTarget.Path>().Select(path => path.Item));
+        HistoryTipFilter = string.Join(", ", GitKay.Core.GitStartup.tipNames(targets));
     }
 
     partial void OnIsAllBranchesChanged(bool value) {
         if (_suppressAllBranchesDispatch) return;
-        var targets = _historyTargets.Where(target => !target.IsAll).ToList();
+        // All branches replaces a branch or tag scope; either way a file filter stays.
+        var targets = GitKay.Core.GitStartup.withoutTips(_historyTargets).Where(target => !target.IsAll).ToList();
         if (value) targets.Insert(0, GitKay.Core.GitStartup.StartupTarget.All);
         SetHistoryTargets(targets);
     }
@@ -201,18 +221,9 @@ public partial class MainProjection {
     private void SetHistoryTargets(List<GitKay.Core.GitStartup.StartupTarget> targets) =>
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetHistoryTargets(Microsoft.FSharp.Collections.ListModule.OfSeq(targets)));
 
-    // ----- File actions: select, copy paths, whole file, VS Code. -----
+    // ----- File actions: copy paths, whole file, VS Code. -----
 
     public event Action<FileTarget>? WholeFileRequested;
-
-    public void SelectFile(FileTarget target) {
-        if (target.Changed is { } file) {
-            SelectedDiffFileListRow = file;
-            return;
-        }
-
-        SelectedDiffFileListRow = DiffFileListRows.OfType<RepoFileRow>().FirstOrDefault(row => row.Path == target.Path);
-    }
 
     public string FullPath(FileTarget target) =>
         System.IO.Path.GetFullPath(System.IO.Path.Combine(WorkingDirectory ?? "", target.Path.Replace('/', System.IO.Path.DirectorySeparatorChar)));

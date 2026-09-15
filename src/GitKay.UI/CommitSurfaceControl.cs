@@ -90,6 +90,8 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
 
     /// <summary>Raised by the row context menu: (field, value) where a null value asks the host to prompt for one.</summary>
     public event Action<string, string?>? FilterRequested;
+    /// <summary>History limited to what a branch or tag reaches was requested.</summary>
+    public event Action<string>? HistoryRequested;
 
     public double GraphWidth { get => GetValue(GraphWidthProperty); set => SetValue(GraphWidthProperty, value); }
     public double SubjectWidth { get => GetValue(SubjectWidthProperty); set => SetValue(SubjectWidthProperty, value); }
@@ -415,8 +417,13 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
             yield return Filter("Filter by hash…", "hash", null);
         }
         else {
-            foreach (var badge in commit.RefBadges)
-                yield return Filter($"Only commits on {badge.Text}", "ref", badge.Text);
+            foreach (var badge in commit.RefBadges) {
+                var history = new MenuItem { Header = $"Only commits on {badge.Text}" };
+                ToolTip.SetTip(history, $"History from {badge.Text} back, like gitk {badge.Text}");
+                var name = badge.Text;
+                history.Click += (_, _) => HistoryRequested?.Invoke(name);
+                yield return history;
+            }
             yield return Filter("Filter by message…", "message", null);
         }
     }

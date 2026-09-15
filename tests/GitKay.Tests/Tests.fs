@@ -3114,3 +3114,26 @@ module SettingsSerializationTests =
             |> UiState.withSelectedCommit "path with \"quotes\"" "def456"
         let json = UiStateJson.encode state
         test <@ UiStateJson.decode json = Ok(UiState.normalize state) @>
+
+module HistoryScopeTests =
+    [<Fact>]
+    let ``history of a branch replaces other tips and all branches but keeps file filters`` () =
+        let targets = [ GitStartup.All; GitStartup.Branch "topic"; GitStartup.Exclude "old"; GitStartup.Path "src/a.fs" ]
+        test <@ GitStartup.historyOf "main" targets = [ GitStartup.Revision "main"; GitStartup.Path "src/a.fs" ] @>
+        test <@ GitStartup.tipNames (GitStartup.historyOf "main" targets) = [ "main" ] && GitStartup.tipNames [ GitStartup.All ] = [] @>
+        test <@ GitStartup.withoutTips targets = [ GitStartup.All; GitStartup.Path "src/a.fs" ] @>
+
+    [<Fact>]
+    let ``Only commits on a branch asks for its history, and clearing goes back`` () =
+        let projection = MainProjection()
+        let messages = ConcurrentQueue<App.Msg>()
+        projection.SetDispatch(fun message -> messages.Enqueue message)
+        let model0, _ = App.init [||]
+        projection.Update { model0 with StartupTargets = [ GitStartup.Path "src/a.fs" ] }
+        projection.ShowHistoryOf "origin/main"
+        test <@ messages.ToArray() |> Array.last = App.Msg.SetHistoryTargets [ GitStartup.Revision "origin/main"; GitStartup.Path "src/a.fs" ] @>
+        projection.Update { model0 with StartupTargets = [ GitStartup.Revision "origin/main"; GitStartup.Path "src/a.fs" ] }
+        test <@ projection.HasHistoryTipFilter && projection.HistoryTipFilter = "origin/main" @>
+        projection.ClearHistoryTipFilter()
+        test <@ messages.ToArray() |> Array.last = App.Msg.SetHistoryTargets [ GitStartup.Path "src/a.fs" ] @>
+

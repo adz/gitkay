@@ -49,6 +49,7 @@ public partial class MainWindow : Window, IVimCommands {
         PaletteBox.AddHandler(InputElement.KeyDownEvent, OnPaletteBoxKeyDown, RoutingStrategies.Tunnel);
         CommitFindBox.AddHandler(InputElement.KeyDownEvent, OnCommitFindBoxKeyDown, RoutingStrategies.Tunnel);
         CommitListBox.FilterRequested += OnCommitFilterRequested;
+        CommitListBox.HistoryRequested += revision => _projection?.ShowHistoryOf(revision);
         CommitListBox.BranchOperationRequested += OnBranchOperationRequested;
         CommitListBox.CopyRequested += name => CopyToClipboard(name, "Copied");
         DiffRowsListBox.TextCopied += (_, lines) => { if (_projection != null) _projection.Status = lines switch { 0 => "Copied", 1 => "Copied 1 line", _ => $"Copied {lines} lines" }; };
@@ -425,7 +426,7 @@ public partial class MainWindow : Window, IVimCommands {
 
     // ----- File actions: context menus on the file list and diff file headers, whole-file popup, VS Code. -----
 
-    private void AddFileMenuItems(ContextMenu menu, FileTarget target, int? line, bool includeSelect) {
+    private void AddFileMenuItems(ContextMenu menu, FileTarget target, int? line) {
         if (_projection is not { } projection) return;
         void Add(string header, Action action, string? gesture = null) {
             var item = new MenuItem { Header = header };
@@ -434,7 +435,6 @@ public partial class MainWindow : Window, IVimCommands {
             menu.Items.Add(item);
         }
 
-        if (includeSelect) Add("Select", () => projection.SelectFile(target));
         Add("Copy full path", () => CopyToClipboard(projection.FullPath(target), "Copied full path"));
         Add("Copy relative path", () => CopyToClipboard(target.Path, "Copied relative path"));
         menu.Items.Add(new Separator());
@@ -459,7 +459,7 @@ public partial class MainWindow : Window, IVimCommands {
         };
         if (target == null) return;
         var menu = new ContextMenu();
-        AddFileMenuItems(menu, target, null, includeSelect: true);
+        AddFileMenuItems(menu, target, null);
         menu.Open(e.Source as Control ?? DiffFilesListBox);
         e.Handled = true;
     }
@@ -470,7 +470,7 @@ public partial class MainWindow : Window, IVimCommands {
     }
 
     private void OnDiffFileHeaderContextRequested(object? sender, DiffFileMenuEventArgs e) =>
-        AddFileMenuItems(e.Menu, FileTarget.From(e.File), e.LineNumber, includeSelect: e.LineNumber == null);
+        AddFileMenuItems(e.Menu, FileTarget.From(e.File), e.LineNumber);
 
     private void OpenWholeFile(FileTarget target) {
         if (_projection is not { RepositoryPath: { } repo, SelectedCommit: { } commit } projection) return;

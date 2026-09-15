@@ -290,6 +290,18 @@ module GitStartup =
         let empty = { Options = defaultStartupOptions; HasAll = false; Targets = []; Positionals = []; Paths = []; Filters = [] }
         read empty (List.ofArray args) |> Result.map finish
 
+    /// <summary>History of what one revision reaches (a branch's commits back from its head), keeping any path filter.</summary>
+    let historyOf (revision: string) (targets: StartupTarget list) =
+        Revision revision :: (targets |> List.filter (function Path _ -> true | _ -> false))
+
+    /// <summary>The tips history is limited to (branches, tags, hashes, revisions); empty for HEAD or all branches.</summary>
+    let tipNames (targets: StartupTarget list) =
+        targets |> List.choose (function Branch name | Sha name | Tag name | Revision name -> Some name | _ -> None)
+
+    /// <summary>The targets without tips or ranges: back to HEAD (or all branches), keeping any path filter.</summary>
+    let withoutTips (targets: StartupTarget list) =
+        targets |> List.filter (function Path _ | All -> true | _ -> false)
+
     let parseStartupTargets args =
         parseStartupOptions args |> Result.map _.StartupTargets
 
