@@ -1301,6 +1301,18 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     public bool HasTextSelection => _visualAnchorRow >= 0 || _textSelection is { } selection && selection.Anchor != selection.Active;
 
+    /// <summary>The rows a text or visual selection spans, or the focused row when nothing is selected.</summary>
+    public IReadOnlyList<IDiffRowProjection> SelectedRows {
+        get {
+            if (_textSelection is { } selection && (selection.Anchor != selection.Active || _visualAnchorRow >= 0)) {
+                var first = Math.Max(0, Math.Min(selection.Anchor.Row, selection.Active.Row));
+                var last = Math.Min(_rows.Length - 1, Math.Max(selection.Anchor.Row, selection.Active.Row));
+                return first > last ? [] : _rows[first..(last + 1)];
+            }
+            return SelectedItem is { } item ? [item] : [];
+        }
+    }
+
     private static bool SameLineAt(IDiffRowProjection[] rows, int index) =>
         (uint)index < (uint)rows.Length && rows[index] is DiffLineProjection;
 

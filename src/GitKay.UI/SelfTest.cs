@@ -62,6 +62,15 @@ public static class SelfTest {
             return loaded.IsOk ? null : "git status and diff failed: " + GitKay.Core.GitErrorModule.describe(loaded.ErrorValue);
         });
 
+        Check("partial patches build for staging lines", () => {
+            var raw = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,3 @@\n one\n-two\n+TWO\n+three\n";
+            var chosen = Microsoft.FSharp.Collections.ListModule.OfSeq(new[] {
+                new GitKay.Core.PatchBuilder.SelectedLine(0, 2, GitKay.Core.Models.LineType.Added, "TWO") });
+            var patch = GitKay.Core.PatchBuilder.build(GitKay.Core.PatchBuilder.Direction.Forward, raw, chosen);
+            if (!patch.IsOk) return GitKay.Core.PatchBuilder.describeError(patch.ErrorValue);
+            return patch.ResultValue.Contains("@@ -1,2 +1,3 @@\n one\n two\n+TWO\n") ? null : "unexpected patch: " + patch.ResultValue;
+        });
+
         Check("settings round-trip through the Reified codec", () => {
             // Eleven fields: records this wide threw TypeLoadException under NativeAOT before Reified 0.8.1.
             var settings = new GitKay.Core.Settings(true, true, 7, GitKay.Core.DiffLayout.SideBySide, "Inter", "Iosevka", 14.5, 12, 10, 0.25, GitKay.Core.ThemeMode.DarkTheme);

@@ -51,6 +51,7 @@ public partial class MainWindow : Window, IVimCommands {
         CommitListBox.FilterRequested += OnCommitFilterRequested;
         CommitListBox.HistoryRequested += revision => _projection?.ShowHistoryOf(revision);
         CommitListBox.BranchOperationRequested += OnBranchOperationRequested;
+        CommitListBox.CommitWindowRequested += OpenCommitWindow;
         CommitListBox.CopyRequested += name => CopyToClipboard(name, "Copied");
         DiffRowsListBox.TextCopied += (_, lines) => { if (_projection != null) _projection.Status = lines switch { 0 => "Copied", 1 => "Copied 1 line", _ => $"Copied {lines} lines" }; };
         AddHandler(InputElement.GotFocusEvent, (_, _) => { UpdatePaneFocusIndicator(); TrackPaneFocus(); }, RoutingStrategies.Bubble);
@@ -229,6 +230,12 @@ public partial class MainWindow : Window, IVimCommands {
         if (e.Key == Key.P && e.KeyModifiers == ctrlShift) { OpenPalette(PaletteMode.Commands); e.Handled = true; return; }
         if (e.Key == Key.P && e.KeyModifiers == KeyModifiers.Control) { OpenPalette(PaletteMode.Files); e.Handled = true; return; }
         if (e.Key == Key.D && e.KeyModifiers == ctrlShift) { ShowDiagnostics(); e.Handled = true; return; }
+        if (e.Key == Key.C && e.KeyModifiers == ctrlShift) { OpenCommitWindow(); e.Handled = true; return; }
+        if (e.Key == Key.Enter && e.KeyModifiers == KeyModifiers.None && CommitListBox.IsKeyboardFocusWithin && CommitListBox.FocusedCommit is { IsWorkingTree: true }) {
+            OpenCommitWindow();
+            e.Handled = true;
+            return;
+        }
         if (e.Key == Key.G && e.KeyModifiers == KeyModifiers.Control) { OpenPalette(PaletteMode.Refs); e.Handled = true; return; }
         if (DiffZoomDirection(e) is { } zoom) { _projection?.ZoomDiff(zoom); e.Handled = true; return; }
         if (e.Key is Key.Left or Key.Right && e.KeyModifiers == KeyModifiers.Alt) {
@@ -588,6 +595,54 @@ public partial class MainWindow : Window, IVimCommands {
         if (choice != null) RunGitOperation(GitOperations.DeleteBranch(branch, force: choice == DeleteBranchDialog.Choice.ForceDelete));
     }
 
+    private CommitWindow? _commitWindow;
+
+    private void OnCommitWindowMenuItemClick(object? sender, RoutedEventArgs e) => OpenCommitWindow();
+
+    /// <summary>One commit window, beside the main window; asking again brings it forward.</summary>
+    private void OpenCommitWindow() {
+        if (_commitWindow is { } open) {
+            open.Activate();
+            return;
+        }
+        if (_projection is not { RepositoryPath: { } repo, WorkingDirectory: { } directory } projection) {
+            if (_projection != null) _projection.Status = "The commit window needs a repository with a working tree";
+            return;
+        }
+
+        _commitWindow = new CommitWindow(repo, System.IO.Path.GetFileName(directory));
+        _commitWindow.Projection!.Committed += push => {
+            projection.RereadRefs();
+            projection.RefreshWorkingTree();
+            if (push) _ = PushCurrentBranchAsync(directory);
+        };
+        _commitWindow.Closed += (_, _) => _commitWindow = null;
+        _commitWindow.Show(this);
+    }
+
+    private async System.Threading.Tasks.Task PushCurrentBranchAsync(string directory) {
+        var branch = await System.Threading.Tasks.Task.Run(() => {
+            try {
+                var info = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = directory, RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
+                info.ArgumentList.Add("symbolic-ref");
+                info.ArgumentList.Add("--short");
+                info.ArgumentList.Add("HEAD");
+                using var process = System.Diagnostics.Process.Start(info)!;
+                var name = process.StandardOutput.ReadToEnd().Trim();
+                process.WaitForExit();
+                return process.ExitCode == 0 && name.Length > 0 ? name : null;
+            }
+            catch (Exception) {
+                return null;
+            }
+        });
+        if (branch == null) {
+            if (_projection != null) _projection.Status = "Not pushed: HEAD isn't on a branch";
+            return;
+        }
+        RunGitOperation(GitOperations.ForBranch("push", new BranchTarget(branch, true)));
+    }
+
     private void RunGitOperation(GitOperation operation) {
         if (_projection is not { WorkingDirectory: { } directory } projection) return;
         var window = new GitOperationWindow(operation, directory, succeeded => {
@@ -731,6 +786,9 @@ public partial class MainWindow : Window, IVimCommands {
                 break;
             case "fetch-all":
                 RunGitOperation(GitOperations.FetchAll());
+                break;
+            case "commit-window":
+                OpenCommitWindow();
                 break;
             case "copy-hash" or "copy-subject" when _projection?.SelectedCommit is { IsWorkingTree: false } commit && Clipboard is { } clipboard:
                 await clipboard.SetTextAsync(command == "copy-hash" ? commit.FullHash : commit.Subject);

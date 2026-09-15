@@ -1,6 +1,6 @@
 # Commit window
 
-Status: in progress. Target: 0.7.0.
+Status: implemented (phases 1–5, 6 partly). Target: 0.7.0.
 
 ## Why a separate window
 
@@ -98,3 +98,10 @@ changes.
 4. The window: lists, diff with stage/unstage hunk and lines, message, commit.
 5. Opening from the main window; discard; amend; sign off; commit and push; draft persistence.
 6. AOT self-test coverage, screenshots, docs.
+
+## Not yet built
+
+- Keeping the draft message across closing the window (it lives only while the window is open).
+- Context expansion in the commit window's diff (hunks show without "more lines" gaps).
+- Partial staging of untracked files: they stage whole (`--intent-to-add` first would allow lines).
+- User-facing docs and the shortcut sheet entries.

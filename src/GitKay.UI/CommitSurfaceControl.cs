@@ -92,6 +92,8 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
 
     /// <summary>Raised by the row context menu: (field, value) where a null value asks the host to prompt for one.</summary>
     public event Action<string, string?>? FilterRequested;
+    /// <summary>The commit window was asked for from the uncommitted changes row.</summary>
+    public event Action? CommitWindowRequested;
     /// <summary>History limited to what a branch or tag reaches was requested.</summary>
     public event Action<string>? HistoryRequested;
 
@@ -480,6 +482,7 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         Focus();
         _lastContextPoint = e.GetPosition(this);
         SelectAt(_lastContextPoint.Y);
+        if (e.ClickCount == 2 && SelectedItem is { IsWorkingTree: true }) CommitWindowRequested?.Invoke();
     }
 
     private void OnCommitContextRequested(object? sender, ContextRequestedEventArgs e) {
@@ -708,7 +711,9 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         var menu = new ContextMenu();
         // The uncommitted changes row has no commit to act on; staging and committing belong to the commit window.
         if (SelectedItem is { IsWorkingTree: true }) {
-            menu.Items.Add(new MenuItem { Header = "No commit actions for uncommitted changes", IsEnabled = false });
+            var open = new MenuItem { Header = "Open commit window…", InputGesture = new KeyGesture(Key.C, KeyModifiers.Control | KeyModifiers.Shift) };
+            open.Click += (_, _) => CommitWindowRequested?.Invoke();
+            menu.Items.Add(open);
             return menu;
         }
         if (SelectedItem is { } selected) {

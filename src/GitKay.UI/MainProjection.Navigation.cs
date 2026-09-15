@@ -272,6 +272,7 @@ public partial class MainProjection {
             Command(IsAllBranches ? "History: current branch only" : "History: all branches", IsAllBranches ? "What HEAD reaches, like gitk" : "Every branch, tag and remote, like --all", () => IsAllBranches = !IsAllBranches),
             Command("Copy commit hash", SelectedCommit?.FullHash ?? "", () => WindowCommandRequested?.Invoke("copy-hash"), "y"),
             Command("Copy commit subject", SelectedCommit?.Subject ?? "", () => WindowCommandRequested?.Invoke("copy-subject"), "Y"),
+            Command("Commit…", "Stage changes and commit, like git gui", () => WindowCommandRequested?.Invoke("commit-window"), "Ctrl+Shift+C"),
             Command("Reread refs", "Reload history from the repository", RereadRefs, "F5"),
             Command("Keyboard shortcuts", "", () => IsShortcutHelpOpen = true, "F1"),
             Command("Settings…", "", () => WindowCommandRequested?.Invoke("settings")),

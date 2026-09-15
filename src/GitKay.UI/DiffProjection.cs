@@ -360,6 +360,10 @@ public sealed class DiffHunkHeaderProjection : IDiffRowProjection {
         Header = hunk.Header;
     }
 
+    public DiffHunkHeaderProjection(string header) {
+        Header = header;
+    }
+
     public string Header { get; }
 }
 

@@ -105,6 +105,7 @@
                                 <Button.Flyout>
                                     <MenuFlyout Placement="BottomEdgeAlignedLeft">
                                         <MenuItem Header="_Open repository…" Click="OnOpenRepositoryMenuItemClick" />
+                                        <MenuItem Header="_Commit…" Click="OnCommitWindowMenuItemClick" InputGesture="Ctrl+Shift+C" />
                                         <MenuItem Header="_Fetch all remotes" Click="OnFetchAllMenuItemClick" />
                                         <MenuItem Header="_Reread refs" Command="{Binding RereadRefs}" />
 

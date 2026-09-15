@@ -1,0 +1,164 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:GitKay.UI"
+        x:Class="GitKay.UI.CommitWindow"
+        x:DataType="local:CommitWindowProjection"
+        Title="{Binding WindowTitle}"
+        Width="1200" Height="820" MinWidth="640" MinHeight="420"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource GitKayWindowBrush}">
+    <Window.Styles>
+        <Style Selector="TextBlock.sectionTitle">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource GitKaySecondaryTextBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Border.bar">
+            <Setter Property="Background" Value="{DynamicResource GitKaySurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource GitKayHairlineBrush}" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <Setter Property="Padding" Value="10,5" />
+        </Style>
+        <Style Selector="Button.action">
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{DynamicResource GitKayBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
+        </Style>
+        <Style Selector="TextBlock.warning">
+            <Setter Property="Foreground" Value="{DynamicResource GitKayRemovedAccentBrush}" />
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="*,Auto,Auto">
+        <!-- Files on the left, the selected file's diff on the right. -->
+        <Grid Grid.Row="0" ColumnDefinitions="320,Auto,*">
+            <Grid Grid.Column="0" RowDefinitions="Auto,*,Auto,*">
+                <Border Grid.Row="0" Classes="bar">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Classes="sectionTitle" Text="{Binding UnstagedTitle}" />
+                        <Button Grid.Column="1" Classes="action" Padding="8,2" Command="{Binding StageAllCommand}"
+                                ToolTip.Tip="Stage every unstaged and untracked file">
+                            <TextBlock Text="Stage all" FontSize="11" />
+                        </Button>
+                    </Grid>
+                </Border>
+                <ListBox Grid.Row="1" x:Name="UnstagedList" ItemsSource="{Binding UnstagedFiles}"
+                         SelectedItem="{Binding SelectedUnstaged, Mode=TwoWay}"
+                         Background="Transparent" DoubleTapped="OnFileDoubleTapped">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="local:CommitFileRow">
+                            <Grid ColumnDefinitions="18,*" ToolTip.Tip="{Binding Path}">
+                                <TextBlock Text="{Binding Marker}" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="1" Text="{Binding Label}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}"
+                                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <Border Grid.Row="2" Classes="bar" BorderThickness="0,1,0,1">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Classes="sectionTitle" Text="{Binding StagedTitle}" />
+                        <Button Grid.Column="1" Classes="action" Padding="8,2" Command="{Binding UnstageAllCommand}"
+                                ToolTip.Tip="Unstage every staged file">
+                            <TextBlock Text="Unstage all" FontSize="11" />
+                        </Button>
+                    </Grid>
+                </Border>
+                <ListBox Grid.Row="3" x:Name="StagedList" ItemsSource="{Binding StagedFiles}"
+                         SelectedItem="{Binding SelectedStaged, Mode=TwoWay}"
+                         Background="Transparent" DoubleTapped="OnFileDoubleTapped">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="local:CommitFileRow">
+                            <Grid ColumnDefinitions="18,*" ToolTip.Tip="{Binding Path}">
+                                <TextBlock Text="{Binding Marker}" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="1" Text="{Binding Label}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}"
+                                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+
+            <GridSplitter Grid.Column="1" Width="1" Background="{DynamicResource GitKayBorderBrush}" ResizeDirection="Columns" />
+
+            <DockPanel Grid.Column="2">
+                <Border DockPanel.Dock="Top" Classes="bar">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Text="{Binding DiffTitle}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}"
+                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" IsVisible="{Binding HasSelectedFile}">
+                            <Button Classes="action" Padding="8,2" Command="{Binding ApplyToSelectionCommand}"
+                                    ToolTip.Tip="{Binding SelectionActionTip}">
+                                <TextBlock Text="{Binding SelectionActionLabel}" FontSize="11" />
+                            </Button>
+                            <Button Classes="action" Padding="8,2" Command="{Binding ToggleFileCommand}"
+                                    ToolTip.Tip="Move the whole file to the other list (Enter in the file list)">
+                                <TextBlock Text="{Binding FileActionLabel}" FontSize="11" />
+                            </Button>
+                            <Button Classes="action" Padding="8,2" Command="{Binding DiscardCommand}" IsVisible="{Binding CanDiscard}"
+                                    ToolTip.Tip="Throw away the selected lines, or the whole file, from the working tree">
+                                <TextBlock Text="{Binding DiscardLabel}" FontSize="11" Foreground="{DynamicResource GitKayRemovedAccentBrush}" />
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+                <Panel>
+                    <ScrollViewer x:Name="RowsScrollViewer" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                        <local:DiffSurfaceControl x:Name="Surface"
+                                                  ItemsSource="{Binding Rows}"
+                                                  SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+                                                  HorizontalAlignment="Stretch" />
+                    </ScrollViewer>
+                    <TextBlock Text="{Binding EmptyDiffText}" IsVisible="{Binding !HasSelectedFile}" FontSize="13"
+                               Foreground="{DynamicResource GitKayMutedTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Panel>
+            </DockPanel>
+        </Grid>
+
+        <!-- Hook and git output from the last failure. -->
+        <Border Grid.Row="1" IsVisible="{Binding HasFailureOutput}" MaxHeight="160"
+                Background="{DynamicResource GitKayRemovedBrush}" BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="0,1,0,0" Padding="10,6">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <SelectableTextBlock Text="{Binding FailureOutput}" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="11"
+                                     Foreground="{DynamicResource GitKayTextBrush}" TextWrapping="Wrap" />
+            </ScrollViewer>
+        </Border>
+
+        <!-- The message and commit controls. -->
+        <Border Grid.Row="2" Background="{DynamicResource GitKaySurfaceBrush}" BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="0,1,0,0" Padding="10,8">
+            <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="6">
+                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
+                    <TextBlock Classes="sectionTitle" Text="Commit message" />
+                    <TextBlock Grid.Column="1" Text="{Binding SubjectLengthText}" Classes.warning="{Binding IsSubjectLong}" FontSize="11"
+                               Foreground="{DynamicResource GitKayMutedTextBrush}" VerticalAlignment="Center"
+                               ToolTip.Tip="Subject length: aim for 50 characters, at most 72" />
+                    <CheckBox Grid.Column="2" IsChecked="{Binding Amend, Mode=TwoWay}" Content="Amend last commit" FontSize="12" />
+                </Grid>
+                <TextBox Grid.Row="1" x:Name="MessageBox" Text="{Binding Message, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap"
+                         Height="120" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12"
+                         Watermark="Subject line&#10;&#10;Why the change was made" />
+                <Grid Grid.Row="2" ColumnDefinitions="Auto,Auto,*,Auto,Auto" ColumnSpacing="8">
+                    <Button Classes="action" Padding="10,3" Command="{Binding RescanCommand}" ToolTip.Tip="Read the working tree and index again (F5)">
+                        <TextBlock Text="Rescan" FontSize="12" />
+                    </Button>
+                    <CheckBox Grid.Column="1" IsChecked="{Binding SignOff, Mode=TwoWay}" Content="Sign off" FontSize="12"
+                              ToolTip.Tip="Add a Signed-off-by trailer with your configured name and email" />
+                    <TextBlock Grid.Column="2" Text="{Binding Status}" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                    <Button Grid.Column="3" Padding="14,4" Command="{Binding CommitCommand}" IsEnabled="{Binding CanCommit}"
+                            ToolTip.Tip="{Binding CommitTip}">
+                        <TextBlock Text="{Binding CommitLabel}" FontSize="12" FontWeight="SemiBold" />
+                    </Button>
+                    <Button Grid.Column="4" Padding="14,4" Command="{Binding CommitAndPushCommand}" IsEnabled="{Binding CanCommit}"
+                            ToolTip.Tip="Commit, then push the current branch">
+                        <TextBlock Text="Commit and push" FontSize="12" />
+                    </Button>
+                </Grid>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

@@ -134,6 +134,10 @@ internal static class HotPaths {
 /// <summary>Headless MainWindow interaction benchmarks: file list mode switch and splitter drag. Usage: ui [repoPath] [hash] [label]</summary>
 internal static class UiInteractions {
     public static void Run(string[] args) {
+        if (args.ElementAtOrDefault(2) is { } commitLabel && commitLabel.StartsWith("commitwindow", StringComparison.Ordinal)) {
+            RunCommitWindow(args[0], commitLabel, args.ElementAtOrDefault(3) ?? $"{commitLabel}.png");
+            return;
+        }
         var repo = args.ElementAtOrDefault(0) ?? "/home/adam/projects/Axial/main";
         var hash = args.ElementAtOrDefault(1) ?? "48db7ad8";
         var label = args.ElementAtOrDefault(2) ?? "run";
@@ -378,6 +382,29 @@ internal static class UiInteractions {
 
     private static void CommitListBoxFocus(Avalonia.Controls.Window window) =>
         Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.Control>(window, "CommitListBox")!.Focus();
+
+    /// <summary>The commit window on a repository: scanned, then optionally with the cursor's hunk staged.</summary>
+    private static void RunCommitWindow(string repo, string label, string output) {
+        var window = new GitKay.UI.CommitWindow(repo, System.IO.Path.GetFileName(repo)) { Width = 1300, Height = 860 };
+        window.Show();
+        var projection = window.Projection!;
+        void Settle() {
+            for (var i = 0; i < 60; i++) { System.Threading.Thread.Sleep(50); Pump(window); }
+        }
+        Settle();
+        if (label.Contains("stagehunk")) {
+            var surface = Avalonia.Controls.NameScopeExtensions.Find<DiffSurfaceControl>(window, "Surface")!;
+            surface.SelectedItem = projection.Rows.OfType<DiffLineProjection>().First(line => line.IsAdded || line.IsRemoved);
+            projection.ApplyToSelection();
+            Settle();
+        }
+        if (label.Contains("message")) projection.Message = "Stage the first hunk\n\nShows the commit window in a screenshot.";
+        Pump(window);
+        using var frame = Avalonia.Headless.HeadlessWindowExtensions.CaptureRenderedFrame(window);
+        frame!.Save(output);
+        Console.WriteLine($"saved {output} unstaged={projection.UnstagedFiles.Count} staged={projection.StagedFiles.Count} status={projection.Status}");
+        window.Close();
+    }
 
     private static void Pump(Avalonia.Controls.Window window) {
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
