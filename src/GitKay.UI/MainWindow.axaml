@@ -1023,7 +1023,7 @@
                         </Grid>
                         <Grid ColumnDefinitions="200,*" Margin="0,2">
                             <TextBlock Text="/ · ?" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Search forwards · backwards in the status bar (regex, smartcase; /i ignores case, \V literal, Alt+R / Alt+C toggle); Enter keeps it for n / N, Esc cancels. Ctrl+F opens the find box. F1 opens this sheet" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Search forwards · backwards in the status bar (regex, smartcase; /i ignores case, \V literal from there on and \v back to regex, Alt+R / Alt+C toggle); Enter keeps it for n / N, Esc cancels. Ctrl+F opens the find box. F1 opens this sheet" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
                         </Grid>
                         <Grid ColumnDefinitions="200,*" Margin="0,2">
                             <TextBlock Text="zz / zt / zb" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />

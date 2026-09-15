@@ -264,6 +264,10 @@ let ``slash and question mark open the search prompt in any pane`` () =
 [<InlineData(@"foo\C", "(?-i)foo", false, false)>]
 [<InlineData(@"\<id\>", @"\bid\b", true, false)>]
 [<InlineData(@"\Va.b(c", @"a\.b\(c", true, true)>]
+[<InlineData(@"x+\Va.b", @"x+a\.b", true, true)>]
+[<InlineData(@"\Va.b\v.*", @"a\.b.*", true, true)>]
+[<InlineData(@"foo\V", "foo", true, true)>]
+[<InlineData(@"\Va\/b", "a/b", true, true)>]
 [<InlineData(@"a\/b", "a/b", true, false)>]
 [<InlineData(@"\vx+", "x+", true, false)>]
 [<InlineData("path/to", "path/to", true, false)>]
@@ -289,4 +293,5 @@ let ``Alt+C and Alt+R rewrite the prompt input`` () =
     test <@ toggleSearchCase @"Foo\c" = "Foo/c" @>
     test <@ toggleSearchRegex "a.b" = @"\Va.b" @>
     test <@ toggleSearchRegex @"\Va.b" = "a.b" @>
+    test <@ toggleSearchRegex @"x\Va.b" = "xa.b" @>
 

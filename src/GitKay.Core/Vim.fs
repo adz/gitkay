@@ -429,7 +429,7 @@ module Vim =
 
     /// <summary>
     /// Parses prompt input the way vim reads a search, plus a trailing flag: regex by default with smartcase (all
-    /// lowercase ignores case), \c / \C or a trailing /i / /c to choose case, \V at the start for literal text,
+    /// lowercase ignores case), \c / \C or a trailing /i / /c to choose case, \V for literal text (\v back to regex),
     /// \&lt; and \&gt; for word boundaries and \/ for a slash.
     /// </summary>
     let parseSearch (input: string) : SearchPattern =
@@ -441,31 +441,44 @@ module Vim =
                 ignoreCase <- ValueSome(flag = 'i')
             text <- text.Substring(0, slash)
 
-        let literal = text.StartsWith "\\V"
-        if literal || text.StartsWith "\\v" then text <- text.Substring 2
-
+        // \V switches to literal text and \v back to regex from that point on, anywhere in the pattern, as in vim.
         let body = Text.StringBuilder()
+        let run = Text.StringBuilder()
+        let mutable literal = false
+        let mutable sawLiteral = false
+        let flushRun () =
+            if run.Length > 0 then
+                body.Append(Text.RegularExpressions.Regex.Escape(run.ToString())) |> ignore
+                run.Clear() |> ignore
         let mutable hasUpper = false
         let mutable i = 0
         while i < text.Length do
             let c = text[i]
             if c = '\\' && i + 1 < text.Length then
                 match text[i + 1] with
+                | 'V' ->
+                    literal <- true
+                    sawLiteral <- true
+                | 'v' ->
+                    flushRun ()
+                    literal <- false
                 | 'c' -> ignoreCase <- ValueSome true
                 | 'C' -> ignoreCase <- ValueSome false
-                | '/' -> body.Append '/' |> ignore
-                | ('<' | '>') when not literal -> body.Append @"\b" |> ignore
-                | '\\' when literal -> body.Append '\\' |> ignore
-                | next when literal -> body.Append('\\').Append(next) |> ignore
+                | '/' -> (if literal then run.Append '/' else body.Append '/') |> ignore
+                | '\\' when literal -> run.Append '\\' |> ignore
+                | next when literal -> run.Append('\\').Append(next) |> ignore
+                | ('<' | '>') -> body.Append @"\b" |> ignore
                 | next -> body.Append('\\').Append(next) |> ignore
                 i <- i + 2
             else
                 if Char.IsUpper c then hasUpper <- true
-                body.Append c |> ignore
+                (if literal then run.Append c else body.Append c) |> ignore
                 i <- i + 1
+        flushRun ()
+        let literal = sawLiteral
 
         let caseInsensitive = ignoreCase |> ValueOption.defaultValue (not hasUpper)
-        let expression = if literal then Text.RegularExpressions.Regex.Escape(body.ToString()) else body.ToString()
+        let expression = body.ToString()
         let regex = (if caseInsensitive then "" else "(?-i)") + expression
         let error =
             if expression.Length = 0 then null
@@ -497,9 +510,8 @@ module Vim =
     /// <summary>Alt+R at the prompt: switches between regex and literal text with a leading \V.</summary>
     let toggleSearchRegex (input: string) =
         let text = if isNull input then "" else input
-        if text.StartsWith @"\V" then text.Substring 2
-        elif text.StartsWith @"\v" then @"\V" + text.Substring 2
-        else @"\V" + text
+        if (parseSearch text).Literal then text.Replace(@"\V", "").Replace(@"\v", "")
+        else @"\V" + text.Replace(@"\v", "")
 
     // ----- Key interpretation -----
 
