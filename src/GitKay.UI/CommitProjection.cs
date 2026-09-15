@@ -49,6 +49,8 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     [ObservableProperty] private int _lane = 0;
     [ObservableProperty] private bool _showBranchRefs = false;
     [ObservableProperty] private bool _showStashes = false;
+    /// <summary>The "Uncommitted changes" row above the newest commit: no hash, author, date or commit actions.</summary>
+    [ObservableProperty] private bool _isWorkingTree;
 
     public ObservableCollection<SegmentProjection> Segments { get; } = new();
     public ObservableCollection<CommitRefProjection> RefBadges { get; } = new();
@@ -90,6 +92,16 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
                 return projection;
             }
         );
+    }
+
+    /// <summary>Shows this projection as the uncommitted changes row, drawn in HEAD's lane.</summary>
+    public void UpdateWorkingTree(Microsoft.FSharp.Collections.FSharpList<GitKay.Core.WorkingTree.Entry> entries, int lane) {
+        IsWorkingTree = true;
+        Subject = "Uncommitted changes";
+        Message = GitKay.Core.WorkingTree.summary(entries);
+        SecondarySummary = Message;
+        HasSecondarySummary = true;
+        Lane = lane;
     }
 
     public void ApplySearchMatch(GitKay.Core.GitSearch.Result? result) {

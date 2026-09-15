@@ -96,7 +96,7 @@ public partial class App : Application {
                 if (string.IsNullOrWhiteSpace(e.PropertyName) || !persistedPropertyNames.Contains(e.PropertyName)) {
                     if (!string.Equals(e.PropertyName, nameof(MainProjection.SelectedCommit), StringComparison.Ordinal)
                         || string.IsNullOrWhiteSpace(repoKey)
-                        || projection.SelectedCommit == null) {
+                        || projection.SelectedCommit is null or { IsWorkingTree: true }) {
                         return;
                     }
 
@@ -122,7 +122,7 @@ public partial class App : Application {
             );
 
             desktop.Exit += (s, e) => {
-                if (!string.IsNullOrWhiteSpace(repoKey) && projection.SelectedCommit != null) {
+                if (!string.IsNullOrWhiteSpace(repoKey) && projection.SelectedCommit is { IsWorkingTree: false }) {
                     currentUiState = UiStateModule.withSelectedCommit(repoKey, projection.SelectedCommit.FullHash, currentUiState);
                 }
 

@@ -528,6 +528,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         var commitsChanged = !ReferenceEquals(_commitsSource, model.Commits);
         var searchResultsChanged = !ReferenceEquals(_commitSearchResultsSource, searchResultsSource);
 
+        var workingTreeChanged = !ReferenceEquals(_workingTreeSource, model.WorkingTree);
+        if (commitsChanged && Commits.Count > 0 && Commits[0].IsWorkingTree) Commits.RemoveAt(0);
+
         if (commitsChanged) {
             Commits.SyncWith(
                 model.Commits,
@@ -540,6 +543,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             ApplyRefVisibility();
         }
 
+        if (commitsChanged || workingTreeChanged) SyncWorkingTreeRow(model);
+
         // While a new search runs, keep the previous matches instead of flashing every commit back.
         var searchPending = model.SearchStartedAtTicks != null && model.SearchResults == null;
         if ((commitsChanged || searchResultsChanged) && !searchPending) {
@@ -549,6 +554,27 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
         IsCommitSearchActive = !string.IsNullOrWhiteSpace(model.SearchQuery) && (model.SearchResults != null || searchPending);
     }
+
+    private object? _workingTreeSource;
+    private readonly CommitProjection _workingTreeRow = new() { IsWorkingTree = true };
+
+    /// <summary>Keeps the uncommitted changes row first in the list while the working tree differs from HEAD.</summary>
+    private void SyncWorkingTreeRow(GitKay.Core.App.Model model) {
+        _workingTreeSource = model.WorkingTree;
+        var shown = Commits.Count > 0 && Commits[0].IsWorkingTree;
+        // Only shown above history that starts at HEAD: a filtered or other-branch history has nowhere to attach it.
+        var head = Commits.Skip(shown ? 1 : 0).FirstOrDefault();
+        var wanted = !model.WorkingTree.IsEmpty && (head == null || head.LocalBranches.Any(branch => branch.IsCurrentHead) || model.IsWorkingTreeSelected);
+        if (wanted) {
+            _workingTreeRow.UpdateWorkingTree(model.WorkingTree, head?.Lane ?? 0);
+            if (!shown) Commits.Insert(0, _workingTreeRow);
+        }
+        else if (shown) {
+            Commits.RemoveAt(0);
+        }
+    }
+
+    public CommitProjection WorkingTreeRow => _workingTreeRow;
 
     private void ApplyRefVisibility() {
         foreach (var commit in Commits) {
@@ -597,7 +623,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             }
         }
 
-        var selected = SelectedCommit;
+        var selected = SelectedCommit is { IsWorkingTree: true } ? null : SelectedCommit;
         RecordVisitedCommit(selected?.FullHash);
         var parents = selected == null
             ? new List<string>()
@@ -634,7 +660,10 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private void UpdateSelectedCommit(GitKay.Core.App.Model model) {
         CommitProjection? selectedCommit = null;
 
-        if (model.SelectedCommitHash != null) {
+        if (model.IsWorkingTreeSelected && Commits.Count > 0 && Commits[0].IsWorkingTree) {
+            selectedCommit = Commits[0];
+        }
+        else if (model.SelectedCommitHash != null) {
             var hash = model.SelectedCommitHash.Value;
             foreach (var commit in Commits) {
                 if (commit.FullHash == hash) {
@@ -696,7 +725,10 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             return;
         }
 
-        if (value != null) {
+        if (value is { IsWorkingTree: true }) {
+            _dispatch?.Invoke(GitKay.Core.App.Msg.NewSelectWorkingTree(Stopwatch.GetTimestamp()));
+        }
+        else if (value != null) {
             var startedAtTicks = Stopwatch.GetTimestamp();
             LogTiming($"commit click hash={value.FullHash}");
             _dispatch?.Invoke(GitKay.Core.App.Msg.NewSelectCommit(value.FullHash, startedAtTicks));
@@ -816,7 +848,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
         SyncSelectedDiffSelection(value);
 
-        if (value == null || SelectedCommit == null) {
+        if (value == null || SelectedCommit is null or { IsWorkingTree: true }) {
             return;
         }
 

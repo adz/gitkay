@@ -222,7 +222,7 @@ public partial class MainProjection {
             }
         }
 
-        foreach (var commit in Commits) {
+        foreach (var commit in Commits.Where(commit => !commit.IsWorkingTree)) {
             var target = commit;
             items.Add(new PaletteItem($"{commit.Hash}  {commit.Subject}", $"{commit.Author} · {commit.Date}", "●", () => SelectedCommit = target));
         }

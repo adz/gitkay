@@ -217,7 +217,10 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         context.FillRectangle(Brushes.Transparent, new Rect(0, offset, Bounds.Width, viewport));
         var first = Math.Clamp((int)(offset / RowHeight), 0, _rows.Length);
         var last = Math.Min(_rows.Length, first + (int)Math.Ceiling(viewport / RowHeight) + 2);
-        for (var index = first; index < last; index++) DrawRow(context, _rows[index], index * RowHeight);
+        for (var index = first; index < last; index++) {
+            if (_rows[index].IsWorkingTree) DrawWorkingTreeRow(context, _rows[index], index * RowHeight, index + 1 < _rows.Length);
+            else DrawRow(context, _rows[index], index * RowHeight, index > 0 && _rows[index - 1].IsWorkingTree);
+        }
 
         if (_filtered && _rows.Length == 0) {
             var message = Layout("No matching commits", 13, ThemeBrush("GitKayMutedTextBrush", MutedBrush), TextTypeface);
@@ -225,7 +228,32 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         }
     }
 
-    private void DrawRow(DrawingContext context, CommitProjection commit, double y) {
+    /// <summary>The uncommitted changes row: a hollow dashed node joined to HEAD below, and its counts.</summary>
+    private void DrawWorkingTreeRow(DrawingContext context, CommitProjection row, double y, bool hasCommitBelow) {
+        if (ReferenceEquals(row, _keyboardSelection ?? SelectedItem))
+            context.FillRectangle(ThemeBrush("GitKaySelectionBrush", SelectionBrush), new Rect(0, y, Bounds.Width, RowHeight));
+        var mutedBrush = ThemeBrush("GitKayMutedTextBrush", MutedBrush);
+        var graphWidth = EffectiveWidth(GraphWidth, 48);
+        var centerY = y + RowHeight / 2;
+        if (!_filtered) {
+            using (context.PushClip(new Rect(0, y, graphWidth, RowHeight))) {
+                var cx = (row.Lane + 1) * LaneWidth;
+                var pen = new Pen(mutedBrush, 1.5, new DashStyle([2, 2], 0));
+                if (hasCommitBelow) context.DrawLine(pen, new Point(cx, centerY + 4), new Point(cx, y + RowHeight));
+                context.DrawEllipse(null, pen, new Rect(cx - 4, centerY - 4, 8, 8));
+            }
+        }
+
+        var subjectX = graphWidth + 5;
+        var hashX = graphWidth + EffectiveWidth(SubjectWidth, 120);
+        using (context.PushClip(new Rect(subjectX, y, Math.Max(0, hashX - subjectX - 3), RowHeight))) {
+            var label = Layout(row.Subject, 13, ThemeBrush("GitKayTextBrush", SubjectBrush), TextTypeface);
+            context.DrawText(label, new Point(subjectX, y + 3));
+            DrawText(context, row.SecondarySummary, subjectX + label.Width + 10, y + 4, 12, mutedBrush, TextTypeface);
+        }
+    }
+
+    private void DrawRow(DrawingContext context, CommitProjection commit, double y, bool joinsWorkingTree = false) {
         var selectionBrush = ThemeBrush("GitKaySelectionBrush", SelectionBrush);
         var subjectBrush = ThemeBrush("GitKayTextBrush", SubjectBrush);
         var metaBrush = ThemeBrush("GitKaySecondaryTextBrush", MetaBrush);
@@ -239,7 +267,7 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         var graphWidth = EffectiveWidth(GraphWidth, 48);
         if (!_filtered)
             using (context.PushClip(new Rect(0, y, graphWidth, RowHeight)))
-                DrawGraph(context, commit, y);
+                DrawGraph(context, commit, y, joinsWorkingTree);
 
         var subjectWidth = EffectiveWidth(SubjectWidth, 120);
         var hashWidth = EffectiveWidth(HashWidth, 54);
@@ -317,8 +345,13 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         _lanePens = _laneBrushes.Select(brush => (IPen)new Pen(brush, 1.5)).ToArray();
     }
 
-    private void DrawGraph(DrawingContext context, CommitProjection commit, double y) {
+    private void DrawGraph(DrawingContext context, CommitProjection commit, double y, bool joinsWorkingTree) {
         var centerY = y + RowHeight / 2;
+        if (joinsWorkingTree) {
+            var dashed = new Pen(ThemeBrush("GitKayMutedTextBrush", MutedBrush), 1.5, new DashStyle([2, 2], 0));
+            var x = (commit.Lane + 1) * LaneWidth;
+            context.DrawLine(dashed, new Point(x, y), new Point(x, centerY));
+        }
         foreach (var segment in commit.Segments) {
             var pen = _lanePens[Math.Abs(segment.Color) % _lanePens.Length];
             var x = (segment.Lane + 1) * LaneWidth;
@@ -603,6 +636,11 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
             return item;
         }
         var menu = new ContextMenu();
+        // The uncommitted changes row has no commit to act on; staging and committing belong to the commit window.
+        if (SelectedItem is { IsWorkingTree: true }) {
+            menu.Items.Add(new MenuItem { Header = "No commit actions for uncommitted changes", IsEnabled = false });
+            return menu;
+        }
         if (SelectedItem is { } selected) {
             foreach (var filter in BuildFilterItems(selected)) menu.Items.Add(filter);
             menu.Items.Add(new Separator());

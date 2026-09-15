@@ -501,7 +501,7 @@ public partial class MainWindow : Window, IVimCommands {
         AddFileMenuItems(e.Menu, FileTarget.From(e.File), e.LineNumber);
 
     private void OpenWholeFile(FileTarget target) {
-        if (_projection is not { RepositoryPath: { } repo, SelectedCommit: { } commit } projection) return;
+        if (_projection is not { RepositoryPath: { } repo, SelectedCommit: { IsWorkingTree: false } commit } projection) return;
         var window = new WholeFileWindow(projection, repo, commit.FullHash, commit.Hash, target);
         window.Show(this);
     }
@@ -714,7 +714,7 @@ public partial class MainWindow : Window, IVimCommands {
             case "fetch-all":
                 RunGitOperation(GitOperations.FetchAll());
                 break;
-            case "copy-hash" or "copy-subject" when _projection?.SelectedCommit is { } commit && Clipboard is { } clipboard:
+            case "copy-hash" or "copy-subject" when _projection?.SelectedCommit is { IsWorkingTree: false } commit && Clipboard is { } clipboard:
                 await clipboard.SetTextAsync(command == "copy-hash" ? commit.FullHash : commit.Subject);
                 _projection.Status = command == "copy-hash" ? $"Copied {commit.Hash}" : "Copied subject";
                 break;

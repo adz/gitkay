@@ -2863,6 +2863,33 @@ module DiffSearchBorrowTests =
         projection.GoToChild ()
         test <@ List.ofSeq selections = [ root.Hash; merge.Hash ] @>
 
+    [<Fact>]
+    let ``uncommitted changes row sits above HEAD and selects the working tree`` () =
+        let commitOf hash subject refs : Models.Commit =
+            { Hash = hash; AuthorName = "A"; AuthorEmail = "a@x"; Timestamp = 1L; Parents = []; Subject = subject; Message = subject; Refs = refs }
+        let projection = MainProjection()
+        let model0, _ = App.init [||]
+        let head = commitOf (String.replicate 40 "a") "Head" [ RefHelpers.currentBranchRef "main" ]
+        let entry : WorkingTree.Entry = { Path = "a.txt"; OriginalPath = "a.txt"; Staged = WorkingTree.Modified; Unstaged = WorkingTree.Unchanged; Untracked = false }
+        let model = { model0 with Commits = Graph.calculateLanes [ head ]; Selection = App.CommitSelected head.Hash }
+        projection.Update model
+        test <@ projection.Commits.Count = 1 @>
+
+        let dirty = { model with WorkingTree = [ entry ] }
+        projection.Update dirty
+        test <@ projection.Commits.Count = 2 && projection.Commits.[0].IsWorkingTree && projection.Commits.[0].Subject = "Uncommitted changes" @>
+
+        let selections = ResizeArray<App.Msg>()
+        projection.SetDispatch (fun msg -> selections.Add msg)
+        projection.SelectedCommit <- projection.Commits.[0]
+        test <@ selections |> Seq.exists (function App.Msg.SelectWorkingTree _ -> true | _ -> false) @>
+
+        projection.Update { dirty with Selection = App.WorkingTreeSelected }
+        test <@ projection.SelectedCommit.IsWorkingTree @>
+
+        projection.Update { dirty with WorkingTree = [] }
+        test <@ projection.Commits.Count = 1 && not projection.Commits.[0].IsWorkingTree @>
+
 module PaletteTests =
 
     let private commitOf hash subject (refs: Models.CommitRef list) : Models.Commit =
