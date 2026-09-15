@@ -805,6 +805,17 @@ module GitService =
                 do! plainGit ([ "clean"; "--force"; "--quiet"; "--" ] @ untracked) |> Flow.map ignore
         }
 
+    /// <summary>What HEAD is: the branch name, "detached at abc1234", or "no commits yet" on an unborn branch's name.</summary>
+    let fetchCurrentBranch : Flow<GitEnv, GitError, string> =
+        flow {
+            let! branch = plainGit [ "symbolic-ref"; "--short"; "-q"; "HEAD" ] |> Flow.map _.Trim() |> Flow.orElseWith (fun _ -> Flow.ok "")
+            if branch <> "" then
+                return branch
+            else
+                let! head = plainGit [ "rev-parse"; "--short"; "HEAD" ] |> Flow.map _.Trim() |> Flow.orElseWith (fun _ -> Flow.ok "")
+                return if head = "" then "no commits yet" else $"detached at {head}"
+        }
+
     /// <summary>The last commit's full message, for amending; empty before the first commit.</summary>
     let fetchLastCommitMessage : Flow<GitEnv, GitError, string> =
         plainGit [ "log"; "-1"; "--format=%B" ] |> Flow.orElseWith (fun _ -> Flow.ok "")

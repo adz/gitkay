@@ -157,6 +157,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     public event EventHandler<DiffFileMenuEventArgs>? FileContextRequested;
     /// <summary>Raised after text is copied, with the number of lines copied (0 for part of a line).</summary>
     public event EventHandler<int>? TextCopied;
+    /// <summary>Lets the host put its own actions at the top of a line's right-click menu.</summary>
+    public event Action<ContextMenu>? LineMenuOpening;
 
     public IEnumerable<IDiffRowProjection>? ItemsSource { get => GetValue(ItemsSourceProperty); set => SetValue(ItemsSourceProperty, value); }
     public IDiffRowProjection? SelectedItem { get => GetValue(SelectedItemProperty); set => SetValue(SelectedItemProperty, value); }
@@ -1210,8 +1212,11 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         if (e.GetCurrentPoint(this).Properties.IsRightButtonPressed) {
             if ((uint)rowIndex < (uint)_rows.Length && _rows[rowIndex] is DiffGapProjection menuGap)
                 ShowGapMenu(rowIndex, menuGap);
-            else if ((uint)rowIndex < (uint)_rows.Length && _rows[rowIndex] is DiffLineProjection menuLine)
+            else if ((uint)rowIndex < (uint)_rows.Length && _rows[rowIndex] is DiffLineProjection menuLine) {
+                // Right-clicking a line focuses it unless it's inside a text selection the menu may act on.
+                if (!HasTextSelection) SelectedItem = menuLine;
                 ShowLineMenu(rowIndex, menuLine);
+            }
             else if (RowAt(position, out _) is var headerIndex && (uint)headerIndex < (uint)_rows.Length && _rows[headerIndex] is DiffFileHeaderProjection menuHeader) {
                 SelectedItem = menuHeader;
                 var menu = new ContextMenu();
@@ -1886,6 +1891,10 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             menu.Items.Add(item);
         }
 
+        if (LineMenuOpening != null) {
+            LineMenuOpening.Invoke(menu);
+            if (menu.Items.Count > 0) menu.Items.Add(new Separator());
+        }
         Add("Copy", HasTextSelection, CopySelection);
         Add("Copy line", true, () => CopyText(LineText(line)));
         var header = index;

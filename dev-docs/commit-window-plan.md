@@ -87,8 +87,16 @@ changes.
 
 - `CommitWindow` (Avalonia window) with two list boxes, `DiffSurfaceControl`, and the message box; its own
   `ElmishHost`.
-- Keys: `j`/`k` in lists, `Tab` between lists, diff and message, `s` stage, `u` unstage, `Ctrl+Enter` commit, `Esc`
-  closes when the message is unchanged.
+- Layout: a "Current Branch" bar across the top; Unstaged Changes (salmon title) and Staged Changes (Will Commit)
+  (green title) down the whole left side; the diff above the commit message on the right, as in git gui.
+- Keys (F1 or `?` shows them all): the main window's movement keys through the shared vim session (`j`/`k`, `gg`/`G`,
+  `Ctrl+D`/`Ctrl+U`, `]c`/`[c`, `v`/`V`, `y`, `zz`, `H`/`M`/`L`, zoom); its pane keys (`Ctrl+1`–`4`,
+  `Ctrl+h`/`j`/`k`/`l`, `Ctrl+W` commands, `Tab`); git gui's staging keys (`Ctrl+T` stage, `Ctrl+U` unstage in a list,
+  `Ctrl+I` stage all, `Ctrl+Enter` commit, `Ctrl+S` sign off, `F5` rescan) plus `s`/`u`, `Enter` and `Delete` (discard).
+  git gui's `Ctrl+J` (revert) stays pane-down, as in the main window. Search, palettes and history navigation stay in
+  the main window.
+- Right-click: on a file, stage/unstage, discard, stage or unstage all, copy path, open in VS Code; on diff lines,
+  stage/unstage the lines or hunk, discard, open in VS Code at the line.
 
 ## Phases
 

@@ -616,6 +616,7 @@ public partial class MainWindow : Window, IVimCommands {
             projection.RefreshWorkingTree();
             if (push) _ = PushCurrentBranchAsync(directory);
         };
+        _commitWindow.OpenInVsCode = (path, line) => projection.OpenInVsCode(new FileTarget(path, path, path, null), line);
         _commitWindow.Closed += (_, _) => _commitWindow = null;
         _commitWindow.Show(this);
     }

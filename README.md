@@ -2,10 +2,18 @@
 
 GitKay is a fast Git history viewer built with Avalonia and F#.
 
-Current focus:
-- commit history and graph browsing
-- commit details and diffs
-- branch, tag, cherry-pick, reset, and revert actions
+It's design goal is to be as close as possible to gitk/git-gui in layout
+and interactions with a more modern style.
+
+In addition it adds:
+
+- Syntax colouring
+- Commit search: more capable, improved UX & moved to top
+- More right-click contextual help (open in vscode, filter)
+- Open file in full (double click, or right-click)
+- Vim movement keys
+- Ctrl-P for go to file
+- Ctrl-G for go to commit/tag/branch
 
 Publish:
 - `bash scripts/publish-gitkay.sh` builds a self-contained single-file app.

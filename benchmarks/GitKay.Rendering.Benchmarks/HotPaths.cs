@@ -398,6 +398,21 @@ internal static class UiInteractions {
             projection.ApplyToSelection();
             Settle();
         }
+        if (label.Contains("keyboard")) {
+            // Real key presses: Ctrl+3 to the diff, j to a change, s stages its hunk.
+            Avalonia.Headless.HeadlessWindowExtensions.KeyPressQwerty(window, Avalonia.Input.PhysicalKey.Digit3, Avalonia.Input.RawInputModifiers.Control);
+            Pump(window);
+            var surface = Avalonia.Controls.NameScopeExtensions.Find<DiffSurfaceControl>(window, "Surface")!;
+            Console.WriteLine($"diff focused={surface.IsKeyboardFocusWithin}");
+            surface.SelectedItem = projection.Rows.OfType<DiffLineProjection>().First(line => line.IsAdded || line.IsRemoved);
+            Avalonia.Headless.HeadlessWindowExtensions.KeyPressQwerty(window, Avalonia.Input.PhysicalKey.S, Avalonia.Input.RawInputModifiers.None);
+            Settle();
+            Avalonia.Headless.HeadlessWindowExtensions.KeyPressQwerty(window, Avalonia.Input.PhysicalKey.Digit1, Avalonia.Input.RawInputModifiers.Control);
+            Avalonia.Headless.HeadlessWindowExtensions.KeyPressQwerty(window, Avalonia.Input.PhysicalKey.J, Avalonia.Input.RawInputModifiers.None);
+            Pump(window);
+            Console.WriteLine($"after j selected={projection.SelectedFile?.Path}");
+        }
+        if (label.Contains("keys")) projection.IsKeysOpen = true;
         if (label.Contains("message")) projection.Message = "Stage the first hunk\n\nShows the commit window in a screenshot.";
         Pump(window);
         using var frame = Avalonia.Headless.HeadlessWindowExtensions.CaptureRenderedFrame(window);

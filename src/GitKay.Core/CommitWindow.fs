@@ -22,6 +22,8 @@ module CommitWindow =
     type Model =
         { GitEnv: GitService.GitEnv
           Changes: GitService.WorkingTreeChanges option
+          /// <summary>The checked-out branch (or a detached HEAD), shown like git gui's "Current Branch".</summary>
+          Branch: string
           /// <summary>The list and current path of the file whose diff is shown.</summary>
           Selected: (ListKind * string) option
           Message: string
@@ -40,6 +42,7 @@ module CommitWindow =
     type Msg =
         | Rescan
         | ChangesLoaded of Result<GitService.WorkingTreeChanges, GitError>
+        | BranchLoaded of string
         | Select of ListKind * path: string
         | StagePaths of string list
         | UnstagePaths of string list
@@ -119,6 +122,7 @@ module CommitWindow =
     let init (env: GitService.GitEnv) (draft: string) : Model * Cmd<Msg> =
         { GitEnv = env
           Changes = None
+          Branch = ""
           Selected = None
           Message = draft
           Amend = false
@@ -131,7 +135,9 @@ module CommitWindow =
         Cmd.ofMsg Rescan
 
     let private scan (model: Model) =
-        Cmd.OfFlow.ofFlowLatest "commit window scan" scanJob model.GitEnv (GitService.fetchWorkingTreeChanges 3) (Ok >> ChangesLoaded) (Error >> ChangesLoaded)
+        Cmd.batch
+            [ Cmd.OfFlow.ofFlowLatest "commit window scan" scanJob model.GitEnv (GitService.fetchWorkingTreeChanges 3) (Ok >> ChangesLoaded) (Error >> ChangesLoaded)
+              Cmd.OfFlow.ofFlow "current branch" App.runtime model.GitEnv GitService.fetchCurrentBranch BranchLoaded (fun _ -> BranchLoaded "") ]
 
     let private operation (model: Model) (description: string) (committed: bool) (work: Flow<GitService.GitEnv, GitError, unit>) =
         { model with Busy = Some description; Status = description + "…"; FailureOutput = None },
@@ -157,6 +163,7 @@ module CommitWindow =
             Cmd.none
         | ChangesLoaded(Error error) ->
             { model with Busy = None; Status = "Scan failed: " + GitError.describe error }, Cmd.none
+        | BranchLoaded branch -> { model with Branch = branch }, Cmd.none
         | Select(list, path) -> { model with Selected = Some(list, path) }, Cmd.none
         | StagePaths [] | UnstagePaths [] -> model, Cmd.none
         | StagePaths paths -> operation model $"Staging {fileCount paths.Length}" false (GitService.stageFiles paths)
