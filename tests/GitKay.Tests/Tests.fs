@@ -3074,6 +3074,71 @@ module DiffSearchBorrowTests =
         finally
             IO.Directory.Delete(root, true)
 
+module CommitWindowTests =
+
+    let private diff path : Models.FileDiff = { OldPath = path; NewPath = path; Hunks = []; NewLineCount = None }
+
+    let private changes (unstaged: string list) (staged: string list) (untracked: string list) : GitService.WorkingTreeChanges =
+        { Entries = []
+          Staged = staged |> List.map diff
+          Unstaged = unstaged |> List.map diff
+          Untracked = untracked |> List.map (fun path -> { diff path with OldPath = "/dev/null" }) }
+
+    let private model0 () = fst (CommitWindow.init (GitService.environment "") "")
+
+    [<Fact>]
+    let ``reselect keeps the file, then its position, then the other list`` () =
+        let before = changes [ "a"; "b"; "c" ] [] [ "n" ]
+        test <@ CommitWindow.reselect None None before = Some(CommitWindow.UnstagedList, "a") @>
+        test <@ CommitWindow.reselect (Some before) (Some(CommitWindow.UnstagedList, "b")) (changes [ "a"; "b"; "c" ] [] []) = Some(CommitWindow.UnstagedList, "b") @>
+        // "b" was staged: the file now at its position is shown.
+        test <@ CommitWindow.reselect (Some before) (Some(CommitWindow.UnstagedList, "b")) (changes [ "a"; "c" ] [ "b" ] [ "n" ]) = Some(CommitWindow.UnstagedList, "c") @>
+        test <@ CommitWindow.reselect (Some before) (Some(CommitWindow.UnstagedList, "n")) (changes [ "a" ] [] []) = Some(CommitWindow.UnstagedList, "a") @>
+        test <@ CommitWindow.reselect (Some(changes [ "a" ] [] [])) (Some(CommitWindow.UnstagedList, "a")) (changes [] [ "a" ] []) = Some(CommitWindow.StagedList, "a") @>
+
+    [<Fact>]
+    let ``commit needs a subject and staged changes unless amending`` () =
+        let loaded, _ = CommitWindow.update (CommitWindow.ChangesLoaded(Ok(changes [ "a" ] [] []))) (model0 ())
+        test <@ CommitWindow.commitBlocker loaded = Some "Write a commit message" @>
+        let written = { loaded with Message = "Fix it" }
+        test <@ CommitWindow.commitBlocker written = Some "Stage changes to commit" @>
+        test <@ CommitWindow.commitBlocker { written with Amend = true } = None @>
+        let staged, _ = CommitWindow.update (CommitWindow.ChangesLoaded(Ok(changes [] [ "a" ] []))) written
+        test <@ CommitWindow.commitBlocker staged = None @>
+        let blocked, _ = CommitWindow.update CommitWindow.Commit loaded
+        test <@ blocked.Status = "Write a commit message" && blocked.Busy.IsNone @>
+
+    [<Fact>]
+    let ``messages get a blank line before the body and lose trailing spaces`` () =
+        test <@ CommitWindow.normalizeMessage "Subject  \nBody\n\n" = "Subject\n\nBody\n" @>
+        test <@ CommitWindow.normalizeMessage "Subject\r\n\r\nBody" = "Subject\n\nBody\n" @>
+        test <@ CommitWindow.subject "\n" = "" @>
+
+    [<Fact>]
+    let ``amend fills an empty draft and turning it off restores it`` () =
+        let amending, _ = CommitWindow.update (CommitWindow.SetAmend true) (model0 ())
+        let loaded, _ = CommitWindow.update (CommitWindow.AmendMessageLoaded "Last subject\n\n") amending
+        test <@ loaded.Message = "Last subject\n" && loaded.Amend @>
+        let off, _ = CommitWindow.update (CommitWindow.SetAmend false) loaded
+        test <@ off.Message = "" && not off.Amend @>
+        let edited, _ = CommitWindow.update (CommitWindow.SetMessage "Rewritten") loaded
+        let keptOff, _ = CommitWindow.update (CommitWindow.SetAmend false) edited
+        test <@ keptOff.Message = "Rewritten" @>
+        let draft = { model0 () with Message = "My draft" }
+        let amendingDraft, _ = CommitWindow.update (CommitWindow.SetAmend true) draft
+        let notReplaced, _ = CommitWindow.update (CommitWindow.AmendMessageLoaded "Last subject") amendingDraft
+        test <@ notReplaced.Message = "My draft" @>
+
+    [<Fact>]
+    let ``a successful commit clears the message and counts it; a failure keeps the output`` () =
+        let written = { model0 () with Message = "Fix it"; Amend = true; Busy = Some "Committing" }
+        let committed, _ = CommitWindow.update (CommitWindow.OperationSucceeded("Committing", true)) written
+        test <@ committed.Message = "" && not committed.Amend && committed.Commits = 1 && committed.Busy.IsNone @>
+        let failed, _ = CommitWindow.update (CommitWindow.OperationFailed("Committing", GitError.OperationFailed("commit", "hook said no"))) written
+        test <@ failed.Message = "Fix it" && failed.FailureOutput = Some "commit failed: hook said no" @>
+        let rescanned, _ = CommitWindow.update (CommitWindow.ChangesLoaded(Ok(changes [ "a" ] [] []))) failed
+        test <@ rescanned.Status = "Committing failed" @>
+
 module PaletteTests =
 
     let private commitOf hash subject (refs: Models.CommitRef list) : Models.Commit =
