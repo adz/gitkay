@@ -134,7 +134,8 @@ module DiffSurfaceTests =
             fixture.Surface.SelectedItem <- header
             fixture.Press Key.Enter
             let collapsedTop = Math.Round(fixture.ViewportTop header, 1)
-            test <@ stuck && collapsedTop = 0.0 @>)
+            // The sticky card sits flush with the top; the row has a 12px margin above its card.
+            test <@ stuck && collapsedTop = -12.0 @>)
 
     [<Fact>]
     let ``v selects from the caret on the side the caret is on`` () =
@@ -428,3 +429,37 @@ module CommitQuickFindTests =
             window.Close()
             Headless.pump ()
             test <@ (whileTyping, afterN, afterEscape) = ((1, true), 3, (3, true)) @>)
+
+module HistoryChipTests =
+    open Avalonia.Controls.Shapes
+    open Avalonia.VisualTree
+
+    [<Fact>]
+    let ``branch and file chips show a close cross that clears their filter`` () =
+        Headless.run (fun () ->
+            let projection = MainProjection()
+            let messages = System.Collections.Concurrent.ConcurrentQueue<App.Msg>()
+            projection.SetDispatch(fun message -> messages.Enqueue message)
+            let window = MainWindow(Width = 1400.0, Height = 800.0, DataContext = projection)
+            window.Show()
+            let model0, _ = App.init [||]
+            projection.Update { model0 with StartupTargets = [ GitStartup.Revision "main"; GitStartup.Path "src/a.fs" ] }
+            Headless.pump ()
+
+            let closeOf (chip: Border) =
+                let button = chip.GetVisualDescendants() |> Seq.pick (function :? Button as b -> Some b | _ -> None)
+                let cross = button.GetVisualDescendants() |> Seq.pick (function :? Path as p -> Some p | _ -> None)
+                button, cross
+            let branchButton, branchCross = closeOf (window.FindControl<Border>("BranchFilterChip"))
+            let fileButton, fileCross = closeOf (window.FindControl<Border>("FileFilterChip"))
+            let visible (cross: Path) = cross.IsEffectivelyVisible && cross.Bounds.Width > 0.0 && not (isNull cross.Stroke) && cross.StrokeThickness > 0.0
+
+            branchButton.Command.Execute null
+            let afterBranch = messages.ToArray() |> Array.last
+            fileButton.Command.Execute null
+            let afterFile = messages.ToArray() |> Array.last
+            window.Close()
+            Headless.pump ()
+            test <@ visible branchCross && visible fileCross @>
+            test <@ afterBranch = App.Msg.SetHistoryTargets [ GitStartup.Path "src/a.fs" ] @>
+            test <@ afterFile = App.Msg.SetHistoryTargets [ GitStartup.Revision "main" ] @>)

@@ -164,11 +164,11 @@ public partial class MainProjection {
     /// <summary>The paths history is limited to, or empty.</summary>
     [ObservableProperty] private string _historyPathFilter = "";
     public bool HasHistoryPathFilter => HistoryPathFilter.Length > 0;
-    public string HistoryPathFilterTip => $"History limited to commits touching {HistoryPathFilter}\nRight-click for actions";
+    public string HistoryPathFilterTip => $"History limited to commits touching {HistoryPathFilter}\nClick or right-click for actions · ✕ clears the filter";
     /// <summary>The branches, tags or revisions history is limited to, or empty for HEAD / all branches.</summary>
     [ObservableProperty] private string _historyTipFilter = "";
     public bool HasHistoryTipFilter => HistoryTipFilter.Length > 0;
-    public string HistoryTipFilterTip => $"History limited to commits reachable from {HistoryTipFilter}";
+    public string HistoryTipFilterTip => $"History limited to commits reachable from {HistoryTipFilter}\nClick or right-click for actions · ✕ shows the full history";
 
     partial void OnHistoryTipFilterChanged(string value) {
         OnPropertyChanged(nameof(HasHistoryTipFilter));

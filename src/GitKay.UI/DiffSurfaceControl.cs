@@ -394,8 +394,10 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         var index = Array.IndexOf(_rows, header);
         if (_scrollViewer != null && index >= 0) {
             _expansionAnchor = null;
-            // A header scrolled above the viewport is showing as the sticky header at the top; keep it there.
-            _pendingAnchor = new ViewportAnchor(null, null, "", Math.Max(0, _tops[index] - _scrollViewer.Offset.Y), header);
+            // A header scrolled above the viewport is drawn as the sticky header: keep its card exactly where that
+            // was drawn (flush with the top, or pushed up by the next file), not where its row would be.
+            var rowTop = _stickyIndex == index ? _stickyRowTop : _tops[index];
+            _pendingAnchor = new ViewportAnchor(null, null, "", rowTop - _scrollViewer.Offset.Y, header);
         }
         command.Execute(header.File);
     }

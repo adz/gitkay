@@ -414,6 +414,34 @@ public partial class MainWindow : Window, IVimCommands {
         menu.Open(anchor);
     }
 
+    private void ShowBranchFilterMenu(Control anchor) {
+        if (_projection is not { HasHistoryTipFilter: true } projection) return;
+        var name = projection.HistoryTipFilter;
+        var menu = new ContextMenu();
+        void Add(string header, Action action) {
+            var item = new MenuItem { Header = header };
+            item.Click += (_, _) => action();
+            menu.Items.Add(item);
+        }
+
+        menu.Items.Add(new MenuItem { Header = $"Commits on {name}", IsEnabled = false });
+        menu.Items.Add(new Separator());
+        Add("Show the full history", projection.ClearHistoryTipFilter);
+        Add("Show all branches", () => projection.IsAllBranches = true);
+        Add("Copy name", () => CopyToClipboard(name, "Copied"));
+        menu.Open(anchor);
+    }
+
+    private void OnBranchFilterChipContextRequested(object? sender, ContextRequestedEventArgs e) {
+        ShowBranchFilterMenu(BranchFilterChip);
+        e.Handled = true;
+    }
+
+    private void OnBranchFilterChipPointerReleased(object? sender, PointerReleasedEventArgs e) {
+        if (e.InitialPressMouseButton == MouseButton.Left && e.Source is not Button && (e.Source as Visual)?.FindAncestorOfType<Button>() == null)
+            ShowBranchFilterMenu(BranchFilterChip);
+    }
+
     private void OnFileFilterChipContextRequested(object? sender, ContextRequestedEventArgs e) {
         ShowFileFilterMenu(FileFilterChip);
         e.Handled = true;

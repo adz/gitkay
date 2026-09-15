@@ -201,14 +201,16 @@
                             </Border>
 <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
 <!-- History is limited to what a branch or tag reaches: its name, with ✕ to go back. -->
-<Border IsVisible="{Binding HasHistoryTipFilter}" VerticalAlignment="Center"
-        Background="{DynamicResource GitKayAccentBrush}" CornerRadius="9" Padding="7,1,2,1"
-        ToolTip.Tip="{Binding HistoryTipFilterTip}">
+<Border x:Name="BranchFilterChip" IsVisible="{Binding HasHistoryTipFilter}" VerticalAlignment="Center"
+        Background="{DynamicResource GitKayAccentBrush}" CornerRadius="9" Padding="7,1,2,1" Cursor="Hand"
+        ToolTip.Tip="{Binding HistoryTipFilterTip}"
+        ContextRequested="OnBranchFilterChipContextRequested"
+        PointerReleased="OnBranchFilterChipPointerReleased">
     <StackPanel Orientation="Horizontal" Spacing="3">
         <TextBlock Text="{Binding HistoryTipFilter}" FontSize="10" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="White" MaxWidth="180" TextTrimming="CharacterEllipsis" />
         <Button Classes="inline" Width="16" Height="16" Padding="0" Command="{Binding ClearHistoryTipFilterCommand}"
                 ToolTip.Tip="Back to the full history">
-            <PathIcon Width="7" Height="7" Data="M2,2 L14,14 M14,2 L2,14" Foreground="White" />
+            <Path Width="8" Height="8" Stretch="Uniform" Data="M0,0 L10,10 M10,0 L0,10" Stroke="White" StrokeThickness="1.6" StrokeLineCap="Round" />
         </Button>
     </StackPanel>
 </Border>
@@ -222,7 +224,7 @@
         <TextBlock Text="FILE FILTERED" FontSize="10" FontWeight="SemiBold" LetterSpacing="0.4" VerticalAlignment="Center" Foreground="White" />
         <Button Classes="inline" Width="16" Height="16" Padding="0" Command="{Binding ClearHistoryPathFilterCommand}"
                 ToolTip.Tip="Clear the file filter and show the full history">
-            <PathIcon Width="7" Height="7" Data="M2,2 L14,14 M14,2 L2,14" Foreground="White" />
+            <Path Width="8" Height="8" Stretch="Uniform" Data="M0,0 L10,10 M10,0 L0,10" Stroke="White" StrokeThickness="1.6" StrokeLineCap="Round" />
         </Button>
     </StackPanel>
 </Border>
