@@ -184,3 +184,80 @@ let ``search progress reads as a status line`` () =
           GitSearch.Searched(0, -1) ]
         |> List.map GitSearch.progressText
     test <@ texts = [ ""; "Searching…"; "12 so far · 42%"; "Searching…"; "3 of 12"; "12 matches"; "No matches" ] @>
+
+module DiffLayoutTests =
+    open GitKay.Core.DiffRows
+
+    let private kindOf (line: string) =
+        match line[0] with
+        | '+' -> Models.Added
+        | '-' -> Models.Removed
+        | _ -> Models.Context
+
+    let private blocks =
+        [ Gap "top"
+          Hunk("@@1", [ " a"; "-b"; "+B"; "+c" ])
+          Hunk("@@2", [ "-gone" ])
+          Gap "middle"
+          Hunk("@@3", [ " d"; "+e" ]) ]
+
+    let private describe row =
+        match row with
+        | GapRow(gap, Some hunk) -> $"gap {gap} {hunk}"
+        | GapRow(gap, None) -> $"gap {gap}"
+        | HunkHeaderRow hunk -> hunk
+        | LineRow line -> line
+        | PairRow(removed, added) -> $"{removed}|{added}"
+
+    [<Fact>]
+    let ``unified keeps every line; a header after a gap merges into it`` () =
+        test <@ layout Unified kindOf blocks |> List.map describe = [ "gap top @@1"; " a"; "-b"; "+B"; "+c"; "@@2"; "-gone"; "gap middle @@3"; " d"; "+e" ] @>
+
+    [<Fact>]
+    let ``side by side pairs a removed line with the added line after it`` () =
+        test <@ layout SideBySide kindOf blocks |> List.map describe = [ "gap top @@1"; " a"; "-b|+B"; "+c"; "@@2"; "-gone"; "gap middle @@3"; " d"; "+e" ] @>
+
+    [<Fact>]
+    let ``new and old file layouts drop the other side, and empty hunks disappear with their header`` () =
+        test <@ layout NewFile kindOf blocks |> List.map describe = [ "gap top @@1"; " a"; "+B"; "+c"; "gap middle @@3"; " d"; "+e" ] @>
+        test <@ layout OldFile kindOf blocks |> List.map describe = [ "gap top @@1"; " a"; "-b"; "@@2"; "-gone"; "gap middle @@3"; " d" ] @>
+
+module DiffNavigationTests =
+    open GitKay.Core.DiffNavigation
+
+    let private row kind oldLine newLine = { Kind = kind; OldLine = oldLine; NewLine = newLine }
+    let private rows =
+        [| row FileHeader -1 -1       // 0
+           row HunkHeader -1 -1       // 1
+           row Line 10 10             // 2
+           row Line 11 -1             // 3
+           row Line -1 11             // 4
+           row CollapsedGap -1 -1     // 5
+           row Line 40 42             // 6
+           row FileHeader -1 -1       // 7
+           row HunkHeader -1 -1       // 8
+           row Line 1 1 |]            // 9
+
+    [<Fact>]
+    let ``go to line finds the line in the focused file, or the next shown one`` () =
+        test <@ goToLine rows 3 Unified 11 = 4 && goToLine rows 3 OldFile 11 = 3 @>
+        test <@ goToLine rows 2 Unified 20 = 6 && goToLine rows 2 Unified 99 = -1 @>
+        test <@ goToLine rows 9 Unified 1 = 9 && goToLine rows -1 Unified 10 = 2 @>
+
+    [<Fact>]
+    let ``hunk targets land on the first line after a header or gap`` () =
+        test <@ hunkTarget rows -1 true = 2 && hunkTarget rows 2 true = 6 && hunkTarget rows 6 true = 9 @>
+        test <@ hunkTarget rows 9 true = -1 && hunkTarget rows 6 false = 2 && hunkTarget rows -1 false = 9 @>
+
+    [<Fact>]
+    let ``selections order, extend like vim, and copy only line text`` () =
+        let texts = [| null; null; "alpha"; "beta"; "gamma"; null; "delta"; null; null; "one" |]
+        let lengthAt row = match texts[row] with null -> 0 | text -> text.Length
+        let position r c = { Row = r; Column = c }
+        test <@ ordered (position 4 1) (position 2 3) = struct (position 2 3, position 4 1) @>
+        test <@ characterwise (position 4 1) (position 2 3) lengthAt = struct (position 2 3, position 4 2) @>
+        test <@ linewise rows 1 5 lengthAt = ValueSome(struct (position 2 0, position 4 5)) && linewise rows 5 5 lengthAt = ValueNone @>
+        let struct (first, last) = characterwise (position 2 3) (position 6 1) lengthAt
+        test <@ selectedText first last (fun row -> texts[row]) = "ha\nbeta\ngamma\nde" @>
+        test <@ DiffText.changedSpan "let x = 1" "let x = 42" = ValueSome(struct (8, 1, 2)) @>
+        test <@ DiffText.changedSpan "same" "same" = ValueNone && DiffText.changedSpan "" "x" = ValueNone @>

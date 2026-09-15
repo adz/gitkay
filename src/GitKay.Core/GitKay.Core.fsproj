@@ -12,6 +12,8 @@
     <Compile Include="CommitFormat.fs" />
     <Compile Include="DiffFind.fs" />
     <Compile Include="Settings.fs" />
+    <Compile Include="DiffRows.fs" />
+    <Compile Include="DiffNavigation.fs" />
     <Compile Include="DiffExpansion.fs" />
     <Compile Include="Vim.fs" />
     <Compile Include="Graph.fs" />

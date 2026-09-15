@@ -951,25 +951,15 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private Rect NewColumnClip(double middle, double y) => new(middle + Z(57), y, Math.Max(0, Bounds.Width - middle - Z(57)), LineHeight);
 
     private void DrawIntralineHighlights(DrawingContext context, string oldText, string newText, double oldX, double newX, double middle, double y) {
-        if (_scrolling || string.IsNullOrEmpty(oldText) || string.IsNullOrEmpty(newText)
-            || oldText == newText || oldText.Length > MaxHighlightedLineLength || newText.Length > MaxHighlightedLineLength)
-            return;
-
-        var prefixLength = 0;
-        var sharedLength = Math.Min(oldText.Length, newText.Length);
-        while (prefixLength < sharedLength && oldText[prefixLength] == newText[prefixLength])
-            prefixLength++;
-
-        var suffixLength = 0;
-        while (suffixLength < sharedLength - prefixLength
-               && oldText[oldText.Length - suffixLength - 1] == newText[newText.Length - suffixLength - 1])
-            suffixLength++;
+        if (_scrolling || oldText.Length > MaxHighlightedLineLength || newText.Length > MaxHighlightedLineLength) return;
+        if (GitKay.Core.DiffText.changedSpan(oldText, newText) is not { IsSome: true } span) return;
+        var (start, oldLength, newLength) = span.Value;
 
         using (context.PushClip(OldColumnClip(middle, y)))
-            DrawChangedSpan(context, oldText, prefixLength, oldText.Length - prefixLength - suffixLength, oldX - _horizontalOffset, y,
+            DrawChangedSpan(context, oldText, start, oldLength, oldX - _horizontalOffset, y,
                 ThemeBrush("GitKayRemovedStrongBrush", ThemeBrush("GitKayRemovedBrush", Brushes.Transparent)));
         using (context.PushClip(NewColumnClip(middle, y)))
-            DrawChangedSpan(context, newText, prefixLength, newText.Length - prefixLength - suffixLength, newX - _horizontalOffset, y,
+            DrawChangedSpan(context, newText, start, newLength, newX - _horizontalOffset, y,
                 ThemeBrush("GitKayAddedStrongBrush", ThemeBrush("GitKayAddedBrush", Brushes.Transparent)));
     }
 
@@ -1221,6 +1211,35 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     // ----- Text selection: drag across code, double-click word, triple-click line, Shift+click extends. -----
 
     private readonly record struct TextPosition(int Row, int Char);
+
+    private static GitKay.Core.DiffNavigation.TextPosition ToCore(TextPosition position) => new(position.Row, position.Char);
+    private static TextPosition FromCore(GitKay.Core.DiffNavigation.TextPosition position) => new(position.Row, position.Column);
+
+    /// <summary>The rows as navigation sees them; rebuilt only when the rows change.</summary>
+    private GitKay.Core.DiffNavigation.Row[] NavigationRows {
+        get {
+            if (_navigationRowsFor == _rows) return _navigationRows;
+            _navigationRows = _rows.Select(row => row switch {
+                DiffFileHeaderProjection => new GitKay.Core.DiffNavigation.Row(GitKay.Core.DiffNavigation.RowKind.FileHeader, -1, -1),
+                DiffHunkHeaderProjection => new GitKay.Core.DiffNavigation.Row(GitKay.Core.DiffNavigation.RowKind.HunkHeader, -1, -1),
+                DiffGapProjection => new GitKay.Core.DiffNavigation.Row(GitKay.Core.DiffNavigation.RowKind.CollapsedGap, -1, -1),
+                DiffLineProjection line => new GitKay.Core.DiffNavigation.Row(GitKay.Core.DiffNavigation.RowKind.Line, line.OldLineNo ?? -1, line.NewLineNo ?? -1),
+                _ => new GitKay.Core.DiffNavigation.Row(GitKay.Core.DiffNavigation.RowKind.HunkHeader, -1, -1),
+            }).ToArray();
+            _navigationRowsFor = _rows;
+            return _navigationRows;
+        }
+    }
+
+    private GitKay.Core.DiffNavigation.Row[] _navigationRows = [];
+    private IDiffRowProjection[]? _navigationRowsFor;
+
+    /// <summary>A row's text on a selection side, or null for rows that aren't lines.</summary>
+    private Microsoft.FSharp.Core.FSharpFunc<int, string> TextAt(int side) =>
+        Microsoft.FSharp.Core.FuncConvert.FromFunc<int, string>(row => _rows[row] is DiffLineProjection line ? TextFor(line, side) : null!);
+
+    private Microsoft.FSharp.Core.FSharpFunc<int, int> LengthAt(int side) =>
+        Microsoft.FSharp.Core.FuncConvert.FromFunc<int, int>(row => _rows[row] is DiffLineProjection line ? TextFor(line, side).Length : 0);
     private sealed record TextSelection(TextPosition Anchor, TextPosition Active, int Side);
 
     private TextSelection? _textSelection;
@@ -1408,8 +1427,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     private (TextPosition Start, TextPosition End)? OrderedSelection() {
         if (_textSelection is not { } selection || selection.Anchor == selection.Active) return null;
-        var (a, b) = (selection.Anchor, selection.Active);
-        return a.Row < b.Row || (a.Row == b.Row && a.Char <= b.Char) ? (a, b) : (b, a);
+        var (first, last) = GitKay.Core.DiffNavigation.ordered(ToCore(selection.Anchor), ToCore(selection.Active));
+        return (FromCore(first), FromCore(last));
     }
 
     private static readonly IBrush TextSelectionFallback = new SolidColorBrush(Color.FromArgb(110, 56, 139, 253)).ToImmutable();
@@ -1433,19 +1452,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     /// <summary>The selected code (no line numbers or +/- markers); the focused line when nothing is selected.</summary>
     public string? GetCopyText() {
-        if (OrderedSelection() is var (start, end) && _textSelection != null) {
-            var side = _textSelection.Side;
-            var lines = new List<string>();
-            for (var row = start.Row; row <= end.Row; row++) {
-                if (_rows[row] is not DiffLineProjection line) continue;
-                var text = TextFor(line, side);
-                var from = row == start.Row ? Math.Min(start.Char, text.Length) : 0;
-                var to = row == end.Row ? Math.Min(end.Char, text.Length) : text.Length;
-                lines.Add(text[from..Math.Max(from, to)]);
-            }
-
-            return string.Join("\n", lines);
-        }
+        if (OrderedSelection() is var (start, end) && _textSelection != null)
+            return GitKay.Core.DiffNavigation.selectedText(ToCore(start), ToCore(end), TextAt(_textSelection.Side));
 
         return SelectedItem is DiffLineProjection selected ? LineText(selected) : null;
     }
@@ -1534,20 +1542,15 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         if (_visualAnchorRow < 0 || _visualAnchorRow >= _rows.Length || _rows[_visualAnchorRow] is not DiffLineProjection anchorLine) return;
         var side = CaretSide(anchorLine);
         if (_visualLinewise) {
-            var (start, end) = activeRow < _visualAnchorRow ? (activeRow, _visualAnchorRow) : (_visualAnchorRow, activeRow);
-            while (start < end && _rows[start] is not DiffLineProjection) start++;
-            while (end > start && _rows[end] is not DiffLineProjection) end--;
-            if (_rows[end] is not DiffLineProjection last) return;
-            _textSelection = new TextSelection(new TextPosition(start, 0), new TextPosition(end, TextFor(last, side).Length), side);
+            if (GitKay.Core.DiffNavigation.linewise(NavigationRows, _visualAnchorRow, activeRow, LengthAt(side)) is not { IsSome: true } lines) return;
+            var (first, last) = lines.Value;
+            _textSelection = new TextSelection(FromCore(first), FromCore(last), side);
         }
         else {
-            var anchor = new TextPosition(_visualAnchorRow, _visualAnchorChar);
-            var active = new TextPosition(activeRow, _caretChar);
-            // Vim's characterwise selection includes the character under the caret at both ends.
-            var forward = active.Row > anchor.Row || (active.Row == anchor.Row && active.Char >= anchor.Char);
-            var (from, to) = forward ? (anchor, active) : (active, anchor);
-            var toText = _rows[to.Row] is DiffLineProjection toLine ? TextFor(toLine, side) : "";
-            _textSelection = new TextSelection(from, to with { Char = Math.Min(to.Char + 1, toText.Length) }, side);
+            var anchor = new GitKay.Core.DiffNavigation.TextPosition(_visualAnchorRow, _visualAnchorChar);
+            var active = new GitKay.Core.DiffNavigation.TextPosition(activeRow, _caretChar);
+            var (first, last) = GitKay.Core.DiffNavigation.characterwise(anchor, active, LengthAt(side));
+            _textSelection = new TextSelection(FromCore(first), FromCore(last), side);
         }
         InvalidateVisual();
     }
@@ -1587,20 +1590,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     /// <summary>vim's {count}G: focuses the row with that line number in the focused file (the first file when none).</summary>
     public void GoToLine(int number) {
         var focus = SelectedItem == null ? 0 : Math.Max(0, Array.IndexOf(_rows, SelectedItem));
-        var fileStart = focus;
-        while (fileStart > 0 && _rows[fileStart] is not DiffFileHeaderProjection) fileStart--;
-        IDiffRowProjection? best = null;
-        var bestNumber = int.MaxValue;
-        for (var index = fileStart + 1; index < _rows.Length && _rows[index] is not DiffFileHeaderProjection; index++) {
-            if (_rows[index] is not DiffLineProjection line) continue;
-            var lineNumber = (DiffLayout.IsOldFile ? line.OldLineNo : line.NewLineNo) ?? line.OldLineNo ?? int.MaxValue;
-            // The exact line, or the nearest shown line after it when that line is hidden context.
-            if (lineNumber >= number && lineNumber < bestNumber) {
-                best = line;
-                bestNumber = lineNumber;
-            }
-        }
-        if (best == null) return;
+        var target = GitKay.Core.DiffNavigation.goToLine(NavigationRows, focus, DiffLayout, number);
+        if (target < 0) return;
+        var best = _rows[target];
         SelectedItem = best;
         ScrollIntoView(best);
         if (_visualAnchorRow >= 0) UpdateVisualSelection(Array.IndexOf(_rows, best));
@@ -1906,15 +1898,12 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     /// <summary>Selects the next or previous hunk (or gap) boundary, like vim's ]c / [c.</summary>
     public void MoveToHunk(int direction) {
         if (_rows.Length == 0) return;
-        var current = SelectedItem == null ? (direction > 0 ? -1 : _rows.Length) : Array.IndexOf(_rows, SelectedItem);
-        for (var index = current + direction; index >= 0 && index < _rows.Length; index += direction) {
-            if (_rows[index] is not (DiffHunkHeaderProjection or DiffGapProjection)) continue;
-            // Select the first line of the hunk so the change itself is in view.
-            var target = index + 1 < _rows.Length && _rows[index + 1] is DiffLineProjection ? _rows[index + 1] : _rows[index];
-            SelectedItem = target;
-            ScrollIntoView(target);
-            return;
-        }
+        var focus = SelectedItem == null ? -1 : Array.IndexOf(_rows, SelectedItem);
+        // The first line of the hunk, so the change itself is in view.
+        var index = GitKay.Core.DiffNavigation.hunkTarget(NavigationRows, focus, direction > 0);
+        if (index < 0) return;
+        SelectedItem = _rows[index];
+        ScrollIntoView(_rows[index]);
     }
 
     public void MoveSelection(int delta) {

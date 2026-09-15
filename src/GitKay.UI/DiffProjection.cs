@@ -247,54 +247,37 @@ public sealed partial class DiffFileHeaderProjection : ObservableObject, IDiffRo
 
 /// <summary>Flattens a file's header, hunks and gaps into diff surface rows for a presentation mode.</summary>
 public static class DiffRowBuilder {
+    private static readonly Microsoft.FSharp.Core.FSharpFunc<DiffLineProjection, GitKay.Core.Models.LineType> KindOf =
+        Microsoft.FSharp.Core.FuncConvert.FromFunc<DiffLineProjection, GitKay.Core.Models.LineType>(line =>
+            line.IsAdded ? GitKay.Core.Models.LineType.Added : line.IsRemoved ? GitKay.Core.Models.LineType.Removed : GitKay.Core.Models.LineType.Context);
+
     public static void AppendFile(List<IDiffRowProjection> rows, DiffFileProjection file, GitKay.Core.DiffLayout layout) {
         rows.Add(file.Header);
         if (!file.IsLoaded || file.IsCollapsed) return;
 
-        foreach (var block in file.Blocks) {
-            if (block is DiffGapProjection gap) {
-                gap.HeaderText = null;
-                rows.Add(gap);
-                continue;
+        var blocks = Microsoft.FSharp.Collections.ListModule.OfSeq(file.Blocks.Select(block => block switch {
+            DiffGapProjection gap => GitKay.Core.DiffRows.Block<DiffGapProjection, DiffHunkProjection, DiffLineProjection>.NewGap(gap),
+            DiffHunkProjection hunk => GitKay.Core.DiffRows.Block<DiffGapProjection, DiffHunkProjection, DiffLineProjection>.NewHunk(
+                hunk, Microsoft.FSharp.Collections.ListModule.OfSeq(hunk.Lines)),
+            _ => throw new InvalidOperationException($"Unexpected diff block {block.GetType().Name}"),
+        }));
+
+        foreach (var row in GitKay.Core.DiffRows.layout(layout, KindOf, blocks)) {
+            switch (row) {
+                case GitKay.Core.DiffRows.Row<DiffGapProjection, DiffHunkProjection, DiffLineProjection>.GapRow gapRow:
+                    gapRow.gap.HeaderText = gapRow.nextHunk?.Value.Header;
+                    rows.Add(gapRow.gap);
+                    break;
+                case GitKay.Core.DiffRows.Row<DiffGapProjection, DiffHunkProjection, DiffLineProjection>.HunkHeaderRow header:
+                    rows.Add(new DiffHunkHeaderProjection(header.Item));
+                    break;
+                case GitKay.Core.DiffRows.Row<DiffGapProjection, DiffHunkProjection, DiffLineProjection>.LineRow line:
+                    rows.Add(line.Item);
+                    break;
+                case GitKay.Core.DiffRows.Row<DiffGapProjection, DiffHunkProjection, DiffLineProjection>.PairRow pair:
+                    rows.Add(DiffLineProjection.CreateSideBySidePair(pair.removed, pair.added));
+                    break;
             }
-
-            if (block is not DiffHunkProjection hunk) continue;
-
-            if (layout.IsSideBySide) {
-                AddHunkHeader(rows, hunk);
-                AddSideBySideLines(rows, hunk.Lines);
-                continue;
-            }
-
-            var lines = layout.IsNewFile ? hunk.Lines.Where(line => !line.IsRemoved).ToArray()
-                : layout.IsOldFile ? hunk.Lines.Where(line => !line.IsAdded).ToArray()
-                : hunk.Lines.ToArray();
-            if (lines.Length == 0) continue;
-
-            AddHunkHeader(rows, hunk);
-            rows.AddRange(lines);
-        }
-    }
-
-    private static void AddHunkHeader(List<IDiffRowProjection> rows, DiffHunkProjection hunk) {
-        if (rows.Count > 0 && rows[^1] is DiffGapProjection gap)
-            gap.HeaderText = hunk.Header;
-        else
-            rows.Add(new DiffHunkHeaderProjection(hunk));
-    }
-
-    private static void AddSideBySideLines(List<IDiffRowProjection> target, IList<DiffLineProjection> lines) {
-        var index = 0;
-        while (index < lines.Count) {
-            var line = lines[index];
-            if (line.IsRemoved && index + 1 < lines.Count && lines[index + 1].IsAdded) {
-                target.Add(DiffLineProjection.CreateSideBySidePair(line, lines[index + 1]));
-                index += 2;
-                continue;
-            }
-
-            target.Add(line);
-            index++;
         }
     }
 }
