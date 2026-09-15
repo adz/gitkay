@@ -2248,6 +2248,8 @@ module AppTests =
                 Commit = commit
                 Lane = 0
                 Segments = []
+                HasIncoming = false
+                Color = 0
             }
 
         test <@ projection.HasRefs @>
@@ -2281,6 +2283,8 @@ module AppTests =
                 Commit = commit
                 Lane = 0
                 Segments = []
+                HasIncoming = false
+                Color = 0
             }
 
         test <@ projection.RefBadges.Count = 2 @>
@@ -2315,6 +2319,8 @@ module AppTests =
                             Color = 1
                         }
                     ]
+                HasIncoming = false
+                Color = 0
             }
 
         test <@ projection.Segments.Count = 2 @>

@@ -30,16 +30,16 @@
             <SolidColorBrush x:Key="GitKaySyntaxNumberBrush" Color="#79C0FF" />
             <SolidColorBrush x:Key="GitKaySyntaxCommentBrush" Color="#8B949E" />
             <SolidColorBrush x:Key="GitKaySyntaxTypeBrush" Color="#D2A8FF" />
-            <SolidColorBrush x:Key="GitKayLane0Brush" Color="#FF0000" />
-            <SolidColorBrush x:Key="GitKayLane1Brush" Color="#008000" />
-            <SolidColorBrush x:Key="GitKayLane2Brush" Color="#0000FF" />
-            <SolidColorBrush x:Key="GitKayLane3Brush" Color="#FFA500" />
-            <SolidColorBrush x:Key="GitKayLane4Brush" Color="#800080" />
-            <SolidColorBrush x:Key="GitKayLane5Brush" Color="#00FFFF" />
-            <SolidColorBrush x:Key="GitKayLane6Brush" Color="#FF00FF" />
-            <SolidColorBrush x:Key="GitKayLane7Brush" Color="#FFFF00" />
-            <SolidColorBrush x:Key="GitKayLane8Brush" Color="#90EE90" />
-            <SolidColorBrush x:Key="GitKayLane9Brush" Color="#ADD8E6" />
+            <SolidColorBrush x:Key="GitKayLane0Brush" Color="#F47067" />
+            <SolidColorBrush x:Key="GitKayLane1Brush" Color="#57AB5A" />
+            <SolidColorBrush x:Key="GitKayLane2Brush" Color="#539BF5" />
+            <SolidColorBrush x:Key="GitKayLane3Brush" Color="#E0823D" />
+            <SolidColorBrush x:Key="GitKayLane4Brush" Color="#B083F0" />
+            <SolidColorBrush x:Key="GitKayLane5Brush" Color="#39C5CF" />
+            <SolidColorBrush x:Key="GitKayLane6Brush" Color="#FC8DC7" />
+            <SolidColorBrush x:Key="GitKayLane7Brush" Color="#DAAA3F" />
+            <SolidColorBrush x:Key="GitKayLane8Brush" Color="#8DDB8C" />
+            <SolidColorBrush x:Key="GitKayLane9Brush" Color="#6CB6FF" />
             <!-- Visual refresh: hairlines, muted ref pills, quieter numbers -->
             <SolidColorBrush x:Key="GitKayHairlineBrush" Color="#21262D" />
             <SolidColorBrush x:Key="GitKayLineNumberBrush" Color="#6E7681" />

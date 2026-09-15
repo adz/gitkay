@@ -3,7 +3,8 @@
 ## Vision
 GitKay is a modern, high-performance Git history visualizer designed as a lean and fast alternative to `gitk`. It focuses on a streamlined subset of features, providing a responsive and aesthetically pleasing experience for viewing commit history and performing common branch/tag operations.
 
-## Core Requirements
+## The Core Requirements
+
 - **Three-Pane Layout**:
     - **Top (Tree/Graph)**: A visual representation of the git commit graph and history.
     - **Middle (Commit Info)**: Details about the selected commit (message, author, hash, etc.).

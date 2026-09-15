@@ -47,6 +47,10 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     [ObservableProperty] private bool _hasSecondarySummary;
     [ObservableProperty] private string _secondarySummary = "";
     [ObservableProperty] private int _lane = 0;
+    /// <summary>The commit's branch line colour index, and whether a line from a child leads into it.</summary>
+    [ObservableProperty] private int _graphColor;
+    [ObservableProperty] private bool _hasIncoming;
+    [ObservableProperty] private bool _isMerge;
     [ObservableProperty] private bool _showBranchRefs = false;
     [ObservableProperty] private bool _showStashes = false;
     /// <summary>The "Uncommitted changes" row above the newest commit: no hash, author, date or commit actions.</summary>
@@ -61,6 +65,9 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
 
         if (FullHash == commit.Hash
             && Lane == info.Lane
+            && GraphColor == info.Color
+            && HasIncoming == info.HasIncoming
+            && Segments.Count == info.Segments.Length
             && _refs.Length == commit.Refs.Length
             && _refs.SequenceEqual(commit.Refs)) {
             return;
@@ -81,10 +88,13 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         RefsSummary = GitKay.Core.CommitFormat.refsSummary(Microsoft.FSharp.Collections.ListModule.OfSeq(_refs.Select(reference => reference.Name)));
         UpdateRefBadges();
         Lane = info.Lane;
+        GraphColor = info.Color;
+        HasIncoming = info.HasIncoming;
+        IsMerge = commit.Parents.Length > 1;
 
         Segments.SyncWith(
             info.Segments,
-            m => $"{m.Lane}-{m.TargetLane}-{m.IsCommit}",
+            m => $"{m.Lane}-{m.TargetLane}-{m.IsCommit}-{m.Color}",
             vm => vm.Key,
             segment => {
                 var projection = new SegmentProjection();
@@ -253,6 +263,6 @@ public partial class SegmentProjection : ObservableObject, IProjection<Graph.Lan
         TargetLane = segment.TargetLane;
         IsCommit = segment.IsCommit;
         Color = segment.Color;
-        Key = $"{segment.Lane}-{segment.TargetLane}-{segment.IsCommit}";
+        Key = $"{segment.Lane}-{segment.TargetLane}-{segment.IsCommit}-{segment.Color}";
     }
 }

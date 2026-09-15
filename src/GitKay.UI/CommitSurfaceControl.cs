@@ -32,7 +32,8 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
     public event EventHandler? OverviewChanged;
 
     private const double RowHeight = 22;
-    private const double LaneWidth = 9;
+    private const double LaneWidth = 11;
+    private const double GraphInset = 2;
     private static readonly Typeface TextTypeface = new(FontStacks.Resolve(GitKay.Core.SettingsModule.defaults.CommitRowFontFamily));
     private static readonly Typeface MonoTypeface = new(FontStacks.Resolve(GitKay.Core.SettingsModule.defaults.CommitRowMonoFontFamily));
     // Search matches are shown in bold, like gitk.
@@ -43,12 +44,13 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
     private static readonly IBrush MutedBrush = new SolidColorBrush(Color.FromRgb(136, 136, 136)).ToImmutable();
     private static readonly IBrush SelectionBrush = new SolidColorBrush(Color.FromRgb(51, 51, 51)).ToImmutable();
     private static readonly IBrush[] LaneBrushes =
-    [
-        Brushes.Red, Brushes.Green, Brushes.Blue, Brushes.Orange, Brushes.Purple,
-        Brushes.Cyan, Brushes.Magenta, Brushes.Yellow, Brushes.LightGreen, Brushes.LightBlue
-    ];
+        new[] { "#F47067", "#57AB5A", "#539BF5", "#E0823D", "#B083F0", "#39C5CF", "#FC8DC7", "#DAAA3F", "#8DDB8C", "#6CB6FF" }
+            .Select(hex => (IBrush)new SolidColorBrush(Color.Parse(hex)).ToImmutable()).ToArray();
+    private static readonly IBrush WindowFallback = new SolidColorBrush(Color.FromRgb(0x0D, 0x11, 0x17)).ToImmutable();
     private IBrush[] _laneBrushes = LaneBrushes;
-    private IPen[] _lanePens = LaneBrushes.Select(brush => new Pen(brush, 1.5).ToImmutable()).ToArray();
+    private IPen[] _lanePens = LaneBrushes.Select(LanePen).ToArray();
+
+    private static IPen LanePen(IBrush brush) => new Pen(brush, 1.75, lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round).ToImmutable();
 
     public static readonly StyledProperty<IEnumerable<CommitProjection>?> ItemsSourceProperty =
         AvaloniaProperty.Register<CommitSurfaceControl, IEnumerable<CommitProjection>?>(nameof(ItemsSource));
@@ -237,7 +239,7 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         var centerY = y + RowHeight / 2;
         if (!_filtered) {
             using (context.PushClip(new Rect(0, y, graphWidth, RowHeight))) {
-                var cx = (row.Lane + 1) * LaneWidth;
+                var cx = LaneX(row.Lane);
                 var pen = new Pen(mutedBrush, 1.5, new DashStyle([2, 2], 0));
                 if (hasCommitBelow) context.DrawLine(pen, new Point(cx, centerY + 4), new Point(cx, y + RowHeight));
                 context.DrawEllipse(null, pen, new Rect(cx - 4, centerY - 4, 8, 8));
@@ -259,15 +261,17 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         var metaBrush = ThemeBrush("GitKaySecondaryTextBrush", MetaBrush);
         var mutedBrush = ThemeBrush("GitKayMutedTextBrush", MutedBrush);
 
-        if (ReferenceEquals(commit, _keyboardSelection ?? SelectedItem))
+        var isSelected = ReferenceEquals(commit, _keyboardSelection ?? SelectedItem);
+        if (isSelected)
             context.FillRectangle(selectionBrush, new Rect(0, y, Bounds.Width, RowHeight));
+        var rowBackground = isSelected ? selectionBrush : ThemeBrush("GitKayWindowBrush", WindowFallback);
         var textTypeface = commit.HasSearchMatch ? BoldTextTypeface : TextTypeface;
         var monoTypeface = commit.HasSearchMatch ? BoldMonoTypeface : MonoTypeface;
 
         var graphWidth = EffectiveWidth(GraphWidth, 48);
         if (!_filtered)
             using (context.PushClip(new Rect(0, y, graphWidth, RowHeight)))
-                DrawGraph(context, commit, y, joinsWorkingTree);
+                DrawGraph(context, commit, y, joinsWorkingTree, rowBackground);
 
         var subjectWidth = EffectiveWidth(SubjectWidth, 120);
         var hashWidth = EffectiveWidth(HashWidth, 54);
@@ -281,6 +285,14 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         var highlight = QuickFindHighlight is { IsEmpty: false } quick ? quick : commit.HasSearchMatch ? SearchHighlight : null;
         var underline = ThemeBrush("GitKayAccentBrush", UnderlineFallback);
         var badgeX = subjectX + 5;
+        if (!_filtered && commit.RefBadges.Count > 0) {
+            // Like gitk: a line from the commit's node runs out to its branches and tags and strings them together.
+            var badgesEnd = badgeX + commit.RefBadges.Sum(badge => Layout(badge.Text, 11, Brushes.Transparent, TextTypeface).Width + 16) - 10;
+            var connector = new Pen(_laneBrushes[Math.Abs(commit.GraphColor) % _laneBrushes.Length], 1.25);
+            var nodeX = LaneX(commit.Lane);
+            using (context.PushOpacity(0.7))
+                context.DrawLine(connector, new Point(nodeX + 5.5, y + RowHeight / 2), new Point(badgesEnd, y + RowHeight / 2));
+        }
         foreach (var badge in commit.RefBadges) {
             var badgeWidth = DrawBadge(context, badge, badgeX, y);
             if (highlight != null)
@@ -342,29 +354,64 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
     /// <summary>Lane colours come from the theme so the graph stays legible on light backgrounds.</summary>
     private void RefreshLaneBrushes() {
         _laneBrushes = LaneBrushes.Select((fallback, index) => ThemeBrush($"GitKayLane{index}Brush", fallback)).ToArray();
-        _lanePens = _laneBrushes.Select(brush => (IPen)new Pen(brush, 1.5)).ToArray();
+        _lanePens = _laneBrushes.Select(LanePen).ToArray();
     }
 
-    private void DrawGraph(DrawingContext context, CommitProjection commit, double y, bool joinsWorkingTree) {
+    private static double LaneX(int lane) => GraphInset + (lane + 0.5) * LaneWidth;
+
+    /// <summary>
+    /// Draws a row's slice of the graph so lines meet their neighbours' exactly: every line enters at the row's top and
+    /// leaves at its bottom vertically, lane changes are smooth curves, and each branch line keeps its colour.
+    /// </summary>
+    private void DrawGraph(DrawingContext context, CommitProjection commit, double y, bool joinsWorkingTree, IBrush rowBackground) {
+        var top = y;
+        var bottom = y + RowHeight;
         var centerY = y + RowHeight / 2;
-        if (joinsWorkingTree) {
-            var dashed = new Pen(ThemeBrush("GitKayMutedTextBrush", MutedBrush), 1.5, new DashStyle([2, 2], 0));
-            var x = (commit.Lane + 1) * LaneWidth;
-            context.DrawLine(dashed, new Point(x, y), new Point(x, centerY));
-        }
+        var nodeX = LaneX(commit.Lane);
+        IPen PenFor(int color) => _lanePens[Math.Abs(color) % _lanePens.Length];
+
+        // Lines passing by first, so the commit's own lines and node sit on top.
         foreach (var segment in commit.Segments) {
-            var pen = _lanePens[Math.Abs(segment.Color) % _lanePens.Length];
-            var x = (segment.Lane + 1) * LaneWidth;
-            if (segment.IsCommit) {
-                var target = (segment.TargetLane + 1) * LaneWidth;
-                context.DrawLine(pen, new Point(x, centerY), new Point(target, y + RowHeight));
-            }
-            else
-                context.DrawLine(pen, new Point(x, y), new Point(x, y + RowHeight));
+            if (segment.IsCommit) continue;
+            var from = new Point(LaneX(segment.Lane), top);
+            var to = new Point(LaneX(segment.TargetLane), bottom);
+            if (segment.Lane == segment.TargetLane) context.DrawLine(PenFor(segment.Color), from, to);
+            else context.DrawGeometry(null, PenFor(segment.Color), Curve(from, new Point(from.X, top + RowHeight * 0.55), new Point(to.X, bottom - RowHeight * 0.55), to));
         }
-        var brush = _laneBrushes[Math.Abs(commit.Lane) % _laneBrushes.Length];
-        var cx = (commit.Lane + 1) * LaneWidth;
-        context.DrawEllipse(brush, null, new Rect(cx - 3, centerY - 3, 6, 6));
+
+        // A halo in the row's background separates the node from lines passing by, drawn under the commit's own lines.
+        var brush = _laneBrushes[Math.Abs(commit.GraphColor) % _laneBrushes.Length];
+        var center = new Point(nodeX, centerY);
+        context.DrawEllipse(rowBackground, null, center, 5.5, 5.5);
+
+        if (commit.HasIncoming)
+            context.DrawLine(PenFor(commit.GraphColor), new Point(nodeX, top), new Point(nodeX, centerY));
+        else if (joinsWorkingTree)
+            context.DrawLine(new Pen(ThemeBrush("GitKayMutedTextBrush", MutedBrush), 1.5, new DashStyle([2, 2], 0)), new Point(nodeX, top), new Point(nodeX, centerY));
+
+        foreach (var segment in commit.Segments) {
+            if (!segment.IsCommit) continue;
+            var to = new Point(LaneX(segment.TargetLane), bottom);
+            if (segment.TargetLane == commit.Lane) context.DrawLine(PenFor(segment.Color), new Point(nodeX, centerY), to);
+            // Leaves the node downwards, sweeps across, and arrives vertically to join the next row.
+            else context.DrawGeometry(null, PenFor(segment.Color), Curve(new Point(nodeX, centerY), new Point(nodeX, centerY + RowHeight * 0.3), new Point(to.X, bottom - RowHeight * 0.3), to));
+        }
+
+        // Merges are rings.
+        if (commit.IsMerge)
+            context.DrawEllipse(rowBackground, new Pen(brush, 2), center, 3.25, 3.25);
+        else
+            context.DrawEllipse(brush, null, center, 4, 4);
+    }
+
+    private static StreamGeometry Curve(Point from, Point control1, Point control2, Point to) {
+        var geometry = new StreamGeometry();
+        using (var sink = geometry.Open()) {
+            sink.BeginFigure(from, false);
+            sink.CubicBezierTo(control1, control2, to);
+            sink.EndFigure(false);
+        }
+        return geometry;
     }
 
     private static readonly (IBrush Background, IBrush Foreground)[] RefPillFallbacks =
