@@ -3481,13 +3481,13 @@ module SettingsSerializationTests =
             { ShowBranchRefs = true; ShowStashes = true; DiffContextLines = 7; DiffLayout = DiffLayout.SideBySide
               CommitRowFontFamily = "Inter"; CommitRowMonoFontFamily = "Iosevka"; CommitRowTextFontSize = 14.5
               CommitRowMetaFontSize = 12.0; CommitRowBadgeFontSize = 10.0; SearchDebounceSeconds = 0.25; Theme = DarkTheme
-              PaneGap = 5.0; PaneHoverEffect = HoverShadow }
+              PaneGap = 5.0; PaneHoverEffect = HoverShadow; PaneHoverColor = TealHoverColor }
         test <@ settings |> SettingsJson.encode |> SettingsJson.decode = Ok settings @>
 
     [<Fact>]
     let ``pane settings clamp the gap and fall back to the default hover effect`` () =
-        let read = decoded """{"PaneGap":40,"PaneHoverEffect":"sparkle"}"""
-        test <@ read.PaneGap = 8.0 && read.PaneHoverEffect = Settings.defaults.PaneHoverEffect @>
+        let read = decoded """{"PaneGap":40,"PaneHoverEffect":"sparkle","PaneHoverColor":"chartreuse"}"""
+        test <@ read.PaneGap = 8.0 && read.PaneHoverEffect = Settings.defaults.PaneHoverEffect && read.PaneHoverColor = Settings.defaults.PaneHoverColor @>
         test <@ (decoded """{"PaneGap":0,"PaneHoverEffect":"none"}""") = { Settings.defaults with PaneGap = 0.0; PaneHoverEffect = NoHoverEffect } @>
 
     [<Fact>]

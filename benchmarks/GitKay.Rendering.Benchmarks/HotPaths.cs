@@ -442,12 +442,20 @@ internal static class UiInteractions {
             Settle();
         }
         if (label.Contains("panes")) {
+            var effect = label.Contains("shadow") ? GitKay.Core.PaneHoverEffect.HoverShadow
+                : label.Contains("highlight") ? GitKay.Core.PaneHoverEffect.HoverHighlight
+                : GitKay.Core.PaneHoverEffect.HoverGlow;
+            var color = label.Contains("purple") ? GitKay.Core.PaneHoverColor.PurpleHoverColor
+                : label.Contains("green") ? GitKay.Core.PaneHoverColor.GreenHoverColor
+                : GitKay.Core.PaneHoverColor.AccentHoverColor;
+            window.SetPaneChrome(4, effect, color);
             // Hover the unstaged list so the chosen effect shows in the gap.
             var list = Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.ListBox>(window, "UnstagedList")!;
-            var origin = list.Bounds.TopLeft + new Avalonia.Vector(80, 30);
+            var origin = new Avalonia.Point(150, 200);
             Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, origin, Avalonia.Input.RawInputModifiers.None);
             Settle();
-            Console.WriteLine($"hovered={list.IsPointerOver}");
+            var effectBorder = Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.Border>(window, "UnstagedPaneEffect")!;
+            Console.WriteLine($"hovered={list.IsPointerOver} opacity={effectBorder.Opacity} shadow={effectBorder.BoxShadow.Count} margin={effectBorder.Margin} bounds={effectBorder.Bounds}");
         }
         if (label.Contains("keys")) projection.IsKeysOpen = true;
         if (label.Contains("hints")) {

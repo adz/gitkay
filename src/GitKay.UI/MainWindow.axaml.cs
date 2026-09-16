@@ -708,7 +708,7 @@ public partial class MainWindow : Window, IVimCommands {
     }
 
     private void ApplyPaneChrome() {
-        if (_projection is { } projection) _paneChrome.Update(projection.PaneGap, projection.PaneHoverEffect);
+        if (_projection is { } projection) _paneChrome.Update(projection.PaneGap, projection.PaneHoverEffect, projection.PaneHoverColor);
     }
 
     private void OnDataContextChanged(object? sender, EventArgs e) {

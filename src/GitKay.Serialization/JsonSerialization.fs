@@ -20,7 +20,8 @@ type private SettingsWire =
       SearchDebounceSeconds: float
       ThemeMode: string
       PaneGap: float
-      PaneHoverEffectKey: string }
+      PaneHoverEffectKey: string
+      PaneHoverColorKey: string }
 
 type private RepoStateWire = { LastSelectedCommitHash: string option }
 
@@ -54,11 +55,13 @@ module private Codecs =
             fieldAs "ThemeMode" _.ThemeMode { defaultValue (ThemeMode.key d.Theme) }
             fieldAs "PaneGap" _.PaneGap { defaultValue d.PaneGap }
             fieldAs "PaneHoverEffect" _.PaneHoverEffectKey { defaultValue (PaneHoverEffect.key d.PaneHoverEffect) }
-            construct (fun showBranchRefs showStashes diffContextLines layout fontFamily monoFontFamily textSize metaSize badgeSize debounce theme paneGap paneHover ->
+            fieldAs "PaneHoverColor" _.PaneHoverColorKey { defaultValue (PaneHoverColor.key d.PaneHoverColor) }
+            construct (fun showBranchRefs showStashes diffContextLines layout fontFamily monoFontFamily textSize metaSize badgeSize debounce theme paneGap paneHover paneColor ->
                 { ShowBranchRefs = showBranchRefs; ShowStashes = showStashes; DiffContextLines = diffContextLines
                   DiffPresentationModeKey = layout; CommitRowFontFamily = fontFamily; CommitRowMonoFontFamily = monoFontFamily
                   CommitRowTextFontSize = textSize; CommitRowMetaFontSize = metaSize; CommitRowBadgeFontSize = badgeSize
-                  SearchDebounceSeconds = debounce; ThemeMode = theme; PaneGap = paneGap; PaneHoverEffectKey = paneHover })
+                  SearchDebounceSeconds = debounce; ThemeMode = theme; PaneGap = paneGap; PaneHoverEffectKey = paneHover
+                  PaneHoverColorKey = paneColor })
         }
         |> Json.compile
 
@@ -104,7 +107,8 @@ module SettingsJson =
               SearchDebounceSeconds = settings.SearchDebounceSeconds
               ThemeMode = ThemeMode.key settings.Theme
               PaneGap = settings.PaneGap
-              PaneHoverEffectKey = PaneHoverEffect.key settings.PaneHoverEffect }
+              PaneHoverEffectKey = PaneHoverEffect.key settings.PaneHoverEffect
+              PaneHoverColorKey = PaneHoverColor.key settings.PaneHoverColor }
 
     /// <summary>Normalized settings, or why the text isn't a settings file. Unknown layout or theme names take the defaults.</summary>
     let decode (json: string) : Result<Settings, string> =
@@ -123,7 +127,8 @@ module SettingsJson =
                   SearchDebounceSeconds = wire.SearchDebounceSeconds
                   Theme = ThemeMode.tryParse wire.ThemeMode |> Option.defaultValue Settings.defaults.Theme
                   PaneGap = wire.PaneGap
-                  PaneHoverEffect = PaneHoverEffect.tryParse wire.PaneHoverEffectKey |> Option.defaultValue Settings.defaults.PaneHoverEffect })
+                  PaneHoverEffect = PaneHoverEffect.tryParse wire.PaneHoverEffectKey |> Option.defaultValue Settings.defaults.PaneHoverEffect
+                  PaneHoverColor = PaneHoverColor.tryParse wire.PaneHoverColorKey |> Option.defaultValue Settings.defaults.PaneHoverColor })
 
 /// <summary>Window size, layout and per-repository selections as the UI state file stores them.</summary>
 module UiStateJson =

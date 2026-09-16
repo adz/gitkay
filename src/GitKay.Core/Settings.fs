@@ -79,11 +79,10 @@ type PaneHoverEffect =
     | NoHoverEffect
     | HoverGlow
     | HoverShadow
-    | HoverIndent
     | HoverHighlight
 
 module PaneHoverEffect =
-    let all = [ NoHoverEffect; HoverGlow; HoverShadow; HoverIndent; HoverHighlight ]
+    let all = [ NoHoverEffect; HoverGlow; HoverShadow; HoverHighlight ]
 
     /// <summary>The key used in settings files.</summary>
     let key effect =
@@ -91,7 +90,6 @@ module PaneHoverEffect =
         | NoHoverEffect -> "none"
         | HoverGlow -> "glow"
         | HoverShadow -> "shadow"
-        | HoverIndent -> "indent"
         | HoverHighlight -> "highlight"
 
     let label effect =
@@ -99,20 +97,73 @@ module PaneHoverEffect =
         | NoHoverEffect -> "None"
         | HoverGlow -> "Glow"
         | HoverShadow -> "Shadow"
-        | HoverIndent -> "Indent"
         | HoverHighlight -> "Highlight"
 
     let describe effect =
         match effect with
         | NoHoverEffect -> "Panes stay as they are"
         | HoverGlow -> "The pane under the pointer glows into the space around it"
-        | HoverShadow -> "The pane under the pointer casts a soft shadow"
-        | HoverIndent -> "The pane under the pointer sits slightly inset"
+        | HoverShadow -> "The pane under the pointer lifts, casting a soft shadow"
         | HoverHighlight -> "The pane under the pointer gets a brighter edge"
 
     let tryParse (text: string) =
         let normalized = if isNull text then "" else text.Trim().ToLowerInvariant()
         all |> List.tryFind (fun effect -> key effect = normalized)
+
+/// <summary>The colour a pane's hover effect is drawn in.</summary>
+type PaneHoverColor =
+    /// <summary>The theme's own accent colour.</summary>
+    | AccentHoverColor
+    | BlueHoverColor
+    | GreenHoverColor
+    | PurpleHoverColor
+    | OrangeHoverColor
+    | PinkHoverColor
+    | TealHoverColor
+    | WhiteHoverColor
+
+module PaneHoverColor =
+    let all =
+        [ AccentHoverColor; BlueHoverColor; GreenHoverColor; PurpleHoverColor
+          OrangeHoverColor; PinkHoverColor; TealHoverColor; WhiteHoverColor ]
+
+    let key color =
+        match color with
+        | AccentHoverColor -> "accent"
+        | BlueHoverColor -> "blue"
+        | GreenHoverColor -> "green"
+        | PurpleHoverColor -> "purple"
+        | OrangeHoverColor -> "orange"
+        | PinkHoverColor -> "pink"
+        | TealHoverColor -> "teal"
+        | WhiteHoverColor -> "white"
+
+    let label color =
+        match color with
+        | AccentHoverColor -> "Theme accent"
+        | BlueHoverColor -> "Blue"
+        | GreenHoverColor -> "Green"
+        | PurpleHoverColor -> "Purple"
+        | OrangeHoverColor -> "Orange"
+        | PinkHoverColor -> "Pink"
+        | TealHoverColor -> "Teal"
+        | WhiteHoverColor -> "White"
+
+    /// <summary>The colour as #RRGGBB, or None for the theme's accent, which the window resolves.</summary>
+    let hex color =
+        match color with
+        | AccentHoverColor -> None
+        | BlueHoverColor -> Some "#58A6FF"
+        | GreenHoverColor -> Some "#3FB950"
+        | PurpleHoverColor -> Some "#BC8CFF"
+        | OrangeHoverColor -> Some "#F0883E"
+        | PinkHoverColor -> Some "#FF7EB6"
+        | TealHoverColor -> Some "#39C5CF"
+        | WhiteHoverColor -> Some "#FFFFFF"
+
+    let tryParse (text: string) =
+        let normalized = if isNull text then "" else text.Trim().ToLowerInvariant()
+        all |> List.tryFind (fun color -> key color = normalized)
 
 type Settings =
     { ShowBranchRefs: bool
@@ -129,7 +180,9 @@ type Settings =
       /// <summary>Space around each pane, in pixels; 0 keeps panes flush against each other.</summary>
       PaneGap: float
       /// <summary>What the pane under the pointer does in that space.</summary>
-      PaneHoverEffect: PaneHoverEffect }
+      PaneHoverEffect: PaneHoverEffect
+      /// <summary>The colour that effect is drawn in.</summary>
+      PaneHoverColor: PaneHoverColor }
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module Settings =
@@ -146,7 +199,8 @@ module Settings =
           SearchDebounceSeconds = 0.5
           Theme = SystemTheme
           PaneGap = 3.0
-          PaneHoverEffect = HoverGlow }
+          PaneHoverEffect = HoverGlow
+          PaneHoverColor = AccentHoverColor }
 
     let private fontFamily fallback (value: string) = if String.IsNullOrWhiteSpace value then fallback else value
 
