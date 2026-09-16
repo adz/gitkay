@@ -52,6 +52,9 @@ public partial class MainWindow : Window, IVimCommands {
         CommitListBox.HistoryRequested += revision => _projection?.ShowHistoryOf(revision);
         CommitListBox.BranchOperationRequested += OnBranchOperationRequested;
         CommitListBox.CommitWindowRequested += OpenCommitWindow;
+        _paneChrome.Add(CommitPaneEffect, CommitPaneContent);
+        _paneChrome.Add(DiffPaneEffect, DiffHeaderPart, DiffContentPart, DiffPaneFocus);
+        _paneChrome.Add(FilesPaneEffect, FilesHeaderPart, FilesContentPart, FilesPaneFocus);
         CommitListBox.CopyRequested += name => CopyToClipboard(name, "Copied");
         DiffRowsListBox.TextCopied += (_, lines) => { if (_projection != null) _projection.Status = lines switch { 0 => "Copied", 1 => "Copied 1 line", _ => $"Copied {lines} lines" }; };
         AddHandler(InputElement.GotFocusEvent, (_, _) => { UpdatePaneFocusIndicator(); TrackPaneFocus(); }, RoutingStrategies.Bubble);
@@ -704,6 +707,10 @@ public partial class MainWindow : Window, IVimCommands {
         await settingsWindow.ShowDialog(this);
     }
 
+    private void ApplyPaneChrome() {
+        if (_projection is { } projection) _paneChrome.Update(projection.PaneGap, projection.PaneHoverEffect);
+    }
+
     private void OnDataContextChanged(object? sender, EventArgs e) {
         if (_projection != null) {
             _projection.PropertyChanged -= OnProjectionPropertyChanged;
@@ -713,6 +720,8 @@ public partial class MainWindow : Window, IVimCommands {
 
         if (_projection != null) {
             _projection.PropertyChanged += OnProjectionPropertyChanged;
+            _projection.PaneChromeChanged += ApplyPaneChrome;
+            ApplyPaneChrome();
             _projection.WindowCommandRequested += OnWindowCommandRequested;
             _projection.WholeFileRequested += OpenWholeFile;
             _projection.ErrorStatusRaised += PulseStatusBar;
@@ -916,6 +925,7 @@ public partial class MainWindow : Window, IVimCommands {
 
     // ----- vim keys: every pane shares one GitKay.Core.Vim session, so counts and pending keys behave the same. -----
 
+    private readonly PaneChrome _paneChrome = new();
     private readonly Vim.VimSession _vim = new();
     private readonly ListBoxVimHost _filesVimHost;
 

@@ -95,7 +95,9 @@
             <Grid Grid.Row="1" ColumnDefinitions="320,Auto,*">
                 <!-- Unstaged and staged files down the whole left side. -->
                 <Grid Grid.Column="0" RowDefinitions="Auto,*,Auto,*">
-                    <Border Grid.Row="0" Classes="bar unstagedTitle">
+                    <Border x:Name="UnstagedPaneEffect" Grid.Row="0" Grid.RowSpan="2" />
+                    <Border x:Name="StagedPaneEffect" Grid.Row="2" Grid.RowSpan="2" />
+                    <Border x:Name="UnstagedTitleBar" Grid.Row="0" Classes="bar unstagedTitle">
                         <Grid ColumnDefinitions="*,Auto">
                             <TextBlock Classes="sectionTitle" Text="{Binding UnstagedTitle}" />
                             <Button Grid.Column="1" Classes="action" Padding="8,1" Command="{Binding StageAllCommand}"
@@ -119,7 +121,7 @@
                     </ListBox>
                     <!-- Hold Ctrl: hints overlay their panes without moving anything. -->
                     <Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Row="1" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,10,0"><TextBlock Text="Ctrl+1  unstaged · Ctrl+I  stage all" /></Border>
-                    <Border Grid.Row="2" Classes="bar stagedTitle" BorderThickness="0,1,0,1">
+                    <Border x:Name="StagedTitleBar" Grid.Row="2" Classes="bar stagedTitle" BorderThickness="0,1,0,1">
                         <Grid ColumnDefinitions="*,Auto">
                             <TextBlock Classes="sectionTitle" Text="{Binding StagedTitle}" />
                             <Button Grid.Column="1" Classes="action" Padding="8,1" Command="{Binding UnstageAllCommand}"
@@ -148,7 +150,9 @@
 
                 <!-- The diff above the commit message, both beside the file lists. -->
                 <Grid Grid.Column="2" RowDefinitions="*,Auto,Auto,Auto">
-                    <DockPanel Grid.Row="0">
+                    <Border x:Name="DiffPaneEffect" Grid.Row="0" />
+                    <Border x:Name="MessagePaneEffect" Grid.Row="2" Grid.RowSpan="2" />
+                    <DockPanel x:Name="DiffPanePart" Grid.Row="0">
                         <Border DockPanel.Dock="Top" Classes="bar">
                             <Grid ColumnDefinitions="*,Auto">
                                 <TextBlock Text="{Binding DiffTitle}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}"
@@ -198,7 +202,7 @@
                     <GridSplitter Grid.Row="1" Height="1" Background="{DynamicResource GitKayBorderBrush}" ResizeDirection="Rows" />
 
                     <!-- Hook and git output from the last failure. -->
-                    <Border Grid.Row="2" IsVisible="{Binding HasFailureOutput}" MaxHeight="160"
+                    <Border x:Name="FailureOutputPart" Grid.Row="2" IsVisible="{Binding HasFailureOutput}" MaxHeight="160"
                             Background="{DynamicResource GitKayRemovedBrush}" BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="0,0,0,1" Padding="10,6">
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <SelectableTextBlock Text="{Binding FailureOutput}" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="11"
@@ -206,7 +210,7 @@
                         </ScrollViewer>
                     </Border>
 
-                    <Border Grid.Row="3" Background="{DynamicResource GitKaySurfaceBrush}" Padding="10,8">
+                    <Border x:Name="MessagePanePart" Grid.Row="3" Background="{DynamicResource GitKaySurfaceBrush}" Padding="10,8">
                         <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="6">
                             <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
                                 <TextBlock Classes="sectionTitle" Text="{Binding MessageTitle}" />

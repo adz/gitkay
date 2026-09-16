@@ -72,7 +72,8 @@
         <Grid x:Name="MainSplitGrid"
               RowDefinitions="3*,6,7*"
               MinHeight="0">
-            <Border Grid.Row="0"
+            <Border x:Name="CommitPaneEffect" Grid.Row="0" />
+            <Border x:Name="CommitPaneContent" Grid.Row="0"
                     Background="{DynamicResource GitKayWindowBrush}">
                 <Grid MinHeight="0"
                       RowDefinitions="Auto,24,*"
@@ -403,8 +404,10 @@
                         <ColumnDefinition Width="4" />
                         <ColumnDefinition Width="220" MinWidth="160" />
                     </Grid.ColumnDefinitions>
+                    <Border x:Name="DiffPaneEffect" Grid.Row="0" Grid.RowSpan="2" Grid.Column="0" />
+                    <Border x:Name="FilesPaneEffect" Grid.Row="0" Grid.RowSpan="2" Grid.Column="2" />
                 <!-- Diff header: sits over the diff column only, so its controls end at the diff's right edge. -->
-                <Border Grid.Row="0" Grid.Column="0" MinHeight="37"
+                <Border x:Name="DiffHeaderPart" Grid.Row="0" Grid.Column="0" MinHeight="37"
                         Background="{DynamicResource GitKayWindowBrush}"
                         BorderBrush="{DynamicResource GitKayHairlineBrush}"
                         BorderThickness="0,0,0,1"
@@ -542,7 +545,7 @@
                     <Border x:Name="FilesPaneFocus" Grid.Row="1" Grid.Column="2" IsHitTestVisible="False" Background="{DynamicResource GitKayWindowBrush}" Opacity="0" ZIndex="10">
                         <Border.Transitions><Transitions><DoubleTransition Property="Opacity" Duration="0:0:0.12" /></Transitions></Border.Transitions>
                     </Border>
-                    <Border Grid.Row="1" Grid.Column="0" Background="{DynamicResource GitKayWindowBrush}">
+                    <Border x:Name="DiffContentPart" Grid.Row="1" Grid.Column="0" Background="{DynamicResource GitKayWindowBrush}">
                         <DockPanel>
                         <!-- Commit details show within the diff column only; the file list keeps its layout. -->
                         <Border DockPanel.Dock="Top"
@@ -654,7 +657,7 @@
                     </Border>
 
                     <!-- Files header: same height as the diff header, over the files column. -->
-                    <Border Grid.Row="0" Grid.Column="2" MinHeight="37"
+                    <Border x:Name="FilesHeaderPart" Grid.Row="0" Grid.Column="2" MinHeight="37"
                             Background="{DynamicResource GitKayWindowBrush}"
                             BorderBrush="{DynamicResource GitKayHairlineBrush}"
                             BorderThickness="0,0,0,1"
@@ -719,7 +722,7 @@
                                   ResizeDirection="Columns"
                                   ResizeBehavior="PreviousAndNext" />
 
-                    <Border Grid.Row="1" Grid.Column="2"
+                    <Border x:Name="FilesContentPart" Grid.Row="1" Grid.Column="2"
                             Background="{DynamicResource GitKaySurfaceBrush}"
                             Padding="8">
                         <DockPanel>

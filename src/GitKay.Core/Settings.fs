@@ -74,6 +74,46 @@ module ThemeMode =
         all |> List.tryFind (fun mode -> key mode = normalized)
 
 /// <summary>What the user chose in settings. Build through <see cref="M:GitKay.Core.SettingsModule.normalize"/> to keep values in range.</summary>
+/// <summary>What the pane under the pointer does, in the space around panes.</summary>
+type PaneHoverEffect =
+    | NoHoverEffect
+    | HoverGlow
+    | HoverShadow
+    | HoverIndent
+    | HoverHighlight
+
+module PaneHoverEffect =
+    let all = [ NoHoverEffect; HoverGlow; HoverShadow; HoverIndent; HoverHighlight ]
+
+    /// <summary>The key used in settings files.</summary>
+    let key effect =
+        match effect with
+        | NoHoverEffect -> "none"
+        | HoverGlow -> "glow"
+        | HoverShadow -> "shadow"
+        | HoverIndent -> "indent"
+        | HoverHighlight -> "highlight"
+
+    let label effect =
+        match effect with
+        | NoHoverEffect -> "None"
+        | HoverGlow -> "Glow"
+        | HoverShadow -> "Shadow"
+        | HoverIndent -> "Indent"
+        | HoverHighlight -> "Highlight"
+
+    let describe effect =
+        match effect with
+        | NoHoverEffect -> "Panes stay as they are"
+        | HoverGlow -> "The pane under the pointer glows into the space around it"
+        | HoverShadow -> "The pane under the pointer casts a soft shadow"
+        | HoverIndent -> "The pane under the pointer sits slightly inset"
+        | HoverHighlight -> "The pane under the pointer gets a brighter edge"
+
+    let tryParse (text: string) =
+        let normalized = if isNull text then "" else text.Trim().ToLowerInvariant()
+        all |> List.tryFind (fun effect -> key effect = normalized)
+
 type Settings =
     { ShowBranchRefs: bool
       ShowStashes: bool
@@ -85,7 +125,11 @@ type Settings =
       CommitRowMetaFontSize: float
       CommitRowBadgeFontSize: float
       SearchDebounceSeconds: float
-      Theme: ThemeMode }
+      Theme: ThemeMode
+      /// <summary>Space around each pane, in pixels; 0 keeps panes flush against each other.</summary>
+      PaneGap: float
+      /// <summary>What the pane under the pointer does in that space.</summary>
+      PaneHoverEffect: PaneHoverEffect }
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module Settings =
@@ -100,7 +144,9 @@ module Settings =
           CommitRowMetaFontSize = 12.0
           CommitRowBadgeFontSize = 11.0
           SearchDebounceSeconds = 0.5
-          Theme = SystemTheme }
+          Theme = SystemTheme
+          PaneGap = 3.0
+          PaneHoverEffect = HoverGlow }
 
     let private fontFamily fallback (value: string) = if String.IsNullOrWhiteSpace value then fallback else value
 
@@ -117,7 +163,8 @@ module Settings =
             CommitRowTextFontSize = fontSize defaults.CommitRowTextFontSize settings.CommitRowTextFontSize
             CommitRowMetaFontSize = fontSize defaults.CommitRowMetaFontSize settings.CommitRowMetaFontSize
             CommitRowBadgeFontSize = fontSize defaults.CommitRowBadgeFontSize settings.CommitRowBadgeFontSize
-            SearchDebounceSeconds = nonNegative settings.SearchDebounceSeconds }
+            SearchDebounceSeconds = nonNegative settings.SearchDebounceSeconds
+            PaneGap = (if Double.IsFinite settings.PaneGap then Math.Clamp(settings.PaneGap, 0.0, 8.0) else defaults.PaneGap) }
 
 /// <summary>Splitter positions and history column widths the user dragged; None keeps the layout's default.</summary>
 type UiLayout =

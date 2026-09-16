@@ -441,6 +441,14 @@ internal static class UiInteractions {
             Avalonia.Headless.HeadlessWindowExtensions.KeyPressQwerty(window, Avalonia.Input.PhysicalKey.Slash, Avalonia.Input.RawInputModifiers.None);
             Settle();
         }
+        if (label.Contains("panes")) {
+            // Hover the unstaged list so the chosen effect shows in the gap.
+            var list = Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.ListBox>(window, "UnstagedList")!;
+            var origin = list.Bounds.TopLeft + new Avalonia.Vector(80, 30);
+            Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, origin, Avalonia.Input.RawInputModifiers.None);
+            Settle();
+            Console.WriteLine($"hovered={list.IsPointerOver}");
+        }
         if (label.Contains("keys")) projection.IsKeysOpen = true;
         if (label.Contains("hints")) {
             using (var before = Avalonia.Headless.HeadlessWindowExtensions.CaptureRenderedFrame(window)) before!.Save(output.Replace(".png", "-before.png"));

@@ -476,6 +476,7 @@ public partial class CommitWindow : Window, IVimCommands {
 
     private readonly IDisposable? _host;
     private readonly GitKay.Core.Vim.VimSession _vim = new();
+    private readonly PaneChrome _paneChrome = new();
     private readonly ListBoxVimHost? _unstagedVim;
     private readonly ListBoxVimHost? _stagedVim;
     private Pane _lastPane = Pane.None;
@@ -504,6 +505,11 @@ public partial class CommitWindow : Window, IVimCommands {
         AddHandler(KeyUpEvent, OnWindowKeyUp, RoutingStrategies.Tunnel);
         Deactivated += (_, _) => HideCtrlHints();
         InitializeSearch();
+        _paneChrome.Add(UnstagedPaneEffect, UnstagedTitleBar, UnstagedList);
+        _paneChrome.Add(StagedPaneEffect, StagedTitleBar, StagedList);
+        _paneChrome.Add(DiffPaneEffect, DiffPanePart);
+        _paneChrome.Add(MessagePaneEffect, FailureOutputPart, MessagePanePart);
+        ApplyPaneSettings();
         AddHandler(GotFocusEvent, (_, _) => TrackPane(), RoutingStrategies.Bubble);
 
         var env = GitKay.Core.GitService.environment(repositoryPath);
@@ -518,6 +524,7 @@ public partial class CommitWindow : Window, IVimCommands {
             if (!wasAway) return;
             wasAway = false;
             projection.RescanCommand.Execute(null);
+            ApplyPaneSettings();
         };
         Closed += (_, _) => _host?.Dispose();
         // Take keyboard focus as soon as the window is up, so its keys go here and not to the window behind.
@@ -528,6 +535,12 @@ public partial class CommitWindow : Window, IVimCommands {
     }
 
     public CommitWindowProjection? Projection { get; }
+
+    /// <summary>Panes follow the same settings as the main window's; re-read when the window is activated.</summary>
+    private void ApplyPaneSettings() {
+        var settings = GitKay.Core.SettingsModule.normalize(new AppSettingsStore().Load());
+        _paneChrome.Update(settings.PaneGap, settings.PaneHoverEffect);
+    }
 
     internal TextBox MessageBoxForTests => MessageBox;
 

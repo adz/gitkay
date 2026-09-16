@@ -50,6 +50,40 @@
                                 </StackPanel>
                             </Border>
                         </GroupBox>
+
+                        <GroupBox Header="Panes">
+                            <Border Padding="12">
+                                <StackPanel Spacing="10">
+                                    <StackPanel Orientation="Horizontal" Spacing="12">
+                                        <TextBlock Text="Space around panes"
+                                                   Foreground="{DynamicResource GitKayTextBrush}"
+                                                   VerticalAlignment="Center" />
+                                        <NumericUpDown Width="110" Minimum="0" Maximum="8" Increment="1" FormatString="0"
+                                                       Value="{Binding PaneGap, Mode=TwoWay}" />
+                                        <TextBlock Text="pixels"
+                                                   Foreground="{DynamicResource GitKaySecondaryTextBrush}"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="12">
+                                        <TextBlock Text="On hover"
+                                                   Foreground="{DynamicResource GitKayTextBrush}"
+                                                   VerticalAlignment="Center" />
+                                        <ComboBox Width="150"
+                                                  ItemsSource="{Binding PaneHoverEffects}"
+                                                  SelectedItem="{Binding SelectedPaneHoverEffect}">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="local:PaneHoverEffectProjection">
+                                                    <TextBlock Text="{Binding Label}" ToolTip.Tip="{Binding Description}" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                        <TextBlock Text="{Binding SelectedPaneHoverEffect.Description}"
+                                                   Foreground="{DynamicResource GitKaySecondaryTextBrush}"
+                                                   VerticalAlignment="Center" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </GroupBox>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>

@@ -26,6 +26,12 @@ public sealed class ThemeModeProjection(GitKay.Core.ThemeMode mode) {
     public string Label => GitKay.Core.ThemeModeModule.label(Mode);
 }
 
+public sealed class PaneHoverEffectProjection(GitKay.Core.PaneHoverEffect effect) {
+    public GitKay.Core.PaneHoverEffect Effect { get; } = effect;
+    public string Label => GitKay.Core.PaneHoverEffectModule.label(Effect);
+    public string Description => GitKay.Core.PaneHoverEffectModule.describe(Effect);
+}
+
 public sealed class DiffContextLineCountProjection {
     public DiffContextLineCountProjection(int count) {
         Count = count;
@@ -67,6 +73,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public ObservableCollection<ThemeModeProjection> ThemeModes { get; } =
         new(GitKay.Core.ThemeModeModule.all.Select(mode => new ThemeModeProjection(mode)));
 
+    public ObservableCollection<PaneHoverEffectProjection> PaneHoverEffects { get; } =
+        new(GitKay.Core.PaneHoverEffectModule.all.Select(effect => new PaneHoverEffectProjection(effect)));
+
     public ObservableCollection<DiffContextLineCountProjection> DiffContextLineCounts { get; } = new()
     {
         new DiffContextLineCountProjection(0),
@@ -105,6 +114,32 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private DiffPresentationModeProjection? _selectedDiffPresentationMode;
     [ObservableProperty] private DiffContextLineCountProjection? _selectedDiffContextLineCount;
     [ObservableProperty] private ThemeModeProjection? _selectedThemeMode;
+    [ObservableProperty] private PaneHoverEffectProjection? _selectedPaneHoverEffect;
+
+    /// <summary>Space around each pane, in pixels.</summary>
+    [ObservableProperty] private double _paneGap = GitKay.Core.SettingsModule.defaults.PaneGap;
+
+    /// <summary>The gap as a margin, for binding to each pane.</summary>
+    public Avalonia.Thickness PaneGapThickness => new(PaneGap);
+    public GitKay.Core.PaneHoverEffect PaneHoverEffect => SelectedPaneHoverEffect?.Effect ?? GitKay.Core.SettingsModule.defaults.PaneHoverEffect;
+
+    partial void OnPaneGapChanged(double value) {
+        var clamped = Math.Clamp(Math.Round(value), 0, 8);
+        if (Math.Abs(clamped - value) > 0.001) {
+            PaneGap = clamped;
+            return;
+        }
+        OnPropertyChanged(nameof(PaneGapThickness));
+        PaneChromeChanged?.Invoke();
+    }
+
+    partial void OnSelectedPaneHoverEffectChanged(PaneHoverEffectProjection? value) {
+        OnPropertyChanged(nameof(PaneHoverEffect));
+        PaneChromeChanged?.Invoke();
+    }
+
+    /// <summary>Raised when the pane gap or hover effect changes, so windows can restyle their panes.</summary>
+    public event Action? PaneChromeChanged;
     [ObservableProperty] private string _selectedDiffPresentationModeLabel = "Diff";
     [ObservableProperty] private bool _isCommitDetailsExpanded;
     [ObservableProperty] private bool _isDiffFileTreeMode;
@@ -185,6 +220,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         SelectedDiffPresentationMode = DiffPresentationModes[0];
         SelectedDiffContextLineCount = DiffContextLineCounts.First(option => option.Count == DiffContextLineCount);
         SelectedThemeMode = ThemeModes[0];
+        SelectedPaneHoverEffect = PaneHoverEffects.FirstOrDefault(effect => effect.Effect.Equals(GitKay.Core.SettingsModule.defaults.PaneHoverEffect)) ?? PaneHoverEffects[0];
     }
 
     public void ApplySettings(GitKay.Core.Settings settings) {
@@ -210,6 +246,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                 ?? DiffContextLineCounts.First();
             SelectedDiffPresentationMode = PresentationModeFor(normalized.DiffLayout);
             SelectedThemeMode = ThemeModes.FirstOrDefault(mode => mode.Mode.Equals(normalized.Theme)) ?? ThemeModes.First();
+            PaneGap = normalized.PaneGap;
+            SelectedPaneHoverEffect = PaneHoverEffects.FirstOrDefault(effect => effect.Effect.Equals(normalized.PaneHoverEffect)) ?? PaneHoverEffects.First();
         }
         finally {
             _suppressDiffPresentationDispatch = false;
@@ -230,7 +268,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         CommitRowMetaFontSize,
         CommitRowBadgeFontSize,
         SearchDebounceSeconds,
-        SelectedThemeMode?.Mode ?? GitKay.Core.SettingsModule.defaults.Theme));
+        SelectedThemeMode?.Mode ?? GitKay.Core.SettingsModule.defaults.Theme,
+        PaneGap,
+        PaneHoverEffect));
 
     /// <summary>The diff layout chosen in the view menu.</summary>
     public GitKay.Core.DiffLayout DiffLayout => SelectedDiffPresentationMode?.Layout ?? GitKay.Core.SettingsModule.defaults.DiffLayout;

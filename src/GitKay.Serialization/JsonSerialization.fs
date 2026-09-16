@@ -18,7 +18,9 @@ type private SettingsWire =
       CommitRowMetaFontSize: float
       CommitRowBadgeFontSize: float
       SearchDebounceSeconds: float
-      ThemeMode: string }
+      ThemeMode: string
+      PaneGap: float
+      PaneHoverEffectKey: string }
 
 type private RepoStateWire = { LastSelectedCommitHash: string option }
 
@@ -50,11 +52,13 @@ module private Codecs =
             fieldAs "CommitRowBadgeFontSize" _.CommitRowBadgeFontSize { defaultValue d.CommitRowBadgeFontSize }
             fieldAs "SearchDebounceSeconds" _.SearchDebounceSeconds { defaultValue d.SearchDebounceSeconds }
             fieldAs "ThemeMode" _.ThemeMode { defaultValue (ThemeMode.key d.Theme) }
-            construct (fun showBranchRefs showStashes diffContextLines layout fontFamily monoFontFamily textSize metaSize badgeSize debounce theme ->
+            fieldAs "PaneGap" _.PaneGap { defaultValue d.PaneGap }
+            fieldAs "PaneHoverEffect" _.PaneHoverEffectKey { defaultValue (PaneHoverEffect.key d.PaneHoverEffect) }
+            construct (fun showBranchRefs showStashes diffContextLines layout fontFamily monoFontFamily textSize metaSize badgeSize debounce theme paneGap paneHover ->
                 { ShowBranchRefs = showBranchRefs; ShowStashes = showStashes; DiffContextLines = diffContextLines
                   DiffPresentationModeKey = layout; CommitRowFontFamily = fontFamily; CommitRowMonoFontFamily = monoFontFamily
                   CommitRowTextFontSize = textSize; CommitRowMetaFontSize = metaSize; CommitRowBadgeFontSize = badgeSize
-                  SearchDebounceSeconds = debounce; ThemeMode = theme })
+                  SearchDebounceSeconds = debounce; ThemeMode = theme; PaneGap = paneGap; PaneHoverEffectKey = paneHover })
         }
         |> Json.compile
 
@@ -98,7 +102,9 @@ module SettingsJson =
               CommitRowMetaFontSize = settings.CommitRowMetaFontSize
               CommitRowBadgeFontSize = settings.CommitRowBadgeFontSize
               SearchDebounceSeconds = settings.SearchDebounceSeconds
-              ThemeMode = ThemeMode.key settings.Theme }
+              ThemeMode = ThemeMode.key settings.Theme
+              PaneGap = settings.PaneGap
+              PaneHoverEffectKey = PaneHoverEffect.key settings.PaneHoverEffect }
 
     /// <summary>Normalized settings, or why the text isn't a settings file. Unknown layout or theme names take the defaults.</summary>
     let decode (json: string) : Result<Settings, string> =
@@ -115,7 +121,9 @@ module SettingsJson =
                   CommitRowMetaFontSize = wire.CommitRowMetaFontSize
                   CommitRowBadgeFontSize = wire.CommitRowBadgeFontSize
                   SearchDebounceSeconds = wire.SearchDebounceSeconds
-                  Theme = ThemeMode.tryParse wire.ThemeMode |> Option.defaultValue Settings.defaults.Theme })
+                  Theme = ThemeMode.tryParse wire.ThemeMode |> Option.defaultValue Settings.defaults.Theme
+                  PaneGap = wire.PaneGap
+                  PaneHoverEffect = PaneHoverEffect.tryParse wire.PaneHoverEffectKey |> Option.defaultValue Settings.defaults.PaneHoverEffect })
 
 /// <summary>Window size, layout and per-repository selections as the UI state file stores them.</summary>
 module UiStateJson =
