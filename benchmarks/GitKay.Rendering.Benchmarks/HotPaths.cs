@@ -168,7 +168,8 @@ internal static class UiInteractions {
             FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, baseModel.WorkingTree, baseModel.WorkingTreeChanges, baseModel.WorkingTreeStartedAtTicks, baseModel.LastDiscard);
 
         var projection = new MainProjection();
-        var window = new MainWindow { Width = 1600, Height = 1000, DataContext = projection };
+        var windowWidth = label.Contains("narrow") ? 1100 : 1600;
+        var window = new MainWindow { Width = windowWidth, Height = 1000, DataContext = projection };
         window.Show();
         projection.Update(model);
         Pump(window);

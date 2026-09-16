@@ -539,6 +539,44 @@ module HistoryChipTests =
         finally
             try IO.Directory.Delete(root, true) with _ -> ()
 
+module CommitColumnTests =
+
+    [<Fact>]
+    let ``a row full of branches widens the commit column instead of losing them`` () =
+        Headless.run (fun () ->
+            let projection = MainProjection()
+            let window = MainWindow(Width = 900.0, Height = 700.0, DataContext = projection)
+            try
+                window.Show()
+                Headless.pump ()
+                let header = window.FindControl<Grid>("HistoryHeaderGrid")
+                let authorColumn = header.ColumnDefinitions[3]
+                let plain =
+                    { Hash = String.replicate 40 "a"; AuthorName = "A"; AuthorEmail = "a@x"; Timestamp = 1L; Parents = []
+                      Subject = "A commit with a reasonably long subject"; Message = "body"; Refs = [] } : Models.Commit
+                let model0, _ = App.init [||]
+                projection.Update { model0 with Commits = Graph.calculateLanes [ plain ]; ShowBranchRefs = true }
+                Headless.pump ()
+                let before = authorColumn.ActualWidth
+
+
+                let manyRefs =
+                    { plain with
+                        Refs =
+                            [ for name in [ "main"; "feature/login-and-signup"; "feature/user-preferences"; "release/2026-09-candidate"
+                                            "hotfix/urgent-production-fix"; "experiment/rendering-rewrite" ] ->
+                                ({ Name = name; Kind = Models.CommitRefKind.Branch; IsCurrentHead = false } : Models.CommitRef) ] }
+                projection.Update { model0 with Commits = Graph.calculateLanes [ manyRefs ]; ShowBranchRefs = true }
+                for _ in 1..10 do
+                    window.UpdateLayout()
+                    Headless.pump ()
+                let withRefs = authorColumn.ActualWidth
+                // The badges are wider than the commit column has spare, so the author column lends it space.
+                test <@ withRefs < before && withRefs >= authorColumn.MinWidth @>
+            finally
+                window.Close()
+                Headless.pump ())
+
 module SyntaxHighlightingTests =
     let private kinds (flavour: SyntaxFlavour) (text: string) =
         SyntaxHighlighting.Tokenize(text, flavour) |> Seq.map (fun token -> token.Text, token.Kind) |> List.ofSeq

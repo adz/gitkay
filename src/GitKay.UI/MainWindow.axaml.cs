@@ -56,6 +56,7 @@ public partial class MainWindow : Window, IVimCommands {
         CommitListBox.HistoryRequested += revision => _projection?.ShowHistoryOf(revision);
         CommitListBox.BranchOperationRequested += OnBranchOperationRequested;
         CommitListBox.CommitWindowRequested += OpenCommitWindow;
+        CommitListBox.BadgeWidthMeasured += FitCommitColumnToBadges;
         CommitListBox.AmendRequested += () => OpenCommitWindow(amend: true);
         _paneChrome.Add(CommitPaneEffect, CommitPaneContent);
         _paneChrome.Add(DiffPaneEffect, DiffHeaderPart, DiffContentPart, DiffPaneFocus);
@@ -447,6 +448,31 @@ public partial class MainWindow : Window, IVimCommands {
     }
 
     // ----- Column filters -----
+
+    /// <summary>How much the author column has lent the commit column to keep badges whole.</summary>
+    private double _authorWidthLent;
+
+    /// <summary>
+    /// Branch and tag badges share the commit column with the subject. When they need more room than it has, the
+    /// author column lends some (down to its minimum) instead of the badges being cut off, and gets it back after.
+    /// </summary>
+    private void FitCommitColumnToBadges(double badgeWidth) {
+        const double roomForSubject = 180;
+        var columns = HistoryHeaderGrid.ColumnDefinitions;
+        if (columns.Count < 5) return;
+        var commit = columns[1];
+        var author = columns[3];
+
+        // What the commit column would have without any loan.
+        var natural = commit.ActualWidth + _authorWidthLent;
+        var wanted = Math.Max(0, badgeWidth + roomForSubject - natural);
+        var lent = Math.Clamp(wanted, 0, Math.Max(0, author.ActualWidth + _authorWidthLent - author.MinWidth));
+        if (Math.Abs(lent - _authorWidthLent) < 1) return;
+
+        var authorWidth = author.ActualWidth + _authorWidthLent - lent;
+        _authorWidthLent = lent;
+        author.Width = new GridLength(Math.Max(author.MinWidth, authorWidth), GridUnitType.Pixel);
+    }
 
     private void OnCommitFilterRequested(string field, string? value) {
         if (_projection is not { } projection) return;
@@ -1216,6 +1242,8 @@ public partial class MainWindow : Window, IVimCommands {
     }
 
     private void OnHistoryColumnResizePointerMoved(object? sender, PointerEventArgs e) {
+        // A column the user sizes themselves is theirs: forget what the author column lent.
+        _authorWidthLent = 0;
         if (_activeHistoryColumnResizeHandle == null
             || !ReferenceEquals(sender, _activeHistoryColumnResizeHandle)
             || _activeHistoryColumnResizeIndex < 0

@@ -90,6 +90,13 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
     public GitKay.Core.GitSearch.Highlight? QuickFindHighlight { get => GetValue(QuickFindHighlightProperty); set => SetValue(QuickFindHighlightProperty, value); }
     public bool SearchActive { get => GetValue(SearchActiveProperty); set => SetValue(SearchActiveProperty, value); }
 
+    /// <summary>
+    /// How much room the visible rows' branch and tag badges need, so the commit column can widen rather than cut
+    /// them off, as gitk does. Raised only when the figure changes.
+    /// </summary>
+    public event Action<double>? BadgeWidthMeasured;
+    private double _lastBadgeWidth = -1;
+
     /// <summary>Raised by the row context menu: (field, value) where a null value asks the host to prompt for one.</summary>
     public event Action<string, string?>? FilterRequested;
     /// <summary>The commit window was asked for from the uncommitted changes row, or to amend the commit at HEAD.</summary>
@@ -165,6 +172,7 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         _rows = _filtered ? _all.Where(row => row.HasSearchMatch).ToArray() : _all;
         OverviewChanged?.Invoke(this, EventArgs.Empty);
         _filterPending = false;
+        MeasureVisibleBadges();
         InvalidateMeasure();
         InvalidateVisual();
     }
@@ -202,10 +210,15 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
             Dispatcher.UIThread.Post(ApplyFilter, DispatcherPriority.Background);
         }
         _layouts.Clear();
+        if (e.PropertyName == nameof(CommitProjection.RefBadges) || e.PropertyName == nameof(CommitProjection.HasRefBadges))
+            MeasureVisibleBadges();
         InvalidateVisual();
         if (e.PropertyName == nameof(CommitProjection.HasSearchMatch)) OverviewChanged?.Invoke(this, EventArgs.Empty);
     }
-    private void OnScrollChanged(object? sender, ScrollChangedEventArgs e) => InvalidateVisual();
+    private void OnScrollChanged(object? sender, ScrollChangedEventArgs e) {
+        MeasureVisibleBadges();
+        InvalidateVisual();
+    }
 
     protected override Size MeasureOverride(Size availableSize) {
         EnsureRows();
@@ -214,6 +227,16 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
 
     private Size MeasureRows(Size availableSize) =>
         new(double.IsInfinity(availableSize.Width) ? 800 : availableSize.Width, _rows.Length * RowHeight);
+
+    /// <summary>Measures the badges on screen; the commit column may need to change width because of them.</summary>
+    private void MeasureVisibleBadges() {
+        var offset = _scrollViewer?.Offset.Y ?? 0;
+        var viewport = _scrollViewer?.Viewport.Height ?? Bounds.Height;
+        if (viewport <= 0) viewport = 600;
+        var first = Math.Clamp((int)(offset / RowHeight), 0, Math.Max(0, _rows.Length));
+        var last = Math.Min(_rows.Length, first + (int)Math.Ceiling(viewport / RowHeight) + 2);
+        MeasureBadges(first, last);
+    }
 
     public override void Render(DrawingContext context) {
         EnsureRows();
@@ -256,6 +279,22 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
             context.DrawText(label, new Point(subjectX, y + 3));
             DrawText(context, row.SecondarySummary, subjectX + label.Width + 10, y + 4, 12, mutedBrush, TextTypeface);
         }
+    }
+
+    /// <summary>The widest run of badges on screen, so the host can give the commit column room for it.</summary>
+    private void MeasureBadges(int first, int last) {
+        var widest = 0.0;
+        for (var index = first; index < last; index++) {
+            var width = 0.0;
+            foreach (var badge in _rows[index].RefBadges)
+                width += Layout(badge.Text, 11, Brushes.Transparent, TextTypeface).Width + (badge.Kind == CommitRefKind.Tag ? 19 : 16);
+            widest = Math.Max(widest, width);
+        }
+
+        if (Math.Abs(widest - _lastBadgeWidth) < 1) return;
+        _lastBadgeWidth = widest;
+        // Resizing a column from inside the render pass is not allowed, so the host hears about it just after.
+        Dispatcher.UIThread.Post(() => BadgeWidthMeasured?.Invoke(widest), DispatcherPriority.Background);
     }
 
     private void DrawRow(DrawingContext context, CommitProjection commit, double y, bool joinsWorkingTree = false) {
