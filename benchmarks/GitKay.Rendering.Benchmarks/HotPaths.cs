@@ -202,6 +202,16 @@ internal static class UiInteractions {
             if (label.Contains("dark")) Avalonia.Application.Current!.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Dark;
             if (label.Contains("light")) Avalonia.Application.Current!.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Light;
             Pump(window);
+            if (label.Contains("hoverfind")) {
+                var box = Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.TextBox>(window, "CommitFindBox")!;
+                // Walk up the visual tree to the window, summing each element's offset.
+                var point = new Avalonia.Point(box.Bounds.Width / 2, box.Bounds.Height / 2);
+                for (Avalonia.Visual? visual = box; visual != null && visual != window; visual = Avalonia.VisualTree.VisualExtensions.GetVisualParent(visual))
+                    point += new Avalonia.Vector(visual.Bounds.X, visual.Bounds.Y);
+                Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, point, Avalonia.Input.RawInputModifiers.None);
+                Pump(window);
+                Console.WriteLine($"find hovered={box.IsPointerOver} at={point}");
+            }
             if (label.Contains("scrolled")) {
                 var diffScroll = Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.ScrollViewer>(window, "DiffRowsScrollViewer")!;
                 diffScroll.Offset = new Avalonia.Vector(0, 1150);

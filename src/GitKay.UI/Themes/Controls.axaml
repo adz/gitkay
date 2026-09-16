@@ -15,6 +15,15 @@
         <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
         <Setter Property="BorderBrush" Value="{DynamicResource GitKayBorderBrush}" />
     </Style>
+    <!-- Hover keeps the field's own fill and just picks up an accent edge, like a pane's hover. -->
+    <Style Selector="TextBox:pointerover /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="{DynamicResource GitKayRaisedBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GitKayHoverEdgeBrush}" />
+    </Style>
+    <Style Selector="ComboBox:pointerover /template/ Border#Background">
+        <Setter Property="Background" Value="{DynamicResource GitKayRaisedBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GitKayHoverEdgeBrush}" />
+    </Style>
     <Style Selector="ComboBox">
         <Setter Property="Background" Value="{DynamicResource GitKayRaisedBrush}" />
         <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />

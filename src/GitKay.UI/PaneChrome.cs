@@ -62,15 +62,15 @@ internal sealed class PaneChrome {
                      || (pane.Effect.FindResource("GitKayWindowBrush") is ISolidColorBrush window && window.Color.R + window.Color.G + window.Color.B < 3 * 128);
 
         pane.Effect.BorderThickness = new Thickness(_effect.IsHoverGlow || _effect.IsHoverHighlight ? 1 : 0);
-        pane.Effect.BorderBrush = new SolidColorBrush(WithAlpha(color, _effect.IsHoverGlow ? (byte)0xEE : (byte)0xCC));
+        pane.Effect.BorderBrush = new SolidColorBrush(WithAlpha(color, _effect.IsHoverGlow ? (byte)0xD0 : (byte)0xCC));
         pane.Effect.Margin = new Thickness(Math.Max(0, _gap - 1));
         pane.Effect.BoxShadow = _effect switch {
             // A halo in the gap plus an inset glow along the pane's edge, so it glows rather than just outlines.
             { IsHoverGlow: true } => new BoxShadows(
-                new BoxShadow { Blur = 12, Spread = 2, Color = WithAlpha(color, 0xCC) },
-                [new BoxShadow { Blur = 30, Spread = 8, Color = WithAlpha(color, 0x66) },
-                 new BoxShadow { Blur = 20, Color = WithAlpha(color, 0xBB), IsInset = true },
-                 new BoxShadow { Blur = 6, Color = WithAlpha(color, 0xCC), IsInset = true }]),
+                new BoxShadow { Blur = 11, Spread = 2, Color = WithAlpha(color, 0xB0) },
+                [new BoxShadow { Blur = 26, Spread = 5, Color = WithAlpha(color, 0x4D) },
+                 new BoxShadow { Blur = 16, Color = WithAlpha(color, 0x77), IsInset = true },
+                 new BoxShadow { Blur = 5, Color = WithAlpha(color, 0x99), IsInset = true }]),
             // A black shadow vanishes on a dark background: there the pane is lifted with light instead.
             { IsHoverShadow: true } => isDark
                 ? new BoxShadows(
