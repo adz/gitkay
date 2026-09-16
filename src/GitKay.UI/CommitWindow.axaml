@@ -146,7 +146,7 @@
                     <Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Row="3" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,10,0"><TextBlock Text="Ctrl+2  staged · Ctrl+U  unstage" /></Border>
                 </Grid>
 
-                <GridSplitter Grid.Column="1" Width="1" Background="{DynamicResource GitKayBorderBrush}" ResizeDirection="Columns" />
+                <GridSplitter x:Name="ListsSplitterLine" Grid.Column="1" Width="1" Background="{DynamicResource GitKayBorderBrush}" ResizeDirection="Columns" />
 
                 <!-- The diff above the commit message, both beside the file lists. -->
                 <Grid Grid.Column="2" RowDefinitions="*,Auto,Auto,Auto">
@@ -200,7 +200,7 @@
                         </Panel>
                     </DockPanel>
 
-                    <GridSplitter Grid.Row="1" Height="1" Background="{DynamicResource GitKayBorderBrush}" ResizeDirection="Rows" />
+                    <GridSplitter x:Name="DiffSplitterLine" Grid.Row="1" Height="1" Background="{DynamicResource GitKayBorderBrush}" ResizeDirection="Rows" />
 
                     <!-- Hook and git output from the last failure. -->
                     <Border x:Name="FailureOutputPart" Grid.Row="2" IsVisible="{Binding HasFailureOutput}" MaxHeight="160"

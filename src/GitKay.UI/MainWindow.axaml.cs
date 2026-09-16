@@ -61,6 +61,8 @@ public partial class MainWindow : Window, IVimCommands {
         _paneChrome.Add(CommitPaneEffect, CommitPaneContent);
         _paneChrome.Add(DiffPaneEffect, DiffHeaderPart, DiffContentPart, DiffPaneFocus);
         _paneChrome.Add(FilesPaneEffect, FilesHeaderPart, FilesContentPart, FilesPaneFocus);
+        _paneChrome.AddSeparator(HistorySplitterLine);
+        _paneChrome.AddSeparator(FilesSplitterLine);
         CommitListBox.CopyRequested += name => CopyToClipboard(name, "Copied");
         DiffRowsListBox.LineMenuOpening += AddWorkingTreeLineItems;
         DiffRowsListBox.TextCopied += (_, lines) => { if (_projection != null) _projection.Status = lines switch { 0 => "Copied", 1 => "Copied 1 line", _ => $"Copied {lines} lines" }; };

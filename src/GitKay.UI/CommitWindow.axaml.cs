@@ -592,6 +592,8 @@ public partial class CommitWindow : Window, IVimCommands {
         _paneChrome.Add(StagedPaneEffect, StagedTitleBar, StagedList);
         _paneChrome.Add(DiffPaneEffect, DiffPanePart);
         _paneChrome.Add(MessagePaneEffect, FailureOutputPart, MessagePanePart);
+        _paneChrome.AddSeparator(ListsSplitterLine);
+        _paneChrome.AddSeparator(DiffSplitterLine);
         ApplyPaneSettings();
         AddHandler(GotFocusEvent, (_, _) => TrackPane(), RoutingStrategies.Bubble);
 

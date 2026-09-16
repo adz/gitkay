@@ -645,6 +645,24 @@ module PaneChromeTests =
                 window.MouseMove(Point(2.0, 2.0))
                 Headless.pump ()
                 test <@ effect.BoxShadow.Count = 0 @>
+
+                // A glow is light, not a frame: the outline belongs to the border setting alone.
+                window.MouseMove(Point(100.0, 100.0))
+                Headless.pump ()
+                test <@ effect.BorderThickness.Top = 0.0 @>
+
+                // Highlight is the effect that draws one.
+                chrome.Update(4.0, PaneHoverEffect.HoverHighlight, PaneHoverColor.AccentHoverColor, PaneHoverIntensity.FullIntensity, false)
+                Headless.pump ()
+                test <@ effect.BorderThickness.Top = 1.0 && effect.BoxShadow.Count = 0 @>
+
+                // With pane borders on, the frame is always there and the hairline between panes steps aside.
+                let separator = Border()
+                chrome.AddSeparator separator
+                test <@ separator.Opacity = 1.0 @>
+                chrome.Update(4.0, PaneHoverEffect.HoverGlow, PaneHoverColor.AccentHoverColor, PaneHoverIntensity.FullIntensity, true)
+                Headless.pump ()
+                test <@ separator.Opacity = 0.0 && effect.BorderThickness.Top = 1.0 @>
             finally
                 window.Close()
                 Headless.pump ())

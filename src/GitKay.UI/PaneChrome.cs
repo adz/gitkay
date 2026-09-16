@@ -43,6 +43,21 @@ internal sealed class PaneChrome {
         ApplyPane(pane);
     }
 
+    private readonly List<Control> _separators = new();
+
+    /// <summary>
+    /// A hairline drawn between two panes. With pane borders on, the panes draw their own edges, so the line between
+    /// them would read as a third: it is hidden instead. The splitter itself still takes the pointer.
+    /// </summary>
+    public void AddSeparator(Control line) {
+        _separators.Add(line);
+        ApplySeparators();
+    }
+
+    private void ApplySeparators() {
+        foreach (var line in _separators) line.Opacity = _border ? 0 : 1;
+    }
+
     /// <summary>Re-reads the settings; call when the pane gap, hover effect or its colour changes.</summary>
     public void Update(double gap, GitKay.Core.PaneHoverEffect effect, GitKay.Core.PaneHoverColor color, GitKay.Core.PaneHoverIntensity intensity, bool border) {
         _gap = Math.Clamp(gap, 0, 8);
@@ -51,6 +66,7 @@ internal sealed class PaneChrome {
         _intensity = GitKay.Core.PaneHoverIntensityModule.scale(intensity);
         _border = border;
         foreach (var pane in _panes) ApplyPane(pane);
+        ApplySeparators();
     }
 
     private readonly HashSet<TopLevel> _watched = new();
@@ -122,10 +138,11 @@ internal sealed class PaneChrome {
 
     private void ApplyHover(Pane pane) {
         var hovered = IsHovered(pane) && !_effect.IsNoHoverEffect;
-        var outlined = _border || _effect.IsHoverGlow || _effect.IsHoverHighlight;
-        // With a border the frame is always there and hovering changes its colour; without one it only appears on hover.
+        // The outline belongs to the border setting alone. Highlight is the effect that colours it; glow and shadow
+        // speak with light, so they leave the frame as the border setting drew it (or absent).
+        var outlined = _border || (hovered && _effect.IsHoverHighlight);
         pane.Effect.BorderThickness = new Thickness(outlined ? 1 : 0);
-        pane.Effect.BorderBrush = hovered ? _hoverOutline : _restOutline;
+        pane.Effect.BorderBrush = hovered && _effect.IsHoverHighlight ? _hoverOutline : _restOutline;
         pane.Effect.BoxShadow = hovered ? _hoverShadow : default;
         pane.Effect.Opacity = hovered || _border ? 1 : 0;
         var margin = new Thickness(_gap);
