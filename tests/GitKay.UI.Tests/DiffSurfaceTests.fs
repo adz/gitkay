@@ -138,6 +138,23 @@ module DiffSurfaceTests =
             test <@ stuck && collapsedTop = -12.0 @>)
 
     [<Fact>]
+    let ``a stuck header lands in place without a frame at the old offset`` () =
+        Headless.run (fun () ->
+            use fixture = new DiffFixture(DiffLayout.Unified)
+            let header = fixture.Header 1
+            fixture.Scroller.Offset <- Vector(0.0, fixture.ViewportTop header + 200.0)
+            Headless.pump ()
+            let offsetBefore = fixture.Scroller.Offset.Y
+            fixture.Surface.Focus() |> ignore
+            fixture.Surface.SelectedItem <- header
+            // The collapse runs the command and rebuilds rows; the offset must already be corrected, with no pump.
+            fixture.Window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null)
+            let offsetAfterCollapse = fixture.Scroller.Offset.Y
+            Headless.pump ()
+            let settled = fixture.Scroller.Offset.Y
+            test <@ offsetAfterCollapse <> offsetBefore && Math.Round(offsetAfterCollapse, 1) = Math.Round(settled, 1) @>)
+
+    [<Fact>]
     let ``v selects from the caret on the side the caret is on`` () =
         Headless.run (fun () ->
             use fixture = new DiffFixture(DiffLayout.SideBySide)

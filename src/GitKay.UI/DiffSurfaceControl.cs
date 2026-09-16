@@ -458,12 +458,27 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         }
         _pendingAnchor = null;
         var row = _rows[index];
-        Dispatcher.UIThread.Post(() => {
-            if (_scrollViewer == null) return;
-            var current = Array.IndexOf(_rows, row);
-            if (current >= 0)
-                SetOffsetWithoutScrolling(Math.Max(0, _tops[current] - anchor.ViewportOffset));
-        }, DispatcherPriority.Loaded);
+        var target = Math.Max(0, _tops[index] - anchor.ViewportOffset);
+        // Apply it now so the next frame is already in the right place: posting it paints one frame at the old
+        // offset first, which reads as a flash when a pinned file header is collapsed.
+        SetOffsetWithoutScrolling(target);
+        // The scroll viewer clamps to the extent it knows about, which grows or shrinks with these rows; re-apply
+        // once this layout pass has measured them.
+        _anchorTarget = (row, anchor.ViewportOffset);
+        Dispatcher.UIThread.Post(ApplyAnchorTarget, DispatcherPriority.Loaded);
+    }
+
+    /// <summary>The row the view is anchored to while the scroll viewer catches up with the new extent.</summary>
+    private (IDiffRowProjection Row, double ViewportOffset)? _anchorTarget;
+
+    private void ApplyAnchorTarget() {
+        if (_anchorTarget is not { } target || _scrollViewer == null) {
+            _anchorTarget = null;
+            return;
+        }
+        _anchorTarget = null;
+        var current = Array.IndexOf(_rows, target.Row);
+        if (current >= 0) SetOffsetWithoutScrolling(Math.Max(0, _tops[current] - target.ViewportOffset));
     }
 
     private void DetachCollection() {
@@ -475,6 +490,13 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     protected override Size MeasureOverride(Size availableSize) =>
         new(double.IsInfinity(availableSize.Width) ? 1000 : availableSize.Width, _tops[^1]);
+
+    protected override Size ArrangeOverride(Size finalSize) {
+        var size = base.ArrangeOverride(finalSize);
+        // The extent is known by now, so an anchor that the earlier attempt clamped lands correctly, before painting.
+        if (_anchorTarget != null) ApplyAnchorTarget();
+        return size;
+    }
 
     /// <summary>Anchoring adjusts the offset without the user scrolling; keep full-quality rendering.</summary>
     private void SetOffsetWithoutScrolling(double y) {
