@@ -2204,13 +2204,14 @@ module AppTests =
         let projection = MainProjection()
         let messages = ConcurrentQueue<App.Msg>()
         projection.SetDispatch (fun msg -> messages.Enqueue msg |> ignore)
-        projection.SearchDebounceSeconds <- 0.5
+        // Generous margins: a loaded machine that stalls between the two edits would otherwise run the first search too.
+        projection.SearchDebounceSeconds <- 1.0
 
         projection.SearchQuery <- "nee"
-        Task.Delay(200).Wait()
+        Task.Delay(50).Wait()
         projection.SearchQuery <- "needle"
 
-        Task.Delay(800).Wait()
+        Task.Delay(2500).Wait()
 
         let dispatched = messages.ToArray()
         let setQueries =
