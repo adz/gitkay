@@ -182,12 +182,13 @@ module PaneHoverIntensity =
         | QuarterIntensity -> "quarter"
         | EighthIntensity -> "eighth"
 
+    /// <summary>Named for how much light they give off; the keys in the settings file stay full/half/quarter/eighth.</summary>
     let label intensity =
         match intensity with
-        | FullIntensity -> "Full"
-        | HalfIntensity -> "Half"
-        | QuarterIntensity -> "Quarter"
-        | EighthIntensity -> "Eighth"
+        | FullIntensity -> "Supernova"
+        | HalfIntensity -> "Bonfire"
+        | QuarterIntensity -> "Candle"
+        | EighthIntensity -> "Firefly"
 
     /// <summary>What the effect's colours are scaled by.</summary>
     let scale intensity =
@@ -220,7 +221,9 @@ type Settings =
       /// <summary>The colour that effect is drawn in.</summary>
       PaneHoverColor: PaneHoverColor
       /// <summary>How strongly it is drawn.</summary>
-      PaneHoverIntensity: PaneHoverIntensity }
+      PaneHoverIntensity: PaneHoverIntensity
+      /// <summary>Whether each pane is outlined, so the space around it reads as a frame.</summary>
+      PaneBorder: bool }
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module Settings =
@@ -239,7 +242,8 @@ module Settings =
           PaneGap = 3.0
           PaneHoverEffect = HoverGlow
           PaneHoverColor = AccentHoverColor
-          PaneHoverIntensity = HalfIntensity }
+          PaneHoverIntensity = HalfIntensity
+          PaneBorder = true }
 
     let private fontFamily fallback (value: string) = if String.IsNullOrWhiteSpace value then fallback else value
 
@@ -296,14 +300,17 @@ type UiState =
       WindowWidth: float option
       WindowHeight: float option
       /// <summary>Full repository path to the hash of the commit last selected there.</summary>
-      LastSelectedCommits: Map<string, string> }
+      LastSelectedCommits: Map<string, string>
+      /// <summary>Full repository path to the commit message being written there, kept until it is committed.</summary>
+      CommitDrafts: Map<string, string> }
 
 module UiState =
     let empty =
         { Layout = UiLayout.empty
           WindowWidth = None
           WindowHeight = None
-          LastSelectedCommits = Map.empty }
+          LastSelectedCommits = Map.empty
+          CommitDrafts = Map.empty }
 
     let private dimension (value: float option) = value |> Option.filter (fun size -> Double.IsFinite size && size > 0.0)
 
@@ -324,6 +331,15 @@ module UiState =
                 match repositoryKey repository, text hash with
                 | Some key, Some hash -> Some(key, hash)
                 | _ -> None)
+            |> Map.ofSeq
+          CommitDrafts =
+            state.CommitDrafts
+            |> Map.toSeq
+            // A draft keeps its own whitespace: only the repository path is normalized, and blank drafts are dropped.
+            |> Seq.choose (fun (repository, draft) ->
+                match repositoryKey repository with
+                | Some key when not (String.IsNullOrWhiteSpace draft) -> Some(key, draft)
+                | _ -> None)
             |> Map.ofSeq }
 
     let withLayout layout state = { state with Layout = UiLayout.normalize layout }
@@ -341,3 +357,16 @@ module UiState =
 
     let selectedCommit (repository: string) state =
         repositoryKey repository |> Option.bind (fun key -> state.LastSelectedCommits |> Map.tryFind key)
+
+    /// <summary>Keeps the commit message being written for a repository; a blank draft removes it.</summary>
+    let withCommitDraft (repository: string) (draft: string) state =
+        match repositoryKey repository with
+        | None -> state
+        | Some key ->
+            { state with
+                CommitDrafts =
+                    if String.IsNullOrWhiteSpace draft then state.CommitDrafts |> Map.remove key
+                    else state.CommitDrafts |> Map.add key draft }
+
+    let commitDraft (repository: string) state =
+        repositoryKey repository |> Option.bind (fun key -> state.CommitDrafts |> Map.tryFind key)

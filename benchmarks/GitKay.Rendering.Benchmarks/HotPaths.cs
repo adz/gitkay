@@ -186,6 +186,19 @@ internal static class UiInteractions {
             return;
         }
         if (label.StartsWith("screenshot", StringComparison.Ordinal)) {
+            // A plain window for the README: no search text, just the history and the selected commit's diff.
+            if (label.Contains("readme")) {
+                if (label.Contains("dark")) Avalonia.Application.Current!.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Dark;
+                if (label.Contains("light")) Avalonia.Application.Current!.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Light;
+                projection.ShowBranchRefs = true;
+                Pump(window);
+                for (var i = 0; i < 20; i++) { System.Threading.Thread.Sleep(50); Pump(window); }
+                using var readme = Avalonia.Headless.HeadlessWindowExtensions.CaptureRenderedFrame(window);
+                var readmePath = args.ElementAtOrDefault(3) ?? $"{label}.png";
+                readme!.Save(readmePath);
+                Console.WriteLine($"saved {readmePath} commits={projection.Commits.Count} rows={projection.SelectedDiffRows.Count}");
+                return;
+            }
             var pathDiff = label.Contains("pathdiff");
             var searchText = pathDiff ? "path:DiffSurface Typeface" : "font";
             var searchMode = pathDiff ? GitSearch.Mode.Diff : GitSearch.Mode.Commit;
@@ -470,6 +483,25 @@ internal static class UiInteractions {
             Settle();
             var effectBorder = Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.Border>(window, "UnstagedPaneEffect")!;
             Console.WriteLine($"hovered={list.IsPointerOver} opacity={effectBorder.Opacity} shadow={effectBorder.BoxShadow.Count} margin={effectBorder.Margin} bounds={effectBorder.Bounds}");
+        }
+        if (label.Contains("expandstage")) {
+            var surface = Avalonia.Controls.NameScopeExtensions.Find<DiffSurfaceControl>(window, "Surface")!;
+            // A file with two hunks and a gap between them.
+            projection.SelectedUnstaged = projection.UnstagedFiles.First(row => row.Path.Contains("numbers"));
+            Settle();
+            var before = projection.Rows.Count;
+            var gap = projection.Rows.OfType<DiffGapProjection>().FirstOrDefault();
+            Console.WriteLine($"rows={before} gaps={projection.Rows.OfType<DiffGapProjection>().Count()}");
+            if (gap != null) {
+                projection.ExpandDiffGapCommand.Execute(new DiffGapExpansionRequest(gap.Gap, GitKay.Core.DiffExpansion.ExpandDirection.All, null));
+                Settle();
+                Console.WriteLine($"after expand rows={projection.Rows.Count}");
+            }
+            // Stage the hunk at the last change: its patch must still line up with the file's own diff.
+            surface.SelectedItem = projection.Rows.OfType<DiffLineProjection>().Last(line => line.IsAdded || line.IsRemoved);
+            projection.ApplyToSelection();
+            Settle();
+            Console.WriteLine($"status={projection.Status}");
         }
         if (label.Contains("keys")) projection.IsKeysOpen = true;
         if (label.Contains("hints")) {

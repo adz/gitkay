@@ -178,6 +178,7 @@
                                 <local:DiffSurfaceControl x:Name="Surface"
                                                           ItemsSource="{Binding Rows}"
                                                           SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+                                                      ExpandGapCommand="{Binding ExpandDiffGapCommand}"
                                                           CodeFontSize="{Binding DiffFontSize, Mode=TwoWay}"
                                                           HorizontalAlignment="Stretch" />
                             </ScrollViewer>

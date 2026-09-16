@@ -783,13 +783,22 @@ module GitService =
             | DiscardFromWorkingTree -> [ "--reverse" ]
         workTreeGit (Some patch) ([ "apply"; "--whitespace=nowarn" ] @ options @ [ "-" ]) |> Flow.map ignore
 
-    /// <summary>Stages, unstages or discards the chosen lines of one file.</summary>
+    /// <summary>
+    /// Stages, unstages or discards the chosen lines of one file. An untracked file is added with
+    /// <c>--intent-to-add</c> first, so that git has a file in the index to apply the patch to.
+    /// </summary>
     let applyLines (target: PatchTarget) (path: string) (lines: PatchBuilder.SelectedLine list) : Flow<GitEnv, GitError, unit> =
         flow {
             let section, direction =
                 match target with
                 | StageInIndex | DiscardFromWorkingTree -> WorkingTree.Unstaged, PatchBuilder.Forward
                 | UnstageFromIndex -> WorkingTree.Staged, PatchBuilder.Reverse
+
+            if target = StageInIndex then
+                let! status = fetchWorkingTreeStatus
+                if status |> List.exists (fun entry -> entry.Untracked && entry.Path = path) then
+                    do! plainGit [ "add"; "--intent-to-add"; "--"; path ] |> Flow.map ignore
+
             let! raw = fetchRawFileDiff section path
             match PatchBuilder.build direction raw lines with
             | Ok patch -> do! applyPatch target patch

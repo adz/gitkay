@@ -34,6 +34,25 @@
         <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
         <Setter Property="BorderBrush" Value="{DynamicResource GitKayBorderBrush}" />
     </Style>
+    <!--
+      One colour per state. The Fluent theme paints its own brushes on the template part, so without these a hover
+      crossfades between two different colours and looks like it flashes.
+    -->
+    <Style Selector="Button /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource GitKayRaisedBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GitKayBorderBrush}" />
+    </Style>
+    <Style Selector="Button:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource GitKayControlHoverBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GitKayHoverEdgeBrush}" />
+    </Style>
+    <Style Selector="Button:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource GitKaySelectionBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GitKayHoverEdgeBrush}" />
+    </Style>
     <!-- Segmented icon toggles (diff view modes, file list modes). -->
     <Style Selector="Button.segment">
         <Setter Property="Width" Value="30" />
@@ -158,18 +177,15 @@
     <!-- Splitters: invisible until hovered; a hairline behind them marks the edge. -->
     <Style Selector="GridSplitter">
         <Setter Property="Background" Value="Transparent" />
-        <Setter Property="Transitions">
-            <Transitions><BrushTransition Property="Background" Duration="0:0:0.1" /></Transitions>
-        </Setter>
     </Style>
     <Style Selector="GridSplitter:pointerover">
         <Setter Property="Background" Value="{DynamicResource GitKayBorderBrush}" />
     </Style>
 
-    <!-- Gentle motion: hover and selection backgrounds ease; panels and overlays fade in. -->
+    <!-- Hover and press land on one colour straight away: crossfading between two themes' brushes reads as a flash. -->
     <Style Selector="ListBoxItem /template/ ContentPresenter#PART_ContentPresenter, Button /template/ ContentPresenter#PART_ContentPresenter, ToggleButton /template/ ContentPresenter#PART_ContentPresenter">
         <Setter Property="Transitions">
-            <Transitions><BrushTransition Property="Background" Duration="0:0:0.08" /></Transitions>
+            <Transitions />
         </Setter>
     </Style>
     <Style Selector=":is(Control).fadeIn[IsVisible=True]">

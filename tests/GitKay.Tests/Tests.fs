@@ -923,6 +923,29 @@ summary Another line
             test <@ File.ReadAllText(Path.Combine(root, "a.txt")) = numbered [ "one"; "TWO"; "three"; "four" ] @>)
 
     [<Fact>]
+    let ``staging chosen lines of an untracked file adds it with intent-to-add first`` () =
+        withTempRepository (fun root repo ->
+            let gitDir = Path.Combine(root, ".git")
+            commitFile repo root "a.txt" "one\n" "init" |> ignore
+            writeFile root "new.txt" (numbered [ "first"; "second"; "third" ])
+            // The UI selects from the diff GitKay builds for an untracked file, which git itself won't show yet.
+            let changes0 = run gitDir (GitService.fetchWorkingTreeChanges 3)
+            let untracked = changes0.Untracked |> List.find (fun file -> file.NewPath = "new.txt")
+            let chosen =
+                untracked.Hunks
+                |> List.mapi (fun hunkIndex hunk ->
+                    hunk.Lines
+                    |> List.mapi (fun lineIndex line -> hunkIndex, lineIndex, line)
+                    |> List.filter (fun (_, _, line) -> line.Content = "second"))
+                |> List.concat
+                |> List.map (fun (h, l, line) -> ({ Hunk = h; Line = l; Type = line.Type; Content = line.Content } : PatchBuilder.SelectedLine))
+            run gitDir (GitService.applyLines GitService.StageInIndex "new.txt" chosen)
+            let changes (raw: string) = pick raw (fun _ _ _ -> true) |> List.map (fun line -> line.Type, line.Content)
+            test <@ changes (run gitDir (GitService.fetchRawFileDiff WorkingTree.Staged "new.txt")) = [ Models.Added, "second" ] @>
+            test <@ changes (run gitDir (GitService.fetchRawFileDiff WorkingTree.Unstaged "new.txt")) = [ Models.Added, "first"; Models.Added, "third" ] @>
+            test <@ File.ReadAllText(Path.Combine(root, "new.txt")) = numbered [ "first"; "second"; "third" ] @>)
+
+    [<Fact>]
     let ``patch building keeps no-newline markers and refuses a changed diff`` () =
         let raw =
             numbered
@@ -3077,6 +3100,18 @@ module DiffSearchBorrowTests =
 module CommitWindowTests =
 
     [<Fact>]
+    let ``a commit draft is kept per repository until it is committed`` () =
+        let state = UiState.empty |> UiState.withCommitDraft "/repo/a" "Half-written message\n\nbody" |> UiState.withCommitDraft "/repo/b" "Other"
+        test <@ UiState.commitDraft "/repo/a" state = Some "Half-written message\n\nbody" @>
+        test <@ UiState.commitDraft "/repo/b" state = Some "Other" @>
+        // Committing clears it; blank drafts aren't kept.
+        let cleared = state |> UiState.withCommitDraft "/repo/a" ""
+        test <@ UiState.commitDraft "/repo/a" cleared = None && UiState.commitDraft "/repo/b" cleared = Some "Other" @>
+        match GitKay.Serialization.UiStateJson.encode state |> GitKay.Serialization.UiStateJson.decode with
+        | Ok read -> test <@ UiState.commitDraft "/repo/a" read = Some "Half-written message\n\nbody" @>
+        | Error message -> failwith message
+
+    [<Fact>]
     let ``gitkay gui, gitkay commit and gitkay-gui open the commit window`` () =
         test <@ GitStartup.launchMode "/usr/bin/gitkay" [| "gui"; "--log"; "x" |] = (GitStartup.Commit, [| "--log"; "x" |]) @>
         test <@ fst (GitStartup.launchMode "/usr/bin/gitkay" [| "commit" |]) = GitStartup.Commit @>
@@ -3481,7 +3516,7 @@ module SettingsSerializationTests =
             { ShowBranchRefs = true; ShowStashes = true; DiffContextLines = 7; DiffLayout = DiffLayout.SideBySide
               CommitRowFontFamily = "Inter"; CommitRowMonoFontFamily = "Iosevka"; CommitRowTextFontSize = 14.5
               CommitRowMetaFontSize = 12.0; CommitRowBadgeFontSize = 10.0; SearchDebounceSeconds = 0.25; Theme = DarkTheme
-              PaneGap = 5.0; PaneHoverEffect = HoverShadow; PaneHoverColor = TealHoverColor; PaneHoverIntensity = QuarterIntensity }
+              PaneGap = 5.0; PaneHoverEffect = HoverShadow; PaneHoverColor = TealHoverColor; PaneHoverIntensity = QuarterIntensity; PaneBorder = false }
         test <@ settings |> SettingsJson.encode |> SettingsJson.decode = Ok settings @>
 
     [<Fact>]

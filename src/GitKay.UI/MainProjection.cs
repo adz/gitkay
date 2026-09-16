@@ -146,6 +146,11 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     /// <summary>Space around each pane, in pixels.</summary>
     [ObservableProperty] private double _paneGap = GitKay.Core.SettingsModule.defaults.PaneGap;
 
+    /// <summary>Whether each pane is outlined.</summary>
+    [ObservableProperty] private bool _paneBorder = GitKay.Core.SettingsModule.defaults.PaneBorder;
+
+    partial void OnPaneBorderChanged(bool value) => PaneChromeChanged?.Invoke();
+
     /// <summary>The gap as a margin, for binding to each pane.</summary>
     public Avalonia.Thickness PaneGapThickness => new(PaneGap);
     public GitKay.Core.PaneHoverEffect PaneHoverEffect => SelectedPaneHoverEffect?.Effect ?? GitKay.Core.SettingsModule.defaults.PaneHoverEffect;
@@ -288,6 +293,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             SelectedDiffPresentationMode = PresentationModeFor(normalized.DiffLayout);
             SelectedThemeMode = ThemeModes.FirstOrDefault(mode => mode.Mode.Equals(normalized.Theme)) ?? ThemeModes.First();
             PaneGap = normalized.PaneGap;
+            PaneBorder = normalized.PaneBorder;
             SelectedPaneHoverEffect = PaneHoverEffects.FirstOrDefault(effect => effect.Effect.Equals(normalized.PaneHoverEffect)) ?? PaneHoverEffects.First();
             SelectedPaneHoverColor = PaneHoverColors.FirstOrDefault(color => color.Color.Equals(normalized.PaneHoverColor)) ?? PaneHoverColors.First();
             SelectedPaneHoverIntensity = PaneHoverIntensities.FirstOrDefault(intensity => intensity.Intensity.Equals(normalized.PaneHoverIntensity)) ?? PaneHoverIntensities.First();
@@ -315,7 +321,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         PaneGap,
         PaneHoverEffect,
         PaneHoverColor,
-        PaneHoverIntensity));
+        PaneHoverIntensity,
+        PaneBorder));
 
     /// <summary>The diff layout chosen in the view menu.</summary>
     public GitKay.Core.DiffLayout DiffLayout => SelectedDiffPresentationMode?.Layout ?? GitKay.Core.SettingsModule.defaults.DiffLayout;

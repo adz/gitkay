@@ -21,6 +21,8 @@ internal sealed class PaneChrome {
     private GitKay.Core.PaneHoverEffect _effect = GitKay.Core.SettingsModule.defaults.PaneHoverEffect;
     private GitKay.Core.PaneHoverColor _color = GitKay.Core.SettingsModule.defaults.PaneHoverColor;
     private double _intensity = GitKay.Core.PaneHoverIntensityModule.scale(GitKay.Core.SettingsModule.defaults.PaneHoverIntensity);
+    private bool _border = GitKay.Core.SettingsModule.defaults.PaneBorder;
+    private BoxShadows _hoverShadow;
 
     /// <summary>Adds a pane: the border that draws its effect, and the elements that make up the pane.</summary>
     public void Add(Border effect, params Control[] parts) {
@@ -40,11 +42,12 @@ internal sealed class PaneChrome {
     }
 
     /// <summary>Re-reads the settings; call when the pane gap, hover effect or its colour changes.</summary>
-    public void Update(double gap, GitKay.Core.PaneHoverEffect effect, GitKay.Core.PaneHoverColor color, GitKay.Core.PaneHoverIntensity intensity) {
+    public void Update(double gap, GitKay.Core.PaneHoverEffect effect, GitKay.Core.PaneHoverColor color, GitKay.Core.PaneHoverIntensity intensity, bool border) {
         _gap = Math.Clamp(gap, 0, 8);
         _effect = effect;
         _color = color;
         _intensity = GitKay.Core.PaneHoverIntensityModule.scale(intensity);
+        _border = border;
         foreach (var pane in _panes) ApplyPane(pane);
     }
 
@@ -64,12 +67,12 @@ internal sealed class PaneChrome {
         var isDark = pane.Effect.ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark
                      || (pane.Effect.FindResource("GitKayWindowBrush") is ISolidColorBrush window && window.Color.R + window.Color.G + window.Color.B < 3 * 128);
 
-        pane.Effect.BorderThickness = new Thickness(_effect.IsHoverGlow || _effect.IsHoverHighlight ? 1 : 0);
         // The outline stays readable at low intensities, so it fades more gently than the halo.
         var outline = (byte)Math.Round((_effect.IsHoverGlow ? 0xD0 : 0xCC) * Math.Sqrt(_intensity));
-        pane.Effect.BorderBrush = new SolidColorBrush(Color.FromArgb(outline, color.R, color.G, color.B));
+        _hoverOutline = new SolidColorBrush(Color.FromArgb(outline, color.R, color.G, color.B));
+        _restOutline = pane.Effect.FindResource("GitKayBorderBrush") as IBrush ?? Brushes.Gray;
         pane.Effect.Margin = new Thickness(Math.Max(0, _gap - 1));
-        pane.Effect.BoxShadow = _effect switch {
+        _hoverShadow = _effect switch {
             // A halo in the gap plus an inset glow along the pane's edge, so it glows rather than just outlines.
             { IsHoverGlow: true } => new BoxShadows(
                 new BoxShadow { Blur = 11, Spread = 2, Color = WithAlpha(color, 0xB0) },
@@ -91,8 +94,17 @@ internal sealed class PaneChrome {
         ApplyHover(pane);
     }
 
+    private IBrush _hoverOutline = Brushes.SteelBlue;
+    private IBrush _restOutline = Brushes.Gray;
+
     private void ApplyHover(Pane pane) {
-        pane.Effect.Opacity = IsHovered(pane) && !_effect.IsNoHoverEffect ? 1 : 0;
+        var hovered = IsHovered(pane) && !_effect.IsNoHoverEffect;
+        var outlined = _border || _effect.IsHoverGlow || _effect.IsHoverHighlight;
+        // With a border the frame is always there and hovering changes its colour; without one it only appears on hover.
+        pane.Effect.BorderThickness = new Thickness(outlined ? 1 : 0);
+        pane.Effect.BorderBrush = hovered ? _hoverOutline : _restOutline;
+        pane.Effect.BoxShadow = hovered ? _hoverShadow : default;
+        pane.Effect.Opacity = hovered || _border ? 1 : 0;
         var margin = new Thickness(_gap);
         foreach (var part in pane.Parts)
             if (part.Margin != margin) part.Margin = margin;

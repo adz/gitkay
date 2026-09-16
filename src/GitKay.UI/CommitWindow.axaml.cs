@@ -40,7 +40,15 @@ public sealed partial class CommitWindowProjection : ObservableObject {
     private CoreWindow.Model? _model;
     private bool _syncing;
     private GitKay.Core.Models.FileDiff? _shownDiff;
+    private DiffFileProjection? _shownFile;
+    private GitKay.Core.App.FileExpansion? _expansion;
+    private long _expansionRequest;
     private readonly Dictionary<DiffLineProjection, (int Hunk, int Line)> _linePositions = new(ReferenceEqualityComparer.Instance);
+    /// <summary>Where each changed line sits in the file's own diff, in order, so staging still works once context is shown.</summary>
+    private readonly List<(int Hunk, int Line)> _changePositions = new();
+
+    /// <summary>The repository, for reading a file's full context.</summary>
+    public string? RepositoryPath { get; set; }
 
     public CommitWindowProjection(string repositoryName) => WindowTitle = $"Commit — {repositoryName}";
 
@@ -220,8 +228,7 @@ public sealed partial class CommitWindowProjection : ObservableObject {
         : Surface?.HasTextSelection == true ? "Stage lines (s)" : "Stage hunk (s)";
     public string SelectionActionTip => "s / u: stages or unstages the selected lines, or the hunk at the cursor";
     public bool CanDiscard => HasSelectedFile && !IsStagedFileSelected;
-    /// <summary>Untracked files have no hunks in the index to patch; they stage whole.</summary>
-    public bool CanApplyToLines => SelectedFile is { IsUntracked: false };
+    public bool CanApplyToLines => HasSelectedFile;
     public string DiscardLabel => Surface?.HasTextSelection == true ? "Discard lines…" : "Discard file…";
 
     public string SubjectLengthText => $"{GitKay.Core.CommitWindow.subject(Message).Length}/72";
@@ -309,20 +316,83 @@ public sealed partial class CommitWindowProjection : ObservableObject {
         }
 
         DiffTitle = $"{row.Label} · {(row.IsUntracked ? "untracked" : row.List.IsStagedList ? "staged" : "unstaged")}";
-        var file = new DiffFileProjection(new GitKay.Core.GitService.DiffFileSummary(row.Diff.OldPath, row.Diff.NewPath, row.Label));
-        file.ApplyContent(row.Diff);
+        _expansion = null;
+        _changePositions.Clear();
+        // Patches are built against the file's own diff, so remember where its changed lines are, in order.
+        for (var hunk = 0; hunk < row.Diff.Hunks.Length; hunk++) {
+            var lines = row.Diff.Hunks[hunk].Lines;
+            for (var line = 0; line < lines.Length; line++)
+                if (!lines[line].Type.IsContext) _changePositions.Add((hunk, line));
+        }
+
+        _shownFile = new DiffFileProjection(new GitKay.Core.GitService.DiffFileSummary(row.Diff.OldPath, row.Diff.NewPath, row.Label));
+        _shownFile.ApplyContent(row.Diff);
+        RenderRows();
+    }
+
+    /// <summary>Rebuilds the diff rows and re-maps changed lines onto the file's own diff.</summary>
+    private void RenderRows() {
+        Rows.Clear();
+        _linePositions.Clear();
+        if (_shownFile is not { } file) return;
+
         var rows = new List<IDiffRowProjection>();
         DiffRowBuilder.AppendFile(rows, file, GitKay.Core.DiffLayout.Unified);
-        // The title bar names the file, and hidden context can't be revealed here: gaps show as plain hunk headers.
-        rows = rows
-            .Where(item => item is not DiffFileHeaderProjection)
-            .Select(item => item is DiffGapProjection gap ? gap.HeaderText is { } header ? new DiffHunkHeaderProjection(header) : null : item)
-            .OfType<IDiffRowProjection>()
-            .ToList();
-        for (var hunk = 0; hunk < file.Hunks.Count; hunk++)
-            for (var line = 0; line < file.Hunks[hunk].Lines.Count; line++)
-                _linePositions[file.Hunks[hunk].Lines[line]] = (hunk, line);
+        // The title bar already names the file.
+        rows = rows.Where(item => item is not DiffFileHeaderProjection).ToList();
+
+        var changed = rows.OfType<DiffLineProjection>().Where(line => line.IsAdded || line.IsRemoved).ToList();
+        // Expanding context adds context lines only, so the changed lines stay in the same order as the diff's.
+        for (var i = 0; i < changed.Count && i < _changePositions.Count; i++) _linePositions[changed[i]] = _changePositions[i];
         Rows.AddRange(rows);
+    }
+
+    /// <summary>Shows more of the file around a gap, or all of it.</summary>
+    public void RevealContext(GitKay.Core.DiffExpansion.LineRange range) {
+        if (_shownFile is not { } file || SelectedFile is not { } row || RepositoryPath is not { } repo) return;
+        if (GitKay.Core.WorkingTree.tryParseSection(row.List.IsStagedList ? "Staged" : row.IsUntracked ? "Untracked" : "Unstaged") is not { } section) return;
+
+        var current = _expansion ?? new GitKay.Core.App.FileExpansion(null, Microsoft.FSharp.Collections.FSharpList<GitKay.Core.DiffExpansion.LineRange>.Empty, null);
+        var revealed = GitKay.Core.DiffExpansion.addRange(range, current.Revealed);
+        if (current.FullContext != null) {
+            Apply(new GitKay.Core.App.FileExpansion(current.FullContext, revealed, null));
+            return;
+        }
+
+        var request = ++_expansionRequest;
+        Apply(new GitKay.Core.App.FileExpansion(null, revealed, Microsoft.FSharp.Core.FSharpOption<long>.Some(request)));
+        _ = LoadContextAsync(repo, section.Value, row, request);
+
+        void Apply(GitKay.Core.App.FileExpansion expansion) {
+            _expansion = expansion;
+            file.ApplyExpansion(expansion);
+            RenderRows();
+        }
+    }
+
+    private async Task LoadContextAsync(string repo, GitKay.Core.WorkingTree.Section section, CommitFileRow row, long request) {
+        GitKay.Core.Models.FileDiff? loaded = null;
+        string? error = null;
+        try {
+            var result = await Task.Run(() => GitKay.Core.GitService.loadWorkingTreeFile(repo, section, row.Diff.OldPath, row.Diff.NewPath));
+            if (result.IsOk) loaded = result.ResultValue;
+            else error = GitKay.Core.GitErrorModule.describe(result.ErrorValue);
+        }
+        catch (Exception exception) {
+            error = exception.Message;
+        }
+
+        if (request != _expansionRequest || _shownFile is not { } file || _expansion is not { } current) return;
+        if (loaded == null) {
+            Status = $"Could not read more of {row.Label}: {error}";
+            _expansion = null;
+            file.ApplyExpansion(null);
+        }
+        else {
+            _expansion = new GitKay.Core.App.FileExpansion(loaded, current.Revealed, null);
+            file.ApplyExpansion(_expansion);
+        }
+        RenderRows();
     }
 
     partial void OnSelectedUnstagedChanged(CommitFileRow? value) {
@@ -369,6 +439,12 @@ public sealed partial class CommitWindowProjection : ObservableObject {
 
     [RelayCommand]
     private void Rescan() => _dispatch?.Invoke(CoreWindow.Msg.Rescan);
+
+    /// <summary>A gap's up, down or show-all control.</summary>
+    [RelayCommand]
+    private void ExpandDiffGap(DiffGapExpansionRequest request) {
+        if (GitKay.Core.DiffExpansion.revealRange(request.Direction, request.Gap) is { } range) RevealContext(range.Value);
+    }
 
     [RelayCommand]
     public void StageAll() => _dispatch?.Invoke(CoreWindow.Msg.NewStagePaths(ListModule.OfSeq(UnstagedFiles.Select(row => row.Path))));
@@ -427,11 +503,6 @@ public sealed partial class CommitWindowProjection : ObservableObject {
     [RelayCommand]
     public void ApplyToSelection() {
         if (SelectedFile is not { } file) return;
-        if (file.IsUntracked) {
-            // An untracked file has nothing in the index to patch yet: it stages whole.
-            ToggleFile(file);
-            return;
-        }
         var lines = ChosenLines();
         if (lines.Count == 0) {
             Status = "Put the cursor in a hunk or select changed lines";
@@ -487,14 +558,18 @@ public partial class CommitWindow : Window, IVimCommands {
         Icon = AppIcon.Window;
     }
 
+    private readonly AppUiStateStore _uiState = new();
+    private string _repositoryPath = "";
+
     public CommitWindow(string repositoryPath, string repositoryName) : this() {
+        _repositoryPath = repositoryPath;
         Surface.DiffLayout = GitKay.Core.DiffLayout.Unified;
         Surface.SharedVim = _vim;
         Surface.VimCommands = this;
         _unstagedVim = new ListBoxVimHost(UnstagedList, this);
         _stagedVim = new ListBoxVimHost(StagedList, this);
 
-        var projection = new CommitWindowProjection(repositoryName) { Surface = Surface };
+        var projection = new CommitWindowProjection(repositoryName) { Surface = Surface, RepositoryPath = repositoryPath };
         projection.ConfirmDiscard = ConfirmAsync;
         DataContext = projection;
         Projection = projection;
@@ -512,9 +587,11 @@ public partial class CommitWindow : Window, IVimCommands {
         ApplyPaneSettings();
         AddHandler(GotFocusEvent, (_, _) => TrackPane(), RoutingStrategies.Bubble);
 
+        // The message being written survives closing the window, until it is committed.
+        var draft = GitKay.Core.UiStateModule.commitDraft(repositoryPath, _uiState.Load());
         var env = GitKay.Core.GitService.environment(repositoryPath);
         _host = ElmishHost.startAndBind(
-            GitKay.Core.CommitWindow.program(env, ""),
+            GitKay.Core.CommitWindow.program(env, draft == null ? "" : draft.Value),
             model => projection.Update(model),
             dispatch => projection.SetDispatch(dispatch));
         // Rescan when the user comes back from elsewhere; not on every activation, which focus changes can repeat.
@@ -526,7 +603,11 @@ public partial class CommitWindow : Window, IVimCommands {
             projection.RescanCommand.Execute(null);
             ApplyPaneSettings();
         };
-        Closed += (_, _) => _host?.Dispose();
+        Closed += (_, _) => {
+            SaveDraft(projection.Message);
+            _host?.Dispose();
+        };
+        projection.Committed += _ => SaveDraft("");
         // Take keyboard focus as soon as the window is up, so its keys go here and not to the window behind.
         Opened += (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(() => {
             Activate();
@@ -536,16 +617,26 @@ public partial class CommitWindow : Window, IVimCommands {
 
     public CommitWindowProjection? Projection { get; }
 
-    internal void SetPaneChrome(double gap, GitKay.Core.PaneHoverEffect effect, GitKay.Core.PaneHoverColor color, GitKay.Core.PaneHoverIntensity intensity) =>
-        _paneChrome.Update(gap, effect, color, intensity);
+    internal void SetPaneChrome(double gap, GitKay.Core.PaneHoverEffect effect, GitKay.Core.PaneHoverColor color, GitKay.Core.PaneHoverIntensity intensity, bool border = true) =>
+        _paneChrome.Update(gap, effect, color, intensity, border);
 
     /// <summary>Panes follow the same settings as the main window's; re-read when the window is activated.</summary>
     private void ApplyPaneSettings() {
         var settings = GitKay.Core.SettingsModule.normalize(new AppSettingsStore().Load());
-        _paneChrome.Update(settings.PaneGap, settings.PaneHoverEffect, settings.PaneHoverColor, settings.PaneHoverIntensity);
+        _paneChrome.Update(settings.PaneGap, settings.PaneHoverEffect, settings.PaneHoverColor, settings.PaneHoverIntensity, settings.PaneBorder);
     }
 
     internal TextBox MessageBoxForTests => MessageBox;
+
+    private void SaveDraft(string draft) {
+        if (string.IsNullOrEmpty(_repositoryPath)) return;
+        try {
+            _uiState.Save(GitKay.Core.UiStateModule.withCommitDraft(_repositoryPath, draft, _uiState.Load()));
+        }
+        catch (Exception exception) {
+            System.Diagnostics.Trace.WriteLine($"[commit-window] draft not saved: {exception.Message}");
+        }
+    }
 
     public void FocusMessage() => Avalonia.Threading.Dispatcher.UIThread.Post(() => MessageBox.Focus(), Avalonia.Threading.DispatcherPriority.Input);
 
@@ -854,7 +945,7 @@ public partial class CommitWindow : Window, IVimCommands {
         }
 
         if (file.List.IsUnstagedList) {
-            Add(file.IsUntracked ? "Stage file" : $"Stage {lines}", "S", () => projection.Stage(inDiff: true, stage: true));
+            Add($"Stage {lines}", "S", () => projection.Stage(inDiff: true, stage: true));
             Add(file.IsUntracked ? "Delete untracked file…" : Surface.HasTextSelection ? "Discard lines…" : "Discard file…", "Delete", projection.DiscardFromKeyboard);
         }
         else {

@@ -107,9 +107,10 @@ changes.
 5. Opening from the main window; discard; amend; sign off; commit and push; draft persistence.
 6. AOT self-test coverage, screenshots, docs.
 
-## Not yet built
+## Built since
 
-- Keeping the draft message across closing the window (it lives only while the window is open).
-- Context expansion in the commit window's diff (hunks show without "more lines" gaps).
-- Partial staging of untracked files: they stage whole (`--intent-to-add` first would allow lines).
-- User-facing docs and the shortcut sheet entries.
+- The draft message is kept per repository (UI state) until the commit succeeds.
+- Context expansion works in the commit window's diff; selected lines still map to the file's own diff, so staging
+  after expanding stays correct.
+- Untracked files stage by line: `git add --intent-to-add` runs first so the patch has something to apply to.
+- The README shows both windows and what they do; F1 lists the keys in the window itself.
