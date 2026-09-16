@@ -1,6 +1,7 @@
 using Microsoft.FSharp.Core;
 using GitKay.Core;
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using Avalonia.Controls;
@@ -55,13 +56,66 @@ public partial class MainWindow : Window, IVimCommands {
         CommitListBox.HistoryRequested += revision => _projection?.ShowHistoryOf(revision);
         CommitListBox.BranchOperationRequested += OnBranchOperationRequested;
         CommitListBox.CommitWindowRequested += OpenCommitWindow;
+        CommitListBox.AmendRequested += () => OpenCommitWindow(amend: true);
         _paneChrome.Add(CommitPaneEffect, CommitPaneContent);
         _paneChrome.Add(DiffPaneEffect, DiffHeaderPart, DiffContentPart, DiffPaneFocus);
         _paneChrome.Add(FilesPaneEffect, FilesHeaderPart, FilesContentPart, FilesPaneFocus);
         CommitListBox.CopyRequested += name => CopyToClipboard(name, "Copied");
+        DiffRowsListBox.LineMenuOpening += AddWorkingTreeLineItems;
         DiffRowsListBox.TextCopied += (_, lines) => { if (_projection != null) _projection.Status = lines switch { 0 => "Copied", 1 => "Copied 1 line", _ => $"Copied {lines} lines" }; };
         AddHandler(InputElement.GotFocusEvent, (_, _) => { UpdatePaneFocusIndicator(); TrackPaneFocus(); }, RoutingStrategies.Bubble);
         AddHandler(InputElement.LostFocusEvent, (_, _) => Dispatcher.UIThread.Post(UpdatePaneFocusIndicator), RoutingStrategies.Bubble);
+    }
+
+    /// <summary>Stage, unstage and discard on the uncommitted diff's right-click menu.</summary>
+    private void AddWorkingTreeLineItems(ContextMenu menu) {
+        if (_projection is not { IsWorkingTreeDiffShown: true, SelectedDiffFile: { } file } projection) return;
+        var rows = DiffRowsListBox.SelectedRows;
+        var what = DiffRowsListBox.HasTextSelection ? "lines" : "hunk";
+        void Add(string header, Action action, string gesture) {
+            var item = new MenuItem { Header = header, InputGesture = KeyGesture.Parse(gesture) };
+            item.Click += (_, _) => action();
+            menu.Items.Add(item);
+        }
+
+        if (projection.IsStagedFile(file)) {
+            Add($"Unstage {what}", () => projection.ApplyWorkingTreeLines(GitKay.Core.GitService.PatchTarget.UnstageFromIndex, file, rows, !DiffRowsListBox.HasTextSelection), "U");
+        }
+        else {
+            Add($"Stage {what}", () => projection.ApplyWorkingTreeLines(GitKay.Core.GitService.PatchTarget.StageInIndex, file, rows, !DiffRowsListBox.HasTextSelection), "S");
+            Add($"Discard {what}…", () => ConfirmDiscardLines(file, rows), "Delete");
+        }
+        if (projection.CanUndoDiscard) Add("Undo last discard", projection.UndoDiscard, "Ctrl+Z");
+    }
+
+    /// <summary>s / u / Delete act on the uncommitted diff or its files list; Ctrl+Z undoes a discard.</summary>
+    private bool HandleWorkingTreeKey(KeyEventArgs e) {
+        if (_projection is not { IsWorkingTreeDiffShown: true } projection) return false;
+        if (e.Key == Key.Z && e.KeyModifiers == KeyModifiers.Control) {
+            projection.UndoDiscard();
+            return true;
+        }
+        if (e.KeyModifiers != KeyModifiers.None || FocusedPane is not (Pane.Diff or Pane.Files)) return false;
+        if (projection.SelectedDiffFile is not { } file || file.Key.Section.Length == 0) return false;
+        var inDiff = FocusedPane == Pane.Diff;
+        var rows = DiffRowsListBox.SelectedRows;
+
+        switch (e.Key) {
+            case Key.S when !projection.IsStagedFile(file):
+                if (inDiff) projection.ApplyWorkingTreeLines(GitKay.Core.GitService.PatchTarget.StageInIndex, file, rows, !DiffRowsListBox.HasTextSelection);
+                else projection.StageWorkingTreeFile(file);
+                return true;
+            case Key.U when projection.IsStagedFile(file):
+                if (inDiff) projection.ApplyWorkingTreeLines(GitKay.Core.GitService.PatchTarget.UnstageFromIndex, file, rows, !DiffRowsListBox.HasTextSelection);
+                else projection.UnstageWorkingTreeFile(file);
+                return true;
+            case Key.Delete when !projection.IsStagedFile(file):
+                if (inDiff) ConfirmDiscardLines(file, rows);
+                else ConfirmDiscardFile(file);
+                return true;
+            default:
+                return false;
+        }
     }
 
     // ----- Pane navigation: Ctrl+h/j/k/l or Ctrl+arrows move spatially; Tab cycles; 1/2/3 jump. -----
@@ -271,6 +325,11 @@ public partial class MainWindow : Window, IVimCommands {
         }
 
         if (!typingInTextBox && !(_projection?.IsShortcutHelpOpen ?? false) && TryHandlePaneNavigation(e)) {
+            e.Handled = true;
+            return;
+        }
+
+        if (!typingInTextBox && HandleWorkingTreeKey(e)) {
             e.Handled = true;
             return;
         }
@@ -553,6 +612,19 @@ public partial class MainWindow : Window, IVimCommands {
             menu.Items.Add(item);
         }
 
+        // Uncommitted files can be staged, unstaged or discarded from here, as in the commit window.
+        if (projection.IsWorkingTreeDiffShown && target.Changed is { } changed && changed.Key.Section.Length > 0) {
+            if (projection.IsStagedFile(changed)) {
+                Add("Unstage file", () => projection.UnstageWorkingTreeFile(changed), "U");
+            }
+            else {
+                Add("Stage file", () => projection.StageWorkingTreeFile(changed), "S");
+                Add(projection.IsUntrackedFile(changed) ? "Delete untracked file…" : "Discard changes…", () => ConfirmDiscardFile(changed), "Delete");
+            }
+            if (projection.CanUndoDiscard) Add("Undo last discard", projection.UndoDiscard, "Ctrl+Z");
+            menu.Items.Add(new Separator());
+        }
+
         Add("Copy full path", () => CopyToClipboard(projection.FullPath(target), "Copied full path"));
         Add("Copy relative path", () => CopyToClipboard(target.Path, "Copied relative path"));
         menu.Items.Add(new Separator());
@@ -560,6 +632,63 @@ public partial class MainWindow : Window, IVimCommands {
         Add("Filter history to this file", () => projection.FilterHistoryToFile(target));
         if (projection.HasHistoryPathFilter) Add($"Clear file filter ({projection.HistoryPathFilter})", projection.ClearHistoryPathFilter);
         Add(line is { } number ? $"Open in VS Code at line {number}" : "Open in VS Code", () => projection.OpenInVsCode(target, line));
+    }
+
+    /// <summary>Discarding is the one thing here that loses work, so it asks first — and can be undone after.</summary>
+    private async void ConfirmDiscardFile(DiffFileProjection file) {
+        if (_projection is not { } projection) return;
+        var what = projection.IsUntrackedFile(file)
+            ? $"Delete the untracked file {file.DisplayPath}?"
+            : $"Discard all unstaged changes to {file.DisplayPath}?";
+        if (await ConfirmAsync(what, "Discard")) projection.DiscardWorkingTreeFile(file);
+    }
+
+    /// <summary>Discards the selected lines, or the hunk at the cursor, from the uncommitted diff.</summary>
+    private async void ConfirmDiscardLines(DiffFileProjection file, IReadOnlyList<IDiffRowProjection> rows) {
+        if (_projection is not { } projection) return;
+        var lines = projection.LinesOf(file, rows, !DiffRowsListBox.HasTextSelection);
+        if (lines.Count == 0) {
+            projection.Status = "Put the cursor in a hunk or select changed lines";
+            return;
+        }
+        var what = lines.Count == 1 ? $"Discard 1 line in {file.DisplayPath}?" : $"Discard {lines.Count} lines in {file.DisplayPath}?";
+        if (await ConfirmAsync(what, "Discard"))
+            projection.ApplyWorkingTreeLines(GitKay.Core.GitService.PatchTarget.DiscardFromWorkingTree, file, rows, !DiffRowsListBox.HasTextSelection);
+    }
+
+    private async System.Threading.Tasks.Task<bool> ConfirmAsync(string question, string action) {
+        var confirmed = false;
+        var dialog = new Window {
+            Title = action,
+            Icon = AppIcon.Window,
+            Width = 460,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+        };
+        dialog[!BackgroundProperty] = dialog.GetResourceObservable("GitKaySurfaceBrush").ToBinding();
+        var text = new TextBlock { Text = question + "\nIt can be undone with Ctrl+Z.", TextWrapping = TextWrapping.Wrap, FontSize = 13 };
+        text[!TextBlock.ForegroundProperty] = dialog.GetResourceObservable("GitKayTextBrush").ToBinding();
+        var cancel = new Button { Content = "Cancel", Padding = new Thickness(14, 4), IsCancel = true, IsDefault = true };
+        cancel.Click += (_, _) => dialog.Close();
+        var confirm = new Button { Content = action, Padding = new Thickness(14, 4) };
+        confirm[!ForegroundProperty] = dialog.GetResourceObservable("GitKayRemovedAccentBrush").ToBinding();
+        confirm.Click += (_, _) => { confirmed = true; dialog.Close(); };
+        dialog.Content = new StackPanel {
+            Margin = new Thickness(20, 16),
+            Spacing = 14,
+            Children = {
+                text,
+                new StackPanel {
+                    Orientation = Avalonia.Layout.Orientation.Horizontal,
+                    Spacing = 8,
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+                    Children = { cancel, confirm },
+                },
+            },
+        };
+        await dialog.ShowDialog(this);
+        return confirmed;
     }
 
     private async void CopyToClipboard(string text, string status) {
@@ -684,9 +813,12 @@ public partial class MainWindow : Window, IVimCommands {
     private void OnCommitWindowMenuItemClick(object? sender, RoutedEventArgs e) => OpenCommitWindow();
 
     /// <summary>One commit window, beside the main window; asking again brings it forward.</summary>
-    private void OpenCommitWindow() {
+    private void OpenCommitWindow() => OpenCommitWindow(amend: false);
+
+    private void OpenCommitWindow(bool amend) {
         if (_commitWindow is { } open) {
             open.Activate();
+            if (amend) open.StartAmending();
             open.FocusMessage();
             return;
         }
@@ -705,6 +837,7 @@ public partial class MainWindow : Window, IVimCommands {
         _commitWindow.Closed += (_, _) => _commitWindow = null;
         _commitWindow.Show(this);
         _commitWindow.Activate();
+        if (amend) _commitWindow.StartAmending();
     }
 
     private async System.Threading.Tasks.Task PushCurrentBranchAsync(string directory) {

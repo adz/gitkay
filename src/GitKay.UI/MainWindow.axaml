@@ -1066,6 +1066,19 @@
                             <TextBlock Text=".*" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Regular expression toggle" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
                         </Grid>
+                        <TextBlock Text="Uncommitted changes" FontWeight="SemiBold" FontSize="12" Margin="0,10,0,4" Foreground="{DynamicResource GitKayAccentBrush}" />
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="s / u" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Stage / unstage: the selected lines or the hunk at the cursor in the diff, the file in the files list" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Delete · Ctrl+Z" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Discard them (asks first) · put back what the last discard threw away" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid ColumnDefinitions="200,*" Margin="0,2">
+                            <TextBlock Text="Ctrl+Shift+C · Enter" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Open the commit window (Enter on the Uncommitted changes row); right-click the newest commit to amend it" FontSize="12" Foreground="{DynamicResource GitKaySecondaryTextBrush}" TextWrapping="Wrap" />
+                        </Grid>
                         <TextBlock Text="Diff" FontWeight="SemiBold" FontSize="12" Margin="0,10,0,4" Foreground="{DynamicResource GitKayAccentBrush}" />
                         <Grid ColumnDefinitions="200,*" Margin="0,2">
                             <TextBlock Text="Enter / Space" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />

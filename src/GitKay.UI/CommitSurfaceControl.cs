@@ -92,8 +92,9 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
 
     /// <summary>Raised by the row context menu: (field, value) where a null value asks the host to prompt for one.</summary>
     public event Action<string, string?>? FilterRequested;
-    /// <summary>The commit window was asked for from the uncommitted changes row.</summary>
+    /// <summary>The commit window was asked for from the uncommitted changes row, or to amend the commit at HEAD.</summary>
     public event Action? CommitWindowRequested;
+    public event Action? AmendRequested;
     /// <summary>History limited to what a branch or tag reaches was requested.</summary>
     public event Action<string>? HistoryRequested;
 
@@ -756,6 +757,15 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
             }
             if (branches.Length > 0) menu.Items.Add(new Separator());
         }
+        // Amending rewrites the last commit, so it's offered only on the commit HEAD is at.
+        if (SelectedItem is { IsHead: true }) {
+            var amend = new MenuItem { Header = "Amend this commit…" };
+            ToolTip.SetTip(amend, "Opens the commit window with the last commit's files and message");
+            amend.Click += (_, _) => Dispatcher.UIThread.Post(() => AmendRequested?.Invoke(), DispatcherPriority.Background);
+            menu.Items.Add(amend);
+            menu.Items.Add(new Separator());
+        }
+
         foreach (var item in new Control[]
             {
                 Item("Create Tag here...", row => row.CreateTagCommand),

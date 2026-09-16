@@ -109,7 +109,7 @@ internal static class HotPaths {
             true, App.Selection.NewCommitSelected(hash), FSharpOption<string>.Some(hash),
             FSharpOption<FSharpList<GitService.DiffFileSummary>>.Some(files), FSharpOption<FSharpList<Models.FileDiff>>.Some(diff),
             FSharpOption<GitService.DiffFileKey>.None, MapModule.Empty<GitService.DiffFileKey, App.FileExpansion>(),
-            FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, model.WorkingTree, model.WorkingTreeChanges, model.WorkingTreeStartedAtTicks);
+            FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, model.WorkingTree, model.WorkingTreeChanges, model.WorkingTreeStartedAtTicks, model.LastDiscard);
 
     private static T Unwrap<T>(Exit<T, GitError> exit) =>
         exit.IsSuccess ? ((Exit<T, GitError>.Success)exit).Item : throw new InvalidOperationException(exit.ToString());
@@ -165,7 +165,7 @@ internal static class UiInteractions {
             FSharpOption<FSharpList<GitSearch.Result>>.None, graph, true, App.Selection.NewCommitSelected(full), FSharpOption<string>.Some(full),
             FSharpOption<FSharpList<GitService.DiffFileSummary>>.Some(files), FSharpOption<FSharpList<Models.FileDiff>>.Some(diff),
             FSharpOption<GitService.DiffFileKey>.None, MapModule.Empty<GitService.DiffFileKey, App.FileExpansion>(),
-            FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, baseModel.WorkingTree, baseModel.WorkingTreeChanges, baseModel.WorkingTreeStartedAtTicks);
+            FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, baseModel.WorkingTree, baseModel.WorkingTreeChanges, baseModel.WorkingTreeStartedAtTicks, baseModel.LastDiscard);
 
         var projection = new MainProjection();
         var window = new MainWindow { Width = 1600, Height = 1000, DataContext = projection };
@@ -182,7 +182,7 @@ internal static class UiInteractions {
                 model.SearchResults, model.Commits, true, App.Selection.WorkingTreeSelected, FSharpOption<string>.None,
                 FSharpOption<FSharpList<GitService.DiffFileSummary>>.None, FSharpOption<FSharpList<Models.FileDiff>>.None, FSharpOption<GitService.DiffFileKey>.None,
                 model.DiffExpansions, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None,
-                changes.Entries, FSharpOption<GitService.WorkingTreeChanges>.Some(changes), FSharpOption<long>.None));
+                changes.Entries, FSharpOption<GitService.WorkingTreeChanges>.Some(changes), FSharpOption<long>.None, FSharpOption<GitKay.Core.Trash.Backup>.None));
             Pump(window);
             if (label.Contains("expand")) {
                 projection.ToggleDiffFileContextCommand.Execute(projection.SelectedDiffFiles[0]);
@@ -190,6 +190,22 @@ internal static class UiInteractions {
                     System.Threading.Thread.Sleep(50);
                     Pump(window);
                 }
+            }
+            if (label.Contains("stage")) {
+                // Stage the hunk at the cursor with s, from the history window's uncommitted view. There is no Elmish
+                // host here, so the dispatched message is what this checks.
+                var dispatched = new List<App.Msg>();
+                projection.SetDispatch(dispatched.Add);
+                var diffSurface = Avalonia.Controls.NameScopeExtensions.Find<DiffSurfaceControl>(window, "DiffRowsListBox")!;
+                diffSurface.Focus();
+                diffSurface.SelectedItem = projection.SelectedDiffRows.OfType<DiffLineProjection>().First(line => line.IsAdded || line.IsRemoved);
+                Pump(window);
+                Avalonia.Headless.HeadlessWindowExtensions.KeyPressQwerty(window, Avalonia.Input.PhysicalKey.S, Avalonia.Input.RawInputModifiers.None);
+                Pump(window);
+                var staged = dispatched.OfType<App.Msg.ApplyWorkingTreeLines>().FirstOrDefault();
+                Console.WriteLine(staged == null
+                    ? $"after s: nothing dispatched ({dispatched.Count} messages), status={projection.Status}"
+                    : $"after s: {staged.target} {staged.path} lines={staged.lines.Length}");
             }
             Pump(window);
             using var frame = Avalonia.Headless.HeadlessWindowExtensions.CaptureRenderedFrame(window);
@@ -218,7 +234,7 @@ internal static class UiInteractions {
             var results = Unwrap(System.Threading.Tasks.Task.Run(() => Flow.run(env, GitService.searchCommits(3, commits, searchMode, false, searchText))).Result);
             var searched = new App.Model(App.StartupSelection.NoStartupSelection, false, model.GitEnv, model.Status, model.StartupTargets, false, false, 3, DiffLayout.Unified, searchText, GitSearch.modeKey(searchMode), false,
                 FSharpOption<FSharpList<GitSearch.Result>>.Some(results), model.Commits, true, model.Selection, model.SelectedDiffHash,
-                model.SelectedDiffFiles, model.SelectedDiff, model.SelectedDiffFileKey, model.DiffExpansions, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, model.WorkingTree, model.WorkingTreeChanges, model.WorkingTreeStartedAtTicks);
+                model.SelectedDiffFiles, model.SelectedDiff, model.SelectedDiffFileKey, model.DiffExpansions, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, model.WorkingTree, model.WorkingTreeChanges, model.WorkingTreeStartedAtTicks, model.LastDiscard);
             projection.Update(searched);
             projection.IsAdvancedSearchExpanded = label.Contains("advanced");
             projection.CommitFindQuery = pathDiff ? "" : "Font";
@@ -234,6 +250,18 @@ internal static class UiInteractions {
                 Pump(window);
                 var popups = window.GetVisualDescendants().OfType<Avalonia.Controls.Calendar>().Count();
                 Console.WriteLine($"calendar popups={popups}");
+            }
+            if (label.Contains("stagefrommain")) {
+                // Select the uncommitted row, then stage the hunk at the cursor with s.
+                projection.SelectedCommit = projection.Commits.First(row => row.IsWorkingTree);
+                for (var i = 0; i < 40; i++) { System.Threading.Thread.Sleep(50); Pump(window); }
+                var diffSurface = Avalonia.Controls.NameScopeExtensions.Find<DiffSurfaceControl>(window, "DiffRowsListBox")!;
+                Console.WriteLine($"uncommitted files={projection.SelectedDiffFiles.Count} shown={projection.IsWorkingTreeDiffShown}");
+                diffSurface.Focus();
+                diffSurface.SelectedItem = projection.SelectedDiffRows.OfType<DiffLineProjection>().First(line => line.IsAdded || line.IsRemoved);
+                Avalonia.Headless.HeadlessWindowExtensions.KeyPressQwerty(window, Avalonia.Input.PhysicalKey.S, Avalonia.Input.RawInputModifiers.None);
+                for (var i = 0; i < 60; i++) { System.Threading.Thread.Sleep(50); Pump(window); }
+                Console.WriteLine($"after s status={projection.Status}");
             }
             if (label.Contains("hoverfind")) {
                 var box = Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.TextBox>(window, "CommitFindBox")!;

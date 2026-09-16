@@ -86,6 +86,8 @@ module App =
             WorkingTreeChanges: GitService.WorkingTreeChanges option
             /// The in-flight working tree diff load, if any.
             WorkingTreeStartedAtTicks: int64 option
+            /// The last discard's backup, while it can still be undone.
+            LastDiscard: Trash.Backup option
         }
 
         member model.SelectedCommitHash =
@@ -111,6 +113,14 @@ module App =
         /// Selects the uncommitted changes row and loads its diffs.
         | SelectWorkingTree of startedAtTicks:int64
         | WorkingTreeChangesLoaded of startedAtTicks:int64 * Result<GitService.WorkingTreeChanges, GitError>
+        /// Stages, unstages or discards whole uncommitted files from the history window.
+        | StageWorkingTree of paths:string list
+        | UnstageWorkingTree of paths:string list
+        | DiscardWorkingTree of tracked:string list * untracked:string list
+        /// Stages, unstages or discards the chosen lines of one uncommitted file.
+        | ApplyWorkingTreeLines of target:GitService.PatchTarget * path:string * lines:PatchBuilder.SelectedLine list
+        | UndoWorkingTreeDiscard
+        | WorkingTreeOperationDone of description:string * Result<Trash.Backup option, GitError>
         | DiffFilesLoaded of hash:string * startedAtTicks:int64 * Result<GitService.DiffFileSummary list, GitError>
         | DiffLoaded of hash:string * startedAtTicks:int64 * Result<Models.FileDiff list, GitError>
         | SelectDiffFile of hash:string * oldPath:string * newPath:string
@@ -144,6 +154,17 @@ module App =
         Cmd.OfFlow.ofFlow (if isFull then "history (full)" else $"history (first {limit.Value})") runtime env (GitService.fetchHistory limit includeStashes targets) (fun r -> HistoryLoaded(isFull, Ok r)) (fun ex -> HistoryLoaded (isFull, Error ex))
 
     let private historyLimit = 1000
+
+    let private plural (count: int) (noun: string) = if count = 1 then "1 " + noun else $"{count} {noun}s"
+    let private fileCount (count: int) = plural count "file"
+    let private lineCount (count: int) = plural count "line"
+
+    /// <summary>Runs a staging, unstaging or discard from the history window, then rereads the working tree.</summary>
+    let private workingTreeOperation (model: Model) (description: string) (work: Flow<GitService.GitEnv, GitError, Trash.Backup option>) =
+        { model with Status = description + "…" },
+        Cmd.OfFlow.ofFlow description runtime model.GitEnv work
+            (fun backup -> WorkingTreeOperationDone(description, Ok backup))
+            (fun error -> WorkingTreeOperationDone(description, Error error))
 
     let private logTiming (message: string) =
         let line = "[timing] " + message
@@ -412,6 +433,7 @@ module App =
                 WorkingTree = []
                 WorkingTreeChanges = None
                 WorkingTreeStartedAtTicks = None
+                LastDiscard = None
             },
             Cmd.none
         | Ok startupOptions ->
@@ -455,6 +477,7 @@ module App =
                     WorkingTree = []
                     WorkingTreeChanges = None
                     WorkingTreeStartedAtTicks = None
+                    LastDiscard = None
                 }
 
             if String.IsNullOrEmpty gitEnv.RepoPath then
@@ -482,6 +505,39 @@ module App =
             nextModel, Cmd.batch [ loadHistory model.GitEnv (Some historyLimit) model.ShowStashes model.StartupTargets; startWorkingTreeStatusLoad model.GitEnv ]
         | RefreshWorkingTree ->
             model, startWorkingTreeStatusLoad model.GitEnv
+        | StageWorkingTree [] | UnstageWorkingTree [] | DiscardWorkingTree([], []) | ApplyWorkingTreeLines(_, _, []) ->
+            model, Cmd.none
+        | StageWorkingTree paths ->
+            workingTreeOperation model $"Staged {fileCount paths.Length}" (GitService.stageFiles paths |> Flow.map (fun () -> None))
+        | UnstageWorkingTree paths ->
+            workingTreeOperation model $"Unstaged {fileCount paths.Length}" (GitService.unstageFiles paths |> Flow.map (fun () -> None))
+        | DiscardWorkingTree(tracked, untracked) ->
+            workingTreeOperation model $"Discarded {fileCount (tracked.Length + untracked.Length)}"
+                (GitService.discardFilesWithBackup tracked untracked |> Flow.map Some)
+        | ApplyWorkingTreeLines(GitService.DiscardFromWorkingTree, path, lines) ->
+            workingTreeOperation model $"Discarded {lineCount lines.Length} of {path}"
+                (GitService.discardLinesWithBackup path lines |> Flow.map Some)
+        | ApplyWorkingTreeLines(target, path, lines) ->
+            let verb = if target = GitService.StageInIndex then "Staged" else "Unstaged"
+            workingTreeOperation model $"{verb} {lineCount lines.Length} of {path}"
+                (GitService.applyLines target path lines |> Flow.map (fun () -> None))
+        | UndoWorkingTreeDiscard ->
+            match model.LastDiscard with
+            | None -> { model with Status = "Nothing to undo" }, Cmd.none
+            | Some backup ->
+                { model with LastDiscard = None },
+                Cmd.OfFlow.ofFlow "undo discard" runtime model.GitEnv (GitService.undoDiscard backup |> Flow.map (fun () -> None))
+                    (fun _ -> WorkingTreeOperationDone($"Restored {backup.Description}", Ok None))
+                    (fun error -> WorkingTreeOperationDone("Undo", Error error))
+        | WorkingTreeOperationDone(description, Ok backup) ->
+            let status =
+                match backup with
+                | Some (_: Trash.Backup) -> $"{description} · Ctrl+Z to undo"
+                | None -> description
+            { model with Status = status; LastDiscard = backup |> Option.orElse (if description.StartsWith "Restored" then None else model.LastDiscard) },
+            Cmd.ofMsg RefreshWorkingTree
+        | WorkingTreeOperationDone(description, Error error) ->
+            { model with Status = $"{description} failed: " + GitError.describe error }, Cmd.ofMsg RefreshWorkingTree
         | WorkingTreeStatusLoaded (Ok entries) ->
             let changed = entries <> model.WorkingTree
 

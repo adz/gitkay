@@ -51,6 +51,8 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
     [ObservableProperty] private int _graphColor;
     [ObservableProperty] private bool _hasIncoming;
     [ObservableProperty] private bool _isMerge;
+    /// <summary>The commit HEAD points at, which is the one that can be amended.</summary>
+    [ObservableProperty] private bool _isHead;
     [ObservableProperty] private bool _showBranchRefs = false;
     [ObservableProperty] private bool _showStashes = false;
     /// <summary>The "Uncommitted changes" row above the newest commit: no hash, author, date or commit actions.</summary>
@@ -91,6 +93,7 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
         GraphColor = info.Color;
         HasIncoming = info.HasIncoming;
         IsMerge = commit.Parents.Length > 1;
+        IsHead = _refs.Any(reference => reference.IsCurrentHead);
 
         Segments.SyncWith(
             info.Segments,

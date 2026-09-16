@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Collections;
 using Avalonia.Media;
+using Microsoft.FSharp.Collections;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Elmish.Glue.Core;
@@ -386,6 +387,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         UpdateSelectedCommit(model);
         UpdateCommitRelations(model);
         UpdateCommitSearchStatus(model);
+        CanUndoDiscard = model.LastDiscard != null;
 
         var elapsed = Stopwatch.GetElapsedTime(startedAtTicks);
         LogTiming($"ui projection elapsed={elapsed.TotalMilliseconds:F1}ms commits={model.Commits.Length} searchResults={SearchResults.Count} diffFiles={SelectedDiffFiles.Count} diffRows={SelectedDiffRows.Count}");
@@ -462,9 +464,101 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     public bool IsWorkingTreeDiffShown => _selectedDiffHash == WorkingTreeDiffId;
 
+    /// <summary>The diffs the uncommitted view is showing, for mapping rows back onto each file's own diff.</summary>
+    private GitKay.Core.GitService.WorkingTreeChanges? _workingTreeChanges;
+
+    /// <summary>A discard that can still be put back.</summary>
+    [ObservableProperty] private bool _canUndoDiscard;
+
+    // ----- Staging from the history window's uncommitted view. -----
+
+    private static GitKay.Core.WorkingTree.Section? SectionOf(DiffFileProjection file) =>
+        GitKay.Core.WorkingTree.tryParseSection(file.Key.Section) is { } section ? section.Value : null;
+
+    /// <summary>Where each changed line of a file sits in that file's own diff, in order.</summary>
+    private List<(int Hunk, int Line)> ChangePositions(DiffFileProjection file) {
+        var positions = new List<(int, int)>();
+        if (_workingTreeChanges is not { } changes || SectionOf(file) is not { } section) return positions;
+        var diffs = GitKay.Core.GitService.workingTreeSections(changes).FirstOrDefault(entry => entry.Item1.Equals(section))?.Item2;
+        var diff = diffs?.FirstOrDefault(candidate => candidate.OldPath == file.Key.OldPath && candidate.NewPath == file.Key.NewPath);
+        if (diff == null) return positions;
+        for (var hunk = 0; hunk < diff.Hunks.Length; hunk++) {
+            var lines = diff.Hunks[hunk].Lines;
+            for (var line = 0; line < lines.Length; line++)
+                if (!lines[line].Type.IsContext) positions.Add((hunk, line));
+        }
+        return positions;
+    }
+
+    /// <summary>
+    /// The chosen rows as lines of the file's own diff, so context expansion doesn't shift them. Without a selection
+    /// (<paramref name="wholeHunk"/>) the cursor's whole hunk is taken, as in the commit window.
+    /// </summary>
+    public IReadOnlyList<GitKay.Core.PatchBuilder.SelectedLine> LinesOf(DiffFileProjection file, IEnumerable<IDiffRowProjection> rows, bool wholeHunk = false) {
+        var positions = ChangePositions(file);
+        var changed = SelectedDiffRows.OfType<DiffLineProjection>().Where(line => line.IsAdded || line.IsRemoved).ToList();
+        var chosen = rows.OfType<DiffLineProjection>().Where(line => line.IsAdded || line.IsRemoved).ToHashSet();
+
+        if (wholeHunk) {
+            // The row at the cursor may be a hunk header or context line: take the next change at or after it.
+            var start = rows.FirstOrDefault() is { } row ? SelectedDiffRows.IndexOf(row) : -1;
+            var focus = chosen.Count > 0
+                ? changed.FindIndex(line => chosen.Contains(line))
+                : changed.FindIndex(line => SelectedDiffRows.IndexOf(line) >= start);
+            if (focus < 0 || focus >= positions.Count) return [];
+            var hunk = positions[focus].Hunk;
+            chosen = changed.Where((_, index) => index < positions.Count && positions[index].Hunk == hunk).ToHashSet();
+        }
+
+        var lines = new List<GitKay.Core.PatchBuilder.SelectedLine>();
+        for (var i = 0; i < changed.Count && i < positions.Count; i++) {
+            if (!chosen.Contains(changed[i])) continue;
+            lines.Add(new GitKay.Core.PatchBuilder.SelectedLine(positions[i].Hunk, positions[i].Line,
+                changed[i].IsAdded ? GitKay.Core.Models.LineType.Added : GitKay.Core.Models.LineType.Removed, changed[i].Content));
+        }
+        return lines;
+    }
+
+    /// <summary>Whether this file can move to the index (unstaged and untracked files) or out of it (staged ones).</summary>
+    public bool IsStagedFile(DiffFileProjection file) => file.Key.Section == "Staged";
+    public bool IsUntrackedFile(DiffFileProjection file) => file.Key.Section == "Untracked";
+
+    public void StageWorkingTreeFile(DiffFileProjection file) =>
+        _dispatch?.Invoke(GitKay.Core.App.Msg.NewStageWorkingTree(ListModule.OfSeq(PathsOf(file))));
+
+    public void UnstageWorkingTreeFile(DiffFileProjection file) =>
+        _dispatch?.Invoke(GitKay.Core.App.Msg.NewUnstageWorkingTree(ListModule.OfSeq(PathsOf(file))));
+
+    public void DiscardWorkingTreeFile(DiffFileProjection file) {
+        var path = ListModule.OfSeq([DiffFileTree.PathOf(file)]);
+        var empty = Microsoft.FSharp.Collections.FSharpList<string>.Empty;
+        _dispatch?.Invoke(IsUntrackedFile(file)
+            ? GitKay.Core.App.Msg.NewDiscardWorkingTree(empty, path)
+            : GitKay.Core.App.Msg.NewDiscardWorkingTree(path, empty));
+    }
+
+    /// <summary>Stages, unstages or discards the chosen lines of an uncommitted file.</summary>
+    public void ApplyWorkingTreeLines(GitKay.Core.GitService.PatchTarget target, DiffFileProjection file, IEnumerable<IDiffRowProjection> rows, bool wholeHunk = false) {
+        var lines = LinesOf(file, rows, wholeHunk);
+        if (lines.Count == 0) {
+            Status = "Put the cursor in a hunk or select changed lines";
+            return;
+        }
+        _dispatch?.Invoke(GitKay.Core.App.Msg.NewApplyWorkingTreeLines(target, DiffFileTree.PathOf(file), ListModule.OfSeq(lines)));
+    }
+
+    public void UndoDiscard() => _dispatch?.Invoke(GitKay.Core.App.Msg.UndoWorkingTreeDiscard);
+
+    // A rename moves with both of its paths, so the index doesn't keep half of it.
+    private static IEnumerable<string> PathsOf(DiffFileProjection file) =>
+        file.Key.OldPath != file.Key.NewPath && file.Key.OldPath != "/dev/null" && file.Key.NewPath != "/dev/null"
+            ? [file.Key.OldPath, file.Key.NewPath]
+            : [DiffFileTree.PathOf(file)];
+
     /// <summary>Shows the uncommitted changes as Staged, Unstaged and Untracked files, keeping collapsed files and the selected file across refreshes.</summary>
     private void UpdateWorkingTreeDiffState(GitKay.Core.App.Model model) {
         var changes = model.WorkingTreeChanges?.Value;
+        _workingTreeChanges = changes;
         var wasShown = IsWorkingTreeDiffShown;
         if (wasShown && ReferenceEquals(_selectedDiffFilesSource, changes)) return;
 

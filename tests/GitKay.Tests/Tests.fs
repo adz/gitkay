@@ -1321,6 +1321,7 @@ module AppTests =
             WorkingTree = []
             WorkingTreeChanges = None
             WorkingTreeStartedAtTicks = None
+            LastDiscard = None
         }
 
     [<Fact>]
@@ -1596,6 +1597,24 @@ module AppTests =
         test <@ same.WorkingTreeStartedAtTicks = None @>
         let changed, _ = App.update (App.Msg.WorkingTreeStatusLoaded(Ok [ workingEntry "b.txt" ])) selected
         test <@ changed.WorkingTreeStartedAtTicks.IsSome @>
+
+    [<Fact>]
+    let ``staging from the history reports what happened, and a discard can be undone`` () =
+        let backup : Trash.Backup =
+            { Directory = "/tmp/backup"; Entries = []; Description = "1 file"; CreatedAt = DateTimeOffset.UnixEpoch }
+        let staged, _ = App.update (App.Msg.WorkingTreeOperationDone("Staged 2 files", Ok None)) emptyModel
+        test <@ staged.Status = "Staged 2 files" && staged.LastDiscard = None @>
+
+        let discarded, _ = App.update (App.Msg.WorkingTreeOperationDone("Discarded 1 file", Ok(Some backup))) emptyModel
+        test <@ discarded.Status = "Discarded 1 file · Ctrl+Z to undo" && discarded.LastDiscard = Some backup @>
+
+        let undone, _ = App.update App.Msg.UndoWorkingTreeDiscard discarded
+        test <@ undone.LastDiscard = None @>
+        let nothing, _ = App.update App.Msg.UndoWorkingTreeDiscard undone
+        test <@ nothing.Status = "Nothing to undo" @>
+
+        let failed, _ = App.update (App.Msg.WorkingTreeOperationDone("Staging", Error(GitError.OperationFailed("add", "locked")))) emptyModel
+        test <@ failed.Status.StartsWith "Staging failed" @>
 
     [<Fact>]
     let ``a clean working tree moves the selection off the uncommitted changes row`` () =

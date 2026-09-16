@@ -636,6 +636,11 @@ public partial class CommitWindow : Window, IVimCommands {
 
     internal TextBox MessageBoxForTests => MessageBox;
 
+    /// <summary>Turns on amend, so the window opens showing the last commit's files and message.</summary>
+    public void StartAmending() {
+        if (Projection is { Amend: false } projection) projection.Amend = true;
+    }
+
     private void SaveDraft(string draft) {
         if (string.IsNullOrEmpty(_repositoryPath)) return;
         try {
