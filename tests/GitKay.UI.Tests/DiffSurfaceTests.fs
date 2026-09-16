@@ -155,6 +155,24 @@ module DiffSurfaceTests =
             test <@ offsetAfterCollapse <> offsetBefore && Math.Round(offsetAfterCollapse, 1) = Math.Round(settled, 1) @>)
 
     [<Fact>]
+    let ``expanding a file again returns to where its content was`` () =
+        Headless.run (fun () ->
+            use fixture = new DiffFixture(DiffLayout.Unified)
+            let header = fixture.Header 1
+            // Scroll well into the second file.
+            fixture.Scroller.Offset <- Vector(0.0, fixture.ViewportTop header + 260.0)
+            Headless.pump ()
+            let insideFile = Math.Round(-fixture.ViewportTop header, 1)
+            fixture.Surface.Focus() |> ignore
+            fixture.Surface.SelectedItem <- header
+            fixture.Press Key.Enter
+            let whileCollapsed = Math.Round(-fixture.ViewportTop header, 1)
+            fixture.Press Key.Enter
+            let afterExpanding = Math.Round(-fixture.ViewportTop header, 1)
+            // Collapsed, the header sits at the top; expanded, the view is back inside the file.
+            test <@ insideFile = 260.0 && whileCollapsed = 12.0 && afterExpanding = insideFile @>)
+
+    [<Fact>]
     let ``v selects from the caret on the side the caret is on`` () =
         Headless.run (fun () ->
             use fixture = new DiffFixture(DiffLayout.SideBySide)

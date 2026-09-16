@@ -37,7 +37,9 @@ module CommitWindow =
           /// <summary>The last failure's full output (hooks, git apply), shown until the next operation.</summary>
           FailureOutput: string option
           /// <summary>Increments on each successful commit, so the main window knows to reread refs.</summary>
-          Commits: int }
+          Commits: int
+          /// <summary>The last discard's backup, while it can still be undone.</summary>
+          LastDiscard: Trash.Backup option }
 
     type Msg =
         | Rescan
@@ -54,6 +56,9 @@ module CommitWindow =
         | SetSignOff of bool
         | Commit
         | OperationSucceeded of description: string * committed: bool
+        /// <summary>A discard finished; its backup can put the files back.</summary>
+        | DiscardSucceeded of Trash.Backup
+        | UndoDiscard
         | OperationFailed of description: string * GitError
 
     /// <summary>A file's current path: the new path, or the old one for a deletion.</summary>
@@ -131,7 +136,8 @@ module CommitWindow =
           Busy = Some "Scanning"
           Status = "Scanning for changes…"
           FailureOutput = None
-          Commits = 0 },
+          Commits = 0
+          LastDiscard = None },
         Cmd.ofMsg Rescan
 
     let private scan (model: Model) =
@@ -142,6 +148,11 @@ module CommitWindow =
     let private operation (model: Model) (description: string) (committed: bool) (work: Flow<GitService.GitEnv, GitError, unit>) =
         { model with Busy = Some description; Status = description + "…"; FailureOutput = None },
         Cmd.OfFlow.ofFlowLatest description operationJob model.GitEnv work (fun () -> OperationSucceeded(description, committed)) (fun error -> OperationFailed(description, error))
+
+    /// <summary>A discard, which reports the backup that can undo it.</summary>
+    let private discarding (model: Model) (description: string) (work: Flow<GitService.GitEnv, GitError, Trash.Backup>) =
+        { model with Busy = Some description; Status = description + "…"; FailureOutput = None },
+        Cmd.OfFlow.ofFlowLatest description operationJob model.GitEnv work DiscardSucceeded (fun error -> OperationFailed(description, error))
 
     let private plural (count: int) (noun: string) = if count = 1 then "1 " + noun else $"{count} {noun}s"
     let private fileCount (count: int) = plural count "file"
@@ -159,7 +170,8 @@ module CommitWindow =
                 Changes = Some changes
                 Selected = reselect model.Changes model.Selected changes
                 Busy = (if model.Busy = Some "Scanning" then None else model.Busy)
-                Status = (if model.FailureOutput.IsSome then model.Status else status) },
+                // A failure's output, and the offer to undo a discard, outlast the rescan that follows them.
+                Status = (if model.FailureOutput.IsSome || model.LastDiscard.IsSome then model.Status else status) },
             Cmd.none
         | ChangesLoaded(Error error) ->
             { model with Busy = None; Status = "Scan failed: " + GitError.describe error }, Cmd.none
@@ -169,6 +181,8 @@ module CommitWindow =
         | StagePaths paths -> operation model $"Staging {fileCount paths.Length}" false (GitService.stageFiles paths)
         | UnstagePaths paths -> operation model $"Unstaging {fileCount paths.Length}" false (GitService.unstageFilesFor model.Amend paths)
         | ApplyLines(_, _, []) -> model, Cmd.none
+        | ApplyLines(GitService.DiscardFromWorkingTree, path, lines) ->
+            discarding model $"Discarding {lineCount lines.Length} of {path}" (GitService.discardLinesWithBackup path lines)
         | ApplyLines(target, path, lines) ->
             let verb =
                 match target with
@@ -178,7 +192,7 @@ module CommitWindow =
             operation model $"{verb} {lineCount lines.Length} of {path}" false (GitService.applyLines target path lines)
         | DiscardPaths([], []) -> model, Cmd.none
         | DiscardPaths(tracked, untracked) ->
-            operation model $"Discarding {fileCount (tracked.Length + untracked.Length)}" false (GitService.discardFiles tracked untracked)
+            discarding model $"Discarding {fileCount (tracked.Length + untracked.Length)}" (GitService.discardFilesWithBackup tracked untracked)
         | SetMessage message -> { model with Message = message }, Cmd.none
         | SetAmend true when not model.Amend ->
             // Amending shows what the commit will contain, so the staged section is rescanned against its parent.
@@ -217,6 +231,20 @@ module CommitWindow =
                 scan model
             else
                 { model with Status = description + ": done" }, scan model
+        | DiscardSucceeded backup ->
+            { model with
+                Busy = None
+                LastDiscard = Some backup
+                Status = $"Discarded {backup.Description} · Ctrl+Z to undo" },
+            scan model
+        | UndoDiscard ->
+            match model.LastDiscard with
+            | None -> { model with Status = "Nothing to undo" }, Cmd.none
+            | Some backup ->
+                { model with Busy = Some "Undoing"; Status = "Putting the discarded changes back…"; LastDiscard = None },
+                Cmd.OfFlow.ofFlowLatest "undo discard" operationJob model.GitEnv (GitService.undoDiscard backup)
+                    (fun () -> OperationSucceeded($"Restored {backup.Description}", false))
+                    (fun error -> OperationFailed("Undo", error))
         | OperationFailed(description, error) ->
             { model with Busy = None; Status = $"{description} failed"; FailureOutput = Some(GitError.describe error) }, scan model
 

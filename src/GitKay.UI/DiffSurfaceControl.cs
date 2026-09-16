@@ -392,6 +392,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     }
 
     /// <summary>Toggles a file's rows while its header stays at the same viewport position.</summary>
+    /// <summary>How far into each collapsed file the view had scrolled, so expanding it returns there.</summary>
+    private readonly Dictionary<DiffFileProjection, double> _collapsedScroll = new();
+
     private void ToggleFileAnchored(DiffFileHeaderProjection header, ICommand? command) {
         if (command?.CanExecute(header.File) != true) return;
         var index = Array.IndexOf(_rows, header);
@@ -401,8 +404,36 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             // was drawn (flush with the top, or pushed up by the next file), not where its row would be.
             var rowTop = _stickyIndex == index ? _stickyRowTop : _tops[index];
             _pendingAnchor = new ViewportAnchor(null, null, "", rowTop - _scrollViewer.Offset.Y, header);
+
+            if (!header.File.IsCollapsed) {
+                // Collapsing: remember how far into the file the view had reached.
+                var into = _scrollViewer.Offset.Y - _tops[index];
+                if (into > 0) _collapsedScroll[header.File] = into;
+                else _collapsedScroll.Remove(header.File);
+            }
+            else if (_collapsedScroll.TryGetValue(header.File, out var into)) {
+                // Expanding it again: go back to where its content was.
+                _collapsedScroll.Remove(header.File);
+                _expandRestore = (header, into);
+            }
         }
         command.Execute(header.File);
+    }
+
+    /// <summary>A file being expanded, and how far into it to scroll once its rows are back.</summary>
+    private (DiffFileHeaderProjection Header, double Into)? _expandRestore;
+
+    /// <summary>Scrolls back into a re-expanded file, no further than its own content.</summary>
+    private void ApplyExpandRestore() {
+        if (_expandRestore is not { } restore || _scrollViewer == null) return;
+        _expandRestore = null;
+        var index = Array.IndexOf(_rows, restore.Header);
+        if (index < 0) return;
+        var next = index + 1;
+        while (next < _rows.Length && _rows[next] is not DiffFileHeaderProjection) next++;
+        var fileHeight = (next < _rows.Length ? _tops[next] : _tops[^1]) - _tops[index];
+        var into = Math.Min(restore.Into, Math.Max(0, fileHeight - _scrollViewer.Viewport.Height));
+        SetOffsetWithoutScrolling(Math.Max(0, _tops[index] + into));
     }
 
     private void BeginExpansion(int gapIndex, DiffGapProjection gap, GitKay.Core.DiffExpansion.ExpandDirection direction) {
@@ -462,6 +493,10 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         // Apply it now so the next frame is already in the right place: posting it paints one frame at the old
         // offset first, which reads as a flash when a pinned file header is collapsed.
         SetOffsetWithoutScrolling(target);
+        if (_expandRestore != null) {
+            ApplyExpandRestore();
+            return;
+        }
         // The scroll viewer clamps to the extent it knows about, which grows or shrinks with these rows; re-apply
         // once this layout pass has measured them.
         _anchorTarget = (row, anchor.ViewportOffset);
@@ -494,7 +529,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     protected override Size ArrangeOverride(Size finalSize) {
         var size = base.ArrangeOverride(finalSize);
         // The extent is known by now, so an anchor that the earlier attempt clamped lands correctly, before painting.
-        if (_anchorTarget != null) ApplyAnchorTarget();
+        if (_expandRestore != null) ApplyExpandRestore();
+        else if (_anchorTarget != null) ApplyAnchorTarget();
         return size;
     }
 

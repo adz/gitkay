@@ -535,6 +535,18 @@ internal static class UiInteractions {
                 Console.WriteLine($"after commit unstaged={projection.UnstagedFiles.Count} staged={projection.StagedFiles.Count} rows={projection.Rows.Count} selected={projection.SelectedFile?.Path} status={projection.Status}");
             }
         }
+        if (label.Contains("discardundo")) {
+            var file = projection.UnstagedFiles.First(row => !row.IsUntracked);
+            projection.SelectedUnstaged = file;
+            Settle();
+            projection.ConfirmDiscard = _ => System.Threading.Tasks.Task.FromResult(true);
+            projection.DiscardCommand.Execute(null);
+            Settle();
+            Console.WriteLine($"after discard unstaged={projection.UnstagedFiles.Count} undo={projection.CanUndoDiscard} status={projection.Status}");
+            projection.UndoDiscard();
+            Settle();
+            Console.WriteLine($"after undo unstaged={projection.UnstagedFiles.Count} undo={projection.CanUndoDiscard} status={projection.Status}");
+        }
         if (label.Contains("keys")) projection.IsKeysOpen = true;
         if (label.Contains("hints")) {
             using (var before = Avalonia.Headless.HeadlessWindowExtensions.CaptureRenderedFrame(window)) before!.Save(output.Replace(".png", "-before.png"));

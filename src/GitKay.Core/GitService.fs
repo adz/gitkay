@@ -813,7 +813,10 @@ module GitService =
         flow {
             let section, direction =
                 match target with
-                | StageInIndex | DiscardFromWorkingTree -> WorkingTree.Unstaged, PatchBuilder.Forward
+                | StageInIndex -> WorkingTree.Unstaged, PatchBuilder.Forward
+                // Discarding reverse-applies to the working tree, so the patch's new side has to match the file:
+                // lines that stay must appear as context, which is what the reverse form builds.
+                | DiscardFromWorkingTree -> WorkingTree.Unstaged, PatchBuilder.Reverse
                 | UnstageFromIndex -> WorkingTree.Staged, PatchBuilder.Reverse
 
             if target = StageInIndex then
@@ -827,14 +830,57 @@ module GitService =
             | Error error -> return! Flow.fail (GitError.OperationFailed("Apply lines", PatchBuilder.describeError error))
         }
 
-    /// <summary>Throws away working tree changes to whole files; untracked files are deleted.</summary>
-    let discardFiles (tracked: string list) (untracked: string list) : Flow<GitEnv, GitError, unit> =
+    /// <summary>The working tree's root, for reading and restoring files.</summary>
+    let private workingRoot : Flow<GitEnv, GitError, string> =
+        Flow.envWith (fun env -> match workingDirectory env.RepoPath with null -> env.RepoPath | directory -> directory)
+
+    /// <summary>
+    /// Copies the files a discard is about to change, so it can be undone. Discarded working tree content exists
+    /// nowhere else: git has no reflog for it.
+    /// </summary>
+    let backupBeforeDiscard (description: string) (paths: string list) : Flow<GitEnv, GitError, Trash.Backup> =
         flow {
+            // git itself says where the git directory is: RepoPath may be the working tree, and backups must not
+            // land inside it, where they would show up as untracked files.
+            let! gitDir = plainGit [ "rev-parse"; "--absolute-git-dir" ] |> Flow.map _.Trim()
+            let! root = workingRoot
+            let! now = Clock.now
+            let backup = Trash.capture gitDir root description now paths
+            Trash.prune gitDir 20
+            return backup
+        }
+
+    /// <summary>Puts a discard's files back where they were.</summary>
+    let undoDiscard (backup: Trash.Backup) : Flow<GitEnv, GitError, unit> =
+        flow {
+            let! root = workingRoot
+            Trash.restore root backup
+        }
+
+    /// <summary>Discards the chosen lines of one file, after copying it so the discard can be undone.</summary>
+    let discardLinesWithBackup (path: string) (lines: PatchBuilder.SelectedLine list) : Flow<GitEnv, GitError, Trash.Backup> =
+        flow {
+            let description = if lines.Length = 1 then $"1 line in {path}" else $"{lines.Length} lines in {path}"
+            let! backup = backupBeforeDiscard description [ path ]
+            do! applyLines DiscardFromWorkingTree path lines
+            return backup
+        }
+
+    /// <summary>Throws away working tree changes to whole files; untracked files are deleted. Both are backed up first.</summary>
+    let discardFilesWithBackup (tracked: string list) (untracked: string list) : Flow<GitEnv, GitError, Trash.Backup> =
+        flow {
+            let count = tracked.Length + untracked.Length
+            let description = if count = 1 then "1 file" else $"{count} files"
+            let! backup = backupBeforeDiscard description (tracked @ untracked)
             if not tracked.IsEmpty then
                 do! plainGit ([ "restore"; "--worktree"; "--" ] @ tracked) |> Flow.map ignore
             if not untracked.IsEmpty then
                 do! plainGit ([ "clean"; "--force"; "--quiet"; "--" ] @ untracked) |> Flow.map ignore
+            return backup
         }
+
+    let discardFiles (tracked: string list) (untracked: string list) : Flow<GitEnv, GitError, unit> =
+        discardFilesWithBackup tracked untracked |> Flow.map ignore
 
     /// <summary>What HEAD is: the branch name, "detached at abc1234", or "no commits yet" on an unborn branch's name.</summary>
     let fetchCurrentBranch : Flow<GitEnv, GitError, string> =

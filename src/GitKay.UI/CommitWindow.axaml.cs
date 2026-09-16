@@ -73,6 +73,8 @@ public sealed partial class CommitWindowProjection : ObservableObject {
     [ObservableProperty] private bool _canCommit;
     [ObservableProperty] private string _commitTip = "";
     [ObservableProperty] private string _emptyDiffText = "Scanning…";
+    /// <summary>A discard that can still be put back.</summary>
+    [ObservableProperty] private bool _canUndoDiscard;
     [ObservableProperty] private string _branch = "";
     [ObservableProperty] private bool _isKeysOpen;
     /// <summary>Ctrl held for a moment: each pane shows its Ctrl keys.</summary>
@@ -168,6 +170,7 @@ public sealed partial class CommitWindowProjection : ObservableObject {
             new("s / u · Ctrl+S / Ctrl+U", "Stage / unstage: the selected lines or the hunk at the cursor in the diff, the file in a list (Ctrl+U is half a page up in the diff)"),
             new("Ctrl+I", "Stage all unstaged and untracked files"),
             new("Delete", "Discard the selected lines, or the file's unstaged changes (asks first)"),
+            new("Ctrl+Z", "Put back what the last discard threw away"),
             new("Ctrl+Enter", "Commit (or amend)"),
             new("Ctrl+S in the message · Ctrl+Shift+S", "Toggle sign off"),
             new("Ctrl+Shift+A", "Toggle amend"),
@@ -255,6 +258,7 @@ public sealed partial class CommitWindowProjection : ObservableObject {
             if (Amend != model.Amend) Amend = model.Amend;
             if (SignOff != model.SignOff) SignOff = model.SignOff;
             Status = model.Status;
+            CanUndoDiscard = model.LastDiscard != null;
             Branch = string.IsNullOrEmpty(model.Branch) ? "…" : model.Branch;
             FailureOutput = model.FailureOutput?.Value;
             var blocker = CoreWindow.commitBlocker(model);
@@ -529,6 +533,10 @@ public sealed partial class CommitWindowProjection : ObservableObject {
             _dispatch?.Invoke(CoreWindow.Msg.NewDiscardPaths(ListModule.OfSeq([file.Path]), FSharpList<string>.Empty));
     }
 
+    /// <summary>Puts back what the last discard threw away.</summary>
+    [RelayCommand]
+    public void UndoDiscard() => _dispatch?.Invoke(CoreWindow.Msg.UndoDiscard);
+
     [RelayCommand]
     public void Commit() {
         _pushAfterCommit = false;
@@ -786,6 +794,10 @@ public partial class CommitWindow : Window, IVimCommands {
                 return;
             case Key.F5:
                 projection.RescanCommand.Execute(null);
+                Handled();
+                return;
+            case Key.Z when ctrl && !inMessage:
+                projection.UndoDiscard();
                 Handled();
                 return;
             case Key.Enter when ctrl:

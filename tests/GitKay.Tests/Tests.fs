@@ -990,6 +990,42 @@ summary Another line
             test <@ afterUnstage.Staged |> List.map (fun file -> file.NewPath) = [ "a.txt" ] @>)
 
     [<Fact>]
+    let ``discarding lines, files and untracked files can be undone`` () =
+        withTempRepository (fun root repo ->
+            let gitDir = Path.Combine(root, ".git")
+            commitFile repo root "a.txt" (numbered [ "one"; "two"; "three" ]) "init" |> ignore
+            writeFile root "a.txt" (numbered [ "ONE"; "two"; "THREE" ])
+            writeFile root "new.txt" (numbered [ "scratch" ])
+            let read name = File.ReadAllText(Path.Combine(root, name))
+            let edited = read "a.txt"
+
+            // Lines: discard just the first change, then put it back.
+            let raw = run gitDir (GitService.fetchRawFileDiff WorkingTree.Unstaged "a.txt")
+            let firstChange = pick raw (fun _ _ line -> line.Content = "one" || line.Content = "ONE")
+            let lineBackup = run gitDir (GitService.discardLinesWithBackup "a.txt" firstChange)
+            test <@ read "a.txt" = numbered [ "one"; "two"; "THREE" ] @>
+            run gitDir (GitService.undoDiscard lineBackup)
+            test <@ read "a.txt" = edited @>
+
+            // A whole file, and an untracked file that gets deleted.
+            let fileBackup = run gitDir (GitService.discardFilesWithBackup [ "a.txt" ] [ "new.txt" ])
+            test <@ read "a.txt" = numbered [ "one"; "two"; "three" ] && not (File.Exists(Path.Combine(root, "new.txt"))) @>
+            run gitDir (GitService.undoDiscard fileBackup)
+            test <@ read "a.txt" = edited && read "new.txt" = numbered [ "scratch" ] @>
+            test <@ Trash.isIntact fileBackup @>)
+
+    [<Fact>]
+    let ``undoing a discard removes a file that did not exist before`` () =
+        withTempRepository (fun root repo ->
+            let gitDir = Path.Combine(root, ".git")
+            commitFile repo root "a.txt" "one\n" "init" |> ignore
+            // Nothing to copy: the backup records that the file was absent.
+            let backup = run gitDir (GitService.backupBeforeDiscard "test" [ "ghost.txt" ])
+            writeFile root "ghost.txt" "appeared later\n"
+            run gitDir (GitService.undoDiscard backup)
+            test <@ not (File.Exists(Path.Combine(root, "ghost.txt"))) @>)
+
+    [<Fact>]
     let ``commit uses the message, amends, and reports hook failures`` () =
         withTempRepository (fun root repo ->
             let gitDir = Path.Combine(root, ".git")
@@ -3233,6 +3269,22 @@ module CommitWindowTests =
         let amendingDraft, _ = CommitWindow.update (CommitWindow.SetAmend true) draft
         let notReplaced, _ = CommitWindow.update (CommitWindow.AmendMessageLoaded "Last subject") amendingDraft
         test <@ notReplaced.Message = "My draft" @>
+
+    [<Fact>]
+    let ``a discard offers an undo until it is taken`` () =
+        let backup : Trash.Backup =
+            { Directory = "/tmp/backup"; Entries = []; Description = "2 lines in a.txt"; CreatedAt = DateTimeOffset.UnixEpoch }
+        let discarded, _ = CommitWindow.update (CommitWindow.DiscardSucceeded backup) (model0 ())
+        test <@ discarded.LastDiscard = Some backup && discarded.Status = "Discarded 2 lines in a.txt · Ctrl+Z to undo" @>
+
+        // The rescan that follows leaves the offer on screen.
+        let rescanned, _ = CommitWindow.update (CommitWindow.ChangesLoaded(Ok(changes [ "a" ] [] []))) discarded
+        test <@ rescanned.Status = discarded.Status && rescanned.LastDiscard = Some backup @>
+
+        let undoing, _ = CommitWindow.update CommitWindow.UndoDiscard rescanned
+        test <@ undoing.LastDiscard = None && undoing.Busy = Some "Undoing" @>
+        let nothing, _ = CommitWindow.update CommitWindow.UndoDiscard undoing
+        test <@ nothing.Status = "Nothing to undo" @>
 
     [<Fact>]
     let ``a successful commit clears the message and counts it; a failure keeps the output`` () =
