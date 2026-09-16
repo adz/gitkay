@@ -538,3 +538,32 @@ module HistoryChipTests =
             test <@ opened && messageFocused && active && typed @>
         finally
             try IO.Directory.Delete(root, true) with _ -> ()
+
+module SyntaxHighlightingTests =
+    let private kinds (flavour: SyntaxFlavour) (text: string) =
+        SyntaxHighlighting.Tokenize(text, flavour) |> Seq.map (fun token -> token.Text, token.Kind) |> List.ofSeq
+
+    [<Fact>]
+    let ``markdown prose keeps its own colours, not the code ones`` () =
+        // As code, "# Heading" is a comment and "Type" and "for" are keywords: that is what made READMEs look scrambled.
+        let asCode = kinds SyntaxFlavour.Code "# Heading for Type"
+        test <@ asCode |> List.exists (fun (_, kind) -> kind = HighlightKind.Comment) @>
+
+        let heading = kinds SyntaxFlavour.Markdown "# Heading for Type"
+        test <@ heading = [ "# Heading for Type", HighlightKind.Keyword ] @>
+
+        // Ordinary prose stays plain, whatever words it uses.
+        test <@ kinds SyntaxFlavour.Markdown "Use let and for when you type." = [ "Use let and for when you type.", HighlightKind.Plain ] @>
+
+        // Markdown's own marks are what gets colour.
+        test <@ kinds SyntaxFlavour.Markdown "- a `code` span" = [ "- ", HighlightKind.Comment; "a ", HighlightKind.Plain; "`code`", HighlightKind.String; " span", HighlightKind.Plain ] @>
+        test <@ kinds SyntaxFlavour.Markdown "See [docs](https://example.com) here" |> List.contains ("(https://example.com)", HighlightKind.TypeName) @>
+        test <@ kinds SyntaxFlavour.Markdown "> quoted line" |> List.head = ("> ", HighlightKind.Comment) @>
+
+    [<Fact>]
+    let ``a file's extension picks how its lines are coloured`` () =
+        test <@ SyntaxHighlighting.FlavourFor "docs/README.md" = SyntaxFlavour.Markdown @>
+        test <@ SyntaxHighlighting.FlavourFor "notes.txt" = SyntaxFlavour.PlainText @>
+        test <@ SyntaxHighlighting.FlavourFor "src/App.fs" = SyntaxFlavour.Code @>
+        // Plain text is left alone entirely.
+        test <@ kinds SyntaxFlavour.PlainText "# not a comment" = [ "# not a comment", HighlightKind.Plain ] @>

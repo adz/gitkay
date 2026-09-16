@@ -221,6 +221,13 @@ internal static class UiInteractions {
                 if (label.Contains("light")) Avalonia.Application.Current!.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Light;
                 projection.ShowBranchRefs = true;
                 Pump(window);
+                foreach (var file in projection.SelectedDiffFiles.Take(3)) {
+                    var sample = file.Hunks.SelectMany(hunk => hunk.Lines).FirstOrDefault(line => line.Content.Contains(" for "))
+                                 ?? file.Hunks.FirstOrDefault()?.Lines.FirstOrDefault();
+                    if (sample == null) continue;
+                    var tokens = SyntaxHighlighting.Tokenize(sample.Content, sample.Flavour);
+                    Console.WriteLine($"file={file.DisplayPath} flavour={sample.Flavour} len={sample.Content.Length} tokens={string.Join(" | ", tokens.Take(6).Select(t => t.Kind + ":" + t.Text.Substring(0, Math.Min(12, t.Text.Length))))}");
+                }
                 for (var i = 0; i < 20; i++) { System.Threading.Thread.Sleep(50); Pump(window); }
                 using var readme = Avalonia.Headless.HeadlessWindowExtensions.CaptureRenderedFrame(window);
                 var readmePath = args.ElementAtOrDefault(3) ?? $"{label}.png";

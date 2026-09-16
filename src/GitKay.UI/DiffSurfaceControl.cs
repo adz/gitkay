@@ -547,19 +547,19 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             if (row is not DiffLineProjection line) continue;
             var foreground = ThemeBrush("GitKayTextBrush", line.Foreground);
             if (DiffLayout.IsSideBySide) {
-                HighlightNow(line.OldContent, foreground);
-                HighlightNow(line.NewContent, foreground);
+                HighlightNow(line.OldContent, foreground, line.Flavour);
+                HighlightNow(line.NewContent, foreground, line.Flavour);
             }
-            else if (DiffLayout.IsNewFile) HighlightNow(line.NewContent, foreground);
-            else if (DiffLayout.IsOldFile) HighlightNow(line.OldContent, foreground);
-            else HighlightNow(line.Content, foreground);
+            else if (DiffLayout.IsNewFile) HighlightNow(line.NewContent, foreground, line.Flavour);
+            else if (DiffLayout.IsOldFile) HighlightNow(line.OldContent, foreground, line.Flavour);
+            else HighlightNow(line.Content, foreground, line.Flavour);
         }
     }
 
     /// <summary>Colours a newly inserted line before its first frame so it never flashes plain.</summary>
-    private void HighlightNow(string text, IBrush foreground) {
+    private void HighlightNow(string text, IBrush foreground, SyntaxFlavour flavour = SyntaxFlavour.Code) {
         if (string.IsNullOrEmpty(text) || text.Length > MaxHighlightedLineLength || _colouredLayouts.ContainsKey(text)) return;
-        StoreColouredLayout(text, foreground, SyntaxHighlighting.Tokenize(text));
+        StoreColouredLayout(text, foreground, SyntaxHighlighting.Tokenize(text, flavour));
     }
 
     private void StoreColouredLayout(string text, IBrush foreground, IReadOnlyList<HighlightToken> tokens) {
@@ -986,7 +986,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             DrawPlain(context, line.Prefix, Z(41), y + CodeTextTop, CodeFontSize, line.IsAdded ? ThemeBrush("GitKayAddedAccentBrush", line.PrefixForeground) : ThemeBrush("GitKayRemovedAccentBrush", line.PrefixForeground));
         using (context.PushClip(new Rect(Z(54), y, Math.Max(0, Bounds.Width - Z(54)), LineHeight))) {
             DrawFindMatches(context, line.Content, Z(54) - _horizontalOffset, y);
-            DrawCode(context, line.Content, Z(54) - _horizontalOffset, y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground));
+            DrawCode(context, line.Content, Z(54) - _horizontalOffset, y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground), line.Flavour);
         }
     }
 
@@ -1003,7 +1003,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         DrawLineNumber(context, lineNumber, Z(8), y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
         using (context.PushClip(new Rect(Z(52), y, Math.Max(0, Bounds.Width - Z(52)), LineHeight))) {
             DrawFindMatches(context, content, Z(52) - _horizontalOffset, y);
-            DrawCode(context, content, Z(52) - _horizontalOffset, y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground));
+            DrawCode(context, content, Z(52) - _horizontalOffset, y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground), line.Flavour);
         }
     }
 
@@ -1027,13 +1027,13 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         DrawLineNumber(context, line.OldLineNoText, Z(8), y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
         using (context.PushClip(OldColumnClip(middle, y))) {
             DrawFindMatches(context, line.OldContent, Z(56) - _horizontalOffset, y);
-            DrawCode(context, line.OldContent, Z(56) - _horizontalOffset, y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground));
+            DrawCode(context, line.OldContent, Z(56) - _horizontalOffset, y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground), line.Flavour);
         }
 
         DrawLineNumber(context, line.NewLineNoText, middle + Z(9), y, ThemeBrush("GitKayLineNumberBrush", LineNumberFallback));
         using (context.PushClip(NewColumnClip(middle, y))) {
             DrawFindMatches(context, line.NewContent, middle + Z(57) - _horizontalOffset, y);
-            DrawCode(context, line.NewContent, middle + Z(57) - _horizontalOffset, y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground));
+            DrawCode(context, line.NewContent, middle + Z(57) - _horizontalOffset, y + CodeTextTop, ThemeBrush("GitKayTextBrush", line.Foreground), line.Flavour);
         }
     }
 
@@ -1099,7 +1099,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         context.DrawText(layout, new Point(x + Z(34) - layout.Width, y + CodeTextTop));
     }
 
-    private void DrawCode(DrawingContext context, string text, double x, double y, IBrush foreground) {
+    private void DrawCode(DrawingContext context, string text, double x, double y, IBrush foreground, SyntaxFlavour flavour = SyntaxFlavour.Code) {
         var plain = Layout(text, CodeFontSize, foreground, false);
         if (_colouredLayouts.TryGetValue(text, out var coloured)) {
             context.DrawText(coloured, new Point(x, y));
@@ -1109,7 +1109,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             context.DrawText(plain, new Point(x, y));
             return;
         }
-        ScheduleHighlight(text, foreground);
+        ScheduleHighlight(text, foreground, flavour);
         context.DrawText(plain, new Point(x, y));
     }
 
@@ -1122,19 +1122,19 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         for (var index = start; index < end; index++) {
             if (_rows[index] is not DiffLineProjection line) continue;
             if (DiffLayout.IsSideBySide) {
-                ScheduleHighlight(line.OldContent, ThemeBrush("GitKayTextBrush", line.Foreground));
-                ScheduleHighlight(line.NewContent, ThemeBrush("GitKayTextBrush", line.Foreground));
+                ScheduleHighlight(line.OldContent, ThemeBrush("GitKayTextBrush", line.Foreground), line.Flavour);
+                ScheduleHighlight(line.NewContent, ThemeBrush("GitKayTextBrush", line.Foreground), line.Flavour);
             }
             else if (DiffLayout.IsNewFile)
-                ScheduleHighlight(line.NewContent, ThemeBrush("GitKayTextBrush", line.Foreground));
+                ScheduleHighlight(line.NewContent, ThemeBrush("GitKayTextBrush", line.Foreground), line.Flavour);
             else if (DiffLayout.IsOldFile)
-                ScheduleHighlight(line.OldContent, ThemeBrush("GitKayTextBrush", line.Foreground));
+                ScheduleHighlight(line.OldContent, ThemeBrush("GitKayTextBrush", line.Foreground), line.Flavour);
             else
-                ScheduleHighlight(line.Content, ThemeBrush("GitKayTextBrush", line.Foreground));
+                ScheduleHighlight(line.Content, ThemeBrush("GitKayTextBrush", line.Foreground), line.Flavour);
         }
     }
 
-    private void ScheduleHighlight(string text, IBrush foreground) {
+    private void ScheduleHighlight(string text, IBrush foreground, SyntaxFlavour flavour = SyntaxFlavour.Code) {
         if (string.IsNullOrEmpty(text) || text.Length > MaxHighlightedLineLength || _colouredLayouts.ContainsKey(text) || !_pending.Add(text)) return;
         var generation = _generation;
         _ = Task.Run(async () => {
@@ -1152,7 +1152,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
                 }
 
                 IReadOnlyList<HighlightToken> tokens;
-                try { tokens = SyntaxHighlighting.Tokenize(text); }
+                try { tokens = SyntaxHighlighting.Tokenize(text, flavour); }
                 finally { HighlightWorkers.Release(); }
                 await Dispatcher.UIThread.InvokeAsync(() => {
                     _pending.Remove(text);

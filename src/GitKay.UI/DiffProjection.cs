@@ -120,7 +120,7 @@ public partial class DiffFileProjection : ObservableObject {
         foreach (var block in GitKay.Core.DiffExpansion.project(_content, fullContext, revealed)) {
             switch (block) {
                 case GitKay.Core.DiffExpansion.DiffBlock.HunkBlock hunkBlock:
-                    var hunk = new DiffHunkProjection(hunkBlock.Item);
+                    var hunk = new DiffHunkProjection(hunkBlock.Item, SyntaxHighlighting.FlavourFor(DiffFileTree.PathOf(this)));
                     Hunks.Add(hunk);
                     _blocks.Add(hunk);
                     break;
@@ -368,9 +368,12 @@ public sealed class DiffHunkHeaderProjection : IDiffRowProjection {
 }
 
 public sealed class DiffHunkProjection {
-    public DiffHunkProjection(GitKay.Core.Models.DiffHunk hunk) {
+    public DiffHunkProjection(GitKay.Core.Models.DiffHunk hunk) : this(hunk, SyntaxFlavour.Code) {
+    }
+
+    public DiffHunkProjection(GitKay.Core.Models.DiffHunk hunk, SyntaxFlavour flavour) {
         Header = hunk.Header;
-        Lines = new ObservableCollection<DiffLineProjection>(hunk.Lines.Select(line => new DiffLineProjection(line)));
+        Lines = new ObservableCollection<DiffLineProjection>(hunk.Lines.Select(line => new DiffLineProjection(line, flavour)));
     }
 
     public string Header { get; }
@@ -389,6 +392,13 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection {
     private static readonly IBrush ContentForegroundBrush = new SolidColorBrush(Color.FromRgb(220, 220, 220));
     private static readonly IBrush LineNumberForegroundBrush = new SolidColorBrush(Color.FromRgb(150, 150, 150));
     private static readonly IBrush EmptySideBackground = Brushes.Transparent;
+
+    /// <summary>How this line is coloured: its file's own flavour, so prose isn't read as code.</summary>
+    public SyntaxFlavour Flavour { get; private init; } = SyntaxFlavour.Code;
+
+    public DiffLineProjection(GitKay.Core.Models.DiffLine line, SyntaxFlavour flavour) : this(line) {
+        Flavour = flavour;
+    }
 
     public DiffLineProjection(GitKay.Core.Models.DiffLine line) {
         var isAdded = line.Type.Equals(DiffLineType.Added);

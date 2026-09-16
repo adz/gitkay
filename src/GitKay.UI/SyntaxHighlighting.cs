@@ -7,8 +7,28 @@ using Avalonia.Media;
 
 namespace GitKay.UI;
 
+/// <summary>How a file's lines are coloured: as code, or as prose where code rules do more harm than good.</summary>
+public enum SyntaxFlavour {
+    Code,
+    Markdown,
+    PlainText,
+}
+
 internal static class SyntaxHighlighting {
     private const int MaxTokenizedLineLength = 240;
+
+    /// <summary>
+    /// Prose isn't code: in markdown a leading # is a heading, not a comment, and words like "type", "for" and "with"
+    /// are just words. Colouring it with the code rules is what made READMEs look scrambled.
+    /// </summary>
+    public static SyntaxFlavour FlavourFor(string? path) {
+        var extension = System.IO.Path.GetExtension(path ?? "").ToLowerInvariant();
+        return extension switch {
+            ".md" or ".markdown" or ".mdx" => SyntaxFlavour.Markdown,
+            ".txt" or ".rst" or ".adoc" or ".asciidoc" or ".log" or "" => SyntaxFlavour.PlainText,
+            _ => SyntaxFlavour.Code,
+        };
+    }
 
 
     private static readonly IBrush KeywordBrush = new SolidColorBrush(Color.FromRgb(86, 156, 214)).ToImmutable();
@@ -45,15 +65,31 @@ internal static class SyntaxHighlighting {
         }
     }
 
-    internal static IReadOnlyList<HighlightToken> Tokenize(string text) {
+    internal static IReadOnlyList<HighlightToken> Tokenize(string text) => Tokenize(text, SyntaxFlavour.Code);
+
+    internal static IReadOnlyList<HighlightToken> Tokenize(string text, SyntaxFlavour flavour) {
         if (string.IsNullOrEmpty(text)) {
             return Array.Empty<HighlightToken>();
         }
 
+        if (flavour == SyntaxFlavour.PlainText) {
+            return new List<HighlightToken> { new(text, HighlightKind.Plain) }.AsReadOnly();
+        }
+
+        var key = flavour == SyntaxFlavour.Code ? text : (char)flavour + text;
         lock (TokenCacheLock) {
-            if (TokenCache.TryGetValue(text, out var cached)) {
+            if (TokenCache.TryGetValue(key, out var cached)) {
                 return cached;
             }
+        }
+
+        if (flavour == SyntaxFlavour.Markdown) {
+            var prose = TokenizeMarkdown(text);
+            lock (TokenCacheLock) {
+                if (TokenCache.Count >= MaxCacheSize) TokenCache.Clear();
+                TokenCache[key] = prose;
+            }
+            return prose;
         }
 
         var tokens = new List<HighlightToken>();
@@ -148,10 +184,79 @@ internal static class SyntaxHighlighting {
             if (TokenCache.Count >= MaxCacheSize) {
                 TokenCache.Clear();
             }
-            TokenCache[text] = result;
+            TokenCache[key] = result;
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Markdown's own marks, and nothing else: headings, list and quote markers, code spans and fences, link targets.
+    /// The prose between them stays the text colour.
+    /// </summary>
+    private static IReadOnlyList<HighlightToken> TokenizeMarkdown(string text) {
+        var tokens = new List<HighlightToken>();
+        var indent = 0;
+        while (indent < text.Length && (text[indent] == ' ' || text[indent] == '\t')) indent++;
+        var body = text[indent..];
+
+        void Add(string part, HighlightKind kind) {
+            if (part.Length > 0) tokens.Add(new HighlightToken(part, kind));
+        }
+
+        Add(text[..indent], HighlightKind.Plain);
+
+        // A whole heading line, or a fenced code block's fence, reads as one thing.
+        if (body.StartsWith('#') || body.StartsWith("```") || body.StartsWith("~~~")) {
+            Add(body, body.StartsWith('#') ? HighlightKind.Keyword : HighlightKind.Comment);
+            return tokens.AsReadOnly();
+        }
+
+        // List bullets, numbered items, quotes and table rules: the marker only.
+        var marker = MarkdownMarker(body);
+        if (marker > 0) {
+            Add(body[..marker], HighlightKind.Comment);
+            body = body[marker..];
+        }
+
+        var index = 0;
+        var plain = 0;
+        while (index < body.Length) {
+            var current = body[index];
+            if (current == '`') {
+                var close = body.IndexOf('`', index + 1);
+                var end = close < 0 ? body.Length : close + 1;
+                Add(body[plain..index], HighlightKind.Plain);
+                Add(body[index..end], HighlightKind.String);
+                index = plain = end;
+                continue;
+            }
+
+            // A link or image: [text](target) — colour the target, leave the text alone.
+            if (current == '(' && index > 0 && body[index - 1] == ']') {
+                var close = body.IndexOf(')', index + 1);
+                var end = close < 0 ? body.Length : close + 1;
+                Add(body[plain..index], HighlightKind.Plain);
+                Add(body[index..end], HighlightKind.TypeName);
+                index = plain = end;
+                continue;
+            }
+
+            index++;
+        }
+
+        Add(body[plain..], HighlightKind.Plain);
+        return tokens.AsReadOnly();
+    }
+
+    /// <summary>How many characters of a list bullet, numbered item or quote marker start this line.</summary>
+    private static int MarkdownMarker(string body) {
+        if (body.StartsWith("> ") || body == ">") return body.Length >= 2 ? 2 : 1;
+        if ((body.StartsWith("- ") || body.StartsWith("* ") || body.StartsWith("+ ")) && body.Length > 2) return 2;
+        var digits = 0;
+        while (digits < body.Length && char.IsDigit(body[digits])) digits++;
+        if (digits > 0 && digits + 1 < body.Length && (body[digits] == '.' || body[digits] == ')') && body[digits + 1] == ' ') return digits + 2;
+        return 0;
     }
 
     private static HighlightKind ClassifyIdentifier(string word) {
