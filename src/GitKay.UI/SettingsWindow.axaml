@@ -94,6 +94,16 @@
                                                 </DataTemplate>
                                             </ComboBox.ItemTemplate>
                                         </ComboBox>
+                                        <ComboBox Width="110"
+                                                  ItemsSource="{Binding PaneHoverIntensities}"
+                                                  SelectedItem="{Binding SelectedPaneHoverIntensity}"
+                                                  ToolTip.Tip="How strong the effect is">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="local:PaneHoverIntensityProjection">
+                                                    <TextBlock Text="{Binding Label}" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
                                         <TextBlock Text="{Binding SelectedPaneHoverEffect.Description}"
                                                    Foreground="{DynamicResource GitKaySecondaryTextBrush}"
                                                    VerticalAlignment="Center" TextWrapping="Wrap" />

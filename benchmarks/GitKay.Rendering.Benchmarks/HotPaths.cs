@@ -458,7 +458,11 @@ internal static class UiInteractions {
             var color = label.Contains("purple") ? GitKay.Core.PaneHoverColor.PurpleHoverColor
                 : label.Contains("green") ? GitKay.Core.PaneHoverColor.GreenHoverColor
                 : GitKay.Core.PaneHoverColor.AccentHoverColor;
-            window.SetPaneChrome(4, effect, color);
+            var intensity = label.Contains("quarter") ? GitKay.Core.PaneHoverIntensity.QuarterIntensity
+                : label.Contains("eighth") ? GitKay.Core.PaneHoverIntensity.EighthIntensity
+                : label.Contains("full") ? GitKay.Core.PaneHoverIntensity.FullIntensity
+                : GitKay.Core.PaneHoverIntensity.HalfIntensity;
+            window.SetPaneChrome(4, effect, color, intensity);
             // Hover the unstaged list so the chosen effect shows in the gap.
             var list = Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.ListBox>(window, "UnstagedList")!;
             var origin = new Avalonia.Point(150, 200);

@@ -20,6 +20,7 @@ internal sealed class PaneChrome {
     private double _gap;
     private GitKay.Core.PaneHoverEffect _effect = GitKay.Core.SettingsModule.defaults.PaneHoverEffect;
     private GitKay.Core.PaneHoverColor _color = GitKay.Core.SettingsModule.defaults.PaneHoverColor;
+    private double _intensity = GitKay.Core.PaneHoverIntensityModule.scale(GitKay.Core.SettingsModule.defaults.PaneHoverIntensity);
 
     /// <summary>Adds a pane: the border that draws its effect, and the elements that make up the pane.</summary>
     public void Add(Border effect, params Control[] parts) {
@@ -39,10 +40,11 @@ internal sealed class PaneChrome {
     }
 
     /// <summary>Re-reads the settings; call when the pane gap, hover effect or its colour changes.</summary>
-    public void Update(double gap, GitKay.Core.PaneHoverEffect effect, GitKay.Core.PaneHoverColor color) {
+    public void Update(double gap, GitKay.Core.PaneHoverEffect effect, GitKay.Core.PaneHoverColor color, GitKay.Core.PaneHoverIntensity intensity) {
         _gap = Math.Clamp(gap, 0, 8);
         _effect = effect;
         _color = color;
+        _intensity = GitKay.Core.PaneHoverIntensityModule.scale(intensity);
         foreach (var pane in _panes) ApplyPane(pane);
     }
 
@@ -54,7 +56,8 @@ internal sealed class PaneChrome {
         return effect.FindResource("GitKayAccentBrush") is ISolidColorBrush accent ? accent.Color : Color.FromRgb(0x58, 0xA6, 0xFF);
     }
 
-    private static Color WithAlpha(Color color, byte alpha) => Color.FromArgb(alpha, color.R, color.G, color.B);
+    /// <summary>The colour at an alpha scaled by the chosen intensity.</summary>
+    private Color WithAlpha(Color color, byte alpha) => Color.FromArgb((byte)Math.Round(alpha * _intensity), color.R, color.G, color.B);
 
     private void ApplyPane(Pane pane) {
         var color = EffectColor(pane.Effect);
@@ -62,7 +65,9 @@ internal sealed class PaneChrome {
                      || (pane.Effect.FindResource("GitKayWindowBrush") is ISolidColorBrush window && window.Color.R + window.Color.G + window.Color.B < 3 * 128);
 
         pane.Effect.BorderThickness = new Thickness(_effect.IsHoverGlow || _effect.IsHoverHighlight ? 1 : 0);
-        pane.Effect.BorderBrush = new SolidColorBrush(WithAlpha(color, _effect.IsHoverGlow ? (byte)0xD0 : (byte)0xCC));
+        // The outline stays readable at low intensities, so it fades more gently than the halo.
+        var outline = (byte)Math.Round((_effect.IsHoverGlow ? 0xD0 : 0xCC) * Math.Sqrt(_intensity));
+        pane.Effect.BorderBrush = new SolidColorBrush(Color.FromArgb(outline, color.R, color.G, color.B));
         pane.Effect.Margin = new Thickness(Math.Max(0, _gap - 1));
         pane.Effect.BoxShadow = _effect switch {
             // A halo in the gap plus an inset glow along the pane's edge, so it glows rather than just outlines.

@@ -536,13 +536,13 @@ public partial class CommitWindow : Window, IVimCommands {
 
     public CommitWindowProjection? Projection { get; }
 
-    internal void SetPaneChrome(double gap, GitKay.Core.PaneHoverEffect effect, GitKay.Core.PaneHoverColor color) =>
-        _paneChrome.Update(gap, effect, color);
+    internal void SetPaneChrome(double gap, GitKay.Core.PaneHoverEffect effect, GitKay.Core.PaneHoverColor color, GitKay.Core.PaneHoverIntensity intensity) =>
+        _paneChrome.Update(gap, effect, color, intensity);
 
     /// <summary>Panes follow the same settings as the main window's; re-read when the window is activated.</summary>
     private void ApplyPaneSettings() {
         var settings = GitKay.Core.SettingsModule.normalize(new AppSettingsStore().Load());
-        _paneChrome.Update(settings.PaneGap, settings.PaneHoverEffect, settings.PaneHoverColor);
+        _paneChrome.Update(settings.PaneGap, settings.PaneHoverEffect, settings.PaneHoverColor, settings.PaneHoverIntensity);
     }
 
     internal TextBox MessageBoxForTests => MessageBox;

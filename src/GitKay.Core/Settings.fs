@@ -165,6 +165,42 @@ module PaneHoverColor =
         let normalized = if isNull text then "" else text.Trim().ToLowerInvariant()
         all |> List.tryFind (fun color -> key color = normalized)
 
+/// <summary>How strongly a pane's hover effect is drawn.</summary>
+type PaneHoverIntensity =
+    | FullIntensity
+    | HalfIntensity
+    | QuarterIntensity
+    | EighthIntensity
+
+module PaneHoverIntensity =
+    let all = [ FullIntensity; HalfIntensity; QuarterIntensity; EighthIntensity ]
+
+    let key intensity =
+        match intensity with
+        | FullIntensity -> "full"
+        | HalfIntensity -> "half"
+        | QuarterIntensity -> "quarter"
+        | EighthIntensity -> "eighth"
+
+    let label intensity =
+        match intensity with
+        | FullIntensity -> "Full"
+        | HalfIntensity -> "Half"
+        | QuarterIntensity -> "Quarter"
+        | EighthIntensity -> "Eighth"
+
+    /// <summary>What the effect's colours are scaled by.</summary>
+    let scale intensity =
+        match intensity with
+        | FullIntensity -> 1.0
+        | HalfIntensity -> 0.5
+        | QuarterIntensity -> 0.25
+        | EighthIntensity -> 0.125
+
+    let tryParse (text: string) =
+        let normalized = if isNull text then "" else text.Trim().ToLowerInvariant()
+        all |> List.tryFind (fun intensity -> key intensity = normalized)
+
 type Settings =
     { ShowBranchRefs: bool
       ShowStashes: bool
@@ -182,7 +218,9 @@ type Settings =
       /// <summary>What the pane under the pointer does in that space.</summary>
       PaneHoverEffect: PaneHoverEffect
       /// <summary>The colour that effect is drawn in.</summary>
-      PaneHoverColor: PaneHoverColor }
+      PaneHoverColor: PaneHoverColor
+      /// <summary>How strongly it is drawn.</summary>
+      PaneHoverIntensity: PaneHoverIntensity }
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module Settings =
@@ -200,7 +238,8 @@ module Settings =
           Theme = SystemTheme
           PaneGap = 3.0
           PaneHoverEffect = HoverGlow
-          PaneHoverColor = AccentHoverColor }
+          PaneHoverColor = AccentHoverColor
+          PaneHoverIntensity = HalfIntensity }
 
     let private fontFamily fallback (value: string) = if String.IsNullOrWhiteSpace value then fallback else value
 
