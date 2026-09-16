@@ -854,7 +854,16 @@ module GitService =
     let undoDiscard (backup: Trash.Backup) : Flow<GitEnv, GitError, unit> =
         flow {
             let! root = workingRoot
-            Trash.restore root backup
+            // The undo is a safety net; it mustn't become a second way to lose work.
+            match Trash.changedSince root backup with
+            | [] -> Trash.restore root backup
+            | changed ->
+                let names = String.Join(", ", changed)
+                return!
+                    Flow.fail (
+                        GitError.OperationFailed(
+                            "Undo",
+                            $"{names} changed since the discard. The discarded content is still in {backup.Directory}."))
         }
 
     /// <summary>Discards the chosen lines of one file, after copying it so the discard can be undone.</summary>
@@ -863,7 +872,8 @@ module GitService =
             let description = if lines.Length = 1 then $"1 line in {path}" else $"{lines.Length} lines in {path}"
             let! backup = backupBeforeDiscard description [ path ]
             do! applyLines DiscardFromWorkingTree path lines
-            return backup
+            let! root = workingRoot
+            return Trash.seal root backup
         }
 
     /// <summary>Throws away working tree changes to whole files; untracked files are deleted. Both are backed up first.</summary>
@@ -876,7 +886,8 @@ module GitService =
                 do! plainGit ([ "restore"; "--worktree"; "--" ] @ tracked) |> Flow.map ignore
             if not untracked.IsEmpty then
                 do! plainGit ([ "clean"; "--force"; "--quiet"; "--" ] @ untracked) |> Flow.map ignore
-            return backup
+            let! root = workingRoot
+            return Trash.seal root backup
         }
 
     let discardFiles (tracked: string list) (untracked: string list) : Flow<GitEnv, GitError, unit> =

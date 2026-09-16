@@ -13,7 +13,9 @@ module Trash =
     /// <summary>One file's copy: where it lives in the working tree, and the copy's path (None when it didn't exist).</summary>
     type Entry =
         { Path: string
-          BackupFile: string option }
+          BackupFile: string option
+          /// <summary>What the file looked like right after the discard, so later edits aren't overwritten by an undo.</summary>
+          AfterDiscard: string option }
 
     type Backup =
         { Directory: string
@@ -39,13 +41,39 @@ module Trash =
             |> List.map (fun path ->
                 let source = Path.Combine(workingDirectory, safeName path)
                 if not (File.Exists source) then // axial-allow-effect: filesystem
-                    { Path = path; BackupFile = None }
+                    { Path = path; BackupFile = None; AfterDiscard = None }
                 else
                     let destination = Path.Combine(target, safeName path)
                     Directory.CreateDirectory(Path.GetDirectoryName destination) |> ignore // axial-allow-effect: filesystem
                     File.Copy(source, destination, true) // axial-allow-effect: filesystem
-                    { Path = path; BackupFile = Some destination })
+                    { Path = path; BackupFile = Some destination; AfterDiscard = None })
         { Directory = target; Entries = entries; Description = description; CreatedAt = now }
+
+    /// <summary>A file's content, as a hash; None when it isn't there.</summary>
+    let private hashOf (file: string) =
+        if not (File.Exists file) then None // axial-allow-effect: filesystem
+        else
+            try
+                use stream = File.OpenRead file // axial-allow-effect: filesystem
+                Some(Convert.ToHexString(Security.Cryptography.SHA256.HashData stream))
+            with :? IOException | :? UnauthorizedAccessException ->
+                None
+
+    /// <summary>
+    /// Records what each file looks like now the discard has run, so an undo can tell its own work from edits made
+    /// afterwards. Call it straight after the discard.
+    /// </summary>
+    let seal (workingDirectory: string) (backup: Backup) : Backup =
+        { backup with
+            Entries =
+                backup.Entries
+                |> List.map (fun entry -> { entry with AfterDiscard = hashOf (Path.Combine(workingDirectory, safeName entry.Path)) }) }
+
+    /// <summary>Files that changed since the discard, which an undo would otherwise overwrite.</summary>
+    let changedSince (workingDirectory: string) (backup: Backup) : string list =
+        backup.Entries
+        |> List.filter (fun entry -> hashOf (Path.Combine(workingDirectory, safeName entry.Path)) <> entry.AfterDiscard)
+        |> List.map _.Path
 
     /// <summary>Puts the backed-up files back; a file that didn't exist before is removed again.</summary>
     let restore (workingDirectory: string) (backup: Backup) : unit =

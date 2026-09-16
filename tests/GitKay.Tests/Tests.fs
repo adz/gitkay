@@ -1015,15 +1015,41 @@ summary Another line
             test <@ Trash.isIntact fileBackup @>)
 
     [<Fact>]
-    let ``undoing a discard removes a file that did not exist before`` () =
+    let ``an undo refuses to overwrite edits made since the discard`` () =
         withTempRepository (fun root repo ->
             let gitDir = Path.Combine(root, ".git")
             commitFile repo root "a.txt" "one\n" "init" |> ignore
-            // Nothing to copy: the backup records that the file was absent.
-            let backup = run gitDir (GitService.backupBeforeDiscard "test" [ "ghost.txt" ])
-            writeFile root "ghost.txt" "appeared later\n"
+            writeFile root "a.txt" "edited\n"
+            let backup = run gitDir (GitService.discardFilesWithBackup [ "a.txt" ] [])
+            test <@ File.ReadAllText(Path.Combine(root, "a.txt")) = "one\n" @>
+
+            // Working on the file again after the discard: the undo must not silently replace this.
+            writeFile root "a.txt" "written after the discard\n"
+            match runFlow gitDir (GitService.undoDiscard backup) with
+            | Ok () -> failwith "the undo should have refused"
+            | Error error ->
+                let message = GitError.describe error
+                test <@ message.Contains "a.txt changed since the discard" && message.Contains backup.Directory @>
+            test <@ File.ReadAllText(Path.Combine(root, "a.txt")) = "written after the discard\n" @>)
+
+    [<Fact>]
+    let ``undoing a deleted untracked file puts it back, unless it was written again`` () =
+        withTempRepository (fun root repo ->
+            let gitDir = Path.Combine(root, ".git")
+            commitFile repo root "a.txt" "one\n" "init" |> ignore
+            writeFile root "notes.txt" "scratch\n"
+            let backup = run gitDir (GitService.discardFilesWithBackup [] [ "notes.txt" ])
+            test <@ not (File.Exists(Path.Combine(root, "notes.txt"))) @>
             run gitDir (GitService.undoDiscard backup)
-            test <@ not (File.Exists(Path.Combine(root, "ghost.txt"))) @>)
+            test <@ File.ReadAllText(Path.Combine(root, "notes.txt")) = "scratch\n" @>
+
+            // Delete it again, then write a new file at the same path: the undo leaves that alone.
+            let second = run gitDir (GitService.discardFilesWithBackup [] [ "notes.txt" ])
+            writeFile root "notes.txt" "a different note\n"
+            match runFlow gitDir (GitService.undoDiscard second) with
+            | Ok () -> failwith "the undo should have refused"
+            | Error error -> test <@ (GitError.describe error).Contains "notes.txt changed since the discard" @>
+            test <@ File.ReadAllText(Path.Combine(root, "notes.txt")) = "a different note\n" @>)
 
     [<Fact>]
     let ``commit uses the message, amends, and reports hook failures`` () =
@@ -3214,6 +3240,99 @@ module SearchDateTests =
         // Relative dates still work.
         test <@ parse "2 weeks ago" = Some(now.AddDays(-14.0).ToUnixTimeSeconds()) @>
         test <@ parse "yesterday" = Some(now.AddDays(-1.0).ToUnixTimeSeconds()) @>
+
+module WorkingTreeStagingTests =
+
+    let private numbered (lines: string list) = String.concat "\n" lines + "\n"
+
+    /// A repository with one committed file, cleaned up afterwards.
+    let private withRepository (committed: string) (action: string -> unit) =
+        let root = Path.Combine(Path.GetTempPath(), "gitkay-staging-" + Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory root |> ignore
+        try
+            Repository.Init root |> ignore
+            use repo = new Repository(root)
+            repo.Config.Add("user.name", "GitKay Tests") |> ignore
+            repo.Config.Add("user.email", "gitkay@example.com") |> ignore
+            File.WriteAllText(Path.Combine(root, "numbers.txt"), committed)
+            Commands.Stage(repo, "numbers.txt")
+            let author = Signature("GitKay Tests", "gitkay@example.com", DateTimeOffset.Now)
+            repo.Commit("init", author, author) |> ignore
+            action root
+        finally
+            try Directory.Delete(root, true) with _ -> ()
+
+    /// The history window showing the uncommitted changes of a repository.
+    let private showing (gitDir: string) =
+        let projection = MainProjection(RepositoryPath = gitDir)
+        let model0, _ = App.init [||]
+        let changes =
+            match Flow.run (GitService.environment gitDir) (GitService.fetchWorkingTreeChanges 3) |> Exit.toResult with
+            | Ok changes -> changes
+            | Error error -> failwith (GitError.describe error)
+        projection.Update { model0 with Selection = App.WorkingTreeSelected; WorkingTree = changes.Entries; WorkingTreeChanges = Some changes }
+        projection
+
+    let private lineRows (projection: MainProjection) =
+        projection.SelectedDiffRows |> Seq.choose (function :? DiffLineProjection as line -> Some line | _ -> None) |> List.ofSeq
+
+    let private changedContent (gitDir: string) (section: WorkingTree.Section) (path: string) =
+        match Flow.run (GitService.environment gitDir) (GitService.fetchRawFileDiff section path) |> Exit.toResult with
+        | Error error -> failwith (GitError.describe error)
+        | Ok raw ->
+            WorkingTree.parsePatch raw
+            |> List.collect _.Hunks
+            |> List.collect _.Lines
+            |> List.filter (fun line -> line.Type <> Models.Context)
+            |> List.map _.Content
+
+    [<Fact>]
+    let ``staging the hunk at the cursor from the history window stages only that hunk`` () =
+        withRepository (numbered [ for n in 1..15 -> string n ]) (fun root ->
+            let gitDir = Path.Combine(root, ".git")
+            File.WriteAllText(Path.Combine(root, "numbers.txt"), numbered [ for n in 1..15 -> if n = 2 then "TWO" elif n = 14 then "FOURTEEN" else string n ])
+
+            let projection = showing gitDir
+            let file = projection.SelectedDiffFiles |> Seq.find (fun file -> file.Key.Section = "Unstaged")
+            projection.SelectedDiffFile <- file
+            // The cursor sits on the second change; with no selection that means its whole hunk.
+            let cursor = lineRows projection |> List.find (fun line -> line.Content = "FOURTEEN")
+            let lines = projection.LinesOf(file, [ cursor :> IDiffRowProjection ], true)
+            test <@ lines |> Seq.map _.Content |> List.ofSeq = [ "14"; "FOURTEEN" ] @>
+
+            match Flow.run (GitService.environment gitDir) (GitService.applyLines GitService.StageInIndex "numbers.txt" (List.ofSeq lines)) |> Exit.toResult with
+            | Error error -> failwith (GitError.describe error)
+            | Ok () ->
+                test <@ changedContent gitDir WorkingTree.Staged "numbers.txt" = [ "14"; "FOURTEEN" ] @>
+                test <@ changedContent gitDir WorkingTree.Unstaged "numbers.txt" = [ "2"; "TWO" ] @>)
+
+    [<Fact>]
+    let ``the cursor still maps onto the right hunk after context is expanded`` () =
+        withRepository (numbered [ for n in 1..40 -> string n ]) (fun root ->
+            let gitDir = Path.Combine(root, ".git")
+            File.WriteAllText(Path.Combine(root, "numbers.txt"), numbered [ for n in 1..40 -> if n = 5 then "FIVE" elif n = 35 then "THIRTY-FIVE" else string n ])
+
+            let projection = showing gitDir
+            let file = projection.SelectedDiffFiles |> Seq.find (fun file -> file.Key.Section = "Unstaged")
+            projection.SelectedDiffFile <- file
+            let before = lineRows projection |> List.length
+
+            // Reveal the whole file, which adds context rows between the two hunks.
+            projection.ToggleDiffFileContextCommand.Execute file
+            let deadline = DateTime.UtcNow.AddSeconds 10.0
+            while (lineRows projection |> List.length) = before && DateTime.UtcNow < deadline do
+                Threading.Thread.Sleep 50
+            test <@ (lineRows projection |> List.length) > before @>
+
+            let cursor = lineRows projection |> List.find (fun line -> line.Content = "THIRTY-FIVE")
+            let lines = projection.LinesOf(file, [ cursor :> IDiffRowProjection ], true)
+            test <@ lines |> Seq.map _.Content |> List.ofSeq = [ "35"; "THIRTY-FIVE" ] @>
+
+            match Flow.run (GitService.environment gitDir) (GitService.applyLines GitService.StageInIndex "numbers.txt" (List.ofSeq lines)) |> Exit.toResult with
+            | Error error -> failwith (GitError.describe error)
+            | Ok () ->
+                test <@ changedContent gitDir WorkingTree.Staged "numbers.txt" = [ "35"; "THIRTY-FIVE" ] @>
+                test <@ changedContent gitDir WorkingTree.Unstaged "numbers.txt" = [ "5"; "FIVE" ] @>)
 
 module CommitWindowTests =
 
