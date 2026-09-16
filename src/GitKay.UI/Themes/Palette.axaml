@@ -3,11 +3,11 @@
     <ResourceDictionary.ThemeDictionaries>
         <ResourceDictionary x:Key="Dark">
             <SolidColorBrush x:Key="GitKayWindowBrush" Color="#0D1117" />
-            <SolidColorBrush x:Key="GitKaySurfaceBrush" Color="#161B22" />
-            <SolidColorBrush x:Key="GitKayRaisedBrush" Color="#1C2128" />
+            <SolidColorBrush x:Key="GitKaySurfaceBrush" Color="#1B222C" />
+            <SolidColorBrush x:Key="GitKayRaisedBrush" Color="#222A35" />
             <SolidColorBrush x:Key="GitKayHoverBrush" Color="#21262D" />
             <SolidColorBrush x:Key="GitKaySelectionBrush" Color="#27364A" />
-            <SolidColorBrush x:Key="GitKayBorderBrush" Color="#30363D" />
+            <SolidColorBrush x:Key="GitKayBorderBrush" Color="#3C444D" />
             <!-- Buttons and other controls: a fill and edge that stand apart from labels and bars. -->
             <SolidColorBrush x:Key="GitKayControlBrush" Color="#2D333B" />
             <SolidColorBrush x:Key="GitKayControlHoverBrush" Color="#373E47" />
@@ -29,7 +29,7 @@
             <SolidColorBrush x:Key="GitKayAddedAccentBrush" Color="#3FB950" />
             <SolidColorBrush x:Key="GitKayRemovedAccentBrush" Color="#F85149" />
             <SolidColorBrush x:Key="GitKayGutterBrush" Color="#11161D" />
-            <SolidColorBrush x:Key="GitKayStatusBrush" Color="#18212B" />
+            <SolidColorBrush x:Key="GitKayStatusBrush" Color="#1B222C" />
             <SolidColorBrush x:Key="GitKaySyntaxKeywordBrush" Color="#FF7B72" />
             <SolidColorBrush x:Key="GitKaySyntaxStringBrush" Color="#A5D6FF" />
             <SolidColorBrush x:Key="GitKaySyntaxNumberBrush" Color="#79C0FF" />
@@ -46,7 +46,7 @@
             <SolidColorBrush x:Key="GitKayLane8Brush" Color="#8DDB8C" />
             <SolidColorBrush x:Key="GitKayLane9Brush" Color="#6CB6FF" />
             <!-- Visual refresh: hairlines, muted ref pills, quieter numbers -->
-            <SolidColorBrush x:Key="GitKayHairlineBrush" Color="#21262D" />
+            <SolidColorBrush x:Key="GitKayHairlineBrush" Color="#2B333C" />
             <SolidColorBrush x:Key="GitKayLineNumberBrush" Color="#6E7681" />
             <SolidColorBrush x:Key="GitKayRefBranchBackground" Color="#1A2F4A" />
             <SolidColorBrush x:Key="GitKayRefBranchForeground" Color="#79B8FF" />
@@ -62,11 +62,11 @@
             <SolidColorBrush x:Key="GitKayFindMatchBrush" Color="#FFDF5D" />
             <SolidColorBrush x:Key="GitKayTextSelectionBrush" Color="#660969DA" />
             <SolidColorBrush x:Key="GitKayWindowBrush" Color="#FFFFFF" />
-            <SolidColorBrush x:Key="GitKaySurfaceBrush" Color="#F6F8FA" />
-            <SolidColorBrush x:Key="GitKayRaisedBrush" Color="#F6F8FA" />
+            <SolidColorBrush x:Key="GitKaySurfaceBrush" Color="#EDF1F5" />
+            <SolidColorBrush x:Key="GitKayRaisedBrush" Color="#E6EBF0" />
             <SolidColorBrush x:Key="GitKayHoverBrush" Color="#EAEEF2" />
             <SolidColorBrush x:Key="GitKaySelectionBrush" Color="#CCE5FF" />
-            <SolidColorBrush x:Key="GitKayBorderBrush" Color="#D0D7DE" />
+            <SolidColorBrush x:Key="GitKayBorderBrush" Color="#C2CBD4" />
             <!-- Buttons and other controls: a fill and edge that stand apart from labels and bars. -->
             <SolidColorBrush x:Key="GitKayControlBrush" Color="#FFFFFF" />
             <SolidColorBrush x:Key="GitKayControlHoverBrush" Color="#EAEEF2" />
@@ -88,7 +88,7 @@
             <SolidColorBrush x:Key="GitKayAddedAccentBrush" Color="#1A7F37" />
             <SolidColorBrush x:Key="GitKayRemovedAccentBrush" Color="#CF222E" />
             <SolidColorBrush x:Key="GitKayGutterBrush" Color="#FFFFFF" />
-            <SolidColorBrush x:Key="GitKayStatusBrush" Color="#F6F8FA" />
+            <SolidColorBrush x:Key="GitKayStatusBrush" Color="#EDF1F5" />
             <SolidColorBrush x:Key="GitKaySyntaxKeywordBrush" Color="#CF222E" />
             <SolidColorBrush x:Key="GitKaySyntaxStringBrush" Color="#0A3069" />
             <SolidColorBrush x:Key="GitKaySyntaxNumberBrush" Color="#0550AE" />
@@ -104,7 +104,7 @@
             <SolidColorBrush x:Key="GitKayLane7Brush" Color="#9A6700" />
             <SolidColorBrush x:Key="GitKayLane8Brush" Color="#2DA44E" />
             <SolidColorBrush x:Key="GitKayLane9Brush" Color="#3192AA" />
-            <SolidColorBrush x:Key="GitKayHairlineBrush" Color="#EAEEF2" />
+            <SolidColorBrush x:Key="GitKayHairlineBrush" Color="#DCE2E8" />
             <SolidColorBrush x:Key="GitKayLineNumberBrush" Color="#8C959F" />
             <SolidColorBrush x:Key="GitKayRefBranchBackground" Color="#E7F1FC" />
             <SolidColorBrush x:Key="GitKayRefBranchForeground" Color="#0B5CAD" />
