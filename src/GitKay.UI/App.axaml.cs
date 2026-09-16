@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -111,8 +112,8 @@ public partial class App : Application {
 
             var projection = new MainProjection { RepositoryPath = repoKey };
             projection.ApplySettings(persistedSettings);
-            projection.LoadRecentSearches(uiStateStore.LoadSearchHistory());
-            projection.ApplyViewPreferences(uiStateStore.LoadViewPreferences());
+            projection.LoadRecentSearches(persistedUiState.RecentSearches);
+            projection.ApplyViewPreferences(persistedUiState.ViewPreferences.ToDictionary());
             mainWindow.DataContext = projection;
             desktop.MainWindow = mainWindow;
 
@@ -171,9 +172,10 @@ public partial class App : Application {
 
                 currentUiState = UiStateModule.withLayout(mainWindow.CaptureLayout(),
                     UiStateModule.withWindowSize(mainWindow.Bounds.Width, mainWindow.Bounds.Height, currentUiState));
+                currentUiState = UiStateModule.withViewPreferences(
+                    projection.CaptureViewPreferences().Select(entry => Tuple.Create(entry.Key, entry.Value)),
+                    UiStateModule.withRecentSearches(projection.RecentSearches, currentUiState));
                 uiStateStore.Save(currentUiState);
-                uiStateStore.SaveSearchHistory(projection.RecentSearches);
-                uiStateStore.SaveViewPreferences(projection.CaptureViewPreferences());
                 watcher?.Dispose();
                 ((IDisposable)host).Dispose();
                 GitKay.Core.App.stopRuntime();

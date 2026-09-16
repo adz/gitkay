@@ -33,6 +33,8 @@ type private UiStateWire =
     { WindowWidth: float option
       WindowHeight: float option
       RepoStates: Map<string, RepoStateWire>
+      RecentSearches: string list
+      ViewPreferences: Map<string, string>
       HistoryPaneRatio: float option
       FileListWidth: float option
       GraphColumnWidth: float option
@@ -83,14 +85,17 @@ module private Codecs =
             fieldAs "WindowWidth" _.WindowWidth
             fieldAs "WindowHeight" _.WindowHeight
             fieldAs "RepoStates" _.RepoStates { withSchema (Schema.mapWith repoState |> Schema.withDefault Map.empty) }
+            fieldAs "RecentSearches" _.RecentSearches { defaultValue [] }
+            fieldAs "ViewPreferences" _.ViewPreferences { defaultValue Map.empty }
             fieldAs "HistoryPaneRatio" _.HistoryPaneRatio
             fieldAs "FileListWidth" _.FileListWidth
             fieldAs "GraphColumnWidth" _.GraphColumnWidth
             fieldAs "HashColumnWidth" _.HashColumnWidth
             fieldAs "AuthorColumnWidth" _.AuthorColumnWidth
             fieldAs "DateColumnWidth" _.DateColumnWidth
-            construct (fun width height states ratio fileList graph hash author date ->
-                { WindowWidth = width; WindowHeight = height; RepoStates = states; HistoryPaneRatio = ratio
+            construct (fun width height states searches preferences ratio fileList graph hash author date ->
+                { WindowWidth = width; WindowHeight = height; RepoStates = states; RecentSearches = searches
+                  ViewPreferences = preferences; HistoryPaneRatio = ratio
                   FileListWidth = fileList; GraphColumnWidth = graph; HashColumnWidth = hash; AuthorColumnWidth = author
                   DateColumnWidth = date })
         }
@@ -161,6 +166,8 @@ module UiStateJson =
                     { LastSelectedCommitHash = state.LastSelectedCommits |> Map.tryFind repository
                       CommitDraft = state.CommitDrafts |> Map.tryFind repository })
                 |> Map.ofSeq
+              RecentSearches = state.RecentSearches
+              ViewPreferences = state.ViewPreferences
               HistoryPaneRatio = layout.HistoryPaneRatio
               FileListWidth = layout.FileListWidth
               GraphColumnWidth = layout.GraphColumnWidth
@@ -176,6 +183,8 @@ module UiStateJson =
                   WindowHeight = wire.WindowHeight
                   LastSelectedCommits = wire.RepoStates |> Map.toSeq |> Seq.choose (fun (repository, state) -> state.LastSelectedCommitHash |> Option.map (fun hash -> repository, hash)) |> Map.ofSeq
                   CommitDrafts = wire.RepoStates |> Map.toSeq |> Seq.choose (fun (repository, state) -> state.CommitDraft |> Option.map (fun draft -> repository, draft)) |> Map.ofSeq
+                  RecentSearches = wire.RecentSearches
+                  ViewPreferences = wire.ViewPreferences
                   Layout =
                     { HistoryPaneRatio = wire.HistoryPaneRatio
                       FileListWidth = wire.FileListWidth

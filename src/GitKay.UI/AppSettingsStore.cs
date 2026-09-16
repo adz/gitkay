@@ -46,6 +46,6 @@ public sealed class AppSettingsStore {
             appData = Path.GetTempPath();
         }
 
-        return Path.Combine(appData, "GitKay", "settings.json");
+        return Path.Combine(appData, "gitkay", "settings.json");
     }
 }

@@ -302,7 +302,11 @@ type UiState =
       /// <summary>Full repository path to the hash of the commit last selected there.</summary>
       LastSelectedCommits: Map<string, string>
       /// <summary>Full repository path to the commit message being written there, kept until it is committed.</summary>
-      CommitDrafts: Map<string, string> }
+      CommitDrafts: Map<string, string>
+      /// <summary>Recent commit searches, newest first.</summary>
+      RecentSearches: string list
+      /// <summary>Small view toggles: file tree mode, details expanded, search mode and so on.</summary>
+      ViewPreferences: Map<string, string> }
 
 module UiState =
     let empty =
@@ -310,7 +314,9 @@ module UiState =
           WindowWidth = None
           WindowHeight = None
           LastSelectedCommits = Map.empty
-          CommitDrafts = Map.empty }
+          CommitDrafts = Map.empty
+          RecentSearches = []
+          ViewPreferences = Map.empty }
 
     let private dimension (value: float option) = value |> Option.filter (fun size -> Double.IsFinite size && size > 0.0)
 
@@ -340,7 +346,14 @@ module UiState =
                 match repositoryKey repository with
                 | Some key when not (String.IsNullOrWhiteSpace draft) -> Some(key, draft)
                 | _ -> None)
-            |> Map.ofSeq }
+            |> Map.ofSeq
+          // Enough searches to be useful, not a log.
+          RecentSearches =
+            state.RecentSearches
+            |> List.choose text
+            |> List.distinct
+            |> List.truncate 30
+          ViewPreferences = state.ViewPreferences |> Map.filter (fun key _ -> not (String.IsNullOrWhiteSpace key)) }
 
     let withLayout layout state = { state with Layout = UiLayout.normalize layout }
 
@@ -370,3 +383,7 @@ module UiState =
 
     let commitDraft (repository: string) state =
         repositoryKey repository |> Option.bind (fun key -> state.CommitDrafts |> Map.tryFind key)
+
+    let withRecentSearches (searches: string seq) state = { state with RecentSearches = List.ofSeq searches }
+
+    let withViewPreferences (preferences: (string * string) seq) state = { state with ViewPreferences = Map.ofSeq preferences }

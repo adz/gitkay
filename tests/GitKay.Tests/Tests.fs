@@ -3805,6 +3805,17 @@ module SettingsSerializationTests =
         let json = UiStateJson.encode state
         test <@ UiStateJson.decode json = Ok(UiState.normalize state) @>
 
+    [<Fact>]
+    let ``recent searches and view preferences live in the UI state file`` () =
+        let state =
+            UiState.empty
+            |> UiState.withRecentSearches [ "author:ada"; "fix "; "author:ada" ]
+            |> UiState.withViewPreferences [ "FileTree", "true"; "  ", "ignored" ]
+        let read = UiStateJson.encode state |> UiStateJson.decode
+        test <@ read = Ok(UiState.normalize state) @>
+        // Duplicates and blanks are dropped on the way in, so the file stays a preference list rather than a log.
+        test <@ read |> Result.map (fun s -> s.RecentSearches, Map.toList s.ViewPreferences) = Ok([ "author:ada"; "fix" ], [ "FileTree", "true" ]) @>
+
 module HistoryScopeTests =
     [<Fact>]
     let ``history of a branch replaces other tips and all branches but keeps file filters`` () =
