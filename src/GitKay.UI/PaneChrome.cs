@@ -4,6 +4,7 @@ using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Media;
 
 namespace GitKay.UI;
@@ -34,10 +35,11 @@ internal sealed class PaneChrome {
         effect.CornerRadius = new CornerRadius(6);
         effect.Transitions = [new Avalonia.Animation.DoubleTransition { Property = Visual.OpacityProperty, Duration = TimeSpan.FromMilliseconds(140) }];
         effect.Opacity = 0;
-        foreach (var part in parts)
-            part.PropertyChanged += (_, e) => {
-                if (e.Property == InputElement.IsPointerOverProperty) ApplyHover(pane);
-            };
+        // The pane's parts each carry the gap as a margin, so there is a dead strip between them (a pane header and
+        // its content, say). Asking the parts whether they are hovered makes the effect blink off as the pointer
+        // crosses that strip, so hover is measured against the effect border instead: it covers the whole pane.
+        effect.AttachedToVisualTree += (_, _) => Watch(effect);
+        if (TopLevel.GetTopLevel(effect) is not null) Watch(effect);
         ApplyPane(pane);
     }
 
@@ -51,7 +53,28 @@ internal sealed class PaneChrome {
         foreach (var pane in _panes) ApplyPane(pane);
     }
 
-    private static bool IsHovered(Pane pane) => pane.Parts.Any(part => part.IsPointerOver);
+    private readonly HashSet<TopLevel> _watched = new();
+    private PointerPoint? _pointer;
+
+    /// <summary>Follows the pointer across the window, so a pane knows it is hovered even between its parts.</summary>
+    private void Watch(Border effect) {
+        if (TopLevel.GetTopLevel(effect) is not { } top || !_watched.Add(top)) return;
+        top.AddHandler(InputElement.PointerMovedEvent, (_, e) => {
+            _pointer = e.GetCurrentPoint(top);
+            foreach (var pane in _panes) ApplyHover(pane);
+        }, RoutingStrategies.Tunnel);
+        top.AddHandler(InputElement.PointerExitedEvent, (_, _) => {
+            _pointer = null;
+            foreach (var pane in _panes) ApplyHover(pane);
+        }, RoutingStrategies.Tunnel);
+    }
+
+    private bool IsHovered(Pane pane) {
+        if (_pointer is not { } pointer || TopLevel.GetTopLevel(pane.Effect) is not { } top) return pane.Parts.Any(part => part.IsPointerOver);
+        if (!pane.Effect.IsVisible || pane.Effect.Bounds.Width <= 0) return false;
+        var position = top.TranslatePoint(pointer.Position, pane.Effect);
+        return position is { } point && new Rect(pane.Effect.Bounds.Size).Contains(point);
+    }
 
     /// <summary>The chosen colour, or the theme's accent when following it.</summary>
     private Color EffectColor(Border effect) {

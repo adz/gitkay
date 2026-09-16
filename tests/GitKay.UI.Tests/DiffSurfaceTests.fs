@@ -605,3 +605,46 @@ module SyntaxHighlightingTests =
         test <@ SyntaxHighlighting.FlavourFor "src/App.fs" = SyntaxFlavour.Code @>
         // Plain text is left alone entirely.
         test <@ kinds SyntaxFlavour.PlainText "# not a comment" = [ "# not a comment", HighlightKind.Plain ] @>
+
+module PaneChromeTests =
+    [<Fact>]
+    let ``a pane stays hovered in the gap between its header and its content`` () =
+        Headless.run (fun () ->
+            // The pane's two parts each carry the gap as a margin, leaving a strip between them that belongs to neither.
+            let header = Border(Height = 30.0, Background = Media.Brushes.Gray)
+            let content = Border(Background = Media.Brushes.Gray)
+            Grid.SetRow(header, 0)
+            Grid.SetRow(content, 1)
+            let effect = Border()
+            Grid.SetRow(effect, 0)
+            Grid.SetRowSpan(effect, 2)
+            let grid = Grid(RowDefinitions = RowDefinitions("Auto,*"))
+            grid.Children.Add header
+            grid.Children.Add content
+            grid.Children.Add effect
+            let window = Window(Width = 200.0, Height = 200.0, Content = grid)
+            let chrome = PaneChrome()
+            chrome.Add(effect, header, content)
+            chrome.Update(4.0, PaneHoverEffect.HoverGlow, PaneHoverColor.AccentHoverColor, PaneHoverIntensity.FullIntensity, false)
+            try
+                window.Show()
+                window.UpdateLayout()
+                Headless.pump ()
+
+                window.MouseMove(Point(100.0, 100.0))
+                Headless.pump ()
+                test <@ effect.BoxShadow.Count > 0 @>
+
+                // The strip between the header and the content: the pane is still under the pointer, so it stays lit.
+                let seam = header.Bounds.Bottom + 2.0
+                window.MouseMove(Point(100.0, seam))
+                Headless.pump ()
+                test <@ effect.BoxShadow.Count > 0 @>
+
+                // Outside the pane it goes out again.
+                window.MouseMove(Point(2.0, 2.0))
+                Headless.pump ()
+                test <@ effect.BoxShadow.Count = 0 @>
+            finally
+                window.Close()
+                Headless.pump ())
