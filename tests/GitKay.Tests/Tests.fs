@@ -967,6 +967,29 @@ summary Another line
         test <@ PatchBuilder.build PatchBuilder.Forward raw [] = Error PatchBuilder.NothingSelected @>
 
     [<Fact>]
+    let ``amending shows what the commit will contain, and unstaging takes a file out of it`` () =
+        withTempRepository (fun root repo ->
+            let gitDir = Path.Combine(root, ".git")
+            commitFile repo root "a.txt" "one\n" "first" |> ignore
+            writeFile root "a.txt" "two\n"
+            writeFile root "b.txt" "new\n"
+            run gitDir (GitService.stageFiles [ "a.txt"; "b.txt" ])
+            run gitDir (GitService.commit { Amend = false; SignOff = false } "second\n")
+
+            // Without amending the index matches HEAD, so nothing is staged.
+            let plain = run gitDir (GitService.fetchWorkingTreeChanges 3)
+            test <@ plain.Staged.IsEmpty @>
+
+            // Amending shows the commit's own files, as git gui does.
+            let amending = run gitDir (GitService.fetchWorkingTreeChangesFor true 3)
+            test <@ amending.Staged |> List.map (fun file -> file.NewPath) = [ "a.txt"; "b.txt" ] @>
+
+            // Unstaging while amending takes that file back to the commit being replaced.
+            run gitDir (GitService.unstageFilesFor true [ "b.txt" ])
+            let afterUnstage = run gitDir (GitService.fetchWorkingTreeChangesFor true 3)
+            test <@ afterUnstage.Staged |> List.map (fun file -> file.NewPath) = [ "a.txt" ] @>)
+
+    [<Fact>]
     let ``commit uses the message, amends, and reports hook failures`` () =
         withTempRepository (fun root repo ->
             let gitDir = Path.Combine(root, ".git")

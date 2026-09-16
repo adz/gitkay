@@ -275,6 +275,14 @@ public partial class MainWindow : Window, IVimCommands {
             return;
         }
 
+        // F5 rereads refs from anywhere, as the menu says it does.
+        if (e.Key == Key.F5 && _projection is { } refresh) {
+            refresh.RereadRefs();
+            refresh.RefreshWorkingTree();
+            e.Handled = true;
+            return;
+        }
+
         // F1 toggles the shortcut sheet; so does ? outside the panes, where vim's ? search doesn't apply. Esc closes it.
         if (_projection is { } help) {
             var questionMark = e.Key == Key.Oem2 && e.KeyModifiers == KeyModifiers.Shift && !typingInTextBox && (FocusedPane == Pane.None || help.IsShortcutHelpOpen);

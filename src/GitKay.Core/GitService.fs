@@ -698,17 +698,33 @@ module GitService =
             { OldPath = "/dev/null"; NewPath = path; Hunks = []; NewLineCount = None }
 
     /// <summary>The staged, unstaged and untracked diffs, with <paramref name="contextLines"/> lines of context.</summary>
-    let fetchWorkingTreeChanges (contextLines: int) : Flow<GitEnv, GitError, WorkingTreeChanges> =
+    /// <summary>The commit HEAD would replace when amending, or None on a repository's first commit.</summary>
+    let private tryAmendBase : Flow<GitEnv, GitError, string option> =
+        plainGit [ "rev-parse"; "--verify"; "--quiet"; "HEAD^" ]
+        |> Flow.map (fun output -> let hash = output.Trim() in if hash = "" then None else Some hash)
+        |> Flow.orElseWith (fun _ -> Flow.ok None)
+
+    /// <summary>
+    /// The staged, unstaged and untracked diffs. When <paramref name="amending"/> is set the staged section is the
+    /// index against the commit HEAD would replace, so it shows what the amended commit will contain, as git gui does.
+    /// </summary>
+    let fetchWorkingTreeChangesFor (amending: bool) (contextLines: int) : Flow<GitEnv, GitError, WorkingTreeChanges> =
         flow {
             let context = $"-U{normalizeContextLines contextLines}"
             let! entries = fetchWorkingTreeStatus
-            let! staged = plainGit [ "diff"; "--cached"; "--no-ext-diff"; "--find-renames"; context ] |> Flow.map WorkingTree.parsePatch
+            let! amendBase = if amending then tryAmendBase else Flow.ok None
+            let stagedAgainst = match amendBase with Some hash -> [ hash ] | None -> []
+            let! staged = plainGit ([ "diff"; "--cached"; "--no-ext-diff"; "--find-renames"; context ] @ stagedAgainst) |> Flow.map WorkingTree.parsePatch
             let! unstaged = plainGit [ "diff"; "--no-ext-diff"; context ] |> Flow.map WorkingTree.parsePatch
             let! repoPath = Flow.envWith _.RepoPath
             let untracked =
                 entries |> List.filter _.Untracked |> List.map (fun entry -> readUntracked repoPath entry.Path)
             return { Entries = entries; Staged = staged; Unstaged = unstaged; Untracked = untracked }
         }
+
+    /// <summary>The changes as they stand, without the amend view.</summary>
+    let fetchWorkingTreeChanges (contextLines: int) : Flow<GitEnv, GitError, WorkingTreeChanges> =
+        fetchWorkingTreeChangesFor false contextLines
 
     /// <summary>
     /// One uncommitted file's change in a section with its whole content, for the whole-file view and context
@@ -753,17 +769,23 @@ module GitService =
         if paths.IsEmpty then Flow.succeed ()
         else plainGit ([ "add"; "--all"; "--" ] @ paths) |> Flow.map ignore
 
-    /// <summary>Unstages whole files back to HEAD; before the first commit, removes them from the index.</summary>
-    let unstageFiles (paths: string list) : Flow<GitEnv, GitError, unit> =
+    /// <summary>
+    /// Unstages whole files back to HEAD; before the first commit, removes them from the index. While amending they go
+    /// back to the commit being replaced, which takes them out of the amended commit rather than out of HEAD.
+    /// </summary>
+    let unstageFilesFor (amending: bool) (paths: string list) : Flow<GitEnv, GitError, unit> =
         if paths.IsEmpty then Flow.succeed ()
         else
             flow {
+                let! amendBase = if amending then tryAmendBase else Flow.ok None
                 let! hasHead = plainGit [ "rev-parse"; "--verify"; "--quiet"; "HEAD" ] |> Flow.map (fun _ -> true) |> Flow.orElseWith (fun _ -> Flow.ok false)
-                if hasHead then
-                    do! plainGit ([ "restore"; "--staged"; "--" ] @ paths) |> Flow.map ignore
-                else
-                    do! plainGit ([ "rm"; "--cached"; "--quiet"; "--" ] @ paths) |> Flow.map ignore
+                match amendBase, hasHead with
+                | Some hash, _ -> do! plainGit ([ "restore"; "--staged"; "--source"; hash; "--" ] @ paths) |> Flow.map ignore
+                | None, true -> do! plainGit ([ "restore"; "--staged"; "--" ] @ paths) |> Flow.map ignore
+                | None, false -> do! plainGit ([ "rm"; "--cached"; "--quiet"; "--" ] @ paths) |> Flow.map ignore
             }
+
+    let unstageFiles (paths: string list) : Flow<GitEnv, GitError, unit> = unstageFilesFor false paths
 
     /// <summary>How a built patch is applied.</summary>
     type PatchTarget =

@@ -135,6 +135,18 @@ internal static class HotPaths {
 /// <summary>Headless MainWindow interaction benchmarks: file list mode switch and splitter drag. Usage: ui [repoPath] [hash] [label]</summary>
 internal static class UiInteractions {
     public static void Run(string[] args) {
+        if (args.ElementAtOrDefault(2) is { } settingsLabel && settingsLabel.StartsWith("settingswindow", StringComparison.Ordinal)) {
+            if (settingsLabel.Contains("dark")) Avalonia.Application.Current!.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Dark;
+            var settingsWindow = new SettingsWindow { DataContext = new MainProjection(), Width = 760, Height = 620 };
+            settingsWindow.Show();
+            for (var i = 0; i < 20; i++) { System.Threading.Thread.Sleep(50); Pump(settingsWindow); }
+            using var shot = Avalonia.Headless.HeadlessWindowExtensions.CaptureRenderedFrame(settingsWindow);
+            var settingsPath = args.ElementAtOrDefault(3) ?? $"{settingsLabel}.png";
+            shot!.Save(settingsPath);
+            Console.WriteLine($"saved {settingsPath}");
+            settingsWindow.Close();
+            return;
+        }
         if (args.ElementAtOrDefault(2) is { } commitLabel && commitLabel.StartsWith("commitwindow", StringComparison.Ordinal)) {
             RunCommitWindow(args[0], commitLabel, args.ElementAtOrDefault(3) ?? $"{commitLabel}.png");
             return;
@@ -510,6 +522,18 @@ internal static class UiInteractions {
             projection.ApplyToSelection();
             Settle();
             Console.WriteLine($"status={projection.Status}");
+        }
+        if (label.Contains("amend")) {
+            Console.WriteLine($"before amend unstaged={projection.UnstagedFiles.Count} staged={projection.StagedFiles.Count} rows={projection.Rows.Count} selected={projection.SelectedFile?.Path}");
+            projection.Amend = true;
+            Settle();
+            Console.WriteLine($"after amend unstaged={projection.UnstagedFiles.Count} staged={projection.StagedFiles.Count} rows={projection.Rows.Count} selected={projection.SelectedFile?.Path} message={projection.Message.Split('\n')[0]}");
+            if (label.Contains("commit")) {
+                projection.Commit();
+                Settle();
+                Settle();
+                Console.WriteLine($"after commit unstaged={projection.UnstagedFiles.Count} staged={projection.StagedFiles.Count} rows={projection.Rows.Count} selected={projection.SelectedFile?.Path} status={projection.Status}");
+            }
         }
         if (label.Contains("keys")) projection.IsKeysOpen = true;
         if (label.Contains("hints")) {

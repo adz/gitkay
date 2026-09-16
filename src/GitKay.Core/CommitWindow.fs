@@ -136,7 +136,7 @@ module CommitWindow =
 
     let private scan (model: Model) =
         Cmd.batch
-            [ Cmd.OfFlow.ofFlowLatest "commit window scan" scanJob model.GitEnv (GitService.fetchWorkingTreeChanges 3) (Ok >> ChangesLoaded) (Error >> ChangesLoaded)
+            [ Cmd.OfFlow.ofFlowLatest "commit window scan" scanJob model.GitEnv (GitService.fetchWorkingTreeChangesFor model.Amend 3) (Ok >> ChangesLoaded) (Error >> ChangesLoaded)
               Cmd.OfFlow.ofFlow "current branch" App.runtime model.GitEnv GitService.fetchCurrentBranch BranchLoaded (fun _ -> BranchLoaded "") ]
 
     let private operation (model: Model) (description: string) (committed: bool) (work: Flow<GitService.GitEnv, GitError, unit>) =
@@ -167,7 +167,7 @@ module CommitWindow =
         | Select(list, path) -> { model with Selected = Some(list, path) }, Cmd.none
         | StagePaths [] | UnstagePaths [] -> model, Cmd.none
         | StagePaths paths -> operation model $"Staging {fileCount paths.Length}" false (GitService.stageFiles paths)
-        | UnstagePaths paths -> operation model $"Unstaging {fileCount paths.Length}" false (GitService.unstageFiles paths)
+        | UnstagePaths paths -> operation model $"Unstaging {fileCount paths.Length}" false (GitService.unstageFilesFor model.Amend paths)
         | ApplyLines(_, _, []) -> model, Cmd.none
         | ApplyLines(target, path, lines) ->
             let verb =
@@ -181,12 +181,17 @@ module CommitWindow =
             operation model $"Discarding {fileCount (tracked.Length + untracked.Length)}" false (GitService.discardFiles tracked untracked)
         | SetMessage message -> { model with Message = message }, Cmd.none
         | SetAmend true when not model.Amend ->
-            { model with Amend = true },
-            Cmd.OfFlow.ofFlow "last commit message" App.runtime model.GitEnv GitService.fetchLastCommitMessage AmendMessageLoaded (fun _ -> AmendMessageLoaded "")
+            // Amending shows what the commit will contain, so the staged section is rescanned against its parent.
+            let model = { model with Amend = true }
+            model,
+            Cmd.batch
+                [ Cmd.OfFlow.ofFlow "last commit message" App.runtime model.GitEnv GitService.fetchLastCommitMessage AmendMessageLoaded (fun _ -> AmendMessageLoaded "")
+                  scan model ]
         | SetAmend false when model.Amend ->
             // Put back an empty draft if the message is still the one loaded for amending.
             let message = if model.AmendMessage = Some model.Message then "" else model.Message
-            { model with Amend = false; AmendMessage = None; Message = message }, Cmd.none
+            let model = { model with Amend = false; AmendMessage = None; Message = message }
+            model, scan model
         | SetAmend _ -> model, Cmd.none
         | AmendMessageLoaded loaded when model.Amend ->
             let loaded = loaded.TrimEnd() + "\n"

@@ -53,38 +53,33 @@
 
                         <GroupBox Header="Panes">
                             <Border Padding="12">
-                                <StackPanel Spacing="10">
-                                    <StackPanel Orientation="Horizontal" Spacing="12">
-                                        <TextBlock Text="Space around panes"
-                                                   Foreground="{DynamicResource GitKayTextBrush}"
-                                                   VerticalAlignment="Center" />
-                                        <NumericUpDown Width="110" Minimum="0" Maximum="8" Increment="1" FormatString="0"
+                                <!-- Labels in one column and inputs in the next, so the fields line up down the panel. -->
+                                <Grid ColumnDefinitions="150,Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="10">
+                                    <TextBlock Text="Space around panes" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                        <NumericUpDown Width="120" Minimum="0" Maximum="8" Increment="1" FormatString="0"
                                                        Value="{Binding PaneGap, Mode=TwoWay}" />
-                                        <TextBlock Text="pixels"
-                                                   Foreground="{DynamicResource GitKaySecondaryTextBrush}"
-                                                   VerticalAlignment="Center" />
+                                        <TextBlock Text="pixels" Foreground="{DynamicResource GitKaySecondaryTextBrush}" VerticalAlignment="Center" />
                                     </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="12">
-                                        <TextBlock Text="Effect colour"
-                                                   Foreground="{DynamicResource GitKayTextBrush}"
-                                                   VerticalAlignment="Center" />
-                                        <ComboBox Width="150"
-                                                  ItemsSource="{Binding PaneHoverColors}"
-                                                  SelectedItem="{Binding SelectedPaneHoverColor}">
-                                            <ComboBox.ItemTemplate>
-                                                <DataTemplate x:DataType="local:PaneHoverColorProjection">
-                                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                                        <Border Width="14" Height="14" CornerRadius="3" Background="{Binding Swatch}" VerticalAlignment="Center" />
-                                                        <TextBlock Text="{Binding Label}" VerticalAlignment="Center" />
-                                                    </StackPanel>
-                                                </DataTemplate>
-                                            </ComboBox.ItemTemplate>
-                                        </ComboBox>
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="12">
-                                        <TextBlock Text="On hover"
-                                                   Foreground="{DynamicResource GitKayTextBrush}"
-                                                   VerticalAlignment="Center" />
+                                    <CheckBox Grid.Column="2" Content="Outline panes" IsChecked="{Binding PaneBorder, Mode=TwoWay}" VerticalAlignment="Center"
+                                              ToolTip.Tip="Draw a border around each pane, so the space reads as a frame" />
+
+                                    <TextBlock Grid.Row="1" Text="Effect colour" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                                    <ComboBox Grid.Row="1" Grid.Column="1" Width="280" HorizontalAlignment="Left"
+                                              ItemsSource="{Binding PaneHoverColors}"
+                                              SelectedItem="{Binding SelectedPaneHoverColor}">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="local:PaneHoverColorProjection">
+                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                    <Border Width="14" Height="14" CornerRadius="3" Background="{Binding Swatch}" VerticalAlignment="Center" />
+                                                    <TextBlock Text="{Binding Label}" VerticalAlignment="Center" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+
+                                    <TextBlock Grid.Row="2" Text="On hover" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                                    <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Spacing="8">
                                         <ComboBox Width="150"
                                                   ItemsSource="{Binding PaneHoverEffects}"
                                                   SelectedItem="{Binding SelectedPaneHoverEffect}">
@@ -94,7 +89,7 @@
                                                 </DataTemplate>
                                             </ComboBox.ItemTemplate>
                                         </ComboBox>
-                                        <ComboBox Width="110"
+                                        <ComboBox Width="122"
                                                   ItemsSource="{Binding PaneHoverIntensities}"
                                                   SelectedItem="{Binding SelectedPaneHoverIntensity}"
                                                   ToolTip.Tip="How strong the effect is">
@@ -104,11 +99,11 @@
                                                 </DataTemplate>
                                             </ComboBox.ItemTemplate>
                                         </ComboBox>
-                                        <TextBlock Text="{Binding SelectedPaneHoverEffect.Description}"
-                                                   Foreground="{DynamicResource GitKaySecondaryTextBrush}"
-                                                   VerticalAlignment="Center" TextWrapping="Wrap" />
                                     </StackPanel>
-                                </StackPanel>
+                                    <TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding SelectedPaneHoverEffect.Description}"
+                                               Foreground="{DynamicResource GitKaySecondaryTextBrush}"
+                                               VerticalAlignment="Center" TextWrapping="Wrap" />
+                                </Grid>
                             </Border>
                         </GroupBox>
                     </StackPanel>
