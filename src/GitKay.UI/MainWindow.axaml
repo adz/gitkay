@@ -104,20 +104,24 @@
                                           Data="M1,3h14v1.6H1z M1,7.2h14v1.6H1z M1,11.4h14v1.6H1z"
                                           Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
                                 <Button.Flyout>
+                                    <!-- Ordered by how often it's reached for: refreshing, then help, then what's shown, then the repository. -->
                                     <MenuFlyout Placement="BottomEdgeAlignedLeft">
-                                        <MenuItem Header="_Open repository…" Click="OnOpenRepositoryMenuItemClick" />
-                                        <MenuItem Header="_Commit…" Click="OnCommitWindowMenuItemClick" InputGesture="Ctrl+Shift+C" />
+                                        <MenuItem Header="_Reread refs" Command="{Binding RereadRefs}" InputGesture="F5" />
                                         <MenuItem Header="_Fetch all remotes" Click="OnFetchAllMenuItemClick" />
-                                        <MenuItem Header="_Reread refs" Command="{Binding RereadRefs}" />
-
+                                        <Separator />
+                                        <MenuItem Header="_Keyboard shortcuts" Command="{Binding ToggleShortcutHelpCommand}" InputGesture="F1" />
                                         <MenuItem Header="_Settings…" Click="OnSettingsMenuItemClick" />
-                                        <MenuItem Header="_Diagnostics…" Click="OnDiagnosticsMenuItemClick" InputGesture="Ctrl+Shift+D" />
-                                        <MenuItem Header="_About GitKay…" Click="OnAboutMenuItemClick" />
-                                    <MenuItem Header="_Keyboard shortcuts" Command="{Binding ToggleShortcutHelpCommand}" InputGesture="F1" />
                                         <Separator />
                                         <MenuItem Header="Show _branch refs" ToggleType="CheckBox" IsChecked="{Binding ShowBranchRefs, Mode=TwoWay}" />
-                                        <MenuItem Header="_All branches (--all)" ToggleType="CheckBox" IsChecked="{Binding IsAllBranches, Mode=TwoWay}" />
                                         <MenuItem Header="Show _stashes" ToggleType="CheckBox" IsChecked="{Binding ShowStashes, Mode=TwoWay}" />
+                                        <MenuItem Header="_All branches (--all)" ToggleType="CheckBox" IsChecked="{Binding IsAllBranches, Mode=TwoWay}" />
+                                        <Separator />
+                                        <MenuItem Header="_Open repository…" Click="OnOpenRepositoryMenuItemClick" />
+                                        <MenuItem Header="_Commit…" Click="OnCommitWindowMenuItemClick" InputGesture="Ctrl+Shift+C"
+                                                  IsEnabled="{Binding HasUncommittedChanges}" />
+                                        <Separator />
+                                        <MenuItem Header="_About GitKay…" Click="OnAboutMenuItemClick" />
+                                        <MenuItem Header="E_xit" Click="OnExitMenuItemClick" />
                                     </MenuFlyout>
                                 </Button.Flyout>
                             </Button>
@@ -264,6 +268,11 @@
                                 <Style Selector="TextBox.field.invalid:focus /template/ Border#PART_BorderElement">
                                     <Setter Property="BorderBrush" Value="{DynamicResource GitKayRemovedAccentBrush}" />
                                 </Style>
+                                <Style Selector="AutoCompleteBox.field">
+                                    <Setter Property="Height" Value="30" />
+                                    <Setter Property="MinHeight" Value="30" />
+                                    <Setter Property="FontSize" Value="12" />
+                                </Style>
                                 <Style Selector="TextBox.field">
                                     <!-- Room for the text's descenders: at 26px the placeholder's lower quarter was clipped. -->
                                     <Setter Property="Height" Value="30" />
@@ -276,21 +285,41 @@
                             <TextBlock Classes="label" Text="Message" />
                             <TextBox Classes="field" Grid.Column="1" Text="{Binding AdvancedMessage, Mode=TwoWay}" PlaceholderText="headline or body" />
                             <TextBlock Classes="label" Grid.Column="2" Text="Author" />
-                            <TextBox Classes="field" Grid.Column="3" Text="{Binding AdvancedAuthor, Mode=TwoWay}" PlaceholderText="name or email" />
+                            <AutoCompleteBox Classes="field" Grid.Column="3" Text="{Binding AdvancedAuthor, Mode=TwoWay}" Watermark="name or email"
+                                             ItemsSource="{Binding AuthorSuggestions}" FilterMode="Contains" MinimumPrefixLength="1" />
                             <TextBlock Classes="label" Grid.Column="4" Text="Hash" />
-                            <TextBox Classes="field" Grid.Column="5" Text="{Binding AdvancedHash, Mode=TwoWay}" PlaceholderText="full or partial" />
+                            <AutoCompleteBox Classes="field" Grid.Column="5" Text="{Binding AdvancedHash, Mode=TwoWay}" Watermark="full or partial"
+                                             ItemsSource="{Binding HashSuggestions}" FilterMode="StartsWith" MinimumPrefixLength="1" />
 
                             <TextBlock Classes="label" Grid.Row="1" Text="Branch / tag" />
-                            <TextBox Classes="field" Grid.Row="1" Grid.Column="1" Text="{Binding AdvancedRef, Mode=TwoWay}" PlaceholderText="e.g. main, v1.0" />
+                            <AutoCompleteBox Classes="field" Grid.Row="1" Grid.Column="1" Text="{Binding AdvancedRef, Mode=TwoWay}" Watermark="e.g. main, v1.0"
+                                             ItemsSource="{Binding RefSuggestions}" FilterMode="Contains" MinimumPrefixLength="0" />
                             <TextBlock Classes="label" Grid.Row="1" Grid.Column="2" Text="Path" />
-                            <TextBox Classes="field" Grid.Row="1" Grid.Column="3" Text="{Binding AdvancedPath, Mode=TwoWay}" PlaceholderText="file or folder" />
+                            <AutoCompleteBox Classes="field" Grid.Row="1" Grid.Column="3" Text="{Binding AdvancedPath, Mode=TwoWay}" Watermark="file or folder"
+                                             ItemsSource="{Binding PathSuggestions}" FilterMode="Contains" MinimumPrefixLength="1" />
                             <TextBlock Classes="label" Grid.Row="1" Grid.Column="4" Text="Diff" />
                             <TextBox Classes="field" Grid.Row="1" Grid.Column="5" Text="{Binding AdvancedDiff, Mode=TwoWay}" PlaceholderText="added or removed text" />
 
                             <TextBlock Classes="label" Grid.Row="2" Text="After" />
-                            <TextBox Classes="field" Classes.invalid="{Binding IsAfterDateInvalid}" Grid.Row="2" Grid.Column="1" Text="{Binding AdvancedAfter, Mode=TwoWay}" PlaceholderText="yyyy-mm-dd" />
+                            <Grid Grid.Row="2" Grid.Column="1" ColumnDefinitions="*,Auto">
+                                <TextBox Classes="field" Classes.invalid="{Binding IsAfterDateInvalid}" Text="{Binding AdvancedAfter, Mode=TwoWay}" PlaceholderText="2026, 2026-09, 2026-09-16T07:13" />
+                                <Button Grid.Column="1" Classes="field" Height="30" Padding="6,0" Margin="4,0,0,0" Tag="after"
+                                        Click="OnPickDateClick" ToolTip.Tip="Pick a date and time">
+                                    <Path Width="14" Height="14" Stretch="Uniform" StrokeThickness="1.2" StrokeLineCap="Round"
+                                          Data="M2.5,3.5 H13.5 V13.5 H2.5 Z M2.5,6.5 H13.5 M5.5,1.8 V4 M10.5,1.8 V4"
+                                          Stroke="{DynamicResource GitKaySecondaryTextBrush}" />
+                                </Button>
+                            </Grid>
                             <TextBlock Classes="label" Grid.Row="2" Grid.Column="2" Text="Before" />
-                            <TextBox Classes="field" Classes.invalid="{Binding IsBeforeDateInvalid}" Grid.Row="2" Grid.Column="3" Text="{Binding AdvancedBefore, Mode=TwoWay}" PlaceholderText="yyyy-mm-dd" />
+                            <Grid Grid.Row="2" Grid.Column="3" ColumnDefinitions="*,Auto">
+                                <TextBox Classes="field" Classes.invalid="{Binding IsBeforeDateInvalid}" Text="{Binding AdvancedBefore, Mode=TwoWay}" PlaceholderText="2026, 2026-09, 2026-09-16T07:13" />
+                                <Button Grid.Column="1" Classes="field" Height="30" Padding="6,0" Margin="4,0,0,0" Tag="before"
+                                        Click="OnPickDateClick" ToolTip.Tip="Pick a date and time">
+                                    <Path Width="14" Height="14" Stretch="Uniform" StrokeThickness="1.2" StrokeLineCap="Round"
+                                          Data="M2.5,3.5 H13.5 V13.5 H2.5 Z M2.5,6.5 H13.5 M5.5,1.8 V4 M10.5,1.8 V4"
+                                          Stroke="{DynamicResource GitKaySecondaryTextBrush}" />
+                                </Button>
+                            </Grid>
                             <Button Grid.Row="2" Grid.Column="5" HorizontalAlignment="Right" Height="30" Padding="10,0"
                                     Content="Clear" Command="{Binding ClearAdvancedSearchCommand}" />
                         </Grid>

@@ -174,7 +174,32 @@ module GitSearch =
     let spans (queries: TextQuery list) (text: string) : struct (int * int) list =
         queries |> List.collect (fun query -> query.Spans text)
 
-    /// Absolute dates, or git-style relative ones: "2 weeks ago", "3.days.ago", "yesterday".
+    /// <summary>
+    /// A date written to any precision: a year, year/month, a day, or a day with hours, minutes or seconds
+    /// (2026, 2026-09, 2026/09/16, 2026-09-16T07, 2026-09-16 07:13:45). Separators may be - or /, and the time may
+    /// follow a T or a space. The instant returned is where that period starts, so <c>after:</c> includes it and
+    /// <c>before:</c> stops at it.
+    /// </summary>
+    let private tryParseParts (text: string) =
+        let m = Regex.Match(text.Trim(), @"^(\d{4})(?:[-/](\d{1,2})(?:[-/](\d{1,2})(?:[T ](\d{1,2})(?::(\d{1,2})(?::(\d{1,2}))?)?)?)?)?$")
+        if not m.Success then
+            None
+        else
+            let part (group: int) fallback =
+                if m.Groups[group].Success then int m.Groups[group].Value else fallback
+            let year = int m.Groups[1].Value
+            let month = part 2 1
+            let day = part 3 1
+            let hour = part 4 0
+            let minute = part 5 0
+            let second = part 6 0
+            if month < 1 || month > 12 || day < 1 || day > DateTime.DaysInMonth(year, month) || hour > 23 || minute > 59 || second > 59 then
+                None
+            else
+                let local = DateTime(year, month, day, hour, minute, second, DateTimeKind.Local)
+                Some(DateTimeOffset(local).ToUnixTimeSeconds())
+
+    /// Absolute dates to any precision, or git-style relative ones: "2 weeks ago", "3.days.ago", "yesterday".
     let tryParseDate (now: DateTimeOffset) (text: string) =
         let normalized = text.Trim().ToLowerInvariant().Replace('.', ' ').Replace('_', ' ')
         let relative = Regex.Match(normalized, @"^(\d+)\s*(second|minute|hour|day|week|month|year)s?(\s+ago)?$")
@@ -193,9 +218,12 @@ module GitSearch =
                 | _ -> now.AddYears(-(int amount))
             Some(date.ToUnixTimeSeconds())
         else
-            match DateTimeOffset.TryParse(text, Globalization.CultureInfo.InvariantCulture, Globalization.DateTimeStyles.AssumeLocal) with
-            | true, date -> Some(date.ToUnixTimeSeconds())
-            | _ -> None
+            match tryParseParts text with
+            | Some seconds -> Some seconds
+            | None ->
+                match DateTimeOffset.TryParse(text, Globalization.CultureInfo.InvariantCulture, Globalization.DateTimeStyles.AssumeLocal) with
+                | true, date -> Some(date.ToUnixTimeSeconds())
+                | _ -> None
 
     /// <summary>An <c>after:</c> or <c>before:</c> value that isn't a date, which a search ignores.</summary>
     type DateProblem = { Field: Field; Text: string }

@@ -27,6 +27,9 @@ public sealed class AboutWindow : Window {
         }
     }
 
+    /// <summary>Opens the diagnostics window; set by the window that shows this one.</summary>
+    public Action? DiagnosticsRequested { get; init; }
+
     public AboutWindow() {
         Title = "About GitKay";
         Icon = AppIcon.Window;
@@ -66,6 +69,10 @@ public sealed class AboutWindow : Window {
         }
 
         Action("Releases", () => Open("https://github.com/adz/gitkay/releases"));
+        Action("Diagnostics", () => {
+            Close();
+            DiagnosticsRequested?.Invoke();
+        });
         Action("Copy version", async () => {
             if (Clipboard is { } clipboard) await clipboard.SetTextAsync($"GitKay {version}{(commit == null ? "" : $" ({commit})")} · {details}");
         });

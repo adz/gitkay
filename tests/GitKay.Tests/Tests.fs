@@ -3097,6 +3097,46 @@ module DiffSearchBorrowTests =
         finally
             IO.Directory.Delete(root, true)
 
+module SearchFieldSuggestionTests =
+
+    [<Fact>]
+    let ``search fields suggest refs, authors and hashes from the loaded history`` () =
+        let projection = MainProjection()
+        let model0, _ = App.init [||]
+        let commitOf hash name email refs : Models.Commit =
+            { Hash = hash; AuthorName = name; AuthorEmail = email; Timestamp = 1L; Parents = []; Subject = "Subject"; Message = "Subject"; Refs = refs }
+        let a = commitOf (String.replicate 40 "a") "Ada Lovelace" "ada@example.com" [ RefHelpers.branchRef "main"; RefHelpers.tagRef "v1.0" ]
+        let b = commitOf (String.replicate 40 "b") "Alan Turing" "alan@example.com" [ RefHelpers.remoteRef "origin/main" ]
+        projection.Update { model0 with Commits = Graph.calculateLanes [ a; b ]; ShowBranchRefs = true }
+
+        test <@ List.ofSeq projection.RefSuggestions = [ "main"; "origin/main"; "v1.0" ] @>
+        test <@ List.ofSeq projection.AuthorSuggestions = [ "Ada Lovelace"; "ada@example.com"; "Alan Turing"; "alan@example.com" ] @>
+        test <@ List.ofSeq projection.HashSuggestions = [ CommitFormat.shortHash a.Hash; CommitFormat.shortHash b.Hash ] @>
+
+module SearchDateTests =
+
+    let private now = DateTimeOffset(DateTime(2026, 9, 16, 12, 0, 0, DateTimeKind.Local))
+    let private parse text = GitSearch.tryParseDate now text
+    let private local (year, month, day, hour, minute, second) =
+        Some(DateTimeOffset(DateTime(year, month, day, hour, minute, second, DateTimeKind.Local)).ToUnixTimeSeconds())
+
+    [<Fact>]
+    let ``dates parse at any precision, with or without a time`` () =
+        test <@ parse "2026" = local (2026, 1, 1, 0, 0, 0) @>
+        test <@ parse "2026-09" = local (2026, 9, 1, 0, 0, 0) @>
+        test <@ parse "2026/09/16" = local (2026, 9, 16, 0, 0, 0) @>
+        test <@ parse "2026-09-16T07" = local (2026, 9, 16, 7, 0, 0) @>
+        test <@ parse "2026-09-16T07:13" = local (2026, 9, 16, 7, 13, 0) @>
+        test <@ parse "2026-09-16 07:13:45" = local (2026, 9, 16, 7, 13, 45) @>
+
+    [<Fact>]
+    let ``impossible dates and other text are not dates`` () =
+        test <@ parse "2026-13" = None && parse "2026-02-30" = None && parse "2026-09-16T24:00" = None @>
+        test <@ parse "last tuesday" = None @>
+        // Relative dates still work.
+        test <@ parse "2 weeks ago" = Some(now.AddDays(-14.0).ToUnixTimeSeconds()) @>
+        test <@ parse "yesterday" = Some(now.AddDays(-1.0).ToUnixTimeSeconds()) @>
+
 module CommitWindowTests =
 
     [<Fact>]

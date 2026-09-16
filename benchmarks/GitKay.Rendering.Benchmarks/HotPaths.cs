@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using Avalonia.VisualTree;
 using Axial;
 using App = GitKay.Core.App;
 using GitKay.Core;
@@ -215,6 +216,13 @@ internal static class UiInteractions {
             if (label.Contains("dark")) Avalonia.Application.Current!.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Dark;
             if (label.Contains("light")) Avalonia.Application.Current!.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Light;
             Pump(window);
+            if (label.Contains("datepicker")) {
+                var pick = window.GetVisualDescendants().OfType<Avalonia.Controls.Button>().First(button => (button.Tag as string) == "after");
+                pick.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+                Pump(window);
+                var popups = window.GetVisualDescendants().OfType<Avalonia.Controls.Calendar>().Count();
+                Console.WriteLine($"calendar popups={popups}");
+            }
             if (label.Contains("hoverfind")) {
                 var box = Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.TextBox>(window, "CommitFindBox")!;
                 // Walk up the visual tree to the window, summing each element's offset.

@@ -513,16 +513,23 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         var x = _lastContextPoint.X;
 
         if (x >= dateX) {
+            // The row shows "yyyy-MM-dd HH:mm": offer the day, and the exact minute for a tighter range.
             var day = commit.Date.Length >= 10 ? commit.Date[..10] : commit.Date;
+            var minute = commit.Date.Length >= 16 ? commit.Date[..16].Replace(' ', 'T') : day;
             yield return Filter($"Commits on or after {day}", "after", day);
             yield return Filter($"Commits before {day}", "before", day);
+            if (minute != day) {
+                yield return Filter($"Commits on or after {commit.Date}", "after", minute);
+                yield return Filter($"Commits before {commit.Date}", "before", minute);
+            }
         }
         else if (x >= authorX) {
             yield return Filter($"Only commits by {commit.Author}", "author", commit.Author);
             yield return Filter("Filter by author…", "author", null);
         }
         else if (x >= hashX) {
-            yield return Filter("Filter by hash…", "hash", null);
+            // A hash names one commit, so going to it beats filtering the list down to it.
+            yield return Filter("Go to commit…", "goto", null);
         }
         else {
             foreach (var badge in commit.RefBadges) {

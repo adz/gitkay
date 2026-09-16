@@ -698,6 +698,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
             _commitsSource = model.Commits;
             ApplyRefVisibility();
+            RefreshSuggestions();
         }
 
         if (commitsChanged || workingTreeChanged) SyncWorkingTreeRow(model);
@@ -718,6 +719,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     /// <summary>Keeps the uncommitted changes row first in the list while the working tree differs from HEAD.</summary>
     private void SyncWorkingTreeRow(GitKay.Core.App.Model model) {
         _workingTreeSource = model.WorkingTree;
+        HasUncommittedChanges = !model.WorkingTree.IsEmpty;
         var shown = Commits.Count > 0 && Commits[0].IsWorkingTree;
         // Only shown above history that starts at HEAD: a filtered or other-branch history has nowhere to attach it.
         var head = Commits.Skip(shown ? 1 : 0).FirstOrDefault();
@@ -866,6 +868,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public void SetDispatch(Action<GitKay.Core.App.Msg> dispatch) {
         _dispatch = dispatch;
     }
+
+    /// <summary>Whether anything is staged, unstaged or untracked, so committing is possible.</summary>
+    [ObservableProperty] private bool _hasUncommittedChanges;
 
     /// <summary>Rereads git status: the working tree changed on disk, or the window regained focus.</summary>
     public void RefreshWorkingTree() => _dispatch?.Invoke(GitKay.Core.App.Msg.RefreshWorkingTree);
@@ -1166,6 +1171,32 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public string AdvancedDiff { get => GetFieldText(GitKay.Core.GitSearch.Field.ChangedLine); set => SetFieldText(GitKay.Core.GitSearch.Field.ChangedLine, value); }
     public string AdvancedAfter { get => GetFieldText(GitKay.Core.GitSearch.Field.After); set => SetFieldText(GitKay.Core.GitSearch.Field.After, value); }
     public string AdvancedBefore { get => GetFieldText(GitKay.Core.GitSearch.Field.Before); set => SetFieldText(GitKay.Core.GitSearch.Field.Before, value); }
+
+    // ----- What the advanced search fields suggest, read from the loaded history. -----
+
+    /// <summary>Branch, remote and tag names on loaded commits.</summary>
+    public IEnumerable<string> RefSuggestions =>
+        Commits.SelectMany(commit => commit.RefNames.Select(reference => reference.Name)).Distinct(StringComparer.Ordinal).OrderBy(name => name, StringComparer.Ordinal);
+
+    /// <summary>Author names and email addresses on loaded commits.</summary>
+    public IEnumerable<string> AuthorSuggestions =>
+        Commits.SelectMany(commit => new[] { commit.Author, commit.AuthorEmail })
+            .Where(text => !string.IsNullOrWhiteSpace(text))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(text => text, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Short hashes of loaded commits.</summary>
+    public IEnumerable<string> HashSuggestions => Commits.Select(commit => commit.Hash);
+
+    /// <summary>Paths in the selected commit, and every path in its tree once "All files" has read it.</summary>
+    public IEnumerable<string> PathSuggestions =>
+        SelectedDiffFiles.Select(DiffFileTree.PathOf).Concat(UnchangedFilePaths()).Distinct(StringComparer.Ordinal).OrderBy(path => path, StringComparer.Ordinal);
+
+    /// <summary>Refreshes the suggestion lists; the fields read them when they open.</summary>
+    private void RefreshSuggestions() {
+        foreach (var name in new[] { nameof(RefSuggestions), nameof(AuthorSuggestions), nameof(HashSuggestions), nameof(PathSuggestions) })
+            OnPropertyChanged(name);
+    }
 
     public bool HasAuthorFilter => !string.IsNullOrEmpty(AdvancedAuthor);
     // Funnels mark explicit field filters only; a plain search isn't a column filter.

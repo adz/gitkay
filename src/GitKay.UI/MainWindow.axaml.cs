@@ -4,6 +4,9 @@ using System;
 using System.ComponentModel;
 using System.Linq;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Primitives.PopupPositioning;
+using Avalonia.Layout;
 using Avalonia.Input.Platform;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -380,6 +383,10 @@ public partial class MainWindow : Window, IVimCommands {
 
     private void OnCommitFilterRequested(string field, string? value) {
         if (_projection is not { } projection) return;
+        if (field == "goto") {
+            OpenPalette(PaletteMode.Refs);
+            return;
+        }
         if (value != null) {
             projection.ApplyColumnFilter(field, value);
             return;
@@ -404,7 +411,67 @@ public partial class MainWindow : Window, IVimCommands {
         };
     }
 
-    private async void OnAboutMenuItemClick(object? sender, RoutedEventArgs e) => await new AboutWindow().ShowDialog(this);
+    private async void OnAboutMenuItemClick(object? sender, RoutedEventArgs e) {
+        var about = new AboutWindow { DiagnosticsRequested = ShowDiagnostics };
+        await about.ShowDialog(this);
+    }
+
+    private void OnExitMenuItemClick(object? sender, RoutedEventArgs e) => Close();
+
+    /// <summary>The calendar button beside a date field: pick a day, and optionally a time, into that field.</summary>
+    private void OnPickDateClick(object? sender, RoutedEventArgs e) {
+        if (_projection is not { } projection || sender is not Button button) return;
+        var isAfter = (button.Tag as string) == "after";
+        var current = isAfter ? projection.AdvancedAfter : projection.AdvancedBefore;
+
+        var calendar = new Calendar { SelectionMode = CalendarSelectionMode.SingleDate };
+        if (DateTime.TryParse(current.Replace('T', ' '), out var parsed)) calendar.SelectedDate = parsed.Date;
+        var withTime = new CheckBox { Content = "Include time", FontSize = 12, IsChecked = current.Contains('T') };
+        var time = new TimePicker { ClockIdentifier = "24HourClock", MinuteIncrement = 1, IsVisible = withTime.IsChecked == true };
+        if (DateTime.TryParse(current.Replace('T', ' '), out var parsedTime) && current.Contains('T')) time.SelectedTime = parsedTime.TimeOfDay;
+        withTime.IsCheckedChanged += (_, _) => time.IsVisible = withTime.IsChecked == true;
+
+        var popup = new Popup {
+            PlacementTarget = button,
+            Placement = PlacementMode.BottomEdgeAlignedRight,
+            IsLightDismissEnabled = true,
+        };
+        var apply = new Button { Content = "Use", Padding = new Thickness(12, 4), IsDefault = true };
+        apply.Click += (_, _) => {
+            if (calendar.SelectedDate is { } date) {
+                var text = date.ToString("yyyy-MM-dd");
+                if (withTime.IsChecked == true && time.SelectedTime is { } chosen) text += "T" + chosen.ToString("hh\\:mm");
+                if (isAfter) projection.AdvancedAfter = text;
+                else projection.AdvancedBefore = text;
+            }
+            popup.IsOpen = false;
+        };
+        var clear = new Button { Content = "Clear", Padding = new Thickness(12, 4) };
+        clear.Click += (_, _) => {
+            if (isAfter) projection.AdvancedAfter = "";
+            else projection.AdvancedBefore = "";
+            popup.IsOpen = false;
+        };
+
+        var panel = new StackPanel { Margin = new Thickness(10), Spacing = 8, Children = { calendar, withTime, time } };
+        panel.Children.Add(new StackPanel {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            Children = { clear, apply },
+        });
+        var border = new Border { Child = panel, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6) };
+        border[!Border.BackgroundProperty] = this.GetResourceObservable("GitKaySurfaceBrush").ToBinding();
+        border[!Border.BorderBrushProperty] = this.GetResourceObservable("GitKayBorderBrush").ToBinding();
+        popup.Child = border;
+
+        // The overlay layer hosts it above the window's content, wherever the button happens to sit.
+        var overlay = OverlayLayer.GetOverlayLayer(this);
+        if (overlay == null) return;
+        overlay.Children.Add(popup);
+        popup.Closed += (_, _) => overlay.Children.Remove(popup);
+        popup.IsOpen = true;
+    }
 
     // ----- File filter chip -----
 
