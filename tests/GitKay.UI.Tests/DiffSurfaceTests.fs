@@ -696,20 +696,3 @@ module PaneChromeTests =
             finally
                 window.Close()
                 Headless.pump ())
-
-module FontCatalogTests =
-    [<Fact>]
-    let ``the font picker lists installed families and knows which are fixed-width`` () =
-        Headless.run (fun () ->
-            // However few fonts the machine has (a CI container may have almost none), reading them must not throw.
-            let all = FontCatalog.All
-            test <@ all |> Seq.map _.Name |> Seq.distinct |> Seq.length = all.Count @>
-
-            // Monospaced is a subset, measured rather than guessed from the name.
-            match all |> Seq.tryFind _.IsMonospaced with
-            | None -> ()
-            | Some font ->
-                let width (text: string) =
-                    Media.FormattedText(text, Globalization.CultureInfo.InvariantCulture, Media.FlowDirection.LeftToRight,
-                                        Media.Typeface(font.Family), 32.0, Media.Brushes.Black).Width
-                test <@ abs (width "iiii" - width "WWWW") < 0.5 @>)

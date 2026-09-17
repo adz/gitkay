@@ -3188,18 +3188,23 @@ module DiffSearchBorrowTests =
             use watcher = WorkingTreeWatcher.TryStart(root, gitDir, fun () -> Threading.Interlocked.Increment(&count) |> ignore)
             test <@ not (isNull watcher) @>
             let settle () = Threading.Thread.Sleep 900
+            // How many reports the edits produce depends on how the machine batches them; that there is at least one,
+            // and none at all for the files GitKay ignores, is what the watcher promises.
+            let waitForReport previous =
+                let deadline = DateTime.UtcNow.AddSeconds 10.0
+                while count <= previous && DateTime.UtcNow < deadline do Threading.Thread.Sleep 50
+                count
 
             IO.File.WriteAllText(IO.Path.Combine(gitDir, "objects", "ab"), "x")
             settle ()
             test <@ count = 0 @>
 
             for i in 1..5 do IO.File.WriteAllText(IO.Path.Combine(root, $"file{i}.txt"), "x")
-            settle ()
-            test <@ count = 1 @>
+            let afterEdits = waitForReport 0
+            test <@ afterEdits >= 1 @>
 
             IO.File.WriteAllText(IO.Path.Combine(gitDir, "index"), "x")
-            settle ()
-            test <@ count = 2 @>
+            test <@ waitForReport afterEdits > afterEdits @>
         finally
             IO.Directory.Delete(root, true)
 
