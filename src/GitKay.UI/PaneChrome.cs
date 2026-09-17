@@ -58,6 +58,10 @@ internal sealed class PaneChrome {
         effect.CornerRadius = new CornerRadius(6);
         effect.Transitions = [new Avalonia.Animation.DoubleTransition { Property = Visual.OpacityProperty, Duration = TimeSpan.FromMilliseconds(140) }];
         effect.Opacity = 0;
+        // Theme brushes can only be found once the pane is in the tree, and they change with the theme: look again
+        // whenever either happens, or every style resolves to the same fallback colour.
+        effect.AttachedToVisualTree += (_, _) => ApplyPane(pane);
+        effect.ActualThemeVariantChanged += (_, _) => ApplyPane(pane);
         ApplyPane(pane);
     }
 
@@ -91,10 +95,14 @@ internal sealed class PaneChrome {
         ApplySeparators();
     }
 
+    /// <summary>A theme brush by name, or null when it isn't there (a pane not yet in the tree, or a bare test theme).</summary>
+    private static IBrush? Brush(Border effect, string key) =>
+        effect.TryFindResource(key, effect.ActualThemeVariant, out var found) ? found as IBrush : null;
+
     /// <summary>One of the chosen colours, or the theme's accent when following it.</summary>
     private static Color Resolve(Border effect, GitKay.Core.PaneEffectColor color) {
         if (GitKay.Core.PaneEffectColorModule.hex(color) is { } hex && Color.TryParse(hex.Value, out var chosen)) return chosen;
-        return effect.FindResource("GitKayAccentBrush") is ISolidColorBrush accent ? accent.Color : Color.FromRgb(0x58, 0xA6, 0xFF);
+        return Brush(effect, "GitKayAccentBrush") is ISolidColorBrush accent ? accent.Color : Color.FromRgb(0x58, 0xA6, 0xFF);
     }
 
     /// <summary>The colour at an alpha scaled by the chosen intensity.</summary>
@@ -103,16 +111,15 @@ internal sealed class PaneChrome {
     private void ApplyPane(Pane pane) {
         var color = Resolve(pane.Effect, _settings.EffectColor);
         var isDark = pane.Effect.ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark
-                     || (pane.Effect.FindResource("GitKayWindowBrush") is ISolidColorBrush window && window.Color.R + window.Color.G + window.Color.B < 3 * 128);
+                     || (Brush(pane.Effect, "GitKayWindowBrush") is ISolidColorBrush window && window.Color.R + window.Color.G + window.Color.B < 3 * 128);
 
         // The highlight stays readable at low intensities, so it fades more gently than the halo.
         var outline = (byte)Math.Round(0xD0 * Math.Sqrt(_intensity));
         _focusOutline = new SolidColorBrush(Color.FromArgb(outline, color.R, color.G, color.B));
         _restOutline = _settings.BorderStyle switch {
             { IsCustomBorder: true } => new SolidColorBrush(Resolve(pane.Effect, _settings.BorderColor)),
-            { IsNormalBorder: true } => pane.Effect.FindResource("GitKayBorderBrush") as IBrush ?? Brushes.Gray,
-            _ => pane.Effect.FindResource("GitKayHairlineBrush") as IBrush
-                 ?? pane.Effect.FindResource("GitKayBorderBrush") as IBrush ?? Brushes.Gray,
+            { IsNormalBorder: true } => Brush(pane.Effect, "GitKayBorderBrush") ?? Brushes.Gray,
+            _ => Brush(pane.Effect, "GitKayPaneSubtleBorderBrush") ?? Brush(pane.Effect, "GitKayHairlineBrush") ?? Brushes.DimGray,
         };
         pane.Effect.Margin = new Thickness(Math.Max(0, _settings.Gap - 1));
         _focusShadow = _settings.Effect switch {

@@ -607,9 +607,11 @@ module SyntaxHighlightingTests =
         test <@ kinds SyntaxFlavour.PlainText "# not a comment" = [ "# not a comment", HighlightKind.Plain ] @>
 
 module PaneChromeTests =
-    let private settings effect highlight border =
+    let private styled effect highlight border style =
         PaneChrome.Settings(4.0, true, highlight, effect, PaneEffectColor.AccentEffectColor, PaneEffectIntensity.FullIntensity,
-                            border, PaneBorderStyle.SubtleBorder, PaneEffectColor.AccentEffectColor, 1.0, border)
+                            border, style, PaneEffectColor.PinkEffectColor, 3.0, border)
+
+    let private settings effect highlight border = styled effect highlight border PaneBorderStyle.SubtleBorder
 
     [<Fact>]
     let ``pane chrome follows the focused pane, not the pointer`` () =
@@ -627,6 +629,9 @@ module PaneChromeTests =
             grid.Children.Add content
             grid.Children.Add effect
             let window = Window(Width = 200.0, Height = 200.0, Content = grid)
+            // The app's palette isn't loaded under the bare test theme, so the brushes each style asks for go here.
+            window.Resources.Add("GitKayPaneSubtleBorderBrush", Media.SolidColorBrush(Media.Color.Parse "#2B333C"))
+            window.Resources.Add("GitKayBorderBrush", Media.SolidColorBrush(Media.Color.Parse "#3C444D"))
             let chrome = PaneChrome()
             chrome.Add("diff", effect, header, content)
             chrome.Update(settings PaneFocusEffect.PaneGlow false false)
@@ -668,6 +673,17 @@ module PaneChromeTests =
                 chrome.Update(settings PaneFocusEffect.PaneGlow false true)
                 Headless.pump ()
                 test <@ effect.BorderThickness.Top = 1.0 && separator.Opacity = 0.0 @>
+
+                // Each border style is its own edge: subtle, normal, and one the user chose outright.
+                let brushOf () = effect.BorderBrush |> string
+                chrome.Update(styled PaneFocusEffect.PaneGlow false true PaneBorderStyle.SubtleBorder)
+                let subtle = brushOf ()
+                chrome.Update(styled PaneFocusEffect.PaneGlow false true PaneBorderStyle.NormalBorder)
+                let normal = brushOf ()
+                test <@ subtle <> normal @>
+
+                chrome.Update(styled PaneFocusEffect.PaneGlow false true PaneBorderStyle.CustomBorder)
+                test <@ brushOf () <> normal && effect.BorderThickness.Top = 3.0 @>
             finally
                 window.Close()
                 Headless.pump ())
