@@ -179,7 +179,7 @@
         <Setter Property="Background" Value="Transparent" />
     </Style>
     <Style Selector="GridSplitter:pointerover">
-        <Setter Property="Background" Value="{DynamicResource GitKayBorderBrush}" />
+        <Setter Property="Background" Value="{DynamicResource GitKaySplitterHoverBrush}" />
     </Style>
 
     <!-- Hover and press land on one colour straight away: crossfading between two themes' brushes reads as a flash. -->
