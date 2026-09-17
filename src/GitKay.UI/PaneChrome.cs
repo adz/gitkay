@@ -56,7 +56,9 @@ internal sealed class PaneChrome {
         // Above the pane, so the glow reads on its edge as well as in the gap; it never takes pointer input.
         effect.ZIndex = 20;
         effect.CornerRadius = new CornerRadius(6);
-        effect.Transitions = [new Avalonia.Animation.DoubleTransition { Property = Visual.OpacityProperty, Duration = TimeSpan.FromMilliseconds(140) }];
+        // No crossfade: while one pane faded out and the next faded in, both glowed at once and their edges added up
+        // into a bright bar along the splitter between them. Focus moves in one step, as the pane keys do.
+        effect.Transitions = null;
         effect.Opacity = 0;
         // Theme brushes can only be found once the pane is in the tree, and they change with the theme: look again
         // whenever either happens, or every style resolves to the same fallback colour.
