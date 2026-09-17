@@ -165,7 +165,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private bool _paneBorder = GitKay.Core.SettingsModule.defaults.PaneBorder;
 
     /// <summary>Whether the pane holding the keys is shown at all.</summary>
-    [ObservableProperty] private bool _paneFocusIndicator = GitKay.Core.SettingsModule.defaults.PaneFocusIndicator;
+    [ObservableProperty] private bool _paneDimUnfocused = GitKay.Core.SettingsModule.defaults.PaneDimUnfocused;
 
     /// <summary>Whether the focused pane's edge is brightened.</summary>
     [ObservableProperty] private bool _paneFocusHighlight = GitKay.Core.SettingsModule.defaults.PaneFocusHighlight;
@@ -178,7 +178,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     partial void OnPaneBorderChanged(bool value) => PaneChromeChanged?.Invoke();
 
-    partial void OnPaneFocusIndicatorChanged(bool value) => PaneChromeChanged?.Invoke();
+    partial void OnPaneDimUnfocusedChanged(bool value) => PaneChromeChanged?.Invoke();
 
     partial void OnPaneFocusHighlightChanged(bool value) => PaneChromeChanged?.Invoke();
 
@@ -362,7 +362,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             SelectedPaneEffectColor = PaneEffectColors.FirstOrDefault(color => color.Color.Equals(normalized.PaneEffectColor)) ?? PaneEffectColors.First();
             SelectedPaneEffectIntensity = PaneHoverIntensities.FirstOrDefault(intensity => intensity.Intensity.Equals(normalized.PaneEffectIntensity)) ?? PaneHoverIntensities.First();
             HoverToFocus = normalized.HoverFocusesPane;
-            PaneFocusIndicator = normalized.PaneFocusIndicator;
+            PaneDimUnfocused = normalized.PaneDimUnfocused;
             PaneFocusHighlight = normalized.PaneFocusHighlight;
             PaneBorderThickness = normalized.PaneBorderThickness;
             SplitterLinesHidden = normalized.SplitterLinesHidden;
@@ -391,7 +391,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         SelectedThemeMode?.Mode ?? GitKay.Core.SettingsModule.defaults.Theme,
         PaneGap,
         HoverToFocus,
-        PaneFocusIndicator,
+        PaneDimUnfocused,
         PaneFocusHighlight,
         PaneFocusEffect,
         PaneEffectColor,

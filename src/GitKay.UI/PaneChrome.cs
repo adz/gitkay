@@ -18,10 +18,10 @@ namespace GitKay.UI;
 internal sealed class PaneChrome {
     private sealed record Pane(Border Effect, IReadOnlyList<Control> Parts);
 
-    /// <summary>What a pane's chrome should say about it.</summary>
+    /// <summary>What a pane's chrome should say about it. Dimming the unfocused panes is the window's own business.</summary>
     internal readonly record struct Settings(
         double Gap,
-        bool FocusIndicator,
+        bool DimUnfocused,
         bool FocusHighlight,
         GitKay.Core.PaneFocusEffect Effect,
         GitKay.Core.PaneEffectColor EffectColor,
@@ -42,7 +42,7 @@ internal sealed class PaneChrome {
     private static Settings Defaults {
         get {
             var d = GitKay.Core.SettingsModule.defaults;
-            return new Settings(d.PaneGap, d.PaneFocusIndicator, d.PaneFocusHighlight, d.PaneFocusEffect, d.PaneEffectColor,
+            return new Settings(d.PaneGap, d.PaneDimUnfocused, d.PaneFocusHighlight, d.PaneFocusEffect, d.PaneEffectColor,
                 d.PaneEffectIntensity, d.PaneBorder, d.PaneBorderStyle, d.PaneBorderColor, d.PaneBorderThickness, d.SplitterLinesHidden);
         }
     }
@@ -150,7 +150,7 @@ internal sealed class PaneChrome {
     private void ApplyFocus(Pane pane) {
         // Everything the focused pane does is one switch away from everything else: the highlight brightens its edge,
         // the effect lights the space around it, and the border is drawn whether a pane is focused or not.
-        var focused = _settings.FocusIndicator && _byKey.TryGetValue(_focused ?? "", out var it) && ReferenceEquals(it, pane);
+        var focused = _byKey.TryGetValue(_focused ?? "", out var it) && ReferenceEquals(it, pane);
         var highlighted = focused && _settings.FocusHighlight;
         var borderThickness = _settings.BorderStyle.IsCustomBorder ? _settings.BorderThickness : 1;
         pane.Effect.BorderThickness = new Thickness(_settings.Border ? borderThickness : highlighted ? 1 : 0);

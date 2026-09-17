@@ -66,8 +66,8 @@ public partial class MainWindow : Window, IVimCommands {
         CommitListBox.CopyRequested += name => CopyToClipboard(name, "Copied");
         DiffRowsListBox.LineMenuOpening += AddWorkingTreeLineItems;
         DiffRowsListBox.TextCopied += (_, lines) => { if (_projection != null) _projection.Status = lines switch { 0 => "Copied", 1 => "Copied 1 line", _ => $"Copied {lines} lines" }; };
-        AddHandler(InputElement.GotFocusEvent, (_, _) => { UpdatePaneFocusIndicator(); TrackPaneFocus(); }, RoutingStrategies.Bubble);
-        AddHandler(InputElement.LostFocusEvent, (_, _) => Dispatcher.UIThread.Post(UpdatePaneFocusIndicator), RoutingStrategies.Bubble);
+        AddHandler(InputElement.GotFocusEvent, (_, _) => { UpdatePaneFocus(); TrackPaneFocus(); }, RoutingStrategies.Bubble);
+        AddHandler(InputElement.LostFocusEvent, (_, _) => Dispatcher.UIThread.Post(UpdatePaneFocus), RoutingStrategies.Bubble);
     }
 
     /// <summary>Stage, unstage and discard on the uncommitted diff's right-click menu.</summary>
@@ -145,24 +145,25 @@ public partial class MainWindow : Window, IVimCommands {
             if (item != null) DiffFilesListBox.ScrollIntoView(item);
             var container = item == null ? null : DiffFilesListBox.ContainerFromItem(item);
             if (container == null || !container.Focus()) DiffFilesListBox.Focus();
-            UpdatePaneFocusIndicator();
+            UpdatePaneFocus();
             return;
         }
 
         Control target = pane == Pane.Commits ? CommitListBox : DiffRowsListBox;
         target.Focus();
-        UpdatePaneFocusIndicator();
+        UpdatePaneFocus();
     }
 
     /// <summary>Unfocused panes fade very slightly, so the pane keys go to stands out without extra chrome.</summary>
-    private void UpdatePaneFocusIndicator() {
+    private void UpdatePaneFocus() {
         const double fade = 0.22;
         var pane = FocusedPane;
-        // With the indicator off nothing marks the focused pane: no fade on the others, and no chrome around it.
-        var indicate = _projection is not { PaneFocusIndicator: false } && pane != Pane.None;
-        CommitPaneFocus.Opacity = indicate && pane != Pane.Commits ? fade : 0;
-        DiffPaneFocus.Opacity = indicate && pane != Pane.Diff ? fade : 0;
-        FilesPaneFocus.Opacity = indicate && pane != Pane.Files ? fade : 0;
+        // Dimming the other panes is its own choice: the glow, shadow and highlight around the focused pane are not
+        // affected by it, and it is not affected by them.
+        var dim = _projection is { PaneDimUnfocused: true } && pane != Pane.None;
+        CommitPaneFocus.Opacity = dim && pane != Pane.Commits ? fade : 0;
+        DiffPaneFocus.Opacity = dim && pane != Pane.Diff ? fade : 0;
+        FilesPaneFocus.Opacity = dim && pane != Pane.Files ? fade : 0;
         _paneChrome.SetFocused(pane == Pane.None ? null : pane.ToString());
     }
 
@@ -949,13 +950,13 @@ public partial class MainWindow : Window, IVimCommands {
     private void ApplyPaneChrome() {
         if (_projection is { } projection) {
             _paneChrome.Update(PaneChromeSettingsFor(projection));
-            UpdatePaneFocusIndicator();
+            UpdatePaneFocus();
         }
     }
 
     /// <summary>The Panes section of settings, as the chrome wants it.</summary>
     internal static PaneChrome.Settings PaneChromeSettingsFor(MainProjection projection) =>
-        new(projection.PaneGap, projection.PaneFocusIndicator, projection.PaneFocusHighlight, projection.PaneFocusEffect,
+        new(projection.PaneGap, projection.PaneDimUnfocused, projection.PaneFocusHighlight, projection.PaneFocusEffect,
             projection.PaneEffectColor, projection.PaneEffectIntensity, projection.PaneBorder, projection.PaneBorderStyle,
             projection.PaneBorderColor, projection.PaneBorderThickness, projection.SplitterLinesHidden);
 

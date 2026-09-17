@@ -24,7 +24,7 @@ type private SettingsWire =
       PaneEffectColorKey: string
       PaneEffectIntensityKey: string
       HoverFocusesPane: bool
-      PaneFocusIndicator: bool
+      PaneDimUnfocused: bool
       PaneFocusHighlight: bool
       PaneBorder: bool
       PaneBorderStyleKey: string
@@ -71,20 +71,20 @@ module private Codecs =
             fieldAs "PaneEffectColor" _.PaneEffectColorKey { defaultValue (PaneEffectColor.key d.PaneEffectColor) }
             fieldAs "PaneEffectIntensity" _.PaneEffectIntensityKey { defaultValue (PaneEffectIntensity.key d.PaneEffectIntensity) }
             fieldAs "HoverFocusesPane" _.HoverFocusesPane { defaultValue d.HoverFocusesPane }
-            fieldAs "PaneFocusIndicator" _.PaneFocusIndicator { defaultValue d.PaneFocusIndicator }
+            fieldAs "PaneDimUnfocused" _.PaneDimUnfocused { defaultValue d.PaneDimUnfocused }
             fieldAs "PaneFocusHighlight" _.PaneFocusHighlight { defaultValue d.PaneFocusHighlight }
             fieldAs "PaneBorder" _.PaneBorder { defaultValue d.PaneBorder }
             fieldAs "PaneBorderStyle" _.PaneBorderStyleKey { defaultValue (PaneBorderStyle.key d.PaneBorderStyle) }
             fieldAs "PaneBorderColor" _.PaneBorderColorKey { defaultValue (PaneEffectColor.key d.PaneBorderColor) }
             fieldAs "PaneBorderThickness" _.PaneBorderThickness { defaultValue d.PaneBorderThickness }
             fieldAs "SplitterLinesHidden" _.SplitterLinesHidden { defaultValue d.SplitterLinesHidden }
-            construct (fun showBranchRefs showStashes diffContextLines layout fontFamily monoFontFamily textSize metaSize badgeSize debounce theme paneGap paneEffect paneColor paneIntensity hoverFocuses focusIndicator focusHighlight paneBorder borderStyle borderColor borderThickness splitterHidden ->
+            construct (fun showBranchRefs showStashes diffContextLines layout fontFamily monoFontFamily textSize metaSize badgeSize debounce theme paneGap paneEffect paneColor paneIntensity hoverFocuses dimUnfocused focusHighlight paneBorder borderStyle borderColor borderThickness splitterHidden ->
                 { ShowBranchRefs = showBranchRefs; ShowStashes = showStashes; DiffContextLines = diffContextLines
                   DiffPresentationModeKey = layout; CommitRowFontFamily = fontFamily; CommitRowMonoFontFamily = monoFontFamily
                   CommitRowTextFontSize = textSize; CommitRowMetaFontSize = metaSize; CommitRowBadgeFontSize = badgeSize
                   SearchDebounceSeconds = debounce; ThemeMode = theme; PaneGap = paneGap; PaneFocusEffectKey = paneEffect
                   PaneEffectColorKey = paneColor; PaneEffectIntensityKey = paneIntensity; HoverFocusesPane = hoverFocuses
-                  PaneFocusIndicator = focusIndicator; PaneFocusHighlight = focusHighlight; PaneBorder = paneBorder
+                  PaneDimUnfocused = dimUnfocused; PaneFocusHighlight = focusHighlight; PaneBorder = paneBorder
                   PaneBorderStyleKey = borderStyle; PaneBorderColorKey = borderColor; PaneBorderThickness = borderThickness
                   SplitterLinesHidden = splitterHidden })
         }
@@ -140,7 +140,7 @@ module SettingsJson =
               PaneEffectColorKey = PaneEffectColor.key settings.PaneEffectColor
               PaneEffectIntensityKey = PaneEffectIntensity.key settings.PaneEffectIntensity
               HoverFocusesPane = settings.HoverFocusesPane
-              PaneFocusIndicator = settings.PaneFocusIndicator
+              PaneDimUnfocused = settings.PaneDimUnfocused
               PaneFocusHighlight = settings.PaneFocusHighlight
               PaneBorder = settings.PaneBorder
               PaneBorderStyleKey = PaneBorderStyle.key settings.PaneBorderStyle
@@ -169,7 +169,7 @@ module SettingsJson =
                   PaneEffectColor = PaneEffectColor.tryParse wire.PaneEffectColorKey |> Option.defaultValue Settings.defaults.PaneEffectColor
                   PaneEffectIntensity = PaneEffectIntensity.tryParse wire.PaneEffectIntensityKey |> Option.defaultValue Settings.defaults.PaneEffectIntensity
                   HoverFocusesPane = wire.HoverFocusesPane
-                  PaneFocusIndicator = wire.PaneFocusIndicator
+                  PaneDimUnfocused = wire.PaneDimUnfocused
                   PaneFocusHighlight = wire.PaneFocusHighlight
                   PaneBorder = wire.PaneBorder
                   PaneBorderStyle = PaneBorderStyle.tryParse wire.PaneBorderStyleKey |> Option.defaultValue Settings.defaults.PaneBorderStyle

@@ -242,8 +242,8 @@ type Settings =
       PaneGap: float
       /// <summary>Whether pointing at a pane focuses it, so keys go there without clicking.</summary>
       HoverFocusesPane: bool
-      /// <summary>Whether the focused pane is shown at all; with it off, nothing marks which pane has the keys.</summary>
-      PaneFocusIndicator: bool
+      /// <summary>Whether the panes without the keys are washed over, so the focused one stands out by contrast.</summary>
+      PaneDimUnfocused: bool
       /// <summary>Whether the focused pane's edge is brightened.</summary>
       PaneFocusHighlight: bool
       /// <summary>What else the focused pane does in the space around it.</summary>
@@ -279,7 +279,7 @@ module Settings =
           Theme = SystemTheme
           PaneGap = 3.0
           HoverFocusesPane = true
-          PaneFocusIndicator = true
+          PaneDimUnfocused = false
           PaneFocusHighlight = false
           PaneFocusEffect = PaneGlow
           PaneEffectColor = AccentEffectColor

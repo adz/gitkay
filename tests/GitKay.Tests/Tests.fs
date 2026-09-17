@@ -3770,7 +3770,7 @@ module SettingsSerializationTests =
             { ShowBranchRefs = true; ShowStashes = true; DiffContextLines = 7; DiffLayout = DiffLayout.SideBySide
               CommitRowFontFamily = "Inter"; CommitRowMonoFontFamily = "Iosevka"; CommitRowTextFontSize = 14.5
               CommitRowMetaFontSize = 12.0; CommitRowBadgeFontSize = 10.0; SearchDebounceSeconds = 0.25; Theme = DarkTheme
-              PaneGap = 5.0; HoverFocusesPane = false; PaneFocusIndicator = false; PaneFocusHighlight = true
+              PaneGap = 5.0; HoverFocusesPane = false; PaneDimUnfocused = false; PaneFocusHighlight = true
               PaneFocusEffect = PaneShadow; PaneEffectColor = TealEffectColor; PaneEffectIntensity = QuarterIntensity
               PaneBorder = true; PaneBorderStyle = CustomBorder; PaneBorderColor = PinkEffectColor
               PaneBorderThickness = 3.0; SplitterLinesHidden = true }

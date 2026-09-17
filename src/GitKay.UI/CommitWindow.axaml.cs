@@ -632,7 +632,7 @@ public partial class CommitWindow : Window, IVimCommands {
     /// <summary>Panes follow the same settings as the main window's; re-read when the window is activated.</summary>
     private void ApplyPaneSettings() {
         var settings = GitKay.Core.SettingsModule.normalize(new AppSettingsStore().Load());
-        _paneChrome.Update(new PaneChrome.Settings(settings.PaneGap, settings.PaneFocusIndicator, settings.PaneFocusHighlight,
+        _paneChrome.Update(new PaneChrome.Settings(settings.PaneGap, settings.PaneDimUnfocused, settings.PaneFocusHighlight,
             settings.PaneFocusEffect, settings.PaneEffectColor, settings.PaneEffectIntensity, settings.PaneBorder,
             settings.PaneBorderStyle, settings.PaneBorderColor, settings.PaneBorderThickness, settings.SplitterLinesHidden));
         TrackPane();

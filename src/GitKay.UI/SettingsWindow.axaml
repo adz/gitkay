@@ -68,15 +68,14 @@
                                     <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="16">
                                         <CheckBox Content="Hover focuses" IsChecked="{Binding HoverToFocus, Mode=TwoWay}"
                                                   ToolTip.Tip="Pointing at a pane makes it the target for keys, without clicking" />
-                                        <CheckBox Content="Show focused pane" IsChecked="{Binding PaneFocusIndicator, Mode=TwoWay}"
-                                                  ToolTip.Tip="Mark which pane the keys go to" />
+                                        <CheckBox Content="Dim the other panes" IsChecked="{Binding PaneDimUnfocused, Mode=TwoWay}"
+                                                  ToolTip.Tip="Wash over the panes without the keys, so the focused one stands out" />
                                     </StackPanel>
-                                    <CheckBox Grid.Row="1" Grid.Column="2" Content="Highlight its edge" IsChecked="{Binding PaneFocusHighlight, Mode=TwoWay}" VerticalAlignment="Center"
-                                              IsEnabled="{Binding PaneFocusIndicator}" />
+                                    <CheckBox Grid.Row="1" Grid.Column="2" Content="Highlight its edge" IsChecked="{Binding PaneFocusHighlight, Mode=TwoWay}" VerticalAlignment="Center" />
 
                                     <TextBlock Grid.Row="2" Text="On focus" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
                                     <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                                        <ComboBox Width="150" IsEnabled="{Binding PaneFocusIndicator}"
+                                        <ComboBox Width="150"
                                                   ItemsSource="{Binding PaneFocusEffects}"
                                                   SelectedItem="{Binding SelectedPaneFocusEffect}">
                                             <ComboBox.ItemTemplate>
@@ -85,7 +84,7 @@
                                                 </DataTemplate>
                                             </ComboBox.ItemTemplate>
                                         </ComboBox>
-                                        <ComboBox Width="122" IsEnabled="{Binding PaneFocusIndicator}"
+                                        <ComboBox Width="122"
                                                   ItemsSource="{Binding PaneHoverIntensities}"
                                                   SelectedItem="{Binding SelectedPaneEffectIntensity}"
                                                   ToolTip.Tip="How strong the effect is">
@@ -102,7 +101,6 @@
 
                                     <TextBlock Grid.Row="3" Text="Effect colour" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
                                     <ComboBox Grid.Row="3" Grid.Column="1" Width="280" HorizontalAlignment="Left"
-                                              IsEnabled="{Binding PaneFocusIndicator}"
                                               ItemsSource="{Binding PaneEffectColors}"
                                               SelectedItem="{Binding SelectedPaneEffectColor}">
                                         <ComboBox.ItemTemplate>
