@@ -44,9 +44,8 @@ public partial class MainWindow : Window, IVimCommands {
         HistoryHeaderGrid.LayoutUpdated += (_, _) => SyncCommitColumnWidths();
         AddHandler(InputElement.KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
         AddHandler(InputElement.KeyUpEvent, OnWindowKeyUp, RoutingStrategies.Tunnel);
-        CommitScrollViewer.PointerEntered += (_, _) => OnPaneHovered(Pane.Commits);
-        DiffRowsScrollViewer.PointerEntered += (_, _) => OnPaneHovered(Pane.Diff);
-        DiffFilesListBox.PointerEntered += (_, _) => OnPaneHovered(Pane.Files);
+        // Hovering counts anywhere in a pane, its header and padding included, not only over the list inside it.
+        _paneChrome.PaneHovered += key => { if (Enum.TryParse<Pane>(key, out var pane)) OnPaneHovered(pane); };
         Deactivated += (_, _) => HideCtrlHints();
         Loaded += (_, _) => CommitListBox.Focus();
         SearchBox.AddHandler(InputElement.KeyDownEvent, OnSearchBoxKeyDown, RoutingStrategies.Tunnel);

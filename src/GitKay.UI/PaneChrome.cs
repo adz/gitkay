@@ -62,9 +62,38 @@ internal sealed class PaneChrome {
         effect.Opacity = 0;
         // Theme brushes can only be found once the pane is in the tree, and they change with the theme: look again
         // whenever either happens, or every style resolves to the same fallback colour.
-        effect.AttachedToVisualTree += (_, _) => ApplyPane(pane);
+        effect.AttachedToVisualTree += (_, _) => { ApplyPane(pane); Watch(effect); };
+        if (TopLevel.GetTopLevel(effect) is not null) Watch(effect);
         effect.ActualThemeVariantChanged += (_, _) => ApplyPane(pane);
         ApplyPane(pane);
+    }
+
+    /// <summary>
+    /// Raised with a pane's key when the pointer moves into it — anywhere in it, its header and the space around its
+    /// contents included, not just over the list or diff inside. The window decides what to do with that.
+    /// </summary>
+    public event Action<string>? PaneHovered;
+
+    private readonly HashSet<TopLevel> _watched = new();
+    private string? _hovered;
+
+    /// <summary>Follows the pointer across the window, so a pane counts as hovered over the whole of itself.</summary>
+    private void Watch(Border effect) {
+        if (TopLevel.GetTopLevel(effect) is not { } top || !_watched.Add(top)) return;
+        top.AddHandler(InputElement.PointerMovedEvent, (_, e) => OnPointerAt(top, e.GetPosition(top)), RoutingStrategies.Tunnel);
+        top.AddHandler(InputElement.PointerExitedEvent, (_, _) => _hovered = null, RoutingStrategies.Tunnel);
+    }
+
+    private void OnPointerAt(TopLevel top, Point position) {
+        var key = _byKey.FirstOrDefault(pane => Contains(top, pane.Value, position)).Key;
+        if (string.Equals(key, _hovered, StringComparison.Ordinal)) return;
+        _hovered = key;
+        if (key is not null) PaneHovered?.Invoke(key);
+    }
+
+    private static bool Contains(TopLevel top, Pane pane, Point position) {
+        if (!pane.Effect.IsVisible || pane.Effect.Bounds.Width <= 0) return false;
+        return top.TranslatePoint(position, pane.Effect) is { } point && new Rect(pane.Effect.Bounds.Size).Contains(point);
     }
 
     /// <summary>Says which pane holds the keys; null when none does. The window decides, from focus or hover.</summary>

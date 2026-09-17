@@ -633,6 +633,8 @@ module PaneChromeTests =
             window.Resources.Add("GitKayPaneSubtleBorderBrush", Media.SolidColorBrush(Media.Color.Parse "#2B333C"))
             window.Resources.Add("GitKayBorderBrush", Media.SolidColorBrush(Media.Color.Parse "#3C444D"))
             let chrome = PaneChrome()
+            let hovered = ResizeArray<string>()
+            chrome.add_PaneHovered (fun key -> hovered.Add key)
             chrome.Add("diff", effect, header, content)
             chrome.Update(settings PaneFocusEffect.PaneGlow false false)
             let separator = Border()
@@ -646,6 +648,13 @@ module PaneChromeTests =
                 window.MouseMove(Point(100.0, 100.0))
                 Headless.pump ()
                 test <@ effect.BoxShadow.Count = 0 @>
+
+                // The pane is hovered over the whole of itself: its header, and the padding the inner control leaves.
+                test <@ List.ofSeq hovered = [ "diff" ] @>
+                window.MouseMove(Point(100.0, header.Bounds.Top + 2.0))
+                window.MouseMove(Point(100.0, 100.0))
+                Headless.pump ()
+                test <@ List.ofSeq hovered = [ "diff" ] @>
 
                 chrome.SetFocused "diff"
                 Headless.pump ()
