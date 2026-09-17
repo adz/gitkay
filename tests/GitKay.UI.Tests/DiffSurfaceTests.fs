@@ -607,8 +607,12 @@ module SyntaxHighlightingTests =
         test <@ kinds SyntaxFlavour.PlainText "# not a comment" = [ "# not a comment", HighlightKind.Plain ] @>
 
 module PaneChromeTests =
+    let private settings effect highlight border =
+        PaneChrome.Settings(4.0, true, highlight, effect, PaneEffectColor.AccentEffectColor, PaneEffectIntensity.FullIntensity,
+                            border, PaneBorderStyle.SubtleBorder, PaneEffectColor.AccentEffectColor, 1.0, border)
+
     [<Fact>]
-    let ``a pane stays hovered in the gap between its header and its content`` () =
+    let ``pane chrome follows the focused pane, not the pointer`` () =
         Headless.run (fun () ->
             // The pane's two parts each carry the gap as a margin, leaving a strip between them that belongs to neither.
             let header = Border(Height = 30.0, Background = Media.Brushes.Gray)
@@ -624,45 +628,46 @@ module PaneChromeTests =
             grid.Children.Add effect
             let window = Window(Width = 200.0, Height = 200.0, Content = grid)
             let chrome = PaneChrome()
-            chrome.Add(effect, header, content)
-            chrome.Update(4.0, PaneHoverEffect.HoverGlow, PaneHoverColor.AccentHoverColor, PaneHoverIntensity.FullIntensity, false)
+            chrome.Add("diff", effect, header, content)
+            chrome.Update(settings PaneFocusEffect.PaneGlow false false)
+            let separator = Border()
+            chrome.AddSeparator separator
             try
                 window.Show()
                 window.UpdateLayout()
                 Headless.pump ()
 
+                // Pointing at a pane does nothing on its own: the window says which pane has the keys.
                 window.MouseMove(Point(100.0, 100.0))
-                Headless.pump ()
-                test <@ effect.BoxShadow.Count > 0 @>
-
-                // The strip between the header and the content: the pane is still under the pointer, so it stays lit.
-                let seam = header.Bounds.Bottom + 2.0
-                window.MouseMove(Point(100.0, seam))
-                Headless.pump ()
-                test <@ effect.BoxShadow.Count > 0 @>
-
-                // Outside the pane it goes out again.
-                window.MouseMove(Point(2.0, 2.0))
                 Headless.pump ()
                 test <@ effect.BoxShadow.Count = 0 @>
 
-                // A glow is light, not a frame: the outline belongs to the border setting alone.
-                window.MouseMove(Point(100.0, 100.0))
+                chrome.SetFocused "diff"
                 Headless.pump ()
+                test <@ effect.BoxShadow.Count > 0 @>
+
+                // A glow is light, not a frame: the outline belongs to the border setting alone.
                 test <@ effect.BorderThickness.Top = 0.0 @>
 
-                // Highlight is the effect that draws one.
-                chrome.Update(4.0, PaneHoverEffect.HoverHighlight, PaneHoverColor.AccentHoverColor, PaneHoverIntensity.FullIntensity, false)
+                // Highlight is the switch that draws one, and it is independent of the effect.
+                chrome.Update(settings PaneFocusEffect.PaneGlow true false)
+                Headless.pump ()
+                test <@ effect.BorderThickness.Top = 1.0 && effect.BoxShadow.Count > 0 @>
+
+                chrome.Update(settings PaneFocusEffect.NoPaneEffect true false)
                 Headless.pump ()
                 test <@ effect.BorderThickness.Top = 1.0 && effect.BoxShadow.Count = 0 @>
 
-                // With pane borders on, the frame is always there and the hairline between panes steps aside.
-                let separator = Border()
-                chrome.AddSeparator separator
-                test <@ separator.Opacity = 1.0 @>
-                chrome.Update(4.0, PaneHoverEffect.HoverGlow, PaneHoverColor.AccentHoverColor, PaneHoverIntensity.FullIntensity, true)
+                // Focus elsewhere takes all of it away.
+                chrome.SetFocused null
                 Headless.pump ()
-                test <@ separator.Opacity = 0.0 && effect.BorderThickness.Top = 1.0 @>
+                test <@ effect.BorderThickness.Top = 0.0 && effect.BoxShadow.Count = 0 @>
+
+                // Bordered panes are outlined whether focused or not, and the hairline between panes steps aside.
+                test <@ separator.Opacity = 1.0 @>
+                chrome.Update(settings PaneFocusEffect.PaneGlow false true)
+                Headless.pump ()
+                test <@ effect.BorderThickness.Top = 1.0 && separator.Opacity = 0.0 @>
             finally
                 window.Close()
                 Headless.pump ())

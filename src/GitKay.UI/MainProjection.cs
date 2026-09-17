@@ -27,18 +27,18 @@ public sealed class ThemeModeProjection(GitKay.Core.ThemeMode mode) {
     public string Label => GitKay.Core.ThemeModeModule.label(Mode);
 }
 
-public sealed class PaneHoverEffectProjection(GitKay.Core.PaneHoverEffect effect) {
-    public GitKay.Core.PaneHoverEffect Effect { get; } = effect;
-    public string Label => GitKay.Core.PaneHoverEffectModule.label(Effect);
-    public string Description => GitKay.Core.PaneHoverEffectModule.describe(Effect);
+public sealed class PaneFocusEffectProjection(GitKay.Core.PaneFocusEffect effect) {
+    public GitKay.Core.PaneFocusEffect Effect { get; } = effect;
+    public string Label => GitKay.Core.PaneFocusEffectModule.label(Effect);
+    public string Description => GitKay.Core.PaneFocusEffectModule.describe(Effect);
 }
 
-public sealed class PaneHoverColorProjection(GitKay.Core.PaneHoverColor color) {
-    public GitKay.Core.PaneHoverColor Color { get; } = color;
-    public string Label => GitKay.Core.PaneHoverColorModule.label(Color);
+public sealed class PaneEffectColorProjection(GitKay.Core.PaneEffectColor color) {
+    public GitKay.Core.PaneEffectColor Color { get; } = color;
+    public string Label => GitKay.Core.PaneEffectColorModule.label(Color);
     /// <summary>A swatch for the settings list; the accent follows the theme, so it shows as the accent brush.</summary>
     public Avalonia.Media.IBrush Swatch =>
-        GitKay.Core.PaneHoverColorModule.hex(Color) is { } hex && Avalonia.Media.Color.TryParse(hex.Value, out var parsed)
+        GitKay.Core.PaneEffectColorModule.hex(Color) is { } hex && Avalonia.Media.Color.TryParse(hex.Value, out var parsed)
             ? new Avalonia.Media.SolidColorBrush(parsed)
             : Avalonia.Application.Current is { } app
               && app.Resources.TryGetResource("GitKayAccentBrush", app.ActualThemeVariant, out var accent)
@@ -47,9 +47,14 @@ public sealed class PaneHoverColorProjection(GitKay.Core.PaneHoverColor color) {
                 : Avalonia.Media.Brushes.SteelBlue;
 }
 
-public sealed class PaneHoverIntensityProjection(GitKay.Core.PaneHoverIntensity intensity) {
-    public GitKay.Core.PaneHoverIntensity Intensity { get; } = intensity;
-    public string Label => GitKay.Core.PaneHoverIntensityModule.label(Intensity);
+public sealed class PaneBorderStyleProjection(GitKay.Core.PaneBorderStyle style) {
+    public GitKay.Core.PaneBorderStyle Style { get; } = style;
+    public string Label { get; } = GitKay.Core.PaneBorderStyleModule.label(style);
+}
+
+public sealed class PaneEffectIntensityProjection(GitKay.Core.PaneEffectIntensity intensity) {
+    public GitKay.Core.PaneEffectIntensity Intensity { get; } = intensity;
+    public string Label => GitKay.Core.PaneEffectIntensityModule.label(Intensity);
 }
 
 public sealed class DiffContextLineCountProjection {
@@ -93,14 +98,21 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public ObservableCollection<ThemeModeProjection> ThemeModes { get; } =
         new(GitKay.Core.ThemeModeModule.all.Select(mode => new ThemeModeProjection(mode)));
 
-    public ObservableCollection<PaneHoverEffectProjection> PaneHoverEffects { get; } =
-        new(GitKay.Core.PaneHoverEffectModule.all.Select(effect => new PaneHoverEffectProjection(effect)));
+    public ObservableCollection<PaneFocusEffectProjection> PaneFocusEffects { get; } =
+        new(GitKay.Core.PaneFocusEffectModule.all.Select(effect => new PaneFocusEffectProjection(effect)));
 
-    public ObservableCollection<PaneHoverColorProjection> PaneHoverColors { get; } =
-        new(GitKay.Core.PaneHoverColorModule.all.Select(color => new PaneHoverColorProjection(color)));
+    public ObservableCollection<PaneEffectColorProjection> PaneEffectColors { get; } =
+        new(GitKay.Core.PaneEffectColorModule.all.Select(color => new PaneEffectColorProjection(color)));
 
-    public ObservableCollection<PaneHoverIntensityProjection> PaneHoverIntensities { get; } =
-        new(GitKay.Core.PaneHoverIntensityModule.all.Select(intensity => new PaneHoverIntensityProjection(intensity)));
+    public ObservableCollection<PaneEffectIntensityProjection> PaneHoverIntensities { get; } =
+        new(GitKay.Core.PaneEffectIntensityModule.all.Select(intensity => new PaneEffectIntensityProjection(intensity)));
+
+    public ObservableCollection<PaneBorderStyleProjection> PaneBorderStyles { get; } =
+        new(GitKay.Core.PaneBorderStyleModule.all.Select(style => new PaneBorderStyleProjection(style)));
+
+    /// <summary>The border's own colour list, the same choices the effect uses.</summary>
+    public ObservableCollection<PaneEffectColorProjection> PaneBorderColors { get; } =
+        new(GitKay.Core.PaneEffectColorModule.all.Select(color => new PaneEffectColorProjection(color)));
 
     public ObservableCollection<DiffContextLineCountProjection> DiffContextLineCounts { get; } = new()
     {
@@ -140,9 +152,11 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private DiffPresentationModeProjection? _selectedDiffPresentationMode;
     [ObservableProperty] private DiffContextLineCountProjection? _selectedDiffContextLineCount;
     [ObservableProperty] private ThemeModeProjection? _selectedThemeMode;
-    [ObservableProperty] private PaneHoverEffectProjection? _selectedPaneHoverEffect;
-    [ObservableProperty] private PaneHoverColorProjection? _selectedPaneHoverColor;
-    [ObservableProperty] private PaneHoverIntensityProjection? _selectedPaneHoverIntensity;
+    [ObservableProperty] private PaneFocusEffectProjection? _selectedPaneFocusEffect;
+    [ObservableProperty] private PaneEffectColorProjection? _selectedPaneEffectColor;
+    [ObservableProperty] private PaneEffectIntensityProjection? _selectedPaneEffectIntensity;
+    [ObservableProperty] private PaneBorderStyleProjection? _selectedPaneBorderStyle;
+    [ObservableProperty] private PaneEffectColorProjection? _selectedPaneBorderColor;
 
     /// <summary>Space around each pane, in pixels.</summary>
     [ObservableProperty] private double _paneGap = GitKay.Core.SettingsModule.defaults.PaneGap;
@@ -150,13 +164,60 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     /// <summary>Whether each pane is outlined.</summary>
     [ObservableProperty] private bool _paneBorder = GitKay.Core.SettingsModule.defaults.PaneBorder;
 
+    /// <summary>Whether the pane holding the keys is shown at all.</summary>
+    [ObservableProperty] private bool _paneFocusIndicator = GitKay.Core.SettingsModule.defaults.PaneFocusIndicator;
+
+    /// <summary>Whether the focused pane's edge is brightened.</summary>
+    [ObservableProperty] private bool _paneFocusHighlight = GitKay.Core.SettingsModule.defaults.PaneFocusHighlight;
+
+    /// <summary>Whether the hairline between panes is hidden, leaving the splitter to be felt rather than seen.</summary>
+    [ObservableProperty] private bool _splitterLinesHidden = GitKay.Core.SettingsModule.defaults.SplitterLinesHidden;
+
+    /// <summary>The outline's thickness, for a custom border.</summary>
+    [ObservableProperty] private double _paneBorderThickness = GitKay.Core.SettingsModule.defaults.PaneBorderThickness;
+
     partial void OnPaneBorderChanged(bool value) => PaneChromeChanged?.Invoke();
+
+    partial void OnPaneFocusIndicatorChanged(bool value) => PaneChromeChanged?.Invoke();
+
+    partial void OnPaneFocusHighlightChanged(bool value) => PaneChromeChanged?.Invoke();
+
+    partial void OnSplitterLinesHiddenChanged(bool value) => PaneChromeChanged?.Invoke();
+
+    partial void OnHoverToFocusChanged(bool value) => PaneChromeChanged?.Invoke();
+
+    partial void OnPaneBorderThicknessChanged(double value) {
+        var clamped = Math.Clamp(Math.Round(value), 1, 4);
+        if (Math.Abs(clamped - value) > 0.001) {
+            PaneBorderThickness = clamped;
+            return;
+        }
+
+        PaneChromeChanged?.Invoke();
+    }
+
+    partial void OnSelectedPaneBorderStyleChanged(PaneBorderStyleProjection? value) {
+        OnPropertyChanged(nameof(PaneBorderStyle));
+        OnPropertyChanged(nameof(IsCustomPaneBorder));
+        PaneChromeChanged?.Invoke();
+    }
+
+    partial void OnSelectedPaneBorderColorChanged(PaneEffectColorProjection? value) {
+        OnPropertyChanged(nameof(PaneBorderColor));
+        PaneChromeChanged?.Invoke();
+    }
+
+    public GitKay.Core.PaneBorderStyle PaneBorderStyle => SelectedPaneBorderStyle?.Style ?? GitKay.Core.SettingsModule.defaults.PaneBorderStyle;
+    public GitKay.Core.PaneEffectColor PaneBorderColor => SelectedPaneBorderColor?.Color ?? GitKay.Core.SettingsModule.defaults.PaneBorderColor;
+
+    /// <summary>Whether the border's colour and thickness are the user's to choose.</summary>
+    public bool IsCustomPaneBorder => PaneBorderStyle.IsCustomBorder;
 
     /// <summary>The gap as a margin, for binding to each pane.</summary>
     public Avalonia.Thickness PaneGapThickness => new(PaneGap);
-    public GitKay.Core.PaneHoverEffect PaneHoverEffect => SelectedPaneHoverEffect?.Effect ?? GitKay.Core.SettingsModule.defaults.PaneHoverEffect;
-    public GitKay.Core.PaneHoverColor PaneHoverColor => SelectedPaneHoverColor?.Color ?? GitKay.Core.SettingsModule.defaults.PaneHoverColor;
-    public GitKay.Core.PaneHoverIntensity PaneHoverIntensity => SelectedPaneHoverIntensity?.Intensity ?? GitKay.Core.SettingsModule.defaults.PaneHoverIntensity;
+    public GitKay.Core.PaneFocusEffect PaneFocusEffect => SelectedPaneFocusEffect?.Effect ?? GitKay.Core.SettingsModule.defaults.PaneFocusEffect;
+    public GitKay.Core.PaneEffectColor PaneEffectColor => SelectedPaneEffectColor?.Color ?? GitKay.Core.SettingsModule.defaults.PaneEffectColor;
+    public GitKay.Core.PaneEffectIntensity PaneEffectIntensity => SelectedPaneEffectIntensity?.Intensity ?? GitKay.Core.SettingsModule.defaults.PaneEffectIntensity;
 
     partial void OnPaneGapChanged(double value) {
         var clamped = Math.Clamp(Math.Round(value), 0, 8);
@@ -168,18 +229,18 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         PaneChromeChanged?.Invoke();
     }
 
-    partial void OnSelectedPaneHoverEffectChanged(PaneHoverEffectProjection? value) {
-        OnPropertyChanged(nameof(PaneHoverEffect));
+    partial void OnSelectedPaneFocusEffectChanged(PaneFocusEffectProjection? value) {
+        OnPropertyChanged(nameof(PaneFocusEffect));
         PaneChromeChanged?.Invoke();
     }
 
-    partial void OnSelectedPaneHoverColorChanged(PaneHoverColorProjection? value) {
-        OnPropertyChanged(nameof(PaneHoverColor));
+    partial void OnSelectedPaneEffectColorChanged(PaneEffectColorProjection? value) {
+        OnPropertyChanged(nameof(PaneEffectColor));
         PaneChromeChanged?.Invoke();
     }
 
-    partial void OnSelectedPaneHoverIntensityChanged(PaneHoverIntensityProjection? value) {
-        OnPropertyChanged(nameof(PaneHoverIntensity));
+    partial void OnSelectedPaneEffectIntensityChanged(PaneEffectIntensityProjection? value) {
+        OnPropertyChanged(nameof(PaneEffectIntensity));
         PaneChromeChanged?.Invoke();
     }
 
@@ -265,9 +326,11 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         SelectedDiffPresentationMode = DiffPresentationModes[0];
         SelectedDiffContextLineCount = DiffContextLineCounts.First(option => option.Count == DiffContextLineCount);
         SelectedThemeMode = ThemeModes[0];
-        SelectedPaneHoverEffect = PaneHoverEffects.FirstOrDefault(effect => effect.Effect.Equals(GitKay.Core.SettingsModule.defaults.PaneHoverEffect)) ?? PaneHoverEffects[0];
-        SelectedPaneHoverColor = PaneHoverColors[0];
-        SelectedPaneHoverIntensity = PaneHoverIntensities.FirstOrDefault(intensity => intensity.Intensity.Equals(GitKay.Core.SettingsModule.defaults.PaneHoverIntensity)) ?? PaneHoverIntensities[0];
+        SelectedPaneFocusEffect = PaneFocusEffects.FirstOrDefault(effect => effect.Effect.Equals(GitKay.Core.SettingsModule.defaults.PaneFocusEffect)) ?? PaneFocusEffects[0];
+        SelectedPaneEffectColor = PaneEffectColors[0];
+        SelectedPaneEffectIntensity = PaneHoverIntensities.FirstOrDefault(intensity => intensity.Intensity.Equals(GitKay.Core.SettingsModule.defaults.PaneEffectIntensity)) ?? PaneHoverIntensities[0];
+        SelectedPaneBorderStyle = PaneBorderStyles[0];
+        SelectedPaneBorderColor = PaneBorderColors[0];
     }
 
     public void ApplySettings(GitKay.Core.Settings settings) {
@@ -295,9 +358,16 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             SelectedThemeMode = ThemeModes.FirstOrDefault(mode => mode.Mode.Equals(normalized.Theme)) ?? ThemeModes.First();
             PaneGap = normalized.PaneGap;
             PaneBorder = normalized.PaneBorder;
-            SelectedPaneHoverEffect = PaneHoverEffects.FirstOrDefault(effect => effect.Effect.Equals(normalized.PaneHoverEffect)) ?? PaneHoverEffects.First();
-            SelectedPaneHoverColor = PaneHoverColors.FirstOrDefault(color => color.Color.Equals(normalized.PaneHoverColor)) ?? PaneHoverColors.First();
-            SelectedPaneHoverIntensity = PaneHoverIntensities.FirstOrDefault(intensity => intensity.Intensity.Equals(normalized.PaneHoverIntensity)) ?? PaneHoverIntensities.First();
+            SelectedPaneFocusEffect = PaneFocusEffects.FirstOrDefault(effect => effect.Effect.Equals(normalized.PaneFocusEffect)) ?? PaneFocusEffects.First();
+            SelectedPaneEffectColor = PaneEffectColors.FirstOrDefault(color => color.Color.Equals(normalized.PaneEffectColor)) ?? PaneEffectColors.First();
+            SelectedPaneEffectIntensity = PaneHoverIntensities.FirstOrDefault(intensity => intensity.Intensity.Equals(normalized.PaneEffectIntensity)) ?? PaneHoverIntensities.First();
+            HoverToFocus = normalized.HoverFocusesPane;
+            PaneFocusIndicator = normalized.PaneFocusIndicator;
+            PaneFocusHighlight = normalized.PaneFocusHighlight;
+            PaneBorderThickness = normalized.PaneBorderThickness;
+            SplitterLinesHidden = normalized.SplitterLinesHidden;
+            SelectedPaneBorderStyle = PaneBorderStyles.FirstOrDefault(style => style.Style.Equals(normalized.PaneBorderStyle)) ?? PaneBorderStyles.First();
+            SelectedPaneBorderColor = PaneBorderColors.FirstOrDefault(color => color.Color.Equals(normalized.PaneBorderColor)) ?? PaneBorderColors.First();
         }
         finally {
             _suppressDiffPresentationDispatch = false;
@@ -320,10 +390,17 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         SearchDebounceSeconds,
         SelectedThemeMode?.Mode ?? GitKay.Core.SettingsModule.defaults.Theme,
         PaneGap,
-        PaneHoverEffect,
-        PaneHoverColor,
-        PaneHoverIntensity,
-        PaneBorder));
+        HoverToFocus,
+        PaneFocusIndicator,
+        PaneFocusHighlight,
+        PaneFocusEffect,
+        PaneEffectColor,
+        PaneEffectIntensity,
+        PaneBorder,
+        PaneBorderStyle,
+        PaneBorderColor,
+        PaneBorderThickness,
+        SplitterLinesHidden));
 
     /// <summary>The diff layout chosen in the view menu.</summary>
     public GitKay.Core.DiffLayout DiffLayout => SelectedDiffPresentationMode?.Layout ?? GitKay.Core.SettingsModule.defaults.DiffLayout;

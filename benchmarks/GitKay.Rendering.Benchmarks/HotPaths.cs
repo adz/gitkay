@@ -521,24 +521,28 @@ internal static class UiInteractions {
             Settle();
         }
         if (label.Contains("panes")) {
-            var effect = label.Contains("shadow") ? GitKay.Core.PaneHoverEffect.HoverShadow
-                : label.Contains("highlight") ? GitKay.Core.PaneHoverEffect.HoverHighlight
-                : GitKay.Core.PaneHoverEffect.HoverGlow;
-            var color = label.Contains("purple") ? GitKay.Core.PaneHoverColor.PurpleHoverColor
-                : label.Contains("green") ? GitKay.Core.PaneHoverColor.GreenHoverColor
-                : GitKay.Core.PaneHoverColor.AccentHoverColor;
-            var intensity = label.Contains("quarter") ? GitKay.Core.PaneHoverIntensity.QuarterIntensity
-                : label.Contains("eighth") ? GitKay.Core.PaneHoverIntensity.EighthIntensity
-                : label.Contains("full") ? GitKay.Core.PaneHoverIntensity.FullIntensity
-                : GitKay.Core.PaneHoverIntensity.HalfIntensity;
-            window.SetPaneChrome(4, effect, color, intensity);
-            // Hover the unstaged list so the chosen effect shows in the gap.
+            var effect = label.Contains("shadow") ? GitKay.Core.PaneFocusEffect.PaneShadow
+                : label.Contains("noeffect") ? GitKay.Core.PaneFocusEffect.NoPaneEffect
+                : GitKay.Core.PaneFocusEffect.PaneGlow;
+            var color = label.Contains("purple") ? GitKay.Core.PaneEffectColor.PurpleEffectColor
+                : label.Contains("green") ? GitKay.Core.PaneEffectColor.GreenEffectColor
+                : GitKay.Core.PaneEffectColor.AccentEffectColor;
+            var intensity = label.Contains("quarter") ? GitKay.Core.PaneEffectIntensity.QuarterIntensity
+                : label.Contains("eighth") ? GitKay.Core.PaneEffectIntensity.EighthIntensity
+                : label.Contains("full") ? GitKay.Core.PaneEffectIntensity.FullIntensity
+                : GitKay.Core.PaneEffectIntensity.HalfIntensity;
+            var paneSettings = new PaneChrome.Settings(4, true, label.Contains("highlight"), effect, color, intensity,
+                label.Contains("bordered"), GitKay.Core.PaneBorderStyle.SubtleBorder, color, 1.0, label.Contains("nolines"));
+            window.SetPaneChrome(paneSettings);
+            // Focus the unstaged list so the chosen effect shows in the gap.
             var list = Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.ListBox>(window, "UnstagedList")!;
-            var origin = new Avalonia.Point(150, 200);
-            Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, origin, Avalonia.Input.RawInputModifiers.None);
+            // A ListBox doesn't take focus itself; its item containers do, as the window's own pane focus does it.
+            var row = list.SelectedItem ?? list.Items.Cast<object>().FirstOrDefault();
+            if (row != null && list.ContainerFromItem(row) is { } container) container.Focus();
+            else list.Focus();
             Settle();
             var effectBorder = Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.Border>(window, "UnstagedPaneEffect")!;
-            Console.WriteLine($"hovered={list.IsPointerOver} opacity={effectBorder.Opacity} shadow={effectBorder.BoxShadow.Count} margin={effectBorder.Margin} bounds={effectBorder.Bounds}");
+            Console.WriteLine($"focused={list.IsKeyboardFocusWithin} opacity={effectBorder.Opacity} shadow={effectBorder.BoxShadow.Count} margin={effectBorder.Margin} bounds={effectBorder.Bounds}");
         }
         if (label.Contains("expandstage")) {
             var surface = Avalonia.Controls.NameScopeExtensions.Find<DiffSurfaceControl>(window, "Surface")!;

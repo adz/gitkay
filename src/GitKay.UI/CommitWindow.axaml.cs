@@ -588,10 +588,10 @@ public partial class CommitWindow : Window, IVimCommands {
         AddHandler(KeyUpEvent, OnWindowKeyUp, RoutingStrategies.Tunnel);
         Deactivated += (_, _) => HideCtrlHints();
         InitializeSearch();
-        _paneChrome.Add(UnstagedPaneEffect, UnstagedTitleBar, UnstagedList);
-        _paneChrome.Add(StagedPaneEffect, StagedTitleBar, StagedList);
-        _paneChrome.Add(DiffPaneEffect, DiffPanePart);
-        _paneChrome.Add(MessagePaneEffect, FailureOutputPart, MessagePanePart);
+        _paneChrome.Add(nameof(Pane.Unstaged), UnstagedPaneEffect, UnstagedTitleBar, UnstagedList);
+        _paneChrome.Add(nameof(Pane.Staged), StagedPaneEffect, StagedTitleBar, StagedList);
+        _paneChrome.Add(nameof(Pane.Diff), DiffPaneEffect, DiffPanePart);
+        _paneChrome.Add(nameof(Pane.Message), MessagePaneEffect, FailureOutputPart, MessagePanePart);
         _paneChrome.AddSeparator(ListsSplitterLine);
         _paneChrome.AddSeparator(DiffSplitterLine);
         ApplyPaneSettings();
@@ -627,13 +627,15 @@ public partial class CommitWindow : Window, IVimCommands {
 
     public CommitWindowProjection? Projection { get; }
 
-    internal void SetPaneChrome(double gap, GitKay.Core.PaneHoverEffect effect, GitKay.Core.PaneHoverColor color, GitKay.Core.PaneHoverIntensity intensity, bool border = true) =>
-        _paneChrome.Update(gap, effect, color, intensity, border);
+    internal void SetPaneChrome(PaneChrome.Settings settings) => _paneChrome.Update(settings);
 
     /// <summary>Panes follow the same settings as the main window's; re-read when the window is activated.</summary>
     private void ApplyPaneSettings() {
         var settings = GitKay.Core.SettingsModule.normalize(new AppSettingsStore().Load());
-        _paneChrome.Update(settings.PaneGap, settings.PaneHoverEffect, settings.PaneHoverColor, settings.PaneHoverIntensity, settings.PaneBorder);
+        _paneChrome.Update(new PaneChrome.Settings(settings.PaneGap, settings.PaneFocusIndicator, settings.PaneFocusHighlight,
+            settings.PaneFocusEffect, settings.PaneEffectColor, settings.PaneEffectIntensity, settings.PaneBorder,
+            settings.PaneBorderStyle, settings.PaneBorderColor, settings.PaneBorderThickness, settings.SplitterLinesHidden));
+        TrackPane();
     }
 
     internal TextBox MessageBoxForTests => MessageBox;
@@ -669,6 +671,7 @@ public partial class CommitWindow : Window, IVimCommands {
 
     private void TrackPane() {
         var pane = FocusedPane;
+        _paneChrome.SetFocused(pane == Pane.None ? null : pane.ToString());
         if (pane == Pane.None || pane == _currentPane) return;
         _lastPane = _currentPane;
         _currentPane = pane;

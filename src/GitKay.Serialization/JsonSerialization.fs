@@ -20,10 +20,17 @@ type private SettingsWire =
       SearchDebounceSeconds: float
       ThemeMode: string
       PaneGap: float
-      PaneHoverEffectKey: string
-      PaneHoverColorKey: string
-      PaneHoverIntensityKey: string
-      PaneBorder: bool }
+      PaneFocusEffectKey: string
+      PaneEffectColorKey: string
+      PaneEffectIntensityKey: string
+      HoverFocusesPane: bool
+      PaneFocusIndicator: bool
+      PaneFocusHighlight: bool
+      PaneBorder: bool
+      PaneBorderStyleKey: string
+      PaneBorderColorKey: string
+      PaneBorderThickness: float
+      SplitterLinesHidden: bool }
 
 type private RepoStateWire =
     { LastSelectedCommitHash: string option
@@ -60,16 +67,26 @@ module private Codecs =
             fieldAs "SearchDebounceSeconds" _.SearchDebounceSeconds { defaultValue d.SearchDebounceSeconds }
             fieldAs "ThemeMode" _.ThemeMode { defaultValue (ThemeMode.key d.Theme) }
             fieldAs "PaneGap" _.PaneGap { defaultValue d.PaneGap }
-            fieldAs "PaneHoverEffect" _.PaneHoverEffectKey { defaultValue (PaneHoverEffect.key d.PaneHoverEffect) }
-            fieldAs "PaneHoverColor" _.PaneHoverColorKey { defaultValue (PaneHoverColor.key d.PaneHoverColor) }
-            fieldAs "PaneHoverIntensity" _.PaneHoverIntensityKey { defaultValue (PaneHoverIntensity.key d.PaneHoverIntensity) }
+            fieldAs "PaneFocusEffect" _.PaneFocusEffectKey { defaultValue (PaneFocusEffect.key d.PaneFocusEffect) }
+            fieldAs "PaneEffectColor" _.PaneEffectColorKey { defaultValue (PaneEffectColor.key d.PaneEffectColor) }
+            fieldAs "PaneEffectIntensity" _.PaneEffectIntensityKey { defaultValue (PaneEffectIntensity.key d.PaneEffectIntensity) }
+            fieldAs "HoverFocusesPane" _.HoverFocusesPane { defaultValue d.HoverFocusesPane }
+            fieldAs "PaneFocusIndicator" _.PaneFocusIndicator { defaultValue d.PaneFocusIndicator }
+            fieldAs "PaneFocusHighlight" _.PaneFocusHighlight { defaultValue d.PaneFocusHighlight }
             fieldAs "PaneBorder" _.PaneBorder { defaultValue d.PaneBorder }
-            construct (fun showBranchRefs showStashes diffContextLines layout fontFamily monoFontFamily textSize metaSize badgeSize debounce theme paneGap paneHover paneColor paneIntensity paneBorder ->
+            fieldAs "PaneBorderStyle" _.PaneBorderStyleKey { defaultValue (PaneBorderStyle.key d.PaneBorderStyle) }
+            fieldAs "PaneBorderColor" _.PaneBorderColorKey { defaultValue (PaneEffectColor.key d.PaneBorderColor) }
+            fieldAs "PaneBorderThickness" _.PaneBorderThickness { defaultValue d.PaneBorderThickness }
+            fieldAs "SplitterLinesHidden" _.SplitterLinesHidden { defaultValue d.SplitterLinesHidden }
+            construct (fun showBranchRefs showStashes diffContextLines layout fontFamily monoFontFamily textSize metaSize badgeSize debounce theme paneGap paneEffect paneColor paneIntensity hoverFocuses focusIndicator focusHighlight paneBorder borderStyle borderColor borderThickness splitterHidden ->
                 { ShowBranchRefs = showBranchRefs; ShowStashes = showStashes; DiffContextLines = diffContextLines
                   DiffPresentationModeKey = layout; CommitRowFontFamily = fontFamily; CommitRowMonoFontFamily = monoFontFamily
                   CommitRowTextFontSize = textSize; CommitRowMetaFontSize = metaSize; CommitRowBadgeFontSize = badgeSize
-                  SearchDebounceSeconds = debounce; ThemeMode = theme; PaneGap = paneGap; PaneHoverEffectKey = paneHover
-                  PaneHoverColorKey = paneColor; PaneHoverIntensityKey = paneIntensity; PaneBorder = paneBorder })
+                  SearchDebounceSeconds = debounce; ThemeMode = theme; PaneGap = paneGap; PaneFocusEffectKey = paneEffect
+                  PaneEffectColorKey = paneColor; PaneEffectIntensityKey = paneIntensity; HoverFocusesPane = hoverFocuses
+                  PaneFocusIndicator = focusIndicator; PaneFocusHighlight = focusHighlight; PaneBorder = paneBorder
+                  PaneBorderStyleKey = borderStyle; PaneBorderColorKey = borderColor; PaneBorderThickness = borderThickness
+                  SplitterLinesHidden = splitterHidden })
         }
         |> Json.compile
 
@@ -119,10 +136,17 @@ module SettingsJson =
               SearchDebounceSeconds = settings.SearchDebounceSeconds
               ThemeMode = ThemeMode.key settings.Theme
               PaneGap = settings.PaneGap
-              PaneHoverEffectKey = PaneHoverEffect.key settings.PaneHoverEffect
-              PaneHoverColorKey = PaneHoverColor.key settings.PaneHoverColor
-              PaneHoverIntensityKey = PaneHoverIntensity.key settings.PaneHoverIntensity
-              PaneBorder = settings.PaneBorder }
+              PaneFocusEffectKey = PaneFocusEffect.key settings.PaneFocusEffect
+              PaneEffectColorKey = PaneEffectColor.key settings.PaneEffectColor
+              PaneEffectIntensityKey = PaneEffectIntensity.key settings.PaneEffectIntensity
+              HoverFocusesPane = settings.HoverFocusesPane
+              PaneFocusIndicator = settings.PaneFocusIndicator
+              PaneFocusHighlight = settings.PaneFocusHighlight
+              PaneBorder = settings.PaneBorder
+              PaneBorderStyleKey = PaneBorderStyle.key settings.PaneBorderStyle
+              PaneBorderColorKey = PaneEffectColor.key settings.PaneBorderColor
+              PaneBorderThickness = settings.PaneBorderThickness
+              SplitterLinesHidden = settings.SplitterLinesHidden }
 
     /// <summary>Normalized settings, or why the text isn't a settings file. Unknown layout or theme names take the defaults.</summary>
     let decode (json: string) : Result<Settings, string> =
@@ -141,10 +165,17 @@ module SettingsJson =
                   SearchDebounceSeconds = wire.SearchDebounceSeconds
                   Theme = ThemeMode.tryParse wire.ThemeMode |> Option.defaultValue Settings.defaults.Theme
                   PaneGap = wire.PaneGap
-                  PaneHoverEffect = PaneHoverEffect.tryParse wire.PaneHoverEffectKey |> Option.defaultValue Settings.defaults.PaneHoverEffect
-                  PaneHoverColor = PaneHoverColor.tryParse wire.PaneHoverColorKey |> Option.defaultValue Settings.defaults.PaneHoverColor
-                  PaneHoverIntensity = PaneHoverIntensity.tryParse wire.PaneHoverIntensityKey |> Option.defaultValue Settings.defaults.PaneHoverIntensity
-                  PaneBorder = wire.PaneBorder })
+                  PaneFocusEffect = PaneFocusEffect.tryParse wire.PaneFocusEffectKey |> Option.defaultValue Settings.defaults.PaneFocusEffect
+                  PaneEffectColor = PaneEffectColor.tryParse wire.PaneEffectColorKey |> Option.defaultValue Settings.defaults.PaneEffectColor
+                  PaneEffectIntensity = PaneEffectIntensity.tryParse wire.PaneEffectIntensityKey |> Option.defaultValue Settings.defaults.PaneEffectIntensity
+                  HoverFocusesPane = wire.HoverFocusesPane
+                  PaneFocusIndicator = wire.PaneFocusIndicator
+                  PaneFocusHighlight = wire.PaneFocusHighlight
+                  PaneBorder = wire.PaneBorder
+                  PaneBorderStyle = PaneBorderStyle.tryParse wire.PaneBorderStyleKey |> Option.defaultValue Settings.defaults.PaneBorderStyle
+                  PaneBorderColor = PaneEffectColor.tryParse wire.PaneBorderColorKey |> Option.defaultValue Settings.defaults.PaneBorderColor
+                  PaneBorderThickness = wire.PaneBorderThickness
+                  SplitterLinesHidden = wire.SplitterLinesHidden })
 
 /// <summary>Window size, layout and per-repository selections as the UI state file stores them.</summary>
 module UiStateJson =

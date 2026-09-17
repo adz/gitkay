@@ -58,9 +58,9 @@ public partial class MainWindow : Window, IVimCommands {
         CommitListBox.CommitWindowRequested += OpenCommitWindow;
         CommitListBox.BadgeWidthMeasured += FitCommitColumnToBadges;
         CommitListBox.AmendRequested += () => OpenCommitWindow(amend: true);
-        _paneChrome.Add(CommitPaneEffect, CommitPaneContent);
-        _paneChrome.Add(DiffPaneEffect, DiffHeaderPart, DiffContentPart, DiffPaneFocus);
-        _paneChrome.Add(FilesPaneEffect, FilesHeaderPart, FilesContentPart, FilesPaneFocus);
+        _paneChrome.Add(nameof(Pane.Commits), CommitPaneEffect, CommitPaneContent);
+        _paneChrome.Add(nameof(Pane.Diff), DiffPaneEffect, DiffHeaderPart, DiffContentPart, DiffPaneFocus);
+        _paneChrome.Add(nameof(Pane.Files), FilesPaneEffect, FilesHeaderPart, FilesContentPart, FilesPaneFocus);
         _paneChrome.AddSeparator(HistorySplitterLine);
         _paneChrome.AddSeparator(FilesSplitterLine);
         CommitListBox.CopyRequested += name => CopyToClipboard(name, "Copied");
@@ -158,9 +158,12 @@ public partial class MainWindow : Window, IVimCommands {
     private void UpdatePaneFocusIndicator() {
         const double fade = 0.22;
         var pane = FocusedPane;
-        CommitPaneFocus.Opacity = pane != Pane.None && pane != Pane.Commits ? fade : 0;
-        DiffPaneFocus.Opacity = pane != Pane.None && pane != Pane.Diff ? fade : 0;
-        FilesPaneFocus.Opacity = pane != Pane.None && pane != Pane.Files ? fade : 0;
+        // With the indicator off nothing marks the focused pane: no fade on the others, and no chrome around it.
+        var indicate = _projection is not { PaneFocusIndicator: false } && pane != Pane.None;
+        CommitPaneFocus.Opacity = indicate && pane != Pane.Commits ? fade : 0;
+        DiffPaneFocus.Opacity = indicate && pane != Pane.Diff ? fade : 0;
+        FilesPaneFocus.Opacity = indicate && pane != Pane.Files ? fade : 0;
+        _paneChrome.SetFocused(pane == Pane.None ? null : pane.ToString());
     }
 
     // ----- Hover to focus: pointing at a pane makes it the target for keys, without leaving a text box. -----
@@ -944,8 +947,17 @@ public partial class MainWindow : Window, IVimCommands {
     }
 
     private void ApplyPaneChrome() {
-        if (_projection is { } projection) _paneChrome.Update(projection.PaneGap, projection.PaneHoverEffect, projection.PaneHoverColor, projection.PaneHoverIntensity, projection.PaneBorder);
+        if (_projection is { } projection) {
+            _paneChrome.Update(PaneChromeSettingsFor(projection));
+            UpdatePaneFocusIndicator();
+        }
     }
+
+    /// <summary>The Panes section of settings, as the chrome wants it.</summary>
+    internal static PaneChrome.Settings PaneChromeSettingsFor(MainProjection projection) =>
+        new(projection.PaneGap, projection.PaneFocusIndicator, projection.PaneFocusHighlight, projection.PaneFocusEffect,
+            projection.PaneEffectColor, projection.PaneEffectIntensity, projection.PaneBorder, projection.PaneBorderStyle,
+            projection.PaneBorderColor, projection.PaneBorderThickness, projection.SplitterLinesHidden);
 
     private void OnDataContextChanged(object? sender, EventArgs e) {
         if (_projection != null) {

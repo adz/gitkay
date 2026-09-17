@@ -3770,14 +3770,17 @@ module SettingsSerializationTests =
             { ShowBranchRefs = true; ShowStashes = true; DiffContextLines = 7; DiffLayout = DiffLayout.SideBySide
               CommitRowFontFamily = "Inter"; CommitRowMonoFontFamily = "Iosevka"; CommitRowTextFontSize = 14.5
               CommitRowMetaFontSize = 12.0; CommitRowBadgeFontSize = 10.0; SearchDebounceSeconds = 0.25; Theme = DarkTheme
-              PaneGap = 5.0; PaneHoverEffect = HoverShadow; PaneHoverColor = TealHoverColor; PaneHoverIntensity = QuarterIntensity; PaneBorder = false }
+              PaneGap = 5.0; HoverFocusesPane = false; PaneFocusIndicator = false; PaneFocusHighlight = true
+              PaneFocusEffect = PaneShadow; PaneEffectColor = TealEffectColor; PaneEffectIntensity = QuarterIntensity
+              PaneBorder = true; PaneBorderStyle = CustomBorder; PaneBorderColor = PinkEffectColor
+              PaneBorderThickness = 3.0; SplitterLinesHidden = true }
         test <@ settings |> SettingsJson.encode |> SettingsJson.decode = Ok settings @>
 
     [<Fact>]
-    let ``pane settings clamp the gap and fall back to the default hover effect`` () =
-        let read = decoded """{"PaneGap":40,"PaneHoverEffect":"sparkle","PaneHoverColor":"chartreuse"}"""
-        test <@ read.PaneGap = 8.0 && read.PaneHoverEffect = Settings.defaults.PaneHoverEffect && read.PaneHoverColor = Settings.defaults.PaneHoverColor @>
-        test <@ (decoded """{"PaneGap":0,"PaneHoverEffect":"none"}""") = { Settings.defaults with PaneGap = 0.0; PaneHoverEffect = NoHoverEffect } @>
+    let ``pane settings clamp the gap and thickness and fall back to the default effect`` () =
+        let read = decoded """{"PaneGap":40,"PaneBorderThickness":40,"PaneFocusEffect":"sparkle","PaneEffectColor":"chartreuse"}"""
+        test <@ read.PaneGap = 8.0 && read.PaneBorderThickness = 4.0 && read.PaneFocusEffect = Settings.defaults.PaneFocusEffect && read.PaneEffectColor = Settings.defaults.PaneEffectColor @>
+        test <@ (decoded """{"PaneGap":0,"PaneFocusEffect":"none"}""") = { Settings.defaults with PaneGap = 0.0; PaneFocusEffect = NoPaneEffect } @>
 
     [<Fact>]
     let ``settings missing from the file take their defaults`` () =

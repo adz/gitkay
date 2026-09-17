@@ -74,105 +74,129 @@ module ThemeMode =
         all |> List.tryFind (fun mode -> key mode = normalized)
 
 /// <summary>What the user chose in settings. Build through <see cref="M:GitKay.Core.SettingsModule.normalize"/> to keep values in range.</summary>
-/// <summary>What the pane under the pointer does, in the space around panes.</summary>
-type PaneHoverEffect =
-    | NoHoverEffect
-    | HoverGlow
-    | HoverShadow
-    | HoverHighlight
+/// <summary>What the focused pane does in the space around panes; it is focused by pointing at it or clicking into it.</summary>
+type PaneFocusEffect =
+    | NoPaneEffect
+    | PaneGlow
+    | PaneShadow
 
-module PaneHoverEffect =
-    let all = [ NoHoverEffect; HoverGlow; HoverShadow; HoverHighlight ]
+module PaneFocusEffect =
+    let all = [ NoPaneEffect; PaneGlow; PaneShadow ]
 
     /// <summary>The key used in settings files.</summary>
     let key effect =
         match effect with
-        | NoHoverEffect -> "none"
-        | HoverGlow -> "glow"
-        | HoverShadow -> "shadow"
-        | HoverHighlight -> "highlight"
+        | NoPaneEffect -> "none"
+        | PaneGlow -> "glow"
+        | PaneShadow -> "shadow"
 
     let label effect =
         match effect with
-        | NoHoverEffect -> "None"
-        | HoverGlow -> "Glow"
-        | HoverShadow -> "Shadow"
-        | HoverHighlight -> "Highlight"
+        | NoPaneEffect -> "None"
+        | PaneGlow -> "Glow"
+        | PaneShadow -> "Shadow"
 
     let describe effect =
         match effect with
-        | NoHoverEffect -> "Panes stay as they are"
-        | HoverGlow -> "The pane under the pointer glows into the space around it"
-        | HoverShadow -> "The pane under the pointer lifts, casting a soft shadow"
-        | HoverHighlight -> "The pane under the pointer gets a brighter edge"
+        | NoPaneEffect -> "The focused pane is left as it is"
+        | PaneGlow -> "The focused pane glows into the space around it"
+        | PaneShadow -> "The focused pane lifts, casting a soft shadow"
 
     let tryParse (text: string) =
         let normalized = if isNull text then "" else text.Trim().ToLowerInvariant()
         all |> List.tryFind (fun effect -> key effect = normalized)
 
-/// <summary>The colour a pane's hover effect is drawn in.</summary>
-type PaneHoverColor =
-    /// <summary>The theme's own accent colour.</summary>
-    | AccentHoverColor
-    | BlueHoverColor
-    | GreenHoverColor
-    | PurpleHoverColor
-    | OrangeHoverColor
-    | PinkHoverColor
-    | TealHoverColor
-    | WhiteHoverColor
+/// <summary>How a pane's outline is drawn, when panes are bordered.</summary>
+type PaneBorderStyle =
+    /// <summary>The theme's own hairline, which barely separates the panes.</summary>
+    | SubtleBorder
+    /// <summary>The theme's border colour, as dialogs and inputs use it.</summary>
+    | NormalBorder
+    /// <summary>A colour and thickness of your own.</summary>
+    | CustomBorder
 
-module PaneHoverColor =
+module PaneBorderStyle =
+    let all = [ SubtleBorder; NormalBorder; CustomBorder ]
+
+    let key style =
+        match style with
+        | SubtleBorder -> "subtle"
+        | NormalBorder -> "normal"
+        | CustomBorder -> "custom"
+
+    let label style =
+        match style with
+        | SubtleBorder -> "Subtle"
+        | NormalBorder -> "Normal"
+        | CustomBorder -> "Custom"
+
+    let tryParse (text: string) =
+        let normalized = if isNull text then "" else text.Trim().ToLowerInvariant()
+        all |> List.tryFind (fun style -> key style = normalized)
+
+/// <summary>The colour a pane's focus effect is drawn in.</summary>
+type PaneEffectColor =
+    /// <summary>The theme's own accent colour.</summary>
+    | AccentEffectColor
+    | BlueEffectColor
+    | GreenEffectColor
+    | PurpleEffectColor
+    | OrangeEffectColor
+    | PinkEffectColor
+    | TealEffectColor
+    | WhiteEffectColor
+
+module PaneEffectColor =
     let all =
-        [ AccentHoverColor; BlueHoverColor; GreenHoverColor; PurpleHoverColor
-          OrangeHoverColor; PinkHoverColor; TealHoverColor; WhiteHoverColor ]
+        [ AccentEffectColor; BlueEffectColor; GreenEffectColor; PurpleEffectColor
+          OrangeEffectColor; PinkEffectColor; TealEffectColor; WhiteEffectColor ]
 
     let key color =
         match color with
-        | AccentHoverColor -> "accent"
-        | BlueHoverColor -> "blue"
-        | GreenHoverColor -> "green"
-        | PurpleHoverColor -> "purple"
-        | OrangeHoverColor -> "orange"
-        | PinkHoverColor -> "pink"
-        | TealHoverColor -> "teal"
-        | WhiteHoverColor -> "white"
+        | AccentEffectColor -> "accent"
+        | BlueEffectColor -> "blue"
+        | GreenEffectColor -> "green"
+        | PurpleEffectColor -> "purple"
+        | OrangeEffectColor -> "orange"
+        | PinkEffectColor -> "pink"
+        | TealEffectColor -> "teal"
+        | WhiteEffectColor -> "white"
 
     let label color =
         match color with
-        | AccentHoverColor -> "Theme accent"
-        | BlueHoverColor -> "Blue"
-        | GreenHoverColor -> "Green"
-        | PurpleHoverColor -> "Purple"
-        | OrangeHoverColor -> "Orange"
-        | PinkHoverColor -> "Pink"
-        | TealHoverColor -> "Teal"
-        | WhiteHoverColor -> "White"
+        | AccentEffectColor -> "Theme accent"
+        | BlueEffectColor -> "Blue"
+        | GreenEffectColor -> "Green"
+        | PurpleEffectColor -> "Purple"
+        | OrangeEffectColor -> "Orange"
+        | PinkEffectColor -> "Pink"
+        | TealEffectColor -> "Teal"
+        | WhiteEffectColor -> "White"
 
     /// <summary>The colour as #RRGGBB, or None for the theme's accent, which the window resolves.</summary>
     let hex color =
         match color with
-        | AccentHoverColor -> None
-        | BlueHoverColor -> Some "#58A6FF"
-        | GreenHoverColor -> Some "#3FB950"
-        | PurpleHoverColor -> Some "#BC8CFF"
-        | OrangeHoverColor -> Some "#F0883E"
-        | PinkHoverColor -> Some "#FF7EB6"
-        | TealHoverColor -> Some "#39C5CF"
-        | WhiteHoverColor -> Some "#FFFFFF"
+        | AccentEffectColor -> None
+        | BlueEffectColor -> Some "#58A6FF"
+        | GreenEffectColor -> Some "#3FB950"
+        | PurpleEffectColor -> Some "#BC8CFF"
+        | OrangeEffectColor -> Some "#F0883E"
+        | PinkEffectColor -> Some "#FF7EB6"
+        | TealEffectColor -> Some "#39C5CF"
+        | WhiteEffectColor -> Some "#FFFFFF"
 
     let tryParse (text: string) =
         let normalized = if isNull text then "" else text.Trim().ToLowerInvariant()
         all |> List.tryFind (fun color -> key color = normalized)
 
 /// <summary>How strongly a pane's hover effect is drawn.</summary>
-type PaneHoverIntensity =
+type PaneEffectIntensity =
     | FullIntensity
     | HalfIntensity
     | QuarterIntensity
     | EighthIntensity
 
-module PaneHoverIntensity =
+module PaneEffectIntensity =
     let all = [ FullIntensity; HalfIntensity; QuarterIntensity; EighthIntensity ]
 
     let key intensity =
@@ -216,14 +240,28 @@ type Settings =
       Theme: ThemeMode
       /// <summary>Space around each pane, in pixels; 0 keeps panes flush against each other.</summary>
       PaneGap: float
-      /// <summary>What the pane under the pointer does in that space.</summary>
-      PaneHoverEffect: PaneHoverEffect
-      /// <summary>The colour that effect is drawn in.</summary>
-      PaneHoverColor: PaneHoverColor
-      /// <summary>How strongly it is drawn.</summary>
-      PaneHoverIntensity: PaneHoverIntensity
+      /// <summary>Whether pointing at a pane focuses it, so keys go there without clicking.</summary>
+      HoverFocusesPane: bool
+      /// <summary>Whether the focused pane is shown at all; with it off, nothing marks which pane has the keys.</summary>
+      PaneFocusIndicator: bool
+      /// <summary>Whether the focused pane's edge is brightened.</summary>
+      PaneFocusHighlight: bool
+      /// <summary>What else the focused pane does in the space around it.</summary>
+      PaneFocusEffect: PaneFocusEffect
+      /// <summary>The colour the highlight and effect are drawn in.</summary>
+      PaneEffectColor: PaneEffectColor
+      /// <summary>How strongly they are drawn.</summary>
+      PaneEffectIntensity: PaneEffectIntensity
       /// <summary>Whether each pane is outlined, so the space around it reads as a frame.</summary>
-      PaneBorder: bool }
+      PaneBorder: bool
+      /// <summary>How that outline is drawn.</summary>
+      PaneBorderStyle: PaneBorderStyle
+      /// <summary>The outline's colour, used by <see cref="T:GitKay.Core.CustomBorder"/>.</summary>
+      PaneBorderColor: PaneEffectColor
+      /// <summary>The outline's thickness in pixels, used by <see cref="T:GitKay.Core.CustomBorder"/>.</summary>
+      PaneBorderThickness: float
+      /// <summary>Whether the hairline between two panes is hidden, leaving the splitter to be felt rather than seen.</summary>
+      SplitterLinesHidden: bool }
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module Settings =
@@ -240,10 +278,17 @@ module Settings =
           SearchDebounceSeconds = 0.5
           Theme = SystemTheme
           PaneGap = 3.0
-          PaneHoverEffect = HoverGlow
-          PaneHoverColor = AccentHoverColor
-          PaneHoverIntensity = HalfIntensity
-          PaneBorder = true }
+          HoverFocusesPane = true
+          PaneFocusIndicator = true
+          PaneFocusHighlight = false
+          PaneFocusEffect = PaneGlow
+          PaneEffectColor = AccentEffectColor
+          PaneEffectIntensity = EighthIntensity
+          PaneBorder = false
+          PaneBorderStyle = SubtleBorder
+          PaneBorderColor = AccentEffectColor
+          PaneBorderThickness = 1.0
+          SplitterLinesHidden = false }
 
     let private fontFamily fallback (value: string) = if String.IsNullOrWhiteSpace value then fallback else value
 
@@ -261,7 +306,10 @@ module Settings =
             CommitRowMetaFontSize = fontSize defaults.CommitRowMetaFontSize settings.CommitRowMetaFontSize
             CommitRowBadgeFontSize = fontSize defaults.CommitRowBadgeFontSize settings.CommitRowBadgeFontSize
             SearchDebounceSeconds = nonNegative settings.SearchDebounceSeconds
-            PaneGap = (if Double.IsFinite settings.PaneGap then Math.Clamp(settings.PaneGap, 0.0, 8.0) else defaults.PaneGap) }
+            PaneGap = (if Double.IsFinite settings.PaneGap then Math.Clamp(settings.PaneGap, 0.0, 8.0) else defaults.PaneGap)
+            PaneBorderThickness =
+                if Double.IsFinite settings.PaneBorderThickness then Math.Clamp(settings.PaneBorderThickness, 1.0, 4.0)
+                else defaults.PaneBorderThickness }
 
 /// <summary>Splitter positions and history column widths the user dragged; None keeps the layout's default.</summary>
 type UiLayout =

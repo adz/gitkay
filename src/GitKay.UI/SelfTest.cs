@@ -72,8 +72,8 @@ public static class SelfTest {
         });
 
         Check("settings round-trip through the Reified codec", () => {
-            // Eleven fields: records this wide threw TypeLoadException under NativeAOT before Reified 0.8.1.
-            var settings = new GitKay.Core.Settings(true, true, 7, GitKay.Core.DiffLayout.SideBySide, "Inter", "Iosevka", 14.5, 12, 10, 0.25, GitKay.Core.ThemeMode.DarkTheme, 4.0, GitKay.Core.PaneHoverEffect.HoverShadow, GitKay.Core.PaneHoverColor.PurpleHoverColor, GitKay.Core.PaneHoverIntensity.QuarterIntensity, false);
+            // Twenty-odd fields: records this wide threw TypeLoadException under NativeAOT before Reified 0.8.1.
+            var settings = new GitKay.Core.Settings(true, true, 7, GitKay.Core.DiffLayout.SideBySide, "Inter", "Iosevka", 14.5, 12, 10, 0.25, GitKay.Core.ThemeMode.DarkTheme, 4.0, false, false, true, GitKay.Core.PaneFocusEffect.PaneShadow, GitKay.Core.PaneEffectColor.PurpleEffectColor, GitKay.Core.PaneEffectIntensity.QuarterIntensity, true, GitKay.Core.PaneBorderStyle.CustomBorder, GitKay.Core.PaneEffectColor.TealEffectColor, 2.0, true);
             var read = GitKay.Serialization.SettingsJson.decode(GitKay.Serialization.SettingsJson.encode(settings));
             if (!read.IsOk || !read.ResultValue.Equals(settings)) return "values changed in the round trip";
             var defaults = GitKay.Serialization.SettingsJson.decode("{\"ShowStashes\":true}");

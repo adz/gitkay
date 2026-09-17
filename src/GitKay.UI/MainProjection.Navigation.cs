@@ -42,7 +42,6 @@ public partial class MainProjection {
         ["searchMode"] = SelectedSearchScope?.Key ?? "commit",
         ["searchRegex"] = SearchUseRegex.ToString(),
         ["findRegex"] = CommitFindUseRegex.ToString(),
-        ["hoverToFocus"] = HoverToFocus.ToString(),
     };
 
     public void ApplyViewPreferences(IReadOnlyDictionary<string, string> preferences) {
@@ -56,7 +55,6 @@ public partial class MainProjection {
         CommitFindUseRegex = Flag("findRegex");
         SearchUseRegex = Flag("searchRegex");
         if (preferences.TryGetValue("searchMode", out var mode)) SetSearchMode(mode);
-        HoverToFocus = !preferences.TryGetValue("hoverToFocus", out var hover) || !bool.TryParse(hover, out var hoverFlag) || hoverFlag;
     }
 
     // ----- Back / forward through visited commits (Alt+Left / Alt+Right, Ctrl+O / Ctrl+I). -----
