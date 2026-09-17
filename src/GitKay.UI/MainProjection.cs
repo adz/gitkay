@@ -107,6 +107,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public ObservableCollection<PaneEffectIntensityProjection> PaneHoverIntensities { get; } =
         new(GitKay.Core.PaneEffectIntensityModule.all.Select(intensity => new PaneEffectIntensityProjection(intensity)));
 
+    /// <summary>Every installed font, for the picker; read from the system the first time settings are opened.</summary>
+    public IReadOnlyList<InstalledFont> InstalledFonts => FontCatalog.All;
+
+    /// <summary>Only the fixed-width families, for anything that lines up in columns.</summary>
+    public IReadOnlyList<InstalledFont> InstalledMonoFonts => FontCatalog.Monospaced;
+
     public ObservableCollection<PaneBorderStyleProjection> PaneBorderStyles { get; } =
         new(GitKay.Core.PaneBorderStyleModule.all.Select(style => new PaneBorderStyleProjection(style)));
 

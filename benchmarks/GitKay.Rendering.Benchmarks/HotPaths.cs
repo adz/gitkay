@@ -139,6 +139,10 @@ internal static class UiInteractions {
             if (settingsLabel.Contains("dark")) Avalonia.Application.Current!.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Dark;
             var settingsWindow = new SettingsWindow { DataContext = new MainProjection(), Width = 760, Height = 620 };
             settingsWindow.Show();
+            // "settingswindow-tab3" opens the fourth tab, so each page can be checked on its own.
+            if (settingsLabel.Split("tab").ElementAtOrDefault(1) is { } index && int.TryParse(index, out var tab)
+                && Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(settingsWindow).OfType<Avalonia.Controls.TabControl>().FirstOrDefault() is { } tabs)
+                tabs.SelectedIndex = tab;
             for (var i = 0; i < 20; i++) { System.Threading.Thread.Sleep(50); Pump(settingsWindow); }
             using var shot = Avalonia.Headless.HeadlessWindowExtensions.CaptureRenderedFrame(settingsWindow);
             var settingsPath = args.ElementAtOrDefault(3) ?? $"{settingsLabel}.png";
