@@ -7,10 +7,15 @@ using Avalonia.Media;
 namespace GitKay.UI;
 
 /// <summary>One installed font family: its name, and the family itself so a list can show it in its own typeface.</summary>
-public sealed class InstalledFont(string name, bool isMonospaced) {
+public sealed class InstalledFont(string name) {
+    private bool? _monospaced;
+
     public string Name { get; } = name;
-    public bool IsMonospaced { get; } = isMonospaced;
     public FontFamily Family { get; } = new(name);
+
+    /// <summary>Measured the first time it is asked for: laying every installed font out up front is far too slow.</summary>
+    public bool IsMonospaced => _monospaced ??= FontCatalog.Measure(Name);
+
     public override string ToString() => Name;
 }
 
@@ -34,7 +39,7 @@ public static class FontCatalog {
                 .Where(name => !string.IsNullOrWhiteSpace(name))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(name => name, StringComparer.CurrentCultureIgnoreCase)
-                .Select(name => new InstalledFont(name, IsMonospaced(name)))
+                .Select(name => new InstalledFont(name))
                 .ToArray();
         }
         catch (Exception exception) {
@@ -43,7 +48,8 @@ public static class FontCatalog {
         }
     }
 
-    private static bool IsMonospaced(string name) {
+    /// <summary>Whether a family renders every glyph at the same width. Called once per family, when first needed.</summary>
+    internal static bool Measure(string name) {
         try {
             if (!FontManager.Current.TryGetGlyphTypeface(new Typeface(name), out _)) return false;
             var typeface = new Typeface(name);
