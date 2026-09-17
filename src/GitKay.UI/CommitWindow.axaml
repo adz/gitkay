@@ -224,7 +224,7 @@
                             <Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Row="1" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,10,0"><TextBlock Text="Ctrl+4  message · Ctrl+Enter  commit · Ctrl+S  sign off" /></Border>
                             <TextBox Grid.Row="1" x:Name="MessageBox" Text="{Binding Message, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap"
                                      Height="120" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12"
-                                     Watermark="Subject line, then a blank line and why the change was made" />
+                                     PlaceholderText="Subject line, then a blank line and why the change was made" />
                             <Grid Grid.Row="2" ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto" ColumnSpacing="8">
                                 <Button Classes="action" Padding="10,3" Command="{Binding RescanCommand}" ToolTip.Tip="Read the working tree and index again (F5)">
                                     <TextBlock Text="Rescan" FontSize="12" />
@@ -258,7 +258,7 @@
                     Background="{DynamicResource GitKaySurfaceBrush}" BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="1"
                     BoxShadow="0 12 32 0 #50000000">
                 <DockPanel>
-                    <TextBox DockPanel.Dock="Top" x:Name="PaletteBox" Text="{Binding PaletteQuery, Mode=TwoWay}" Watermark="Go to changed file"
+                    <TextBox DockPanel.Dock="Top" x:Name="PaletteBox" Text="{Binding PaletteQuery, Mode=TwoWay}" PlaceholderText="Go to changed file"
                              FontSize="13" Margin="0,0,0,6" />
                     <ListBox x:Name="PaletteList" ItemsSource="{Binding PaletteFiles}" SelectedIndex="{Binding PaletteIndex, Mode=TwoWay}"
                              Background="Transparent" DoubleTapped="OnPaletteDoubleTapped">

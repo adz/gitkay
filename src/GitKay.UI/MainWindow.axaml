@@ -285,17 +285,17 @@
                             <TextBlock Classes="label" Text="Message" />
                             <TextBox Classes="field" Grid.Column="1" Text="{Binding AdvancedMessage, Mode=TwoWay}" PlaceholderText="headline or body" />
                             <TextBlock Classes="label" Grid.Column="2" Text="Author" />
-                            <AutoCompleteBox Classes="field" Grid.Column="3" Text="{Binding AdvancedAuthor, Mode=TwoWay}" Watermark="name or email"
+                            <AutoCompleteBox Classes="field" Grid.Column="3" Text="{Binding AdvancedAuthor, Mode=TwoWay}" PlaceholderText="name or email"
                                              ItemsSource="{Binding AuthorSuggestions}" FilterMode="Contains" MinimumPrefixLength="1" />
                             <TextBlock Classes="label" Grid.Column="4" Text="Hash" />
-                            <AutoCompleteBox Classes="field" Grid.Column="5" Text="{Binding AdvancedHash, Mode=TwoWay}" Watermark="full or partial"
+                            <AutoCompleteBox Classes="field" Grid.Column="5" Text="{Binding AdvancedHash, Mode=TwoWay}" PlaceholderText="full or partial"
                                              ItemsSource="{Binding HashSuggestions}" FilterMode="StartsWith" MinimumPrefixLength="1" />
 
                             <TextBlock Classes="label" Grid.Row="1" Text="Branch / tag" />
-                            <AutoCompleteBox Classes="field" Grid.Row="1" Grid.Column="1" Text="{Binding AdvancedRef, Mode=TwoWay}" Watermark="e.g. main, v1.0"
+                            <AutoCompleteBox Classes="field" Grid.Row="1" Grid.Column="1" Text="{Binding AdvancedRef, Mode=TwoWay}" PlaceholderText="e.g. main, v1.0"
                                              ItemsSource="{Binding RefSuggestions}" FilterMode="Contains" MinimumPrefixLength="0" />
                             <TextBlock Classes="label" Grid.Row="1" Grid.Column="2" Text="Path" />
-                            <AutoCompleteBox Classes="field" Grid.Row="1" Grid.Column="3" Text="{Binding AdvancedPath, Mode=TwoWay}" Watermark="file or folder"
+                            <AutoCompleteBox Classes="field" Grid.Row="1" Grid.Column="3" Text="{Binding AdvancedPath, Mode=TwoWay}" PlaceholderText="file or folder"
                                              ItemsSource="{Binding PathSuggestions}" FilterMode="Contains" MinimumPrefixLength="1" />
                             <TextBlock Classes="label" Grid.Row="1" Grid.Column="4" Text="Diff" />
                             <TextBox Classes="field" Grid.Row="1" Grid.Column="5" Text="{Binding AdvancedDiff, Mode=TwoWay}" PlaceholderText="added or removed text" />

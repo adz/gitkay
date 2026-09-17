@@ -3032,7 +3032,8 @@ module SearchProjectionTests =
 
     [<Fact>]
     let ``unobserved D-Bus platform errors should not be treated as fatal`` () =
-        let dbus = Tmds.DBus.Protocol.DBusException("org.freedesktop.DBus.Error.ServiceUnknown", "The name is not activatable")
+        // Any Tmds.DBus error counts; this is the one Avalonia's Linux integration raises when a service is absent.
+        let dbus = Tmds.DBus.Protocol.DBusErrorReplyException("org.freedesktop.DBus.Error.ServiceUnknown", "The name is not activatable")
         test <@ FatalErrorPresenter.IsIgnorablePlatformError(AggregateException(dbus :> exn)) @>
         test <@ not (FatalErrorPresenter.IsIgnorablePlatformError(AggregateException(InvalidOperationException("real") :> exn))) @>
         test <@ not (FatalErrorPresenter.IsIgnorablePlatformError(AggregateException(dbus :> exn, InvalidOperationException("real") :> exn))) @>
