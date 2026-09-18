@@ -19,7 +19,7 @@ using CoreWindow = GitKay.Core.CommitWindow;
 namespace GitKay.UI;
 
 /// <summary>A file in one of the commit window's lists.</summary>
-public sealed class CommitFileRow(CoreWindow.ListKind list, GitKay.Core.Models.FileDiff diff, bool untracked) {
+public sealed partial class CommitFileRow(CoreWindow.ListKind list, GitKay.Core.Models.FileDiff diff, bool untracked) : ObservableObject {
     public CoreWindow.ListKind List { get; } = list;
     public GitKay.Core.Models.FileDiff Diff { get; } = diff;
     public bool IsUntracked { get; } = untracked;
@@ -28,6 +28,10 @@ public sealed class CommitFileRow(CoreWindow.ListKind list, GitKay.Core.Models.F
     public string Marker => IsUntracked ? "+" : List.IsStagedList ? "●" : "○";
     public bool IsStaged => List.IsStagedList;
     public string ListName => IsUntracked ? "untracked" : List.IsStagedList ? "staged" : "unstaged";
+
+    /// <summary>What the list shows for this file: its whole path in patch mode, its name alone in a tree.</summary>
+    [ObservableProperty] private string _listLabel = "";
+    [ObservableProperty] private Avalonia.Thickness _listIndent;
 }
 
 /// <summary>A key or key sequence and what it does, for the commit window's keys sheet.</summary>
@@ -55,10 +59,28 @@ public sealed partial class CommitWindowProjection : ObservableObject {
     public string WindowTitle { get; }
     public AvaloniaList<CommitFileRow> UnstagedFiles { get; } = new();
     public AvaloniaList<CommitFileRow> StagedFiles { get; } = new();
+
+    /// <summary>What the two lists actually show: the files, plus folder rows in tree and all-files modes.</summary>
+    public AvaloniaList<object> UnstagedRows { get; } = new();
+    public AvaloniaList<object> StagedRows { get; } = new();
     public AvaloniaList<IDiffRowProjection> Rows { get; } = new();
 
     [ObservableProperty] private CommitFileRow? _selectedUnstaged;
     [ObservableProperty] private CommitFileRow? _selectedStaged;
+
+    /// <summary>What the list control has selected: a file, or a folder row the user is only pointing at.</summary>
+    [ObservableProperty] private object? _selectedUnstagedRow;
+    [ObservableProperty] private object? _selectedStagedRow;
+
+    partial void OnSelectedUnstagedRowChanged(object? value) {
+        if (value is CommitFileRow file) SelectedUnstaged = file;
+    }
+
+    partial void OnSelectedStagedRowChanged(object? value) {
+        if (value is CommitFileRow file) SelectedStaged = file;
+    }
+
+
     [ObservableProperty] private IDiffRowProjection? _selectedRow;
     [ObservableProperty] private string _unstagedTitle = "Unstaged";
     [ObservableProperty] private string _stagedTitle = "Staged";
@@ -279,6 +301,59 @@ public sealed partial class CommitWindowProjection : ObservableObject {
         }
     }
 
+    // ----- File list: patch, tree, or every file in the repository, as in the history window. -----
+
+    private CommitFileListMode _fileListMode = CommitFileListMode.Patch;
+    private readonly HashSet<string> _collapsedUnstaged = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _collapsedStaged = new(StringComparer.Ordinal);
+    private IReadOnlyList<string> _allPaths = [];
+    private bool _allPathsLoading;
+
+    public bool IsPatchFileListMode => _fileListMode == CommitFileListMode.Patch;
+    public bool IsTreeFileListMode => _fileListMode == CommitFileListMode.Tree;
+    public bool IsAllFilesMode => _fileListMode == CommitFileListMode.All;
+
+    [RelayCommand]
+    private void SetFileListMode(string mode) {
+        _fileListMode = mode switch {
+            "tree" => CommitFileListMode.Tree,
+            "all" => CommitFileListMode.All,
+            _ => CommitFileListMode.Patch,
+        };
+        OnPropertyChanged(nameof(IsPatchFileListMode));
+        OnPropertyChanged(nameof(IsTreeFileListMode));
+        OnPropertyChanged(nameof(IsAllFilesMode));
+        if (IsAllFilesMode) LoadAllPaths();
+        RebuildRows();
+    }
+
+    /// <summary>Clicking a folder opens or closes it, in whichever list it belongs to.</summary>
+    [RelayCommand]
+    private void ToggleFolder(CommitFolderRow folder) {
+        var collapsed = UnstagedRows.Contains(folder) ? _collapsedUnstaged : _collapsedStaged;
+        if (!collapsed.Remove(folder.Path)) collapsed.Add(folder.Path);
+        RebuildRows();
+    }
+
+    /// <summary>Every file of HEAD, read once, for the all-files tree.</summary>
+    private void LoadAllPaths() {
+        if (RepositoryPath is not { } repo || _allPathsLoading || _allPaths.Count > 0) return;
+        _allPathsLoading = true;
+        _ = Task.Run(() => GitKay.Core.GitService.listCommitFiles(repo, "HEAD")).ContinueWith(task => Avalonia.Threading.Dispatcher.UIThread.Post(() => {
+            _allPathsLoading = false;
+            if (task.IsFaulted || task.Result.IsError) return;
+            _allPaths = task.Result.ResultValue.ToArray();
+            if (IsAllFilesMode) RebuildRows();
+        }));
+    }
+
+    private void RebuildRows() {
+        UnstagedRows.Clear();
+        UnstagedRows.AddRange(CommitFileList.Build([.. UnstagedFiles], _fileListMode, _collapsedUnstaged, _allPaths));
+        StagedRows.Clear();
+        StagedRows.AddRange(CommitFileList.Build([.. StagedFiles], _fileListMode, _collapsedStaged, _allPaths));
+    }
+
     private void SyncLists(CoreWindow.Model model) {
         UnstagedFiles.Clear();
         StagedFiles.Clear();
@@ -289,6 +364,8 @@ public sealed partial class CommitWindowProjection : ObservableObject {
             StagedFiles.Add(new CommitFileRow(CoreWindow.ListKind.StagedList, diff, false));
         UnstagedTitle = $"Unstaged Changes · {UnstagedFiles.Count}";
         StagedTitle = $"Staged Changes (Will Commit) · {StagedFiles.Count}";
+        if (IsAllFilesMode) LoadAllPaths();
+        RebuildRows();
     }
 
     private void SyncSelection(CoreWindow.Model model) {
@@ -400,10 +477,12 @@ public sealed partial class CommitWindowProjection : ObservableObject {
     }
 
     partial void OnSelectedUnstagedChanged(CommitFileRow? value) {
+        if (value != null && !ReferenceEquals(SelectedUnstagedRow, value)) SelectedUnstagedRow = value;
         if (!_syncing && value != null) _dispatch?.Invoke(CoreWindow.Msg.NewSelect(value.List, value.Path));
     }
 
     partial void OnSelectedStagedChanged(CommitFileRow? value) {
+        if (value != null && !ReferenceEquals(SelectedStagedRow, value)) SelectedStagedRow = value;
         if (!_syncing && value != null) _dispatch?.Invoke(CoreWindow.Msg.NewSelect(value.List, value.Path));
     }
 
@@ -920,6 +999,13 @@ public partial class CommitWindow : Window, IVimCommands {
     }
 
     // ----- Mouse -----
+
+    /// <summary>A click anywhere on a folder row opens or closes it.</summary>
+    private void OnFolderPointerPressed(object? sender, PointerPressedEventArgs e) {
+        if ((sender as Control)?.DataContext is not CommitFolderRow folder || Projection is not { } projection) return;
+        projection.ToggleFolderCommand.Execute(folder);
+        e.Handled = true;
+    }
 
     private void OnFileDoubleTapped(object? sender, TappedEventArgs e) {
         if ((e.Source as Control)?.DataContext is CommitFileRow row) Projection?.ToggleFile(row);

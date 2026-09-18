@@ -548,6 +548,11 @@ internal static class UiInteractions {
             var effectBorder = Avalonia.Controls.NameScopeExtensions.Find<Avalonia.Controls.Border>(window, "UnstagedPaneEffect")!;
             Console.WriteLine($"focused={list.IsKeyboardFocusWithin} opacity={effectBorder.Opacity} shadow={effectBorder.BoxShadow.Count} margin={effectBorder.Margin} bounds={effectBorder.Bounds}");
         }
+        if (label.Contains("filetree")) {
+            projection.SetFileListModeCommand.Execute(label.Contains("fileall") ? "all" : "tree");
+            Settle();
+            Console.WriteLine($"rows={projection.UnstagedRows.Count} folders={projection.UnstagedRows.OfType<CommitFolderRow>().Count()} repo={projection.UnstagedRows.OfType<CommitRepoFileRow>().Count()}");
+        }
         if (label.Contains("expandstage")) {
             var surface = Avalonia.Controls.NameScopeExtensions.Find<DiffSurfaceControl>(window, "Surface")!;
             // A file with two hunks and a gap between them.
