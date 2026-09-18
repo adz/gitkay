@@ -49,3 +49,33 @@ jobs:
         run: |
           bash scripts/publish-gitkay.sh --rid linux-x64 --output artifacts/publish/linux-x64
           artifacts/publish/linux-x64/gitkay --self-test
+
+  macos-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: osx-x64
+            os: macos-15-intel
+          - rid: osx-arm64
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET 11
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 11.0.100-rc.1.26425.128
+
+      - name: Publish
+        shell: bash
+        run: bash scripts/publish-gitkay.sh --rid ${{ matrix.rid }} --output artifacts/publish/${{ matrix.rid }}
+
+      - name: Self-test published binary
+        shell: bash
+        run: artifacts/publish/${{ matrix.rid }}/gitkay --self-test

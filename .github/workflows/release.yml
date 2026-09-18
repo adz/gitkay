@@ -49,6 +49,10 @@ jobs:
             os: windows-latest
           - rid: linux-x64
             os: ubuntu-latest
+          - rid: osx-x64
+            os: macos-15-intel
+          - rid: osx-arm64
+            os: macos-15
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -94,6 +98,14 @@ jobs:
           mkdir -p artifacts/release
           name="gitkay-${{ needs.version.outputs.value }}-${{ matrix.rid }}"
           find artifacts/publish/${{ matrix.rid }} -name '*.dbg' -delete
+          tar -czf "artifacts/release/$name.tar.gz" -C artifacts/publish/${{ matrix.rid }} .
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p artifacts/release
+          name="gitkay-${{ needs.version.outputs.value }}-${{ matrix.rid }}"
           tar -czf "artifacts/release/$name.tar.gz" -C artifacts/publish/${{ matrix.rid }} .
 
       - name: Package (Windows zip and installer)
