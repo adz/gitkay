@@ -3,14 +3,13 @@ using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Media;
+using Avalonia.Media.TextFormatting;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 
@@ -99,11 +98,14 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private const int HeaderContextAction = 101;
     private const int MaxHighlightedLineLength = 240;
     private const int MaxLayoutCacheEntries = 2048;
+
+    /// <summary>Counters for the scrolling benchmark; they cost an increment and say where a stutter came from.</summary>
+    internal static int DiagRebuilds, DiagPrefetches, DiagCacheClears, DiagLayoutsBuilt, DiagHighlights, DiagRenders;
+    internal static double DiagRenderMs, DiagRenderMaxMs, DiagPrefetchMs;
     private static readonly Typeface CodeTypeface = new(FontStacks.Mono);
     private static readonly IBrush SelectionBrush = new SolidColorBrush(Color.FromRgb(51, 51, 51)).ToImmutable();
     private static readonly IBrush FileBrush = new SolidColorBrush(Color.FromRgb(157, 167, 179)).ToImmutable();
     private static readonly IBrush HunkBrush = new SolidColorBrush(Color.FromRgb(136, 136, 136)).ToImmutable();
-    private static readonly SemaphoreSlim HighlightWorkers = new(Math.Clamp(Environment.ProcessorCount / 2, 1, 4));
 
     public static readonly StyledProperty<IEnumerable<IDiffRowProjection>?> ItemsSourceProperty =
         AvaloniaProperty.Register<DiffSurfaceControl, IEnumerable<IDiffRowProjection>?>(nameof(ItemsSource));
@@ -134,9 +136,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private double[] _tops = [0];
     private INotifyCollectionChanged? _collection;
     private ScrollViewer? _scrollViewer;
-    private CancellationTokenSource? _idle;
     private ViewportAnchor? _pendingAnchor;
-    private int _generation;
     private GapActionHit _hoveredGapAction = GapActionHit.None;
 
     /// <summary>Whether Ctrl is down: every gap expander then reads, and acts, as "reveal the whole gap".</summary>
@@ -151,11 +151,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private const double GrowDurationMs = 100;
     private static readonly TimeSpan ExpansionAnchorLifetime = TimeSpan.FromSeconds(10);
     private const double GapGutterWidth = 56;
-    private bool _scrolling;
     private bool _programmaticScroll;
     private readonly Dictionary<string, FormattedText> _plainLayouts = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, FormattedText> _colouredLayouts = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _pending = new(StringComparer.Ordinal);
 
     public event EventHandler<DiffFileMenuEventArgs>? FileContextRequested;
     /// <summary>Raised after text is copied, with the number of lines copied (0 for part of a line).</summary>
@@ -195,10 +192,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     public DiffSurfaceControl() {
         Focusable = true;
         ActualThemeVariantChanged += (_, _) => {
-            Interlocked.Increment(ref _generation);
             _plainLayouts.Clear();
-            _colouredLayouts.Clear();
-            _pending.Clear();
             InvalidateVisual();
         };
     }
@@ -206,15 +200,37 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e) {
         base.OnAttachedToVisualTree(e);
         _scrollViewer = this.FindAncestorOfType<ScrollViewer>();
-        if (_scrollViewer != null) _scrollViewer.ScrollChanged += OnScrollChanged;
+        if (_scrollViewer != null) {
+            _scrollViewer.ScrollChanged += OnScrollChanged;
+            _scrollViewer.AddHandler(InputElement.ScrollGestureEvent, OnScrollGesture,
+                Avalonia.Interactivity.RoutingStrategies.Tunnel | Avalonia.Interactivity.RoutingStrategies.Bubble);
+            _scrollViewer.AddHandler(InputElement.ScrollGestureEndedEvent, OnScrollGestureEnded,
+                Avalonia.Interactivity.RoutingStrategies.Tunnel | Avalonia.Interactivity.RoutingStrategies.Bubble);
+        }
         OverviewChanged?.Invoke(this, EventArgs.Empty);
         RebuildRows();
     }
 
+    private bool _gestureScrolling;
+
+    private void OnScrollGesture(object? sender, ScrollGestureEventArgs e) {
+        _gestureScrolling = true;
+        _userScrolls++;
+        _pendingAnchor = null;
+        _anchorTarget = null;
+        _expansionAnchor = null;
+        _pendingScrollOffset = null;
+    }
+
+    private void OnScrollGestureEnded(object? sender, ScrollGestureEndedEventArgs e) => _gestureScrolling = false;
+
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e) {
-        if (_scrollViewer != null) _scrollViewer.ScrollChanged -= OnScrollChanged;
+        if (_scrollViewer != null) {
+            _scrollViewer.ScrollChanged -= OnScrollChanged;
+            _scrollViewer.RemoveHandler(InputElement.ScrollGestureEvent, OnScrollGesture);
+            _scrollViewer.RemoveHandler(InputElement.ScrollGestureEndedEvent, OnScrollGestureEnded);
+        }
         DetachCollection();
-        _idle?.Cancel();
         base.OnDetachedFromVisualTree(e);
     }
 
@@ -222,9 +238,6 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         // Keep the row at the top of the viewport in place while rows change height.
         var anchorIndex = _scrollViewer == null || _rows.Length == 0 ? -1 : FindRow(_scrollViewer.Offset.Y);
         var within = anchorIndex < 0 ? 0 : (_scrollViewer!.Offset.Y - _tops[anchorIndex]) / Math.Max(1, _tops[anchorIndex + 1] - _tops[anchorIndex]);
-        Interlocked.Increment(ref _generation);
-        _colouredLayouts.Clear();
-        _pending.Clear();
         ComputeTops();
         InvalidateMeasure();
         InvalidateVisual();
@@ -236,6 +249,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     }
 
     private void RebuildRows() {
+        DiagRebuilds++;
         if (_expansionAnchor != null && System.Diagnostics.Stopwatch.GetElapsedTime(_expansionAnchor.StartedAt) > ExpansionAnchorLifetime)
             _expansionAnchor = null;
         if (_expansionAnchor == null)
@@ -247,12 +261,13 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             _selectionIndexToRestore = previousIndex;
         _rows = ItemsSource?.ToArray() ?? Array.Empty<IDiffRowProjection>();
         RestoreSelectionPosition();
+        var sourceChanged = !ReferenceEquals(ItemsSource, _lastItemsSource);
         // A different diff (or reshaped rows) invalidates row-based selection positions.
-        if (_textSelection != null && (previousRows.Length != _rows.Length || !ReferenceEquals(ItemsSource, _lastItemsSource))) {
+        if (_textSelection != null && (previousRows.Length != _rows.Length || sourceChanged)) {
             _textSelection = null;
             _visualAnchorRow = -1;
         }
-        if (!ReferenceEquals(ItemsSource, _lastItemsSource)) _horizontalOffset = 0;
+        if (sourceChanged) _horizontalOffset = 0;
         _lastItemsSource = ItemsSource;
         _hoveredGapAction = GapActionHit.None;
         _pressedGapAction = GapActionHit.None;
@@ -262,8 +277,6 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             _collection = collection;
             _collection.CollectionChanged += OnCollectionChanged;
         }
-        // Layout caches are keyed by text, so rows that survive a rebuild keep their colouring.
-        HighlightGrowingRows();
         InvalidateMeasure();
         InvalidateVisual();
         InvalidateOverview();
@@ -376,8 +389,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         if (realized && _growingRows.Count == 0) _expansionAnchor = null;
 
         var row = _rows[index];
+        var scrolls = _userScrolls;
         Dispatcher.UIThread.Post(() => {
-            if (_scrollViewer == null) return;
+            if (_scrollViewer == null || _userScrolls != scrolls) return;
             var current = Array.IndexOf(_rows, row);
             if (current < 0) return;
             SetOffsetWithoutScrolling(Math.Max(0, _tops[current] - anchor.ViewportOffset));
@@ -503,8 +517,16 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         // The scroll viewer clamps to the extent it knows about, which grows or shrinks with these rows; re-apply
         // once this layout pass has measured them.
         _anchorTarget = (row, anchor.ViewportOffset);
-        Dispatcher.UIThread.Post(ApplyAnchorTarget, DispatcherPriority.Loaded);
+        var scrolls = _userScrolls;
+        Dispatcher.UIThread.Post(() => { if (_userScrolls == scrolls) ApplyAnchorTarget(); else _anchorTarget = null; }, DispatcherPriority.Loaded);
     }
+
+    /// <summary>
+    /// Counts scrolls the user made. Anchors are captured before rows change and re-applied a layout pass later; if a
+    /// scroll happened in between, re-applying would drag the view back under the hand, which reads as scrolling
+    /// sticking until a fast flick outruns it.
+    /// </summary>
+    private int _userScrolls;
 
     /// <summary>The row the view is anchored to while the scroll viewer catches up with the new extent.</summary>
     private (IDiffRowProjection Row, double ViewportOffset)? _anchorTarget;
@@ -537,75 +559,36 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         return size;
     }
 
-    /// <summary>Anchoring adjusts the offset without the user scrolling; keep full-quality rendering.</summary>
+    /// <summary>Anchoring adjusts the offset without treating it as a new user scroll.</summary>
     private void SetOffsetWithoutScrolling(double y) {
-        if (_scrollViewer == null) return;
+        if (_scrollViewer == null || _gestureScrolling) return;
         _programmaticScroll = true;
         try { _scrollViewer.Offset = _scrollViewer.Offset.WithY(y); }
         finally { _programmaticScroll = false; }
     }
 
-    private void HighlightGrowingRows() {
-        foreach (var row in _growingRows) {
-            if (row is not DiffLineProjection line) continue;
-            var foreground = ThemeBrush("GitKayTextBrush", line.Foreground);
-            if (DiffLayout.IsSideBySide) {
-                HighlightNow(line.OldContent, foreground, line.Flavour);
-                HighlightNow(line.NewContent, foreground, line.Flavour);
-            }
-            else if (DiffLayout.IsNewFile) HighlightNow(line.NewContent, foreground, line.Flavour);
-            else if (DiffLayout.IsOldFile) HighlightNow(line.OldContent, foreground, line.Flavour);
-            else HighlightNow(line.Content, foreground, line.Flavour);
-        }
-    }
-
-    /// <summary>Colours a newly inserted line before its first frame so it never flashes plain.</summary>
-    private void HighlightNow(string text, IBrush foreground, SyntaxFlavour flavour = SyntaxFlavour.Code) {
-        if (string.IsNullOrEmpty(text) || text.Length > MaxHighlightedLineLength || _colouredLayouts.ContainsKey(text)) return;
-        StoreColouredLayout(text, foreground, SyntaxHighlighting.Tokenize(text, flavour));
-    }
-
-    private void StoreColouredLayout(string text, IBrush foreground, IReadOnlyList<HighlightToken> tokens) {
-        var layout = new FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, CodeTypeface, CodeFontSize, foreground);
-        var offset = 0;
-        foreach (var token in tokens) {
-            if (token.Kind != HighlightKind.Plain) layout.SetForegroundBrush(TokenBrush(token.Kind, foreground), offset, token.Text.Length);
-            offset += token.Text.Length;
-        }
-        if (_colouredLayouts.Count >= MaxLayoutCacheEntries)
-            _colouredLayouts.Clear();
-        _colouredLayouts[text] = layout;
-    }
-
+    /// <summary>
+    /// Scrolling repaints, and nothing else. It used to cancel every in-flight highlight, allocate a cancellation
+    /// token and a task per scroll event, and start a 40ms timer that prefetched five viewports of lines once the
+    /// hand paused — which is exactly when a slow scroll pauses. Lines are coloured as they are drawn instead.
+    /// </summary>
     private void OnScrollChanged(object? sender, ScrollChangedEventArgs e) {
-        if (_programmaticScroll) {
-            InvalidateVisual();
-            return;
-        }
-        _scrolling = true;
-        Interlocked.Increment(ref _generation);
-        _idle?.Cancel();
-        var idle = new CancellationTokenSource();
-        _idle = idle;
+        if (!_programmaticScroll) _userScrolls++;
         InvalidateVisual();
-        _ = EndScrollingAsync(idle);
-    }
-
-    private async Task EndScrollingAsync(CancellationTokenSource idle) {
-        try {
-            await Task.Delay(40, idle.Token);
-            await Dispatcher.UIThread.InvokeAsync(() => {
-                if (ReferenceEquals(_idle, idle)) {
-                    _scrolling = false;
-                    PrefetchAroundViewport();
-                    InvalidateVisual();
-                }
-            }, DispatcherPriority.Background);
-        }
-        catch (OperationCanceledException) { }
     }
 
     public override void Render(DrawingContext context) {
+        var diagStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        try { RenderCore(context); }
+        finally {
+            var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(diagStart).TotalMilliseconds;
+            DiagRenders++;
+            DiagRenderMs += elapsed;
+            if (elapsed > DiagRenderMaxMs) DiagRenderMaxMs = elapsed;
+        }
+    }
+
+    private void RenderCore(DrawingContext context) {
         var offset = _scrollViewer?.Offset.Y ?? 0;
         var viewport = _scrollViewer?.Viewport.Height ?? Bounds.Height;
         // Hit testing follows what was drawn: paint a transparent backdrop so blank areas (context lines,
@@ -1051,7 +1034,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private Rect NewColumnClip(double middle, double y) => new(middle + Z(57), y, Math.Max(0, Bounds.Width - middle - Z(57)), LineHeight);
 
     private void DrawIntralineHighlights(DrawingContext context, string oldText, string newText, double oldX, double newX, double middle, double y) {
-        if (_scrolling || oldText.Length > MaxHighlightedLineLength || newText.Length > MaxHighlightedLineLength) return;
+        if (oldText.Length > MaxHighlightedLineLength || newText.Length > MaxHighlightedLineLength) return;
         if (GitKay.Core.DiffText.changedSpan(oldText, newText) is not { IsSome: true } span) return;
         var (start, oldLength, newLength) = span.Value;
 
@@ -1109,81 +1092,51 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     }
 
     private void DrawCode(DrawingContext context, string text, double x, double y, IBrush foreground, SyntaxFlavour flavour = SyntaxFlavour.Code) {
-        var plain = Layout(text, CodeFontSize, foreground, false);
-        if (_colouredLayouts.TryGetValue(text, out var coloured)) {
-            context.DrawText(coloured, new Point(x, y));
+        if (string.IsNullOrEmpty(text)) return;
+
+        using var shaped = TextShaper.Current.ShapeText(text.AsMemory(),
+            new TextShaperOptions(CodeTypeface.GlyphTypeface, CodeFontSize, culture: CultureInfo.CurrentCulture));
+        var allGlyphs = new GlyphInfo[shaped.Length];
+        for (var i = 0; i < shaped.Length; i++) allGlyphs[i] = shaped[i];
+        var baseline = new Point(x, y + CodeFontSize);
+
+        if (text.Length > MaxHighlightedLineLength) {
+            context.DrawGlyphRun(foreground,
+                new GlyphRun(shaped.GlyphTypeface, CodeFontSize, text.AsMemory(), allGlyphs, baseline, shaped.BidiLevel));
             return;
         }
-        if (_scrolling || text.Length > MaxHighlightedLineLength) {
-            context.DrawText(plain, new Point(x, y));
-            return;
+
+        DiagHighlights++;
+        var characterOffset = 0;
+        var runX = x;
+        foreach (var token in SyntaxHighlighting.Tokenize(text, flavour)) {
+            var end = characterOffset + token.Text.Length;
+            var tokenGlyphs = allGlyphs
+                .Where(glyph => glyph.GlyphCluster >= characterOffset && glyph.GlyphCluster < end)
+                .Select(glyph => new GlyphInfo(glyph.GlyphIndex, glyph.GlyphCluster - characterOffset, glyph.GlyphAdvance, glyph.GlyphOffset))
+                .ToArray();
+            if (tokenGlyphs.Length > 0) {
+                var run = new GlyphRun(shaped.GlyphTypeface, CodeFontSize, token.Text.AsMemory(), tokenGlyphs,
+                    new Point(runX, baseline.Y), shaped.BidiLevel);
+                context.DrawGlyphRun(TokenBrush(token.Kind, foreground), run);
+                runX += tokenGlyphs.Sum(glyph => glyph.GlyphAdvance);
+            }
+            characterOffset = end;
         }
-        ScheduleHighlight(text, foreground, flavour);
-        context.DrawText(plain, new Point(x, y));
+        DiagLayoutsBuilt++;
     }
 
-    private void PrefetchAroundViewport() {
-        if (_scrollViewer == null || _rows.Length == 0) return;
-        var viewport = Math.Max(1, _scrollViewer.Viewport.Height);
-        var start = FindRow(Math.Max(0, _scrollViewer.Offset.Y - viewport * 2));
-        var end = Math.Min(_rows.Length, FindRow(_scrollViewer.Offset.Y + viewport * 3) + 1);
-
-        for (var index = start; index < end; index++) {
-            if (_rows[index] is not DiffLineProjection line) continue;
-            if (DiffLayout.IsSideBySide) {
-                ScheduleHighlight(line.OldContent, ThemeBrush("GitKayTextBrush", line.Foreground), line.Flavour);
-                ScheduleHighlight(line.NewContent, ThemeBrush("GitKayTextBrush", line.Foreground), line.Flavour);
-            }
-            else if (DiffLayout.IsNewFile)
-                ScheduleHighlight(line.NewContent, ThemeBrush("GitKayTextBrush", line.Foreground), line.Flavour);
-            else if (DiffLayout.IsOldFile)
-                ScheduleHighlight(line.OldContent, ThemeBrush("GitKayTextBrush", line.Foreground), line.Flavour);
-            else
-                ScheduleHighlight(line.Content, ThemeBrush("GitKayTextBrush", line.Foreground), line.Flavour);
-        }
-    }
-
-    private void ScheduleHighlight(string text, IBrush foreground, SyntaxFlavour flavour = SyntaxFlavour.Code) {
-        if (string.IsNullOrEmpty(text) || text.Length > MaxHighlightedLineLength || _colouredLayouts.ContainsKey(text) || !_pending.Add(text)) return;
-        var generation = _generation;
-        _ = Task.Run(async () => {
-            try {
-                if (generation != Volatile.Read(ref _generation)) {
-                    Dispatcher.UIThread.Post(() => _pending.Remove(text), DispatcherPriority.Background);
-                    return;
-                }
-
-                await HighlightWorkers.WaitAsync();
-                if (generation != Volatile.Read(ref _generation)) {
-                    HighlightWorkers.Release();
-                    Dispatcher.UIThread.Post(() => _pending.Remove(text), DispatcherPriority.Background);
-                    return;
-                }
-
-                IReadOnlyList<HighlightToken> tokens;
-                try { tokens = SyntaxHighlighting.Tokenize(text, flavour); }
-                finally { HighlightWorkers.Release(); }
-                await Dispatcher.UIThread.InvokeAsync(() => {
-                    _pending.Remove(text);
-                    if (generation != _generation || _scrolling) return;
-                    if (!_colouredLayouts.ContainsKey(text)) StoreColouredLayout(text, foreground, tokens);
-                    InvalidateVisual();
-                }, DispatcherPriority.Background);
-            }
-            catch (Exception exception) {
-                System.Diagnostics.Trace.WriteLine($"[diff-highlight] {exception}");
-                Dispatcher.UIThread.Post(() => _pending.Remove(text), DispatcherPriority.Background);
-            }
-        });
-    }
 
     private FormattedText Layout(string text, double size, IBrush brush, bool coloured) {
         var key = $"{size}:{text}";
-        var cache = coloured ? _colouredLayouts : _plainLayouts;
+        var cache = _plainLayouts;
         if (!cache.TryGetValue(key, out var layout)) {
+            DiagLayoutsBuilt++;
             layout = new FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, CodeTypeface, size, brush);
-            if (cache.Count >= MaxLayoutCacheEntries)
+            if (cache.Count >= MaxLayoutCacheEntries) {
+                DiagCacheClears++;
                 cache.Clear();
+            }
             cache[key] = layout;
         }
         return layout;
@@ -1196,11 +1149,27 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     /// Dark keeps the established drawn colours (the fallbacks); other variants resolve the palette for the
     /// actual theme. Without the variant, lookups never reach the theme dictionaries.
     /// </summary>
-    private IBrush ThemeBrush(string key, IBrush fallback) =>
-        ActualThemeVariant != Avalonia.Styling.ThemeVariant.Dark
-        && this.TryFindResource(key, ActualThemeVariant, out var value) && value is IBrush brush
-            ? brush
-            : fallback;
+    /// <summary>
+    /// Resolved theme brushes. Looking one up walks the tree to the application's resources, and a frame asks for
+    /// dozens per row; at a screenful of rows that search was most of the time spent drawing.
+    /// </summary>
+    private readonly Dictionary<string, IBrush?> _themeBrushes = new(StringComparer.Ordinal);
+    private Avalonia.Styling.ThemeVariant? _themeBrushesVariant;
+
+    private IBrush ThemeBrush(string key, IBrush fallback) {
+        if (ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark) return fallback;
+        if (!Equals(_themeBrushesVariant, ActualThemeVariant)) {
+            _themeBrushes.Clear();
+            _themeBrushesVariant = ActualThemeVariant;
+        }
+
+        if (!_themeBrushes.TryGetValue(key, out var cached)) {
+            cached = this.TryFindResource(key, ActualThemeVariant, out var value) && value is IBrush brush ? brush : null;
+            _themeBrushes[key] = cached;
+        }
+
+        return cached ?? fallback;
+    }
 
     private IBrush TokenBrush(HighlightKind kind, IBrush fallback) => kind switch {
         HighlightKind.Keyword => ThemeBrush("GitKaySyntaxKeywordBrush", SyntaxHighlighting.GetKeywordBrush()),
@@ -1889,9 +1858,11 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             return;
         }
 
-        // Shift+wheel, a tilting wheel, or a sideways touchpad swipe scrolls the code columns.
-        var sideways = e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? (e.Delta.X != 0 ? e.Delta.X : e.Delta.Y) : e.Delta.X;
-        if (sideways != 0) {
+        // Shift explicitly scrolls columns. For a touchpad, choose the dominant axis: treating any tiny X component
+        // as horizontal swallowed the Y component of slow, slightly diagonal gestures and made vertical scrolling stop.
+        var shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        var sideways = shift ? (e.Delta.X != 0 ? e.Delta.X : e.Delta.Y) : e.Delta.X;
+        if (sideways != 0 && (shift || Math.Abs(e.Delta.X) > Math.Abs(e.Delta.Y))) {
             SetHorizontalOffset(_horizontalOffset - sideways * HorizontalWheelStep);
             e.Handled = true;
             return;
