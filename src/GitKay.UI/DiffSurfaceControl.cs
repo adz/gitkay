@@ -138,6 +138,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private ViewportAnchor? _pendingAnchor;
     private int _generation;
     private GapActionHit _hoveredGapAction = GapActionHit.None;
+
+    /// <summary>Whether Ctrl is down: every gap expander then reads, and acts, as "reveal the whole gap".</summary>
+    private bool _expandAllHeld;
     private GapActionHit _pressedGapAction = GapActionHit.None;
     private ExpansionAnchor? _expansionAnchor;
     private HashSet<(int?, int?)> _knownLineKeys = new();
@@ -895,7 +898,13 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             context.DrawLine(pen, new Point(centerX + 3.5, tipY + head), new Point(centerX, tipY));
         }
 
-        if (cell.Direction.IsDown) {
+        if (_expandAllHeld) {
+            // Both ways at once, from a solid line: a click reveals the gap entirely.
+            context.DrawLine(new Pen(brush, 1.5), new Point(centerX - 6, centerY), new Point(centerX + 6, centerY));
+            Arrow(centerY - 7, centerY - 2);
+            Arrow(centerY + 7, centerY + 2);
+        }
+        else if (cell.Direction.IsDown) {
             Dots(centerY - 6);
             Arrow(centerY + 5, centerY - 2);
         }
@@ -1231,8 +1240,17 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         public bool IsNone => Row < 0;
     }
 
+    /// <summary>Ctrl changes what the expanders mean, so the glyphs are redrawn as it goes down and comes back up.</summary>
+    private void TrackExpandAll(KeyModifiers modifiers) {
+        var held = modifiers.HasFlag(KeyModifiers.Control);
+        if (held == _expandAllHeld) return;
+        _expandAllHeld = held;
+        InvalidateVisual();
+    }
+
     protected override void OnPointerMoved(PointerEventArgs e) {
         base.OnPointerMoved(e);
+        TrackExpandAll(e.KeyModifiers);
         if (_selectingText) {
             UpdateTextSelection(e.GetPosition(this));
             return;
@@ -1887,7 +1905,13 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             await clipboard.SetTextAsync(text);
     }
 
+    protected override void OnKeyUp(KeyEventArgs e) {
+        TrackExpandAll(e.KeyModifiers);
+        base.OnKeyUp(e);
+    }
+
     protected override void OnKeyDown(KeyEventArgs e) {
+        TrackExpandAll(e.KeyModifiers | (e.Key is Key.LeftCtrl or Key.RightCtrl ? KeyModifiers.Control : KeyModifiers.None));
         // Inside the main window, the window sends keys to its shared session before they reach this view.
         if (SharedVim == null && _ownVim.Handle(this, VimKeys.From(e))) {
             e.Handled = true;
@@ -2001,7 +2025,11 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         if (_rows[pressed.Row] is not DiffGapProjection gap) return;
         var cells = GapCells(gap, _tops[pressed.Row]);
         if ((uint)pressed.Action >= (uint)cells.Count) return;
-        RequestExpansion(pressed.Row, gap, cells[pressed.Action].Direction);
+        // Ctrl turns any of a gap's arrows into "all of it", the way the glyph under the pointer says it will.
+        var direction = e.KeyModifiers.HasFlag(KeyModifiers.Control)
+            ? GitKay.Core.DiffExpansion.ExpandDirection.All
+            : cells[pressed.Action].Direction;
+        RequestExpansion(pressed.Row, gap, direction);
         e.Handled = true;
     }
 
