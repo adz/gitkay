@@ -31,6 +31,8 @@ module CommitWindow =
           /// <summary>The message loaded for amending, so turning amend off can put the draft back.</summary>
           AmendMessage: string option
           SignOff: bool
+          /// <summary>Lines of context around each change, as the diff settings ask for.</summary>
+          ContextLines: int
           /// <summary>What is running (a scan, staging, the commit), or None when idle.</summary>
           Busy: string option
           Status: string
@@ -124,7 +126,7 @@ module CommitWindow =
             | _ -> first (match list with UnstagedList -> StagedList | StagedList -> UnstagedList)
         | None -> first UnstagedList |> Option.orElse (first StagedList)
 
-    let init (env: GitService.GitEnv) (draft: string) : Model * Cmd<Msg> =
+    let init (env: GitService.GitEnv) (draft: string) (contextLines: int) : Model * Cmd<Msg> =
         { GitEnv = env
           Changes = None
           Branch = ""
@@ -133,6 +135,7 @@ module CommitWindow =
           Amend = false
           AmendMessage = None
           SignOff = false
+          ContextLines = max 0 contextLines
           Busy = Some "Scanning"
           Status = "Scanning for changes…"
           FailureOutput = None
@@ -142,7 +145,7 @@ module CommitWindow =
 
     let private scan (model: Model) =
         Cmd.batch
-            [ Cmd.OfFlow.ofFlowLatest "commit window scan" scanJob model.GitEnv (GitService.fetchWorkingTreeChangesFor model.Amend 3) (Ok >> ChangesLoaded) (Error >> ChangesLoaded)
+            [ Cmd.OfFlow.ofFlowLatest "commit window scan" scanJob model.GitEnv (GitService.fetchWorkingTreeChangesFor model.Amend model.ContextLines) (Ok >> ChangesLoaded) (Error >> ChangesLoaded)
               Cmd.OfFlow.ofFlow "current branch" App.runtime model.GitEnv GitService.fetchCurrentBranch BranchLoaded (fun _ -> BranchLoaded "") ]
 
     let private operation (model: Model) (description: string) (committed: bool) (work: Flow<GitService.GitEnv, GitError, unit>) =
@@ -248,5 +251,5 @@ module CommitWindow =
         | OperationFailed(description, error) ->
             { model with Busy = None; Status = $"{description} failed"; FailureOutput = Some(GitError.describe error) }, scan model
 
-    let program (env: GitService.GitEnv) (draft: string) =
-        Program.mkProgram (fun () -> init env draft) update (fun _ _ -> ())
+    let program (env: GitService.GitEnv) (draft: string) (contextLines: int) =
+        Program.mkProgram (fun () -> init env draft contextLines) update (fun _ _ -> ())

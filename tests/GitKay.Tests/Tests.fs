@@ -3370,7 +3370,7 @@ module CommitWindowTests =
           Unstaged = unstaged |> List.map diff
           Untracked = untracked |> List.map (fun path -> { diff path with OldPath = "/dev/null" }) }
 
-    let private model0 () = fst (CommitWindow.init (GitService.environment "") "")
+    let private model0 () = fst (CommitWindow.init (GitService.environment "") "" 3)
 
     [<Fact>]
     let ``reselect keeps the file, then its position, then the other list`` () =

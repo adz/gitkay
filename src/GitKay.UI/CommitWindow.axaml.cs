@@ -650,7 +650,9 @@ public partial class CommitWindow : Window, IVimCommands {
 
     public CommitWindow(string repositoryPath, string repositoryName) : this() {
         _repositoryPath = repositoryPath;
-        Surface.DiffLayout = GitKay.Core.DiffLayout.Unified;
+        // The diff here follows the same settings as the history window's: layout, context and the pane chrome.
+        var appSettings = GitKay.Core.SettingsModule.normalize(new AppSettingsStore().Load());
+        Surface.DiffLayout = appSettings.DiffLayout;
         Surface.SharedVim = _vim;
         Surface.VimCommands = this;
         _unstagedVim = new ListBoxVimHost(UnstagedList, this);
@@ -680,7 +682,7 @@ public partial class CommitWindow : Window, IVimCommands {
         var draft = GitKay.Core.UiStateModule.commitDraft(repositoryPath, _uiState.Load());
         var env = GitKay.Core.GitService.environment(repositoryPath);
         _host = ElmishHost.startAndBind(
-            GitKay.Core.CommitWindow.program(env, draft == null ? "" : draft.Value),
+            GitKay.Core.CommitWindow.program(env, draft == null ? "" : draft.Value, appSettings.DiffContextLines),
             model => projection.Update(model),
             dispatch => projection.SetDispatch(dispatch));
         // Rescan when the user comes back from elsewhere; not on every activation, which focus changes can repeat.
@@ -708,9 +710,10 @@ public partial class CommitWindow : Window, IVimCommands {
 
     internal void SetPaneChrome(PaneChrome.Settings settings) => _paneChrome.Update(settings);
 
-    /// <summary>Panes follow the same settings as the main window's; re-read when the window is activated.</summary>
+    /// <summary>Panes and the diff follow the same settings as the main window's; re-read when the window is activated.</summary>
     private void ApplyPaneSettings() {
         var settings = GitKay.Core.SettingsModule.normalize(new AppSettingsStore().Load());
+        Surface.DiffLayout = settings.DiffLayout;
         _paneChrome.Update(new PaneChrome.Settings(settings.PaneGap, settings.PaneDimUnfocused, settings.PaneFocusHighlight,
             settings.PaneFocusEffect, settings.PaneEffectColor, settings.PaneEffectIntensity, settings.PaneBorder,
             settings.PaneBorderStyle, settings.PaneBorderColor, settings.PaneBorderThickness, settings.SplitterLinesHidden));
