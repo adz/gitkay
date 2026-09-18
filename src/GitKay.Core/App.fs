@@ -61,6 +61,8 @@ module App =
             ShowBranchRefs: bool
             ShowStashes: bool
             DiffContextLines: int
+            /// <summary>Whether whitespace-only changes are left out of the diff, as git's -w does.</summary>
+            IgnoreWhitespace: bool
             DiffLayout: DiffLayout
             SearchQuery: string
             SearchScopeKey: string
@@ -104,6 +106,7 @@ module App =
         /// Replaces the history's revisions and paths (all branches toggle, file filter) and reloads it.
         | SetHistoryTargets of GitStartup.StartupTarget list
         | SetDiffContextLines of int
+        | SetIgnoreWhitespace of bool
         | SetDiffLayout of DiffLayout
         | HistoryLoaded of isFull:bool * Result<Models.Commit list, GitError>
         | SelectCommit of hash:string * startedAtTicks:int64
@@ -176,10 +179,10 @@ module App =
             return! GitService.fetchDiffFileList hash
         }
 
-    let private loadDiffFlow (contextLines: int) (hash: string) =
+    let private loadDiffFlow (ignoreWhitespace: bool) (contextLines: int) (hash: string) =
         flow {
             do! Flow.Runtime.ensureNotCanceled (GitError.OperationCanceled "Selection")
-            return! GitService.fetchDiff contextLines hash
+            return! GitService.fetchDiffWith ignoreWhitespace contextLines hash
         }
 
     let private loadSearchResultsFlow (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (useRegex: bool) progress found =
@@ -199,12 +202,12 @@ module App =
             (fun result -> DiffFilesLoaded(hash, startedAtTicks, Ok result))
             (fun err -> DiffFilesLoaded(hash, startedAtTicks, Error err))
 
-    let private startDiffLoad (env: GitService.GitEnv) (hash: string) (startedAtTicks: int64) (contextLines: int) =
+    let private startDiffLoad (env: GitService.GitEnv) (hash: string) (startedAtTicks: int64) (contextLines: int) (ignoreWhitespace: bool) =
         Cmd.OfFlow.ofFlowLatest
             $"diff {hash}"
             diffJob
             env
-            (loadDiffFlow contextLines hash)
+            (loadDiffFlow ignoreWhitespace contextLines hash)
             (fun result -> DiffLoaded(hash, startedAtTicks, Ok result))
             (fun err -> DiffLoaded(hash, startedAtTicks, Error err))
 
@@ -352,7 +355,7 @@ module App =
         let cmd =
             match selectedHash, nextSelectionStartedAtTicks with
             | Some hash, Some startedAtTicks ->
-                Cmd.batch [ startDiffFilesLoad model.GitEnv hash startedAtTicks; startDiffLoad model.GitEnv hash startedAtTicks model.DiffContextLines ]
+                Cmd.batch [ startDiffFilesLoad model.GitEnv hash startedAtTicks; startDiffLoad model.GitEnv hash startedAtTicks model.DiffContextLines model.IgnoreWhitespace ]
             | _ when keepsWorkingTree -> Cmd.none
             | _ ->
                 selectionJob.Cancel()
@@ -413,6 +416,7 @@ module App =
                 ShowBranchRefs = false
                 ShowStashes = false
                 DiffContextLines = 3
+                IgnoreWhitespace = false
                 DiffLayout = Settings.defaults.DiffLayout
                 SearchQuery = ""
                 SearchScopeKey = "commit"
@@ -454,6 +458,7 @@ module App =
                     ShowBranchRefs = startupOptions.ShowBranchRefs
                     ShowStashes = startupOptions.ShowStashes
                     DiffContextLines = startupOptions.DiffContextLines
+                    IgnoreWhitespace = false
                     DiffLayout = startupOptions.DiffLayout
                     SearchQuery = startupOptions.SearchQuery
                     SearchScopeKey = startupOptions.SearchScopeKey
@@ -599,6 +604,22 @@ module App =
                 }
 
             nextModel, loadHistory model.GitEnv (Some historyLimit) showStashes model.StartupTargets
+        | SetIgnoreWhitespace ignoreWhitespace ->
+            if ignoreWhitespace = model.IgnoreWhitespace then
+                model, Cmd.none
+            else
+                // The diff itself changes, so whatever is shown is reread the way the context-line choice rereads it.
+                let nextModel =
+                    { model with
+                        IgnoreWhitespace = ignoreWhitespace
+                        SelectedDiff = None
+                        SelectedDiffStartedAtTicks = model.SelectedCommitHash |> Option.map (fun _ -> Stopwatch.GetTimestamp()) }
+
+                match model.Selection with
+                | CommitSelected hash ->
+                    let startedAtTicks = nextModel.SelectedDiffStartedAtTicks.Value
+                    nextModel, startDiffLoad model.GitEnv hash startedAtTicks model.DiffContextLines ignoreWhitespace
+                | WorkingTreeSelected | NoSelection -> nextModel, Cmd.none
         | SetDiffContextLines diffContextLines ->
             let normalizedContextLines = max 0 diffContextLines
 
@@ -616,7 +637,7 @@ module App =
                 match model.Selection with
                 | CommitSelected hash ->
                     let startedAtTicks = nextModel.SelectedDiffStartedAtTicks.Value
-                    nextModel, startDiffLoad model.GitEnv hash startedAtTicks normalizedContextLines
+                    nextModel, startDiffLoad model.GitEnv hash startedAtTicks normalizedContextLines model.IgnoreWhitespace
                 | WorkingTreeSelected ->
                     let startedAtTicks = Stopwatch.GetTimestamp()
                     { nextModel with WorkingTreeStartedAtTicks = Some startedAtTicks },
@@ -723,7 +744,7 @@ module App =
                 }
 
             workingTreeChangesJob.Cancel()
-            let cmd = Cmd.batch [ startDiffFilesLoad model.GitEnv hash startedAtTicks; startDiffLoad model.GitEnv hash startedAtTicks model.DiffContextLines ]
+            let cmd = Cmd.batch [ startDiffFilesLoad model.GitEnv hash startedAtTicks; startDiffLoad model.GitEnv hash startedAtTicks model.DiffContextLines model.IgnoreWhitespace ]
             nextModel, cmd
         | SetSearchQuery query ->
             let trimmed = query.Trim()

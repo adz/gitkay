@@ -519,6 +519,25 @@
                                 <KeyBinding Gesture="Shift+Enter" Command="{Binding FindPreviousInCommitCommand}" />
                             </TextBox.KeyBindings>
                         </TextBox>
+                        <!-- Whitespace: on, lines that differ only in spacing drop out of the diff (git's -w). -->
+                        <ToggleButton x:Name="IgnoreWhitespaceButton"
+                                      Grid.Column="3"
+                                      Classes="segment"
+                                      Margin="0,0,6,0"
+                                      IsChecked="{Binding IgnoreWhitespace, Mode=TwoWay}"
+                                      ToolTip.Tip="Ignore whitespace changes — hides lines that differ only in spacing">
+                            <Canvas Width="16" Height="16">
+                                <!-- Two lines with the space between them marked, struck through when ignored. -->
+                                <Rectangle Canvas.Left="1.5" Canvas.Top="3" Width="5" Height="1.5" Fill="{DynamicResource GitKaySecondaryTextBrush}" />
+                                <Rectangle Canvas.Left="9.5" Canvas.Top="3" Width="5" Height="1.5" Fill="{DynamicResource GitKaySecondaryTextBrush}" />
+                                <Rectangle Canvas.Left="7.5" Canvas.Top="3" Width="1.5" Height="1.5" Fill="{DynamicResource GitKayMutedTextBrush}" />
+                                <Rectangle Canvas.Left="1.5" Canvas.Top="11.5" Width="5" Height="1.5" Fill="{DynamicResource GitKaySecondaryTextBrush}" />
+                                <Rectangle Canvas.Left="9.5" Canvas.Top="11.5" Width="5" Height="1.5" Fill="{DynamicResource GitKaySecondaryTextBrush}" />
+                                <Rectangle Canvas.Left="6" Canvas.Top="11.5" Width="4" Height="1.5" Fill="{DynamicResource GitKayMutedTextBrush}" />
+                                <Path Data="M2,14 L14,2" Stroke="{DynamicResource GitKayAccentBrush}" StrokeThickness="1.5"
+                                      IsVisible="{Binding IgnoreWhitespace}" />
+                            </Canvas>
+                        </ToggleButton>
                         <Border x:Name="DiffModeButton"
                                 Grid.Column="4"
                                 Background="{DynamicResource GitKayRaisedBrush}"

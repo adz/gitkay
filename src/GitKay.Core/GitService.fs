@@ -591,6 +591,8 @@ module GitService =
             return! loadDiffFileContents contextLines hash (entry.FileList |> List.map (fun file -> file.OldPath, file.NewPath))
         }
 
+
+
     /// Line totals need a full patch pass, so they are computed on request rather than with the file list.
     let fetchDiffSummary (hash: string) : Flow<GitEnv, GitError, DiffSummary> =
         flow {
@@ -679,6 +681,18 @@ module GitService =
         }
 
     let private plainGit (arguments: string list) = workTreeGit None arguments
+
+    /// <summary>
+    /// The commit's diff with whitespace-only changes left out, which libgit2 can't do: git itself produces the patch
+    /// and the same parser the working tree uses reads it back.
+    /// </summary>
+    let fetchDiffIgnoringWhitespace (contextLines: int) (hash: string) : Flow<GitEnv, GitError, FileDiff list> =
+        plainGit [ "show"; "-w"; "--no-ext-diff"; "--find-renames"; "--first-parent"; "--format="; $"-U{normalizeContextLines contextLines}"; hash ]
+        |> Flow.map WorkingTree.parsePatch
+
+    /// <summary>The commit's diff, with or without the whitespace-only changes.</summary>
+    let fetchDiffWith (ignoreWhitespace: bool) (contextLines: int) (hash: string) : Flow<GitEnv, GitError, FileDiff list> =
+        if ignoreWhitespace then fetchDiffIgnoringWhitespace contextLines hash else fetchDiff contextLines hash
 
     /// <summary>What <c>git status</c> reports for the working tree and index.</summary>
     let fetchWorkingTreeStatus : Flow<GitEnv, GitError, WorkingTree.Entry list> =

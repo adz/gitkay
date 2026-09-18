@@ -1327,6 +1327,7 @@ module AppTests =
             ShowBranchRefs = false
             ShowStashes = false
             DiffContextLines = 3
+            IgnoreWhitespace = false
             DiffLayout = DiffLayout.Unified
             SearchQuery = ""
             SearchScopeKey = "all"
@@ -3292,6 +3293,34 @@ module WorkingTreeStagingTests =
             |> List.collect _.Lines
             |> List.filter (fun line -> line.Type <> Models.Context)
             |> List.map _.Content
+
+    [<Fact>]
+    let ``ignoring whitespace drops the lines that differ only in spacing`` () =
+        withRepository (numbered [ "one"; "two"; "three" ]) (fun root ->
+            // Two changes in one commit: a real edit, and a line that only gained indentation.
+            File.WriteAllText(Path.Combine(root, "numbers.txt"), numbered [ "one"; "    two"; "THREE" ])
+            use repo = new Repository(root)
+            Commands.Stage(repo, "numbers.txt")
+            let author = Signature("GitKay Tests", "gitkay@example.com", DateTimeOffset.Now)
+            let commit = repo.Commit("edit", author, author)
+
+            let changedLines ignoreWhitespace =
+                match Flow.run (GitService.environment root) (GitService.fetchDiffWith ignoreWhitespace 3 commit.Sha) |> Exit.toResult with
+                | Error error -> failwith (GitError.describe error)
+                | Ok files ->
+                    files
+                    |> List.collect _.Hunks
+                    |> List.collect _.Lines
+                    |> List.filter (fun line -> line.Type <> Models.Context)
+                    |> List.map (fun line -> line.Content.Trim())
+
+            let normally = changedLines false
+            test <@ normally |> List.contains "two" && normally |> List.contains "THREE" @>
+
+            // With whitespace ignored the indentation-only line is gone; the real change stays.
+            let ignoring = changedLines true
+            test <@ ignoring |> List.contains "THREE" @>
+            test <@ ignoring |> List.filter (fun line -> line = "two") = [] @>)
 
     [<Fact>]
     let ``staging the hunk at the cursor from the history window stages only that hunk`` () =

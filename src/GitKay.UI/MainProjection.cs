@@ -77,6 +77,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private bool _suppressShowBranchRefsDispatch;
     private bool _suppressShowStashesDispatch;
     private bool _suppressDiffContextDispatch;
+    private bool _suppressIgnoreWhitespaceDispatch;
     private bool _suppressDiffPresentationDispatch;
     private object? _commitsSource;
     private object? _commitSearchResultsSource;
@@ -463,6 +464,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
 
         UpdateDiffContextState(model);
+        UpdateIgnoreWhitespaceState(model);
         UpdateDiffPresentationState(model);
         UpdateSearchState(model);
         UpdateDiffState(model);
@@ -817,6 +819,22 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             SelectedDiffRow = null;
             StepDiffFind(+1);
         }
+    }
+
+    /// <summary>Whether whitespace-only changes are left out of the diff, as git's -w does.</summary>
+    [ObservableProperty] private bool _ignoreWhitespace;
+
+    partial void OnIgnoreWhitespaceChanged(bool value) {
+        if (_suppressIgnoreWhitespaceDispatch) return;
+        _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetIgnoreWhitespace(value));
+        Status = value ? "Ignoring whitespace changes" : "Showing whitespace changes";
+    }
+
+    private void UpdateIgnoreWhitespaceState(GitKay.Core.App.Model model) {
+        if (IgnoreWhitespace == model.IgnoreWhitespace) return;
+        _suppressIgnoreWhitespaceDispatch = true;
+        try { IgnoreWhitespace = model.IgnoreWhitespace; }
+        finally { _suppressIgnoreWhitespaceDispatch = false; }
     }
 
     private void UpdateDiffContextState(GitKay.Core.App.Model model) {
