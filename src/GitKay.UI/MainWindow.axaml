@@ -463,10 +463,19 @@
                         </Button>
                         </StackPanel>
 
+                        <!-- The hash and subject open the details too, not just the chevron; resting on them shows
+                             the whole message, placed below the bar so it never covers what it describes. -->
                         <Grid Grid.Column="1"
                               ColumnDefinitions="Auto,*,Auto"
                               ColumnSpacing="8"
-                              VerticalAlignment="Center">
+                              VerticalAlignment="Center"
+                              Background="Transparent"
+                              Cursor="Hand"
+                              PointerPressed="OnCommitHeaderPressed"
+                              ToolTip.Tip="{Binding SelectedCommit.Message}"
+                              ToolTip.ShowDelay="900"
+                              ToolTip.Placement="BottomEdgeAlignedLeft"
+                              ToolTip.VerticalOffset="6">
                             <SelectableTextBlock Text="{Binding SelectedCommit.Hash}"
                                                  Foreground="{DynamicResource GitKayMutedTextBrush}"
                                                  FontFamily="{x:Static local:FontStacks.Mono}"

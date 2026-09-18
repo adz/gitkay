@@ -947,6 +947,14 @@ public partial class MainWindow : Window, IVimCommands {
         await settingsWindow.ShowDialog(this);
     }
 
+    /// <summary>The hash and subject in the diff header open and close the commit details, as the chevron does.</summary>
+    private void OnCommitHeaderPressed(object? sender, PointerPressedEventArgs e) {
+        // Selecting the hash still works: a press that lands in selectable text is left to it.
+        if (e.Source is Control source && source.FindAncestorOfType<SelectableTextBlock>() is not null) return;
+        if (_projection?.ToggleCommitDetailsCommand.CanExecute(null) == true) _projection.ToggleCommitDetailsCommand.Execute(null);
+        e.Handled = true;
+    }
+
     private void ApplyPaneChrome() {
         if (_projection is { } projection) {
             _paneChrome.Update(PaneChromeSettingsFor(projection));
