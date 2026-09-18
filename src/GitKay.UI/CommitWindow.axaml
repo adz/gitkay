@@ -152,9 +152,9 @@
                 <GridSplitter x:Name="ListsSplitterLine" Grid.Column="1" Width="1" Background="{DynamicResource GitKayBorderBrush}" ResizeDirection="Columns" />
 
                 <!-- The diff above the commit message, both beside the file lists. -->
-                <Grid Grid.Column="2" RowDefinitions="*,Auto,Auto,Auto">
+                <Grid Grid.Column="2" RowDefinitions="3*,Auto,*">
                     <Border x:Name="DiffPaneEffect" Grid.Row="0" />
-                    <Border x:Name="MessagePaneEffect" Grid.Row="2" Grid.RowSpan="2" />
+                    <Border x:Name="MessagePaneEffect" Grid.Row="2" />
                     <DockPanel x:Name="DiffPanePart" Grid.Row="0">
                         <Border DockPanel.Dock="Top" Classes="bar">
                             <Grid ColumnDefinitions="*,Auto">
@@ -205,8 +205,10 @@
 
                     <GridSplitter x:Name="DiffSplitterLine" Grid.Row="1" Height="1" Background="{DynamicResource GitKayBorderBrush}" ResizeDirection="Rows" />
 
-                    <!-- Hook and git output from the last failure. -->
-                    <Border x:Name="FailureOutputPart" Grid.Row="2" IsVisible="{Binding HasFailureOutput}" MaxHeight="160"
+                    <!-- The failure output sits above the message, inside the same row, so the splitter above them
+                         hands its space straight to the message box. -->
+                    <Grid Grid.Row="2" RowDefinitions="Auto,*">
+                    <Border x:Name="FailureOutputPart" Grid.Row="0" IsVisible="{Binding HasFailureOutput}" MaxHeight="160"
                             Background="{DynamicResource GitKayRemovedBrush}" BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="0,0,0,1" Padding="10,6">
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <SelectableTextBlock Text="{Binding FailureOutput}" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="11"
@@ -214,8 +216,8 @@
                         </ScrollViewer>
                     </Border>
 
-                    <Border x:Name="MessagePanePart" Grid.Row="3" Background="{DynamicResource GitKaySurfaceBrush}" Padding="10,8">
-                        <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="6">
+                    <Border x:Name="MessagePanePart" Grid.Row="1" Background="{DynamicResource GitKaySurfaceBrush}" Padding="10,8">
+                        <Grid RowDefinitions="Auto,*,Auto" RowSpacing="6">
                             <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
                                 <TextBlock Classes="sectionTitle" Text="{Binding MessageTitle}" />
                                 <TextBlock Grid.Column="1" Text="{Binding SubjectLengthText}" Classes.warning="{Binding IsSubjectLong}" FontSize="11"
@@ -226,7 +228,7 @@
                             </Grid>
                             <Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Row="1" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,10,0"><TextBlock Text="Ctrl+4  message · Ctrl+Enter  commit · Ctrl+S  sign off" /></Border>
                             <TextBox Grid.Row="1" x:Name="MessageBox" Text="{Binding Message, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap"
-                                     Height="120" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12"
+                                     MinHeight="90" VerticalContentAlignment="Top" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12"
                                      PlaceholderText="Subject line, then a blank line and why the change was made" />
                             <Grid Grid.Row="2" ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto" ColumnSpacing="8">
                                 <Button Classes="action" Padding="10,3" Command="{Binding RescanCommand}" ToolTip.Tip="Read the working tree and index again (F5)">
@@ -251,6 +253,7 @@
                             </Grid>
                         </Grid>
                     </Border>
+                    </Grid>
                 </Grid>
             </Grid>
         </Grid>
