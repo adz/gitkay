@@ -6,8 +6,8 @@
     <SelfContained>true</SelfContained>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Avalonia.Headless" Version="12.0.2" />
-    <PackageReference Include="Avalonia.Skia" Version="12.0.2" />
+    <PackageReference Include="Avalonia.Headless" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Skia" Version="12.1.2" />
     <ProjectReference Include="../../src/GitKay.UI/GitKay.UI.csproj" />
   </ItemGroup>
 </Project>

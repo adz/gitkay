@@ -30,7 +30,8 @@ if (args.FirstOrDefault() == "hotpaths") {
     return;
 }
 
-var source = args.FirstOrDefault() ?? "/home/adam/projects/Axial/main";
+// This repository by default: its own source is representative, and it is always here.
+var source = args.FirstOrDefault() ?? GitKay.Core.GitService.tryDiscoverRepositoryPath();
 var lines = Directory.EnumerateFiles(source, "*.*", SearchOption.AllDirectories)
     .Where(path => path.Contains("/src/") && Path.GetExtension(path) is ".fs" or ".cs" or ".md")
     .SelectMany(path => File.ReadLines(path))
