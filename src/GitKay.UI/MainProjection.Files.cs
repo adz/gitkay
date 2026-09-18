@@ -63,6 +63,7 @@ public partial class MainProjection {
         OnPropertyChanged(nameof(IsPatchFileListMode));
         OnPropertyChanged(nameof(IsTreeFileListMode));
         RebuildDiffFileListRows();
+        RenderSelectedDiffRows();
     }
 
     [RelayCommand]

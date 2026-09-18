@@ -1765,7 +1765,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private void RenderSelectedDiffRows() {
         var rows = new List<IDiffRowProjection>();
         var mode = DiffLayout;
-        foreach (var section in SelectedDiffFiles.GroupBy(file => file.Key.Section)) {
+        // Patch mode follows Git's diff order. Tree mode follows the same alphabetical folder/file order as the
+        // file pane; use an uncollapsed tree so collapsing navigation folders never hides files from the diff.
+        var orderedFiles = IsDiffFileTreeMode && !IsAllFilesMode
+            ? DiffFileTree.BuildRows(SelectedDiffFiles, true, new HashSet<string>()).OfType<DiffFileProjection>()
+            : SelectedDiffFiles;
+        foreach (var section in orderedFiles.GroupBy(file => file.Key.Section)) {
             var sectionCollapsed = false;
             if (section.Key.Length > 0) {
                 var name = section.Key;

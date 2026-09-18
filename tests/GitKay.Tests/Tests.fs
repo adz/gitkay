@@ -2875,6 +2875,28 @@ module DiffFileTreeTests =
         test <@ describe (Seq.cast rows) = [ "0:src/FsLiveDocs.Cli/Program.fs"; "0:NEXT_VERSION"; "0:dev-docs/releases/0.6.2.md"; "0:src/FsLiveDocs.Cli/CommandLine.fs"; "0:Directory.Build.props" ] @>
 
     [<Fact>]
+    let ``diff file headers should follow patch and tree display order`` () =
+        let projection = MainProjection()
+        let summaries : GitService.DiffFileSummary list =
+            [ { OldPath = "z/last.fs"; NewPath = "z/last.fs"; DisplayPath = "z/last.fs" }
+              { OldPath = "a/second.fs"; NewPath = "a/second.fs"; DisplayPath = "a/second.fs" }
+              { OldPath = "a/first.fs"; NewPath = "a/first.fs"; DisplayPath = "a/first.fs" } ]
+        let model, _ = App.init [||]
+        projection.Update { model with Selection = App.CommitSelected "abc"; SelectedDiffHash = Some "abc"; SelectedDiffFiles = Some summaries }
+        let headerPaths () =
+            projection.SelectedDiffRows
+            |> Seq.choose (function :? DiffFileHeaderProjection as header -> Some header.DisplayPath | _ -> None)
+            |> List.ofSeq
+        test <@ headerPaths () = [ "z/last.fs"; "a/second.fs"; "a/first.fs" ] @>
+        projection.SetDiffFileListModeCommand.Execute "tree"
+        test <@ headerPaths () = [ "a/first.fs"; "a/second.fs"; "z/last.fs" ] @>
+        let listed =
+            projection.DiffFileListRows
+            |> Seq.choose (function :? DiffFileProjection as file -> Some file.DisplayPath | _ -> None)
+            |> List.ofSeq
+        test <@ listed = headerPaths () @>
+
+    [<Fact>]
     let ``tree mode should merge single-folder chains, list folders first and honour collapsed folders`` () =
         let rows = DiffFileTree.BuildRows(files (), true, Collections.Generic.HashSet<string>())
         test <@ describe (Seq.cast rows) = [ "0:[dev-docs/releases]"; "1:0.6.2.md"; "0:[src/FsLiveDocs.Cli]"; "1:CommandLine.fs"; "1:Program.fs"; "0:Directory.Build.props"; "0:NEXT_VERSION" ] @>
