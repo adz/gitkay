@@ -49,8 +49,6 @@
             <SolidColorBrush x:Key="GitKayLane9Brush" Color="#6CB6FF" />
             <!-- Visual refresh: hairlines, muted ref pills, quieter numbers -->
             <SolidColorBrush x:Key="GitKayHairlineBrush" Color="#2B333C" />
-            <!-- The splitter is felt more than seen: hovering lifts it just clear of the hairline behind it. -->
-            <SolidColorBrush x:Key="GitKaySplitterHoverBrush" Color="#3C444D" Opacity="0.45" />
             <!-- A subtle pane outline barely parts the panes; the normal one is the same edge dialogs and inputs use. -->
             <SolidColorBrush x:Key="GitKayPaneSubtleBorderBrush" Color="#2B333C" Opacity="0.6" />
             <SolidColorBrush x:Key="GitKayLineNumberBrush" Color="#6E7681" />
@@ -113,7 +111,6 @@
             <SolidColorBrush x:Key="GitKayLane8Brush" Color="#2DA44E" />
             <SolidColorBrush x:Key="GitKayLane9Brush" Color="#3192AA" />
             <SolidColorBrush x:Key="GitKayHairlineBrush" Color="#DCE2E8" />
-            <SolidColorBrush x:Key="GitKaySplitterHoverBrush" Color="#C2CBD4" Opacity="0.45" />
             <SolidColorBrush x:Key="GitKayPaneSubtleBorderBrush" Color="#DCE2E8" Opacity="0.6" />
             <SolidColorBrush x:Key="GitKayLineNumberBrush" Color="#8C959F" />
             <SolidColorBrush x:Key="GitKayRefBranchBackground" Color="#E7F1FC" />

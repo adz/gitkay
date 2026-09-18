@@ -174,12 +174,9 @@
         <Setter Property="Background" Value="{DynamicResource GitKayHoverBrush}" />
         <Setter Property="Foreground" Value="{DynamicResource GitKayAccentBrush}" />
     </Style>
-    <!-- Splitters: invisible until hovered; a hairline behind them marks the edge. -->
+    <!-- Splitters don't react to the pointer at all: the hairline behind them marks the edge, and it stays put. -->
     <Style Selector="GridSplitter">
         <Setter Property="Background" Value="Transparent" />
-    </Style>
-    <Style Selector="GridSplitter:pointerover">
-        <Setter Property="Background" Value="{DynamicResource GitKaySplitterHoverBrush}" />
     </Style>
 
     <!-- Hover and press land on one colour straight away: crossfading between two themes' brushes reads as a flash. -->

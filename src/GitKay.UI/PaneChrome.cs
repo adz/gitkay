@@ -80,7 +80,13 @@ internal sealed class PaneChrome {
     /// <summary>Follows the pointer across the window, so a pane counts as hovered over the whole of itself.</summary>
     private void Watch(Border effect) {
         if (TopLevel.GetTopLevel(effect) is not { } top || !_watched.Add(top)) return;
-        top.AddHandler(InputElement.PointerMovedEvent, (_, e) => OnPointerAt(top, e.GetPosition(top)), RoutingStrategies.Tunnel);
+        top.AddHandler(InputElement.PointerMovedEvent, (_, e) => {
+            // Never while a button is down: the pointer is dragging something (a splitter, a selection), and moving
+            // focus out from under it takes the drag with it.
+            var point = e.GetCurrentPoint(top).Properties;
+            if (point.IsLeftButtonPressed || point.IsRightButtonPressed || point.IsMiddleButtonPressed) return;
+            OnPointerAt(top, e.GetPosition(top));
+        }, RoutingStrategies.Tunnel);
         top.AddHandler(InputElement.PointerExitedEvent, (_, _) => _hovered = null, RoutingStrategies.Tunnel);
     }
 
