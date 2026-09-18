@@ -60,6 +60,7 @@ public partial class MainWindow : Window, IVimCommands {
         _paneChrome.Add(nameof(Pane.Commits), CommitPaneEffect, CommitPaneContent);
         _paneChrome.Add(nameof(Pane.Diff), DiffPaneEffect, DiffHeaderPart, DiffContentPart, DiffPaneFocus);
         _paneChrome.Add(nameof(Pane.Files), FilesPaneEffect, FilesHeaderPart, FilesContentPart, FilesPaneFocus);
+        KeepCommitListHeightAcrossStatusBar();
         _paneChrome.AddSeparator(HistorySplitterLine);
         _paneChrome.AddSeparator(FilesSplitterLine);
         CommitListBox.CopyRequested += name => CopyToClipboard(name, "Copied");
@@ -1343,6 +1344,28 @@ public partial class MainWindow : Window, IVimCommands {
         _activeHistoryColumnResizeIndex = -1;
         _activeHistoryColumnResizeStartX = 0d;
         _activeHistoryColumnResizeStartWidths = null;
+    }
+
+    /// <summary>
+    /// The status bar takes its space from the diff, not from everything at once. Both panes are star-sized, so the
+    /// bar appearing would otherwise shrink them in proportion and slide the diff up under the commit list; instead
+    /// the commit list keeps the height it has and the pane below it absorbs the change, so nothing moves.
+    /// </summary>
+    private void KeepCommitListHeightAcrossStatusBar() {
+        StatusBar.PropertyChanged += (_, e) => {
+            if (e.Property != IsVisibleProperty || e.NewValue is not bool visible) return;
+            var rows = MainSplitGrid.RowDefinitions;
+            var commit = rows[0].ActualHeight;
+            var below = rows[2].ActualHeight;
+            if (commit <= 0 || below <= 0) return;
+
+            // The bar is about to be added or removed; its height is what the pane below has to give up or gets back.
+            StatusBar.Measure(new Size(MainSplitGrid.Bounds.Width, double.PositiveInfinity));
+            var barHeight = Math.Max(StatusBar.DesiredSize.Height, StatusBar.Bounds.Height);
+            var remaining = Math.Max(1, below + (visible ? -barHeight : barHeight));
+            rows[0].Height = new GridLength(commit, GridUnitType.Star);
+            rows[2].Height = new GridLength(remaining, GridUnitType.Star);
+        };
     }
 
     /// <summary>Captures the current splitter positions and history column widths for persistence.</summary>

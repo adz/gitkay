@@ -356,6 +356,33 @@ module DiffSurfaceTests =
 
 module MainWindowPaneTests =
     [<Fact>]
+    let ``the status bar takes its space from the diff, leaving the commit list where it is`` () =
+        Headless.run (fun () ->
+            let projection = MainProjection()
+            let window = MainWindow(Width = 1200.0, Height = 800.0, DataContext = projection)
+            try
+                window.Show()
+                window.UpdateLayout()
+                Headless.pump ()
+                let rows = window.FindControl<Grid>("MainSplitGrid").RowDefinitions
+                let diffPane = window.FindControl<Border>("DiffContentPart")
+                let commitBefore = rows[0].ActualHeight
+                let diffTopBefore = diffPane.Bounds.Top
+
+                // A status message brings the bar in at the bottom of the window.
+                projection.Status <- "Staged 3 files"
+                window.UpdateLayout()
+                Headless.pump ()
+                test <@ projection.IsStatusVisible @>
+
+                // The commit list keeps its height, so nothing above the bar moves: only the diff gives up the space.
+                test <@ abs (rows[0].ActualHeight - commitBefore) < 0.5 @>
+                test <@ abs (diffPane.Bounds.Top - diffTopBefore) < 0.5 @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
     let ``Ctrl+W o maximises the focused pane and Ctrl+W = restores the layout`` () =
         Headless.run (fun () ->
             let window = MainWindow(Width = 1200.0, Height = 800.0)
