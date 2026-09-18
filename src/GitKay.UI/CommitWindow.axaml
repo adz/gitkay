@@ -4,7 +4,7 @@
         x:Class="GitKay.UI.CommitWindow"
         x:DataType="local:CommitWindowProjection"
         Title="{Binding WindowTitle}"
-        Width="1200" Height="820" MinWidth="640" MinHeight="420"
+        Width="1200" Height="820" MinWidth="880" MinHeight="560"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource GitKayWindowBrush}">
     <Window.Styles>
@@ -92,14 +92,26 @@
                 </Grid>
             </Border>
 
-            <Grid Grid.Row="1" ColumnDefinitions="320,Auto,*">
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <!-- The lists keep a readable width, and so does the diff beside them. -->
+                    <ColumnDefinition Width="320" MinWidth="220" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" MinWidth="380" />
+                </Grid.ColumnDefinitions>
                 <!-- Unstaged and staged files down the whole left side. -->
-                <Grid Grid.Column="0" RowDefinitions="Auto,*,Auto,*">
+                <Grid Grid.Column="0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" MinHeight="60" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" MinHeight="60" />
+                    </Grid.RowDefinitions>
                     <Border x:Name="UnstagedPaneEffect" Grid.Row="0" Grid.RowSpan="2" />
                     <Border x:Name="StagedPaneEffect" Grid.Row="2" Grid.RowSpan="2" />
                     <Border x:Name="UnstagedTitleBar" Grid.Row="0" Classes="bar unstagedTitle">
                         <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Classes="sectionTitle" Text="{Binding UnstagedTitle}" />
+                            <TextBlock Classes="sectionTitle" Text="{Binding UnstagedTitle}" TextTrimming="CharacterEllipsis" />
                             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
                             <Border Background="{DynamicResource GitKayRaisedBrush}" BorderBrush="{DynamicResource GitKayBorderBrush}"
                                     BorderThickness="1" CornerRadius="4" Padding="1" VerticalAlignment="Center"
@@ -108,17 +120,33 @@
                                     <Button Classes="segment" Classes.selected="{Binding IsPatchFileListMode}"
                                             Command="{Binding SetFileListModeCommand}" CommandParameter="patch"
                                             ToolTip.Tip="Patch — changed files as full paths">
-                                        <TextBlock Text="Patch" FontSize="11" />
+                                        <Canvas Width="16" Height="16">
+                                            <Path Data="M3,0.5 H10 L13.5,4 V15.5 H3 Z" Stroke="{DynamicResource GitKaySecondaryTextBrush}" StrokeThickness="1" />
+                                            <Rectangle Canvas.Left="5" Canvas.Top="6" Width="6" Height="1.5" Fill="{DynamicResource GitKayRemovedAccentBrush}" />
+                                            <Rectangle Canvas.Left="5" Canvas.Top="9" Width="6" Height="1.5" Fill="{DynamicResource GitKayAddedAccentBrush}" />
+                                            <Rectangle Canvas.Left="5" Canvas.Top="12" Width="4" Height="1.5" Fill="{DynamicResource GitKaySecondaryTextBrush}" />
+                                        </Canvas>
                                     </Button>
                                     <Button Classes="segment" Classes.selected="{Binding IsTreeFileListMode}"
                                             Command="{Binding SetFileListModeCommand}" CommandParameter="tree"
                                             ToolTip.Tip="Tree — changed files grouped by folder">
-                                        <TextBlock Text="Tree" FontSize="11" />
+                                        <Canvas Width="16" Height="16">
+                                            <Rectangle Canvas.Left="1" Canvas.Top="2" Width="6" Height="4" RadiusX="1" RadiusY="1" Stroke="{DynamicResource GitKaySecondaryTextBrush}" StrokeThickness="1" />
+                                            <Path Data="M3.5,6 V13.5 H8 M3.5,9.5 H8" Stroke="{DynamicResource GitKaySecondaryTextBrush}" StrokeThickness="1" />
+                                            <Rectangle Canvas.Left="9" Canvas.Top="8" Width="6" Height="3" RadiusX="1" RadiusY="1" Fill="{DynamicResource GitKayAccentBrush}" />
+                                            <Rectangle Canvas.Left="9" Canvas.Top="12" Width="6" Height="3" RadiusX="1" RadiusY="1" Fill="{DynamicResource GitKayAccentBrush}" />
+                                        </Canvas>
                                     </Button>
                                     <Button Classes="segment" Classes.selected="{Binding IsAllFilesMode}"
                                             Command="{Binding SetFileListModeCommand}" CommandParameter="all"
                                             ToolTip.Tip="All files — every file in the repository, as a tree">
-                                        <TextBlock Text="All" FontSize="11" />
+                                        <Canvas Width="16" Height="16">
+                                            <Path Data="M6,0.5 H12 L15.5,4 V11.5 H6 Z" Stroke="{DynamicResource GitKayMutedTextBrush}" StrokeThickness="1" />
+                                            <Path Data="M3.5,2.5 H9.5 L13,6 V13.5 H3.5 Z" Fill="{DynamicResource GitKayRaisedBrush}" Stroke="{DynamicResource GitKaySecondaryTextBrush}" StrokeThickness="1" />
+                                            <Path Data="M1,4.5 H7 L10.5,8 V15.5 H1 Z" Fill="{DynamicResource GitKayRaisedBrush}" Stroke="{DynamicResource GitKaySecondaryTextBrush}" StrokeThickness="1" />
+                                            <Rectangle Canvas.Left="2.5" Canvas.Top="9" Width="5" Height="1.5" Fill="{DynamicResource GitKayAccentBrush}" />
+                                            <Rectangle Canvas.Left="2.5" Canvas.Top="12" Width="6" Height="1.5" Fill="{DynamicResource GitKaySecondaryTextBrush}" />
+                                        </Canvas>
                                     </Button>
                                 </StackPanel>
                             </Border>
@@ -182,7 +210,7 @@
                                   Background="Transparent" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext" />
                     <Border x:Name="StagedTitleBar" Grid.Row="2" Classes="bar stagedTitle" BorderThickness="0,1,0,1">
                         <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Classes="sectionTitle" Text="{Binding StagedTitle}" />
+                            <TextBlock Classes="sectionTitle" Text="{Binding StagedTitle}" TextTrimming="CharacterEllipsis" />
                             <Button Grid.Column="1" Classes="action" Padding="8,1" Command="{Binding UnstageAllCommand}"
                                     ToolTip.Tip="Unstage every staged file">
                                 <TextBlock Text="Unstage all" FontSize="11" />
@@ -241,7 +269,13 @@
                 <GridSplitter x:Name="ListsSplitterLine" Grid.Column="1" Width="1" Background="{DynamicResource GitKayBorderBrush}" ResizeDirection="Columns" />
 
                 <!-- The diff above the commit message, both beside the file lists. -->
-                <Grid Grid.Column="2" RowDefinitions="3*,Auto,*">
+                <Grid Grid.Column="2">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="3*" MinHeight="80" />
+                        <RowDefinition Height="Auto" />
+                        <!-- The message box, its buttons and the row of actions below them. -->
+                        <RowDefinition Height="*" MinHeight="190" />
+                    </Grid.RowDefinitions>
                     <Border x:Name="DiffPaneEffect" Grid.Row="0" />
                     <Border x:Name="MessagePaneEffect" Grid.Row="2" />
                     <DockPanel x:Name="DiffPanePart" Grid.Row="0">
