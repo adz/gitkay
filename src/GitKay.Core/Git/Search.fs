@@ -180,10 +180,17 @@ module GitSearch =
     /// follow a T or a space. The instant returned is where that period starts, so <c>after:</c> includes it and
     /// <c>before:</c> stops at it.
     /// </summary>
+    /// <summary>What a date written in parts (2026, 2026-09, 2026-09-16T07:13) turned out to be.</summary>
+    type private DateParts =
+        | NotParts
+        /// <summary>The right shape, but no such date: 2026-13, 2026-02-30, 24:00.</summary>
+        | ImpossibleParts
+        | Parts of int64
+
     let private tryParseParts (text: string) =
         let m = Regex.Match(text.Trim(), @"^(\d{4})(?:[-/](\d{1,2})(?:[-/](\d{1,2})(?:[T ](\d{1,2})(?::(\d{1,2})(?::(\d{1,2}))?)?)?)?)?$")
         if not m.Success then
-            None
+            NotParts
         else
             let part (group: int) fallback =
                 if m.Groups[group].Success then int m.Groups[group].Value else fallback
@@ -194,10 +201,10 @@ module GitSearch =
             let minute = part 5 0
             let second = part 6 0
             if month < 1 || month > 12 || day < 1 || day > DateTime.DaysInMonth(year, month) || hour > 23 || minute > 59 || second > 59 then
-                None
+                ImpossibleParts
             else
                 let local = DateTime(year, month, day, hour, minute, second, DateTimeKind.Local)
-                Some(DateTimeOffset(local).ToUnixTimeSeconds())
+                Parts(DateTimeOffset(local).ToUnixTimeSeconds())
 
     /// Absolute dates to any precision, or git-style relative ones: "2 weeks ago", "3.days.ago", "yesterday".
     let tryParseDate (now: DateTimeOffset) (text: string) =
@@ -219,8 +226,10 @@ module GitSearch =
             Some(date.ToUnixTimeSeconds())
         else
             match tryParseParts text with
-            | Some seconds -> Some seconds
-            | None ->
+            | Parts seconds -> Some seconds
+            // A date written this way is ours to judge: .NET's own parser reads 2026-02-30 as the 2nd of March.
+            | ImpossibleParts -> None
+            | NotParts ->
                 match DateTimeOffset.TryParse(text, Globalization.CultureInfo.InvariantCulture, Globalization.DateTimeStyles.AssumeLocal) with
                 | true, date -> Some(date.ToUnixTimeSeconds())
                 | _ -> None
