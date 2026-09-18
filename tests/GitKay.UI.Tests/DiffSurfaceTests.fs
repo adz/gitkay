@@ -723,3 +723,20 @@ module PaneChromeTests =
             finally
                 window.Close()
                 Headless.pump ())
+
+module FatalErrorDialogTests =
+
+    [<Fact>]
+    let ``fatal error dialog shows the heading and diagnostic details`` () =
+        Headless.run (fun () ->
+            let dialog = FatalErrorDialog("GitKay hit an unrecoverable UI error.", "System.InvalidOperationException: broken")
+            try
+                dialog.Show()
+                Headless.pump ()
+                let message = dialog.FindControl<TextBlock>("MessageText")
+                let details = dialog.FindControl<TextBox>("DetailsText")
+                test <@ message.Text = "GitKay hit an unrecoverable UI error." @>
+                test <@ details.Text.Contains("InvalidOperationException") @>
+            finally
+                dialog.Close()
+                Headless.pump ())

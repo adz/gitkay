@@ -9,7 +9,7 @@
 - The app is Elmish-style at the core, bridged into Avalonia through `ElmishGlue`.
 - Commit history, graph projection, and git command execution currently live in the F# core.
 - UI projections are C# view models with `ObservableObject` / `RelayCommand`.
-- The diff pane renders structured diffs and inline blame metadata. History and diff loading now use LibGit2Sharp on the read path; blame still needs to be made lazy and file-scoped.
+- The diff pane renders structured diffs. History and diff loading use LibGit2Sharp on the read path. Blame is absent from normal diff loading; the remaining API is file-scoped and only runs when explicitly called.
 
 ## Performance And Design Direction
 - Prefer in-process Git access over repeated shelling out when a feature becomes interactive or high frequency.
@@ -49,7 +49,6 @@
 
 ## Current Next Steps
 - Finish moving any remaining write-side Git operations off the CLI if they become hot.
-- Make blame lazy and file-scoped instead of eager on commit selection.
 - Add file focus/selection behavior in the diff pane.
 - Implement search and navigation parity with `gitk`, especially:
   - commit hash search
