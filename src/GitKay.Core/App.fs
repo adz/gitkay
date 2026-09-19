@@ -72,6 +72,8 @@ module App =
             Commits: Graph.CommitGraphInfo list
             HasFullHistory: bool
             Selection: Selection
+            /// An arbitrary revision comparison currently replacing the selected commit's normal diff.
+            RevisionComparison: GitService.RevisionComparison option
             SelectedDiffHash: string option
             SelectedDiffFiles: GitService.DiffFileSummary list option
             SelectedDiff: Models.FileDiff list option
@@ -126,6 +128,10 @@ module App =
         | WorkingTreeOperationDone of description:string * Result<Trash.Backup option, GitError>
         | DiffFilesLoaded of hash:string * startedAtTicks:int64 * Result<GitService.DiffFileSummary list, GitError>
         | DiffLoaded of hash:string * startedAtTicks:int64 * Result<Models.FileDiff list, GitError>
+        /// Opens a three-dot comparison between arbitrary branches, tags or commits.
+        | OpenRevisionComparison of baseRevision:string * targetRevision:string * startedAtTicks:int64
+        | RevisionComparisonLoaded of baseRevision:string * targetRevision:string * startedAtTicks:int64 * Result<GitService.RevisionComparison * Models.FileDiff list, GitError>
+        | CloseRevisionComparison
         | SelectDiffFile of hash:string * oldPath:string * newPath:string
         /// A startup --select revision (short hash, branch, tag, HEAD~n) resolved to a full hash.
         | SelectionRevisionResolved of revision:string * Result<string, GitError>
@@ -211,6 +217,19 @@ module App =
             (fun result -> DiffLoaded(hash, startedAtTicks, Ok result))
             (fun err -> DiffLoaded(hash, startedAtTicks, Error err))
 
+    let private comparisonId (baseRevision: string) (targetRevision: string) = $"comparison:{baseRevision}...{targetRevision}"
+
+    let private startRevisionComparisonLoad env baseRevision targetRevision startedAtTicks contextLines ignoreWhitespace =
+        let work = flow {
+            let! comparison = GitService.resolveRevisionComparison baseRevision targetRevision
+            let! diff = GitService.fetchRevisionDiff ignoreWhitespace contextLines comparison
+            return comparison, diff
+        }
+        Cmd.OfFlow.ofFlowLatest
+            $"compare {baseRevision}...{targetRevision}" diffJob env work
+            (fun result -> RevisionComparisonLoaded(baseRevision, targetRevision, startedAtTicks, Ok result))
+            (fun error -> RevisionComparisonLoaded(baseRevision, targetRevision, startedAtTicks, Error error))
+
     let private startWorkingTreeStatusLoad (env: GitService.GitEnv) =
         Cmd.OfFlow.ofFlowLatest
             "working tree status"
@@ -268,11 +287,13 @@ module App =
             for effect in command do
                 effect dispatch)
 
-    let private startDiffFileContextLoad (env: GitService.GitEnv) (hash: string) (key: GitService.DiffFileKey) (requestId: int64) =
+    let private startDiffFileContextLoad (env: GitService.GitEnv) (comparison: GitService.RevisionComparison option) (hash: string) (key: GitService.DiffFileKey) (requestId: int64) =
         let workflow =
             flow {
                 do! Flow.Runtime.ensureNotCanceled (GitError.OperationCanceled "Context expansion")
-                return! GitService.fetchDiffFileFullContext hash key.OldPath key.NewPath
+                match comparison with
+                | Some comparison -> return! GitService.fetchRevisionDiffFileFullContext comparison key.OldPath key.NewPath
+                | None -> return! GitService.fetchDiffFileFullContext hash key.OldPath key.NewPath
             }
 
         Cmd.OfFlow.ofFlowLatest
@@ -384,7 +405,7 @@ module App =
             | None, None ->
                 let expansion = { revealed with PendingRequestId = Some requestedAtTicks }
                 { model with DiffExpansions = model.DiffExpansions |> Map.add key expansion },
-                startDiffFileContextLoad model.GitEnv hash key requestedAtTicks
+                startDiffFileContextLoad model.GitEnv model.RevisionComparison hash key requestedAtTicks
             | _ ->
                 { model with DiffExpansions = model.DiffExpansions |> Map.add key revealed }, Cmd.none
         | _ ->
@@ -425,6 +446,7 @@ module App =
                 Commits = []
                 HasFullHistory = false
                 Selection = NoSelection
+                RevisionComparison = None
                 SelectedDiffHash = None
                 SelectedDiffFiles = None
                 SelectedDiff = None
@@ -470,6 +492,7 @@ module App =
                     SearchResults = None
                     Commits = []
                     HasFullHistory = false
+                    RevisionComparison = None
                     SelectedDiffHash = None
                     SelectedDiffFiles = None
                     SelectedDiff = None
@@ -570,6 +593,7 @@ module App =
             contextJobs.CancelAll()
             { model with
                 Selection = WorkingTreeSelected
+                RevisionComparison = None
                 SelectedDiffHash = None
                 SelectedDiffFiles = None
                 SelectedDiff = None
@@ -615,11 +639,15 @@ module App =
                         SelectedDiff = None
                         SelectedDiffStartedAtTicks = model.SelectedCommitHash |> Option.map (fun _ -> Stopwatch.GetTimestamp()) }
 
-                match model.Selection with
-                | CommitSelected hash ->
+                match model.RevisionComparison, model.Selection with
+                | Some comparison, _ ->
+                    let startedAtTicks = Stopwatch.GetTimestamp()
+                    { nextModel with SelectedDiffStartedAtTicks = Some startedAtTicks },
+                    startRevisionComparisonLoad model.GitEnv comparison.BaseRevision comparison.TargetRevision startedAtTicks model.DiffContextLines ignoreWhitespace
+                | None, CommitSelected hash ->
                     let startedAtTicks = nextModel.SelectedDiffStartedAtTicks.Value
                     nextModel, startDiffLoad model.GitEnv hash startedAtTicks model.DiffContextLines ignoreWhitespace
-                | WorkingTreeSelected | NoSelection -> nextModel, Cmd.none
+                | None, (WorkingTreeSelected | NoSelection) -> nextModel, Cmd.none
         | SetDiffContextLines diffContextLines ->
             let normalizedContextLines = max 0 diffContextLines
 
@@ -634,15 +662,19 @@ module App =
                             SelectedDiffStartedAtTicks = model.SelectedCommitHash |> Option.map (fun _ -> Stopwatch.GetTimestamp())
                     }
 
-                match model.Selection with
-                | CommitSelected hash ->
+                match model.RevisionComparison, model.Selection with
+                | Some comparison, _ ->
+                    let startedAtTicks = Stopwatch.GetTimestamp()
+                    { nextModel with SelectedDiffStartedAtTicks = Some startedAtTicks },
+                    startRevisionComparisonLoad model.GitEnv comparison.BaseRevision comparison.TargetRevision startedAtTicks normalizedContextLines model.IgnoreWhitespace
+                | None, CommitSelected hash ->
                     let startedAtTicks = nextModel.SelectedDiffStartedAtTicks.Value
                     nextModel, startDiffLoad model.GitEnv hash startedAtTicks normalizedContextLines model.IgnoreWhitespace
-                | WorkingTreeSelected ->
+                | None, WorkingTreeSelected ->
                     let startedAtTicks = Stopwatch.GetTimestamp()
                     { nextModel with WorkingTreeStartedAtTicks = Some startedAtTicks },
                     startWorkingTreeChangesLoad model.GitEnv normalizedContextLines startedAtTicks
-                | NoSelection ->
+                | None, NoSelection ->
                     diffJob.Cancel()
                     nextModel, Cmd.none
         | SetDiffLayout layout -> { model with DiffLayout = layout }, Cmd.none
@@ -724,6 +756,43 @@ module App =
         | HistoryLoaded (_, Error err) ->
             searchJob.Cancel()
             { model with Status = "Error: " + GitError.describe err; SearchResults = None; SearchStartedAtTicks = None }, Cmd.none
+        | OpenRevisionComparison (baseRevision, targetRevision, startedAtTicks) ->
+            selectionJob.Cancel()
+            diffJob.Cancel()
+            contextJobs.CancelAll()
+            { model with
+                Status = $"Comparing {baseRevision}…{targetRevision}…"
+                RevisionComparison = None
+                SelectedDiffHash = None
+                SelectedDiffFiles = None
+                SelectedDiff = None
+                SelectedDiffFileKey = None
+                DiffExpansions = Map.empty
+                SelectionStartedAtTicks = None
+                SelectedDiffStartedAtTicks = Some startedAtTicks },
+            startRevisionComparisonLoad model.GitEnv baseRevision targetRevision startedAtTicks model.DiffContextLines model.IgnoreWhitespace
+        | RevisionComparisonLoaded (baseRevision, targetRevision, startedAtTicks, Ok (comparison, diff))
+            when model.SelectedDiffStartedAtTicks = Some startedAtTicks ->
+            let id = comparisonId baseRevision targetRevision
+            let files: GitService.DiffFileSummary list =
+                diff |> List.map (fun file -> { OldPath = file.OldPath; NewPath = file.NewPath; DisplayPath = FileChange.displayPath file.OldPath file.NewPath })
+            let selected = files |> List.tryHead |> Option.map diffFileKeyOfSummary
+            { model with
+                Status = $"Compared {baseRevision}…{targetRevision}: {files.Length} files"
+                RevisionComparison = Some comparison
+                SelectedDiffHash = Some id
+                SelectedDiffFiles = Some files
+                SelectedDiff = Some diff
+                SelectedDiffFileKey = selected
+                DiffExpansions = Map.empty
+                SelectedDiffStartedAtTicks = None }, Cmd.none
+        | RevisionComparisonLoaded (_, _, startedAtTicks, Error error) when model.SelectedDiffStartedAtTicks = Some startedAtTicks ->
+            { model with Status = "Comparison Error: " + GitError.describe error; SelectedDiffStartedAtTicks = None }, Cmd.none
+        | RevisionComparisonLoaded _ -> model, Cmd.none
+        | CloseRevisionComparison ->
+            match model.SelectedCommitHash with
+            | Some hash -> model, Cmd.ofMsg (SelectCommit(hash, Stopwatch.GetTimestamp()))
+            | None -> { model with RevisionComparison = None }, Cmd.none
         | SelectCommit (hash, startedAtTicks) ->
             selectionJob.Cancel()
             diffJob.Cancel()
@@ -732,6 +801,7 @@ module App =
                 {
                     model with
                         Selection = CommitSelected hash
+                        RevisionComparison = None
                         SelectedDiffHash = None
                         SelectedDiffFiles = None
                         SelectedDiff = None
@@ -893,7 +963,7 @@ module App =
                     NewPath = newPath
                 }
 
-            if model.SelectedCommitHash = Some hash && model.SelectedDiffHash = Some hash then
+            if model.SelectedDiffHash = Some hash then
                 { model with SelectedDiffFileKey = Some key }, Cmd.none
             else
                 model, Cmd.none

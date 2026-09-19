@@ -54,6 +54,8 @@ public partial class MainWindow : Window, IVimCommands {
         CommitListBox.FilterRequested += OnCommitFilterRequested;
         CommitListBox.HistoryRequested += revision => _projection?.ShowHistoryOf(revision);
         CommitListBox.BranchOperationRequested += OnBranchOperationRequested;
+        CommitListBox.RevisionComparisonRequested += OnRevisionComparisonRequested;
+        CommitListBox.RevisionComparisonBaseRequested = () => _projection?.ComparisonBase ?? "";
         CommitListBox.CommitWindowRequested += OpenCommitWindow;
         CommitListBox.BadgeWidthMeasured += FitCommitColumnToBadges;
         CommitListBox.AmendRequested += () => OpenCommitWindow(amend: true);
@@ -68,6 +70,38 @@ public partial class MainWindow : Window, IVimCommands {
         DiffRowsListBox.TextCopied += (_, lines) => { if (_projection != null) _projection.Status = lines switch { 0 => "Copied", 1 => "Copied 1 line", _ => $"Copied {lines} lines" }; };
         AddHandler(InputElement.GotFocusEvent, (_, _) => { UpdatePaneFocus(); TrackPaneFocus(); }, RoutingStrategies.Bubble);
         AddHandler(InputElement.LostFocusEvent, (_, _) => Dispatcher.UIThread.Post(UpdatePaneFocus), RoutingStrategies.Bubble);
+    }
+
+    private IEnumerable<string> ComparisonRevisions() =>
+        _projection?.RepositoryPath is { } repository ? GitService.comparisonRevisions(repository) : [];
+
+    private async void OnRevisionComparisonRequested(string target, bool chooseBase) {
+        if (_projection is not { } projection) return;
+        var baseRevision = projection.ComparisonBase;
+        if (chooseBase || string.IsNullOrWhiteSpace(baseRevision)) {
+            var choice = await RevisionComparisonDialog.ShowAsync(this, ComparisonRevisions(), baseRevision, target, targetEditable: false);
+            if (choice == null) return;
+            baseRevision = choice.Value.Base;
+        }
+        projection.OpenRevisionComparison(baseRevision, target);
+        MaximizePane(Pane.Diff, height: true, width: false);
+        FocusPaneFromKeyboard(Pane.Diff);
+    }
+
+    private async void OnChangeRevisionComparison(object? sender, RoutedEventArgs e) {
+        if (_projection is not { } projection) return;
+        var choice = await RevisionComparisonDialog.ShowAsync(this, ComparisonRevisions(), projection.ComparisonBaseRevision, projection.ComparisonTargetRevision);
+        if (choice != null) {
+            projection.ComparisonBase = choice.Value.Base;
+            projection.OpenRevisionComparison(choice.Value.Base, choice.Value.Target);
+            MaximizePane(Pane.Diff, height: true, width: false);
+            FocusPaneFromKeyboard(Pane.Diff);
+        }
+    }
+
+    private void OnCloseRevisionComparison(object? sender, RoutedEventArgs e) {
+        _projection?.CloseRevisionComparison();
+        RestorePaneLayout();
     }
 
     /// <summary>Stage, unstage and discard on the uncommitted diff's right-click menu.</summary>

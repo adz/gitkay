@@ -254,6 +254,11 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     /// <summary>Raised when the pane gap or hover effect changes, so windows can restyle their panes.</summary>
     public event Action? PaneChromeChanged;
     [ObservableProperty] private string _selectedDiffPresentationModeLabel = "Diff";
+    [ObservableProperty] private bool _isRevisionComparison;
+    [ObservableProperty] private string _comparisonBaseRevision = "";
+    [ObservableProperty] private string _comparisonTargetRevision = "";
+    /// <summary>The configured per-repository base used by branch badge double-clicks.</summary>
+    [ObservableProperty] private string _comparisonBase = "";
     [ObservableProperty] private bool _isCommitDetailsExpanded;
     [ObservableProperty] private bool _isDiffFileTreeMode;
     /// <summary>Commit search position, e.g. "3 of 27", "Searching…" or "No matches".</summary>
@@ -463,6 +468,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             try { SearchUseRegex = model.SearchUseRegex; } finally { _suppressSearchDispatch = false; }
         }
 
+        IsRevisionComparison = model.RevisionComparison != null;
+        ComparisonBaseRevision = model.RevisionComparison?.Value.BaseRevision ?? "";
+        ComparisonTargetRevision = model.RevisionComparison?.Value.TargetRevision ?? "";
         UpdateDiffContextState(model);
         UpdateIgnoreWhitespaceState(model);
         UpdateDiffPresentationState(model);
@@ -701,10 +709,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
         var leavingWorkingTree = IsWorkingTreeDiffShown;
         var selectedDiffHash =
-            model.SelectedCommitHash != null
-            && model.SelectedDiffHash != null
-            && model.SelectedCommitHash.Value == model.SelectedDiffHash.Value
+            model.SelectedDiffHash != null
             && model.SelectedDiffFiles != null
+            && (model.RevisionComparison != null || (model.SelectedCommitHash != null && model.SelectedCommitHash.Value == model.SelectedDiffHash.Value))
                 ? model.SelectedDiffHash.Value
                 : null;
 
@@ -1064,6 +1071,13 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         _dispatch = dispatch;
     }
 
+    public void OpenRevisionComparison(string baseRevision, string targetRevision) {
+        if (string.IsNullOrWhiteSpace(baseRevision) || string.IsNullOrWhiteSpace(targetRevision)) return;
+        _dispatch?.Invoke(GitKay.Core.App.Msg.NewOpenRevisionComparison(baseRevision.Trim(), targetRevision.Trim(), Stopwatch.GetTimestamp()));
+    }
+
+    public void CloseRevisionComparison() => _dispatch?.Invoke(GitKay.Core.App.Msg.CloseRevisionComparison);
+
     /// <summary>Whether anything is staged, unstaged or untracked, so committing is possible.</summary>
     [ObservableProperty] private bool _hasUncommittedChanges;
 
@@ -1213,7 +1227,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         }
 
         LogTiming($"file click hash={SelectedCommit.FullHash} path={value.DisplayPath}");
-        _dispatch?.Invoke(GitKay.Core.App.Msg.NewSelectDiffFile(SelectedCommit.FullHash, value.Key.OldPath, value.Key.NewPath));
+        if (_selectedDiffHash != null)
+            _dispatch?.Invoke(GitKay.Core.App.Msg.NewSelectDiffFile(_selectedDiffHash, value.Key.OldPath, value.Key.NewPath));
     }
 
     partial void OnSelectedDiffRowChanged(IDiffRowProjection? value) {

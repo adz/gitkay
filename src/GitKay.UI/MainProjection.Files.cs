@@ -81,7 +81,7 @@ public partial class MainProjection {
 
     private void RebuildDiffFileListRows() {
         List<object> rows;
-        if (IsAllFilesMode) {
+        if (IsAllFilesMode && !IsRevisionComparison) {
             // The uncommitted changes sit on HEAD's tree.
             var hash = IsWorkingTreeDiffShown ? "HEAD" : _selectedDiffHash;
             if (hash != null && _allFilesHash != hash) LoadAllFiles(hash);
@@ -231,7 +231,7 @@ public partial class MainProjection {
         System.IO.Path.GetFullPath(System.IO.Path.Combine(WorkingDirectory ?? "", target.Path.Replace('/', System.IO.Path.DirectorySeparatorChar)));
 
     public void ShowWholeFile(FileTarget target) {
-        if (_selectedDiffHash is null or WorkingTreeDiffId || RepositoryPath == null) return;
+        if (_selectedDiffHash is null or WorkingTreeDiffId || RepositoryPath == null || IsRevisionComparison) return;
         WholeFileRequested?.Invoke(target);
     }
 

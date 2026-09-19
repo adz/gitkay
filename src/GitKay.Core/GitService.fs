@@ -60,6 +60,14 @@ module GitService =
             RemovedLines: int
         }
 
+    /// A comparison between arbitrary revisions. BaseHash is their merge base, so branch comparisons
+    /// contain only changes introduced on the target side (git's three-dot semantics).
+    type RevisionComparison =
+        { BaseRevision: string
+          TargetRevision: string
+          BaseHash: string
+          TargetHash: string }
+
     type DiffCacheEntry =
         {
             Summary: DiffSummary
@@ -95,6 +103,27 @@ module GitService =
           Runtime = runtime
           Processes = Process.live runtime.Clock FileSystem.live Console.live
           Cache = GitCache() }
+
+    /// Repository comparison base used on first open: main, then master, including their origin counterparts.
+    let defaultComparisonBase (repoPath: string) =
+        try
+            use repo = new Repository(repoPath)
+            [ "main"; "master"; "origin/main"; "origin/master" ]
+            |> List.tryFind (fun name -> not (isNull repo.Branches.[name]))
+            |> Option.toObj
+        with _ -> null
+
+    /// Local and remote branch names for the comparison picker, independent of which refs the history currently shows.
+    let comparisonRevisions (repoPath: string) =
+        try
+            use repo = new Repository(repoPath)
+            repo.Branches
+            |> Seq.map (fun branch -> branch.FriendlyName)
+            |> Seq.filter (fun name -> not (name.EndsWith("/HEAD", StringComparison.Ordinal)))
+            |> Seq.distinct
+            |> Seq.sort
+            |> Seq.toArray
+        with _ -> Array.empty
 
     let executeGitCommand (arguments: string list) : Flow<GitEnv, GitError, string> =
         flow {
@@ -681,6 +710,44 @@ module GitService =
         }
 
     let private plainGit (arguments: string list) = workTreeGit None arguments
+
+    let private firstOutputLine (text: string) =
+        text.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries) |> Array.tryHead
+
+    /// Resolves two arbitrary revisions and their merge base. This is the shared primitive for branch and commit comparisons.
+    let resolveRevisionComparison (baseRevision: string) (targetRevision: string) : Flow<GitEnv, GitError, RevisionComparison> =
+        flow {
+            let! baseHashText = plainGit [ "rev-parse"; "--verify"; baseRevision + "^{commit}" ]
+            let! targetHashText = plainGit [ "rev-parse"; "--verify"; targetRevision + "^{commit}" ]
+            let! mergeBaseText = plainGit [ "merge-base"; baseRevision; targetRevision ]
+            match firstOutputLine baseHashText, firstOutputLine targetHashText, firstOutputLine mergeBaseText with
+            | Some _, Some targetHash, Some baseHash ->
+                return { BaseRevision = baseRevision; TargetRevision = targetRevision; BaseHash = baseHash; TargetHash = targetHash }
+            | _ -> return! Flow.fail (GitError.CommitNotFound $"{baseRevision}...{targetRevision}")
+        }
+
+    /// Names suitable for a comparison picker. HEAD aliases are omitted and local names win over remote duplicates.
+    let fetchComparisonRevisions : Flow<GitEnv, GitError, string list> =
+        plainGit [ "for-each-ref"; "--format=%(refname:short)"; "refs/heads"; "refs/remotes" ]
+        |> Flow.map (fun text ->
+            text.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
+            |> Seq.filter (fun name -> not (name.EndsWith("/HEAD", StringComparison.Ordinal)))
+            |> Seq.distinct
+            |> Seq.sort
+            |> Seq.toList)
+
+    /// Loads a three-dot comparison between arbitrary commits or branches.
+    let fetchRevisionDiff (ignoreWhitespace: bool) (contextLines: int) (comparison: RevisionComparison) : Flow<GitEnv, GitError, FileDiff list> =
+        let whitespace = if ignoreWhitespace then [ "-w" ] else []
+        plainGit ([ "diff"; "--no-ext-diff"; "--find-renames" ] @ whitespace @ [ $"-U{normalizeContextLines contextLines}"; comparison.BaseHash; comparison.TargetHash ])
+        |> Flow.map WorkingTree.parsePatch
+
+    /// Complete context for one file in an arbitrary revision comparison.
+    let fetchRevisionDiffFileFullContext (comparison: RevisionComparison) (oldPath: string) (newPath: string) : Flow<GitEnv, GitError, FileDiff> =
+        let paths = [ oldPath; newPath ] |> List.filter ((<>) "/dev/null") |> List.distinct
+        plainGit ([ "diff"; "--no-ext-diff"; $"-U{int UInt16.MaxValue}"; comparison.BaseHash; comparison.TargetHash; "--" ] @ paths)
+        |> Flow.map WorkingTree.parsePatch
+        |> Flow.map (fun files -> files |> List.tryHead |> Option.defaultValue { OldPath = oldPath; NewPath = newPath; Hunks = []; NewLineCount = None })
 
     /// <summary>
     /// The commit's diff with whitespace-only changes left out, which libgit2 can't do: git itself produces the patch

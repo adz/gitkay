@@ -34,17 +34,26 @@ public sealed class PaletteItem {
 public partial class MainProjection {
     // ----- View preferences persisted across restarts. -----
 
-    public IReadOnlyDictionary<string, string> CaptureViewPreferences() => new Dictionary<string, string> {
-        ["diffFileTreeMode"] = IsDiffFileTreeMode.ToString(),
-        ["diffFileAllMode"] = IsAllFilesMode.ToString(),
-        ["diffFontSize"] = DiffFontSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
-        ["commitDetailsExpanded"] = IsCommitDetailsExpanded.ToString(),
-        ["searchMode"] = SelectedSearchScope?.Key ?? "commit",
-        ["searchRegex"] = SearchUseRegex.ToString(),
-        ["findRegex"] = CommitFindUseRegex.ToString(),
-    };
+    private readonly Dictionary<string, string> _loadedViewPreferences = new(StringComparer.Ordinal);
+    private string ComparisonBasePreferenceKey => $"comparisonBase:{RepositoryPath ?? ""}";
+
+    public IReadOnlyDictionary<string, string> CaptureViewPreferences() {
+        var result = new Dictionary<string, string>(_loadedViewPreferences, StringComparer.Ordinal) {
+            ["diffFileTreeMode"] = IsDiffFileTreeMode.ToString(),
+            ["diffFileAllMode"] = IsAllFilesMode.ToString(),
+            ["diffFontSize"] = DiffFontSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["commitDetailsExpanded"] = IsCommitDetailsExpanded.ToString(),
+            ["searchMode"] = SelectedSearchScope?.Key ?? "commit",
+            ["searchRegex"] = SearchUseRegex.ToString(),
+            ["findRegex"] = CommitFindUseRegex.ToString(),
+            [ComparisonBasePreferenceKey] = ComparisonBase,
+        };
+        return result;
+    }
 
     public void ApplyViewPreferences(IReadOnlyDictionary<string, string> preferences) {
+        _loadedViewPreferences.Clear();
+        foreach (var preference in preferences) _loadedViewPreferences[preference.Key] = preference.Value;
         bool Flag(string key) => preferences.TryGetValue(key, out var value) && bool.TryParse(value, out var flag) && flag;
         IsDiffFileTreeMode = Flag("diffFileTreeMode");
         IsAllFilesMode = Flag("diffFileAllMode");
@@ -55,6 +64,9 @@ public partial class MainProjection {
         CommitFindUseRegex = Flag("findRegex");
         SearchUseRegex = Flag("searchRegex");
         if (preferences.TryGetValue("searchMode", out var mode)) SetSearchMode(mode);
+        ComparisonBase = preferences.TryGetValue(ComparisonBasePreferenceKey, out var comparisonBase) && !string.IsNullOrWhiteSpace(comparisonBase)
+            ? comparisonBase
+            : RepositoryPath is { } repo ? GitKay.Core.GitService.defaultComparisonBase(repo) ?? "" : "";
     }
 
     // ----- Back / forward through visited commits (Alt+Left / Alt+Right, Ctrl+O / Ctrl+I). -----

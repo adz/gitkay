@@ -466,6 +466,7 @@
                         <!-- The hash and subject open the details too, not just the chevron; resting on them shows
                              the whole message, placed below the bar so it never covers what it describes. -->
                         <Grid Grid.Column="1"
+                              IsVisible="{Binding !IsRevisionComparison}"
                               ColumnDefinitions="Auto,*,Auto"
                               ColumnSpacing="8"
                               VerticalAlignment="Center"
@@ -491,6 +492,23 @@
                                        VerticalAlignment="Center" />
                             <!-- Search progress and counts live in the search boxes; underlines mark matches in the diff. -->
                         </Grid>
+
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center"
+                                    IsVisible="{Binding IsRevisionComparison}">
+                            <TextBlock Text="Revision diff:" Foreground="{DynamicResource GitKayMutedTextBrush}" VerticalAlignment="Center" />
+                            <Button Classes="inline" Click="OnChangeRevisionComparison" ToolTip.Tip="Change the from and to revisions">
+                                <StackPanel Orientation="Horizontal" Spacing="5">
+                                    <TextBlock Text="From" Foreground="{DynamicResource GitKayMutedTextBrush}" />
+                                    <TextBlock Text="{Binding ComparisonBaseRevision}" FontFamily="{x:Static local:FontStacks.Mono}" />
+                                    <TextBlock Text="to" Foreground="{DynamicResource GitKayMutedTextBrush}" />
+                                    <TextBlock Text="{Binding ComparisonTargetRevision}" FontFamily="{x:Static local:FontStacks.Mono}" />
+                                    <TextBlock Text="▾" Foreground="{DynamicResource GitKayMutedTextBrush}" />
+                                </StackPanel>
+                            </Button>
+                            <Button Classes="inline" Click="OnCloseRevisionComparison" ToolTip.Tip="Return to selected commit diff">
+                                <TextBlock Text="×" FontSize="16" />
+                            </Button>
+                        </StackPanel>
 
 <Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Center"><TextBlock Text="Ctrl+G  go to ref" /></Border>
 <Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Column="2" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="6,0,0,0"><TextBlock Text="Ctrl+F  find" /></Border>

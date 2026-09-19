@@ -532,6 +532,30 @@ summary Another line
             test <@ repo.Branches["topic"].Tip.Sha = commit.Sha @>)
 
     [<Fact>]
+    let ``revision comparison diffs from merge base to arbitrary target revision`` () =
+        withTempRepository (fun root repo ->
+            let common = commitFile repo root "common.txt" "common" "common"
+            let main = repo.CreateBranch("main", common)
+            let topic = repo.CreateBranch("topic", common)
+            Commands.Checkout(repo, topic) |> ignore
+            let topicCommit = commitFile repo root "topic.txt" "topic" "topic"
+            Commands.Checkout(repo, main) |> ignore
+            let _ = commitFile repo root "main.txt" "main" "main"
+
+            match runFlow root (GitService.resolveRevisionComparison "main" topicCommit.Sha) with
+            | Error err -> failwith (GitError.describe err)
+            | Ok comparison ->
+                test <@ comparison.BaseHash = common.Sha @>
+                test <@ comparison.TargetHash = topicCommit.Sha @>
+                match runFlow root (GitService.fetchRevisionDiff false 3 comparison) with
+                | Error err -> failwith (GitError.describe err)
+                | Ok files ->
+                    test <@ files |> List.map _.NewPath = [ "topic.txt" ] @>
+
+            test <@ GitService.defaultComparisonBase root = "main" @>
+            test <@ GitService.comparisonRevisions root |> Array.contains "topic" @>)
+
+    [<Fact>]
     let ``fetchHistory should hide stashes by default`` () =
         withTempRepository (fun root repo ->
             let _ = commitFile repo root "app.txt" "base" "base commit"
@@ -1336,6 +1360,7 @@ module AppTests =
             Commits = []
             HasFullHistory = false
             Selection = App.NoSelection
+            RevisionComparison = None
             SelectedDiffHash = None
             SelectedDiffFiles = None
             SelectedDiff = None

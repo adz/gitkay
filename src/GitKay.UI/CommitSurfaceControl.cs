@@ -523,7 +523,9 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         _lastContextPoint = e.GetPosition(this);
         SelectAt(_lastContextPoint.Y);
         // After the click finishes, so the pointer release doesn't give focus back to this window.
-        if (e.ClickCount == 2 && SelectedItem is { IsWorkingTree: true })
+        if (e.ClickCount == 2 && BadgeAt(_lastContextPoint) is { Kind: CommitRefKind.Branch or CommitRefKind.Remote or CommitRefKind.Tag } badge)
+            Dispatcher.UIThread.Post(() => RevisionComparisonRequested?.Invoke(badge.Text, false), DispatcherPriority.Background);
+        else if (e.ClickCount == 2 && SelectedItem is { IsWorkingTree: true })
             Dispatcher.UIThread.Post(() => CommitWindowRequested?.Invoke(), DispatcherPriority.Background);
     }
 
@@ -748,6 +750,26 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
     /// <summary>Push or pull ("push" / "pull") requested for a local branch on the clicked commit.</summary>
     public event Action<string, BranchTarget>? BranchOperationRequested;
 
+    /// <summary>A branch or tag badge requested a comparison; chooseBase is true for the ad-hoc “Diff from…” action.</summary>
+    public event Action<string, bool>? RevisionComparisonRequested;
+
+    /// <summary>Supplies the configured comparison base for explicit context-menu wording.</summary>
+    public Func<string>? RevisionComparisonBaseRequested;
+
+    private CommitRefProjection? BadgeAt(Point point) {
+        if (_filtered || SelectedItem is not { } commit) return null;
+        var row = (int)(point.Y / RowHeight);
+        EnsureRows();
+        if (row < 0 || row >= _rows.Length || !ReferenceEquals(_rows[row], commit)) return null;
+        var x = EffectiveWidth(GraphWidth, 48) + 5;
+        foreach (var badge in commit.RefBadges) {
+            var width = Layout(badge.Text, 11, Brushes.Transparent, TextTypeface).Width + (badge.Kind == CommitRefKind.Tag ? 19 : 16);
+            if (point.X >= x && point.X < x + width) return badge;
+            x += width;
+        }
+        return null;
+    }
+
     /// <summary>Text the user asked to copy (a branch or tag name).</summary>
     public event Action<string>? CopyRequested;
 
@@ -766,6 +788,18 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
             return menu;
         }
         if (SelectedItem is { } selected) {
+            if (BadgeAt(_lastContextPoint) is { Kind: CommitRefKind.Branch or CommitRefKind.Remote or CommitRefKind.Tag } badge) {
+                var target = badge.Text;
+                var comparisonBase = RevisionComparisonBaseRequested?.Invoke();
+                var configuredFrom = string.IsNullOrWhiteSpace(comparisonBase) ? "configured base" : comparisonBase;
+                var configured = new MenuItem { Header = $"Diff from {configuredFrom} to {target}" };
+                configured.Click += (_, _) => RevisionComparisonRequested?.Invoke(target, false);
+                var choose = new MenuItem { Header = $"Diff from… to {target}" };
+                choose.Click += (_, _) => RevisionComparisonRequested?.Invoke(target, true);
+                menu.Items.Add(configured);
+                menu.Items.Add(choose);
+                menu.Items.Add(new Separator());
+            }
             foreach (var filter in BuildFilterItems(selected)) menu.Items.Add(filter);
             menu.Items.Add(new Separator());
             var refNames = selected.RefNames.ToArray();
