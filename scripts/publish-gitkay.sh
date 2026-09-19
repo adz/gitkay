@@ -131,7 +131,9 @@ publish_one() {
     )
   fi
 
-  publish_args+=("${EXTRA_ARGS[@]}")
+  if [[ "${#EXTRA_ARGS[@]}" -gt 0 ]]; then
+    publish_args+=("${EXTRA_ARGS[@]}")
+  fi
 
   mkdir -p "$output_dir"
   echo "Publishing GitKay for $rid to $output_dir"

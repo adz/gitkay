@@ -15,6 +15,9 @@ open Swensen.Unquote
 open GitKay.Core
 open GitKay.UI
 
+[<assembly: CollectionBehavior(DisableTestParallelization = true)>]
+do ()
+
 type HeadlessTestApp() =
     inherit Application()
     override this.Initialize() = this.Styles.Add(FluentTheme())
