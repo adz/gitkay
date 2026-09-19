@@ -1,11 +1,13 @@
 # Release process
 
-A `vX.Y.Z` tag builds GitKay with NativeAOT on Windows and Linux, and publishes a GitHub release with:
+A `vX.Y.Z` tag builds GitKay with NativeAOT on Windows, Linux, and macOS, and publishes a GitHub release with:
 
 - `gitkay-X.Y.Z-setup-x64.exe`: per-user NSIS installer (Start menu shortcut, `gitkay` on PATH, uninstaller;
   `/S` for silent)
 - `gitkay-X.Y.Z-win-x64.zip`: portable Windows build
 - `gitkay-X.Y.Z-linux-x64.tar.gz`
+- `gitkay-X.Y.Z-osx-x64.tar.gz`
+- `gitkay-X.Y.Z-osx-arm64.tar.gz`
 - `SHA256SUMS.txt`
 
 `VersionPrefix` in `Directory.Build.props` is only the local default; the tag decides the shipped version.
