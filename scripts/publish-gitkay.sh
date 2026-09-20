@@ -125,7 +125,7 @@ publish_one() {
     # The .NET 11 RC's classic macOS x64 linker rejects NativeAOT's split-debug object for
     # System.Net.Security. Link with symbols embedded, then strip debug sections after linking.
     if [[ "$rid" == "osx-x64" ]]; then
-      publish_args+=( -p:StripSymbols=false )
+      publish_args+=( -p:StripSymbols=false -p:UseLdClassicXCodeLinker=false )
     fi
   else
     publish_args+=(
