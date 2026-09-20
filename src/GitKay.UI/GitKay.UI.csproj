@@ -21,7 +21,6 @@
   <PropertyGroup Condition="'$(PublishAot)' == 'true'">
     <TrimMode>full</TrimMode>
     <OptimizationPreference>Size</OptimizationPreference>
-    <IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
     <InvariantGlobalization>true</InvariantGlobalization>
     <!-- Keep native symbols in the separate .dbg file; release packaging excludes it. -->
     <StripSymbols>true</StripSymbols>
