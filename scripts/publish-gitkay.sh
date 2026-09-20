@@ -121,7 +121,6 @@ publish_one() {
   if [[ "$USE_AOT" == "true" ]]; then
     publish_args+=(
       -p:PublishAot=true
-      -p:StripSymbols=false
     )
   else
     publish_args+=(
