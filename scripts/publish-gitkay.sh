@@ -122,6 +122,11 @@ publish_one() {
     publish_args+=(
       -p:PublishAot=true
     )
+    # The .NET 11 RC's classic macOS x64 linker rejects NativeAOT's split-debug object for
+    # System.Net.Security. Link with symbols embedded, then strip debug sections after linking.
+    if [[ "$rid" == "osx-x64" ]]; then
+      publish_args+=( -p:StripSymbols=false )
+    fi
   else
     publish_args+=(
       -p:PublishSingleFile=true
@@ -137,6 +142,10 @@ publish_one() {
   mkdir -p "$output_dir"
   echo "Publishing GitKay for $rid to $output_dir"
   "${publish_args[@]}"
+
+  if [[ "$USE_AOT" == "true" && "$rid" == "osx-x64" ]]; then
+    strip -S "$output_dir/gitkay"
+  fi
 
   # gitkay-gui opens the commit window directly, as `git gui` does next to `gitk`.
   case "$rid" in
