@@ -27,6 +27,7 @@ public partial class MainWindow : Window, IVimCommands {
     private int _activeHistoryColumnResizeIndex = -1;
     private double _activeHistoryColumnResizeStartX;
     private double[]? _activeHistoryColumnResizeStartWidths;
+    private DiffSurfaceControl.MarkdownViewAnchor? _pendingMarkdownAnchor;
 
     public MainWindow() {
         InitializeComponent();
@@ -44,6 +45,8 @@ public partial class MainWindow : Window, IVimCommands {
         HistoryHeaderGrid.LayoutUpdated += (_, _) => SyncCommitColumnWidths();
         AddHandler(InputElement.KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
         AddHandler(InputElement.KeyUpEvent, OnWindowKeyUp, RoutingStrategies.Tunnel);
+        AddHandler(InputElement.PointerMovedEvent, OnWindowPointerMoved, RoutingStrategies.Tunnel);
+        AddHandler(InputElement.PointerPressedEvent, OnWindowPointerPressedForHints, RoutingStrategies.Tunnel);
         // Hovering counts anywhere in a pane, its header and padding included, not only over the list inside it.
         _paneChrome.PaneHovered += key => { if (Enum.TryParse<Pane>(key, out var pane)) OnPaneHovered(pane); };
         Deactivated += (_, _) => HideCtrlHints();
@@ -68,6 +71,7 @@ public partial class MainWindow : Window, IVimCommands {
         CommitListBox.CopyRequested += name => CopyToClipboard(name, "Copied");
         DiffRowsListBox.LineMenuOpening += AddWorkingTreeLineItems;
         DiffRowsListBox.TextCopied += (_, lines) => { if (_projection != null) _projection.Status = lines switch { 0 => "Copied", 1 => "Copied 1 line", _ => $"Copied {lines} lines" }; };
+        DiffRowsListBox.RenderedLinkRequested += (_, link) => OpenRenderedDiffLink(link);
         AddHandler(InputElement.GotFocusEvent, (_, _) => { UpdatePaneFocus(); TrackPaneFocus(); }, RoutingStrategies.Bubble);
         AddHandler(InputElement.LostFocusEvent, (_, _) => Dispatcher.UIThread.Post(UpdatePaneFocus), RoutingStrategies.Bubble);
     }
@@ -296,6 +300,16 @@ public partial class MainWindow : Window, IVimCommands {
 
     private int _ctrlReleaseGeneration;
 
+    // Some Linux/X11 paths lose the modifier KeyUp when focus changes during a chord. Pointer events carry the
+    // current modifier state, so they are a reliable second way to retire hints instead of leaving one pinned.
+    private void OnWindowPointerMoved(object? sender, PointerEventArgs e) {
+        if (_projection?.IsCtrlHintsVisible == true && !e.KeyModifiers.HasFlag(KeyModifiers.Control)) HideCtrlHints();
+    }
+
+    private void OnWindowPointerPressedForHints(object? sender, PointerPressedEventArgs e) {
+        if (_projection?.IsCtrlHintsVisible == true && !e.KeyModifiers.HasFlag(KeyModifiers.Control)) HideCtrlHints();
+    }
+
     private async void OnWindowKeyUp(object? sender, KeyEventArgs e) {
         if (e.Key is not (Key.LeftCtrl or Key.RightCtrl)) return;
         // X11 auto-repeat can deliver a held key as release+press pairs; only a release that isn't
@@ -329,6 +343,10 @@ public partial class MainWindow : Window, IVimCommands {
         }
         var ctrlShift = KeyModifiers.Control | KeyModifiers.Shift;
         if (e.Key == Key.P && e.KeyModifiers == ctrlShift) { OpenPalette(PaletteMode.Commands); e.Handled = true; return; }
+        if (e.Key == Key.V && e.KeyModifiers == ctrlShift && IsDiffPaneFocused && _projection?.SelectedDiffFile is { } markdownFile
+            && !GitKay.Core.Markdown.previewKind(markdownFile.ContentPath).IsSourceOnly) {
+            OnDiffFilePreviewRequested(this, markdownFile); e.Handled = true; return;
+        }
         if (e.Key == Key.P && e.KeyModifiers == KeyModifiers.Control) { OpenPalette(PaletteMode.Files); e.Handled = true; return; }
         if (e.Key == Key.D && e.KeyModifiers == ctrlShift) { ShowDiagnostics(); e.Handled = true; return; }
         if (e.Key == Key.C && e.KeyModifiers == ctrlShift) {
@@ -785,27 +803,65 @@ public partial class MainWindow : Window, IVimCommands {
     private void OnDiffFileHeaderContextRequested(object? sender, DiffFileMenuEventArgs e) =>
         AddFileMenuItems(e.Menu, FileTarget.From(e.File), e.LineNumber);
 
-    private void OpenWholeFile(FileTarget target) {
-        if (_projection is { RepositoryPath: { } workingRepo, IsWorkingTreeDiffShown: true } workingProjection) {
-            OpenWorkingTreeFile(workingProjection, workingRepo, target);
+    private void OpenRenderedDiffLink(string link) {
+        if (_projection is not { } projection) return;
+        if (link.StartsWith("gitkay-load-image:", StringComparison.Ordinal)) {
+            _pendingMarkdownAnchor = DiffRowsListBox.CaptureMarkdownViewAnchor();
+            projection.LoadRemoteMarkdownImage(link[18..]);
             return;
         }
-        if (_projection is not { RepositoryPath: { } repo, SelectedCommit: { IsWorkingTree: false } commit } projection) return;
-        var window = new WholeFileWindow(projection, repo, commit.FullHash, commit.Hash, target);
-        window.Show(this);
+        if (link.StartsWith('#')) { DiffRowsListBox.MoveToHeading(link); return; }
+        var file = projection.SelectedDiffFile;
+        var resolved = GitKay.Core.Markdown.resolveTarget(file?.ContentPath ?? "", link);
+        if (resolved is GitKay.Core.MarkdownTarget.RemoteUrl remote) {
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(remote.Item) { UseShellExecute = true }); }
+            catch (Exception error) { projection.Status = $"Could not open link: {error.Message}"; }
+            return;
+        }
+        if (resolved is GitKay.Core.MarkdownTarget.RepositoryPath path
+            && (path.Item.EndsWith(".md", StringComparison.OrdinalIgnoreCase) || path.Item.EndsWith(".markdown", StringComparison.OrdinalIgnoreCase)))
+            OpenWholeFile(new FileTarget(path.Item, path.Item, path.Item, null), preview: true);
     }
 
-    /// <summary>An uncommitted file with its section's change in full; an unchanged file as it is at HEAD.</summary>
-    private void OpenWorkingTreeFile(MainProjection projection, string repo, FileTarget target) {
-        WholeFileWindow window;
-        if (target.Changed is { Key.Section: var sectionName } && GitKay.Core.WorkingTree.tryParseSection(sectionName) is { } section) {
-            window = new WholeFileWindow(projection, sectionName.ToLowerInvariant(), "Uncommitted changes", target,
-                () => GitKay.Core.GitService.loadWorkingTreeFile(repo, section.Value, target.OldPath, target.NewPath), "");
-        }
-        else {
-            window = new WholeFileWindow(projection, "HEAD", "Uncommitted changes", target,
-                () => GitKay.Core.GitService.loadWholeFile(repo, "HEAD", target.OldPath, target.NewPath), "unchanged");
-        }
+    private static string MarkdownPreviewKey(string repository, string path) =>
+        $"markdown-preview|{System.IO.Path.GetFullPath(repository)}|{path}";
+
+    private static bool? MarkdownPreviewPreference(string repository, string path) {
+        var value = GitKay.Core.UiStateModule.viewPreference(MarkdownPreviewKey(repository, path), new AppUiStateStore().Load());
+        return value == null ? null : string.Equals(value.Value, "rendered", StringComparison.Ordinal);
+    }
+
+    private static void SaveMarkdownPreviewPreference(string repository, string path, bool rendered) {
+        var store = new AppUiStateStore();
+        var state = GitKay.Core.UiStateModule.withViewPreference(MarkdownPreviewKey(repository, path), rendered ? "rendered" : "source", store.Load());
+        store.Save(state);
+    }
+
+    private void OnDiffFilePreviewRequested(object? sender, DiffFileProjection file) {
+        if (_projection is not { RepositoryPath: { } repository } projection) return;
+        _pendingMarkdownAnchor = DiffRowsListBox.CaptureMarkdownViewAnchor();
+        SaveMarkdownPreviewPreference(repository, file.ContentPath, !file.IsRenderedMarkdown);
+        projection.ToggleRenderedMarkdown(file);
+    }
+
+    private void OpenWholeFile(FileTarget target, bool preview = false) {
+        if (_projection is not { RepositoryPath: { } repo } projection) return;
+        var preferredPreview = preview || (MarkdownPreviewPreference(repo, target.Path) ?? projection.RenderMarkdownByDefault);
+        _pendingWholeFileTarget = target;
+        projection.RequestWholeFile(target, preferredPreview);
+    }
+
+    private FileTarget? _pendingWholeFileTarget;
+    private void PresentWholeFile(GitKay.Core.App.WholeFileState state) {
+        if (_projection is not { } projection || state.Payload == null) return;
+        var target = _pendingWholeFileTarget ?? new FileTarget(state.Key.OldPath, state.Key.NewPath,
+            state.Key.NewPath == "/dev/null" ? state.Key.OldPath : state.Key.NewPath, null);
+        var label = projection.IsWorkingTreeDiffShown ? (state.Section.Length == 0 ? "HEAD" : state.Section.ToLowerInvariant())
+            : projection.SelectedCommit?.Hash ?? "file";
+        var subject = projection.IsWorkingTreeDiffShown ? "Uncommitted changes" : projection.SelectedCommit?.Subject ?? "";
+        var window = new WholeFileWindow(projection, label, subject, target, state, state.Preview);
+        window.Closed += (_, _) => projection.DismissWholeFile(state.RequestId);
+        _pendingWholeFileTarget = null;
         window.Show(this);
     }
 
@@ -1012,9 +1068,13 @@ public partial class MainWindow : Window, IVimCommands {
         if (_projection != null) {
             _projection.PropertyChanged += OnProjectionPropertyChanged;
             _projection.PaneChromeChanged += ApplyPaneChrome;
+            _projection.RenderedMarkdownChanged += () => {
+                DiffRowsListBox.RestoreMarkdownViewAnchor(_pendingMarkdownAnchor);
+                _pendingMarkdownAnchor = null;
+            };
             ApplyPaneChrome();
             _projection.WindowCommandRequested += OnWindowCommandRequested;
-            _projection.WholeFileRequested += OpenWholeFile;
+            _projection.WholeFileReady += PresentWholeFile;
             _projection.ErrorStatusRaised += PulseStatusBar;
             _projection.FileJumpRequested += file =>
                 Dispatcher.UIThread.Post(() => DiffRowsListBox.ScrollToTop(file.Header), DispatcherPriority.Background);
@@ -1115,6 +1175,17 @@ public partial class MainWindow : Window, IVimCommands {
             _diffScrollCommit = _projection.SelectedCommit?.FullHash;
             if (_diffScrollCommit != null && _diffScrollOffsets.TryGetValue(_diffScrollCommit, out var offset) && offset > 0)
                 DiffRowsListBox.RestoreScrollOffsetWhenReady(offset);
+        }
+
+        if (e.PropertyName == nameof(MainProjection.SelectedDiffFile)
+            && _projection is { RepositoryPath: { } repository, SelectedDiffFile: { IsRenderedMarkdown: false } file } markdownProjection
+            && !GitKay.Core.Markdown.previewKind(file.ContentPath).IsSourceOnly) {
+            var desired = MarkdownPreviewPreference(repository, file.ContentPath) ?? markdownProjection.RenderMarkdownByDefault;
+            if (desired)
+                Dispatcher.UIThread.Post(() => {
+                    if (ReferenceEquals(_projection?.SelectedDiffFile, file) && !file.IsRenderedMarkdown)
+                        OnDiffFilePreviewRequested(this, file);
+                }, DispatcherPriority.Background);
         }
 
         if (e.PropertyName == nameof(MainProjection.IsSearchPanelExpanded)) {

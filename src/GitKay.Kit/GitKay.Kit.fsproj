@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <Compile Include="TextQuery.fs" />
+    <Compile Include="Myers.fs" />
     <Compile Include="Cycle.fs" />
     <Compile Include="Recent.fs" />
     <Compile Include="Fuzzy.fs" />

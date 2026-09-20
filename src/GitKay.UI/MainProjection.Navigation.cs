@@ -42,6 +42,7 @@ public partial class MainProjection {
             ["diffFileTreeMode"] = IsDiffFileTreeMode.ToString(),
             ["diffFileAllMode"] = IsAllFilesMode.ToString(),
             ["diffFontSize"] = DiffFontSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["renderedMarkdownChangesOnly"] = RenderedMarkdownChangesOnly.ToString(),
             ["commitDetailsExpanded"] = IsCommitDetailsExpanded.ToString(),
             ["searchMode"] = SelectedSearchScope?.Key ?? "commit",
             ["searchRegex"] = SearchUseRegex.ToString(),
@@ -61,6 +62,7 @@ public partial class MainProjection {
             && double.TryParse(fontSize, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var size))
             DiffFontSize = size;
         IsCommitDetailsExpanded = Flag("commitDetailsExpanded");
+        RenderedMarkdownChangesOnly = Flag("renderedMarkdownChangesOnly");
         CommitFindUseRegex = Flag("findRegex");
         SearchUseRegex = Flag("searchRegex");
         if (preferences.TryGetValue("searchMode", out var mode)) SetSearchMode(mode);

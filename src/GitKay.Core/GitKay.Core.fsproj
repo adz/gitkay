@@ -10,6 +10,7 @@
     <Compile Include="Models.fs" />
     <Compile Include="FileChange.fs" />
     <Compile Include="CommitFormat.fs" />
+    <Compile Include="Markdown.fs" />
     <Compile Include="DiffFind.fs" />
     <Compile Include="Settings.fs" />
     <Compile Include="DiffRows.fs" />
@@ -46,6 +47,7 @@
     <PackageReference Include="Reified" Version="0.8.2" />
     <PackageReference Include="Axial.Guardrails" Version="0.9.3" PrivateAssets="all" />
     <PackageReference Include="LibGit2Sharp" Version="0.32.0" />
+    <PackageReference Include="Markdig" Version="1.3.2" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(UseLocalGlue)' == 'true'">

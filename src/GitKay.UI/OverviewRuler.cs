@@ -10,6 +10,7 @@ namespace GitKay.UI;
 public enum OverviewMarkKind {
     Added,
     Removed,
+    Modified,
     SearchMatch,
     FindMatch,
 }
@@ -90,6 +91,7 @@ public sealed class OverviewRuler : Control {
             var brush = mark.Kind switch {
                 OverviewMarkKind.Added => Brush("GitKayAddedAccentBrush", AddedFallback),
                 OverviewMarkKind.Removed => Brush("GitKayRemovedAccentBrush", RemovedFallback),
+                OverviewMarkKind.Modified => Brush("GitKayAccentBrush", SearchFallback),
                 OverviewMarkKind.SearchMatch => Brush("GitKayAccentBrush", SearchFallback),
                 _ => FindFallback,
             };

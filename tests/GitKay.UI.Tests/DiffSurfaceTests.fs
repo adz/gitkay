@@ -25,7 +25,8 @@ type HeadlessTestApp() =
     static member BuildAvaloniaApp() =
         AppBuilder
             .Configure<HeadlessTestApp>()
-            .UseHeadless(AvaloniaHeadlessPlatformOptions(UseHeadlessDrawing = true))
+            .UseSkia()
+            .UseHeadless(AvaloniaHeadlessPlatformOptions(UseHeadlessDrawing = false))
 
 module private Headless =
     let session = lazy (HeadlessUnitTestSession.StartNew(typeof<HeadlessTestApp>))
@@ -742,4 +743,194 @@ module FatalErrorDialogTests =
                 test <@ details.Text.Contains("InvalidOperationException") @>
             finally
                 dialog.Close()
+                Headless.pump ())
+
+module RenderedMarkdownVisualTests =
+    [<Fact>]
+    let ``rich rendered markdown lays out compactly at viewport width`` () =
+        Headless.run (fun () ->
+            let markdown = """# Rendered Markdown
+
+Plain text with *emphasis*, **strong**, ~~removed~~, `code`, and [a link](https://example.com).
+
+> A quoted paragraph should remain visually distinct.
+
+- first item
+- [x] completed task
+
+| Name | State | Notes |
+| --- | --- | --- |
+| renderer | ready | shared surface |
+| images | loading | anchored layout |
+
+```fsharp
+let answer = 40 + 2
+printfn $"value = {answer}"
+```
+"""
+            let rows =
+                GitKay.Core.Markdown.renderDocument markdown
+                |> Seq.map (fun row -> RenderedMarkdownRowProjection(row) :> IDiffRowProjection)
+                |> AvaloniaList
+            let surface = DiffSurfaceControl(ItemsSource = rows, Width = 920.0)
+            let scroller = ScrollViewer(Width = 920.0, Height = 650.0, Content = surface)
+            let window = Window(Width = 920.0, Height = 650.0, Content = scroller)
+            try
+                window.Show()
+                Headless.pump ()
+                let bitmap = window.CaptureRenderedFrame()
+                test <@ bitmap.PixelSize.Width = 920 && bitmap.PixelSize.Height = 650 @>
+                test <@ surface.DesiredSize.Height > 200.0 && surface.DesiredSize.Height <= 400.0 @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``wrapped rendered prose hit testing maps each visual line to its exact text range`` () =
+        Headless.run (fun () ->
+            let markdown = String.replicate 12 "wrapped words remain selectable "
+            let rows = Markdown.renderDocument markdown |> Seq.map (RenderedMarkdownRowProjection >> fun row -> row :> IDiffRowProjection) |> AvaloniaList
+            let surface = DiffSurfaceControl(ItemsSource = rows, Width = 280.0)
+            let window = Window(Width = 280.0, Height = 180.0, Content = surface)
+            try
+                window.Show()
+                Headless.pump ()
+                window.CaptureRenderedFrame() |> ignore
+                let struct (firstRow, firstCharacter) = surface.TextPositionAtForTest(Point(28.0, 12.0))
+                let struct (secondRow, secondCharacter) = surface.TextPositionAtForTest(Point(28.0, 34.0))
+                test <@ firstRow = 0 && secondRow = 0 && secondCharacter > firstCharacter @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``side by side rendered prose wraps inside both columns`` () =
+        Headless.run (fun () ->
+            let oldText = String.replicate 18 "old prose wraps inside the left column "
+            let newText = String.replicate 18 "new prose wraps inside the right column "
+            let rows =
+                GitKay.Core.Markdown.renderDiff oldText newText
+                |> Seq.map (fun row -> RenderedMarkdownRowProjection(row) :> IDiffRowProjection)
+                |> AvaloniaList
+            let surface = DiffSurfaceControl(ItemsSource = rows, DiffLayout = DiffLayout.SideBySide, Width = 600.0)
+            let window = Window(Width = 600.0, Height = 350.0, Content = ScrollViewer(Content = surface))
+            try
+                window.Show()
+                Headless.pump ()
+                test <@ surface.RowHeightAt(0) > 180.0 @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``preview action fires for an added-only markdown file`` () =
+        Headless.run (fun () ->
+            let summary : GitService.DiffFileSummary =
+                { OldPath = "/dev/null"; NewPath = "README.md"; DisplayPath = FileChange.displayPath "/dev/null" "README.md" }
+            let file = DiffFileProjection(summary)
+            let model : Models.FileDiff =
+                { OldPath = "/dev/null"; NewPath = "README.md"; NewLineCount = Some 1
+                  Hunks = [ { Header = "@@ -0,0 +1 @@"; Lines = [ { Type = Models.Added; Content = "# Added"; OldLineNo = None; NewLineNo = Some 1 } ] } ] }
+            file.ApplyContent(model)
+            let rows = AvaloniaList<IDiffRowProjection>([ file.Header :> IDiffRowProjection ])
+            let surface = DiffSurfaceControl(ItemsSource = rows, Width = 500.0)
+            let window = Window(Width = 500.0, Height = 100.0, Content = surface)
+            let mutable requested : DiffFileProjection option = None
+            surface.PreviewRequested.Add(fun selected -> requested <- Some selected)
+            try
+                window.Show()
+                Headless.pump ()
+                // Chevron + path width + padding places the preview action immediately after README.md.
+                window.MouseDown(Point(196.0, 31.0), MouseButton.Left)
+                window.MouseUp(Point(196.0, 31.0), MouseButton.Left)
+                Headless.pump ()
+                test <@ requested = Some file @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``blocked remote image placeholder requests an explicit load when clicked`` () =
+        Headless.run (fun () ->
+            let rows =
+                Markdown.renderDocument "![diagram](https://example.com/diagram.png)"
+                |> Seq.map (fun row -> RenderedMarkdownRowProjection(row) :> IDiffRowProjection)
+                |> AvaloniaList
+            let surface = DiffSurfaceControl(ItemsSource = rows, Width = 500.0)
+            let window = Window(Width = 500.0, Height = 140.0, Content = surface)
+            let mutable requested = ""
+            surface.RenderedLinkRequested.Add(fun link -> requested <- link)
+            try
+                window.Show()
+                Headless.pump ()
+                window.MouseDown(Point(40.0, 25.0), MouseButton.Left)
+                window.MouseUp(Point(40.0, 25.0), MouseButton.Left)
+                Headless.pump ()
+                test <@ requested = "gitkay-load-image:https://example.com/diagram.png" @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``whole file popup projection switches from source to rendered markdown`` () =
+        Headless.run (fun () ->
+            let main = MainProjection()
+            let target = FileTarget("README.md", "README.md", "README.md", null)
+            let projection = WholeFileProjection(main, "abc123", "Docs", target)
+            let line : Models.DiffLine = { Type = Models.Context; Content = "# Preview works"; OldLineNo = Some 1; NewLineNo = Some 1 }
+            let file : Models.FileDiff =
+                { OldPath = "README.md"; NewPath = "README.md"
+                  Hunks = [ { Header = "@@ -1 +1 @@"; Lines = [ line ] } ]; NewLineCount = Some 1 }
+            let rendered : RenderedMarkdownContent =
+                { File = file
+                  DiffRows = Markdown.renderDiff "# Preview works" "# Preview works"
+                  OldRows = Markdown.renderDocument "# Preview works"
+                  NewRows = Markdown.renderDocument "# Preview works"
+                  Images = [] }
+            let payload : GitService.WholeFilePayload = { File = file; Rendered = Some rendered; ImageBytes = None }
+            projection.ApplyPayload(payload)
+            projection.TogglePreviewCommand.Execute(null)
+            test <@ projection.IsMarkdownPreview && projection.Rows |> Seq.exists (fun row -> row :? RenderedMarkdownRowProjection) @>)
+
+    [<Fact>]
+    let ``old and new layouts use their unmarked rendered documents`` () =
+        let oldSource, newSource = "# Old\n\nold text", "# New\n\nnew text"
+        let fileModel : Models.FileDiff = { OldPath = "README.md"; NewPath = "README.md"; Hunks = []; NewLineCount = None }
+        let content : RenderedMarkdownContent =
+            { File = fileModel; DiffRows = Markdown.renderDiff oldSource newSource
+              OldRows = Markdown.renderDocument oldSource; NewRows = Markdown.renderDocument newSource; Images = [] }
+        let summary : GitService.DiffFileSummary =
+            { OldPath = "README.md"; NewPath = "README.md"; DisplayPath = "README.md" }
+        let file = DiffFileProjection(summary)
+        file.ApplyContent(fileModel)
+        file.ApplyRenderedContent(content)
+        let oldRows = ResizeArray<IDiffRowProjection>()
+        let newRows = ResizeArray<IDiffRowProjection>()
+        DiffRowBuilder.AppendFile(oldRows, file, DiffLayout.OldFile)
+        DiffRowBuilder.AppendFile(newRows, file, DiffLayout.NewFile)
+        let oldRendered = oldRows |> Seq.choose (function :? RenderedMarkdownRowProjection as row -> Some row | _ -> None) |> Seq.toList
+        let newRendered = newRows |> Seq.choose (function :? RenderedMarkdownRowProjection as row -> Some row | _ -> None) |> Seq.toList
+        test <@ oldRendered |> List.forall (fun row -> row.Kind = MarkdownChangeKind.Unchanged) @>
+        test <@ newRendered |> List.forall (fun row -> row.Kind = MarkdownChangeKind.Unchanged) @>
+        test <@ oldRendered.Head.Text = "Old" && newRendered.Head.Text = "New" @>
+
+    [<Fact>]
+    let ``side by side rendered markdown keeps both code versions in one stable row`` () =
+        Headless.run (fun () ->
+            let oldText = "# Guide\n\nUse the **old** workflow for setup.\n\n```fsharp\nlet value = 1\n```"
+            let newText = "# Guide\n\nUse the **new improved** workflow for setup.\n\n```fsharp\nlet value = 2\n```"
+            let rows =
+                GitKay.Core.Markdown.renderDiff oldText newText
+                |> Seq.map (fun row -> RenderedMarkdownRowProjection(row) :> IDiffRowProjection)
+                |> AvaloniaList
+            let surface = DiffSurfaceControl(ItemsSource = rows, DiffLayout = DiffLayout.SideBySide, Width = 920.0)
+            let window = Window(Width = 920.0, Height = 350.0, Content = ScrollViewer(Content = surface))
+            try
+                window.Show()
+                Headless.pump ()
+                let bitmap = window.CaptureRenderedFrame()
+                test <@ bitmap.PixelSize.Width = 920 @>
+                test <@ rows.Count = 3 && surface.DesiredSize.Height < 180.0 @>
+            finally
+                window.Close()
                 Headless.pump ())

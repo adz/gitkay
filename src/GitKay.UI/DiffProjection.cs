@@ -17,6 +17,32 @@ public readonly record struct DiffFileKey(string OldPath, string NewPath, string
 public interface IDiffRowProjection {
 }
 
+public sealed class RenderedMarkdownGapProjection(int count) : IDiffRowProjection {
+    public int Count { get; } = count;
+    public string Label => $"⋯ {Count} unchanged sections";
+}
+
+public sealed class RenderedMarkdownRowProjection(GitKay.Core.RenderedMarkdownRow row) : IDiffRowProjection {
+    public GitKay.Core.RenderedMarkdownRow Row { get; } = row;
+    public GitKay.Core.LocatedMarkdownBlock Located => Row.Current?.Value ?? Row.Previous!.Value;
+    public GitKay.Core.LocatedMarkdownBlock? OldLocated => Row.Previous?.Value;
+    public GitKay.Core.LocatedMarkdownBlock? NewLocated => Row.Current?.Value;
+    public GitKay.Core.MarkdownChangeKind Kind => Row.Change;
+    public string Text => Row.CurrentText.Length > 0 ? Row.CurrentText : Row.PreviousText;
+    public string Source => Row.Source;
+    public string OldText => Row.PreviousText;
+    public string NewText => Row.CurrentText;
+    public IReadOnlyList<GitKay.Core.MarkdownWordSpan> Words => Row.Words;
+    public IReadOnlyList<GitKay.Core.MarkdownCodeLine> CodeLines => Row.CodeLines;
+    public IReadOnlyList<GitKay.Core.RenderedMarkdownSpan> OldSpans => Row.PreviousSpans;
+    public IReadOnlyList<GitKay.Core.RenderedMarkdownSpan> NewSpans => Row.CurrentSpans;
+    public bool IsChanged => Kind != GitKay.Core.MarkdownChangeKind.Unchanged;
+    public bool IsAdded => Kind == GitKay.Core.MarkdownChangeKind.Added;
+    public bool IsRemoved => Kind == GitKay.Core.MarkdownChangeKind.Removed;
+    public bool IsMoved => Kind == GitKay.Core.MarkdownChangeKind.Moved;
+    public int? MoveCounterpartLine => Row.MoveCounterpartLine?.Value;
+}
+
 public partial class DiffFileProjection : ObservableObject {
     public DiffFileProjection(GitKay.Core.GitService.DiffFileSummary summary, string section = "") {
         Key = new DiffFileKey(summary.OldPath, summary.NewPath, section);
@@ -26,10 +52,13 @@ public partial class DiffFileProjection : ObservableObject {
     }
 
     public DiffFileKey Key { get; }
+    public string ContentPath => Key.NewPath == "/dev/null" ? Key.OldPath : Key.NewPath;
     [ObservableProperty] private string _displayPath = "";
     [ObservableProperty] private bool _isLoaded;
     /// <summary>Presentation-only: hides this file's diff rows beneath its header.</summary>
     [ObservableProperty] private bool _isCollapsed;
+    [ObservableProperty] private bool _isRenderedMarkdown;
+    [ObservableProperty] private bool _renderedChangesOnly;
     /// <summary>Label and indent for the changed-files list: full path in patch mode, file name in tree mode.</summary>
     [ObservableProperty] private string _listLabel = "";
     /// <summary>The commit search's path term matches this file; shown as a dotted underline.</summary>
@@ -61,6 +90,19 @@ public partial class DiffFileProjection : ObservableObject {
     /// <summary>Ordered hunks and collapsed gaps, after applying file-scoped expansion.</summary>
     public IReadOnlyList<object> Blocks => _blocks;
     public DiffFileHeaderProjection Header { get; }
+    public IReadOnlyList<RenderedMarkdownRowProjection> RenderedRows { get; private set; } = Array.Empty<RenderedMarkdownRowProjection>();
+    private IReadOnlyList<RenderedMarkdownRowProjection> RenderedOldRows { get; set; } = Array.Empty<RenderedMarkdownRowProjection>();
+    private IReadOnlyList<RenderedMarkdownRowProjection> RenderedNewRows { get; set; } = Array.Empty<RenderedMarkdownRowProjection>();
+    public IEnumerable<IDiffRowProjection> RenderedDisplayRows(bool changesOnly, GitKay.Core.DiffLayout layout) {
+        var rows = layout.IsOldFile ? RenderedOldRows : layout.IsNewFile ? RenderedNewRows : RenderedRows;
+        if (!changesOnly || layout.IsOldFile || layout.IsNewFile) return rows;
+        return GitKay.Core.Markdown.changesOnly(2, Microsoft.FSharp.Collections.ListModule.OfSeq(rows.Select(row => row.Row)))
+            .Select(row => row switch {
+                GitKay.Core.RenderedMarkdownDisplayRow.RenderedBlock block => (IDiffRowProjection)new RenderedMarkdownRowProjection(block.Item),
+                GitKay.Core.RenderedMarkdownDisplayRow.UnchangedSections gap => new RenderedMarkdownGapProjection(gap.Item),
+                _ => throw new InvalidOperationException(),
+            });
+    }
 
     private readonly List<object> _blocks = new();
     private GitKay.Core.Models.FileDiff? _content;
@@ -94,6 +136,29 @@ public partial class DiffFileProjection : ObservableObject {
         }
 
         return true;
+    }
+
+    /// <summary>Reconstructs one side of a fully-expanded file for whole-file readers such as markdown preview.</summary>
+    public string WholeText(bool oldSide) {
+        if (_content == null) return "";
+        var lines = _content.Hunks.SelectMany(hunk => hunk.Lines)
+            .Where(line => oldSide ? !line.Type.IsAdded : !line.Type.IsRemoved)
+            .Select(line => line.Content);
+        return string.Join("\n", lines);
+    }
+
+    public void ApplyRenderedContent(GitKay.Core.RenderedMarkdownContent content) {
+        RenderedRows = content.DiffRows.Select(row => new RenderedMarkdownRowProjection(row)).ToArray();
+        RenderedOldRows = content.OldRows.Select(row => new RenderedMarkdownRowProjection(row)).ToArray();
+        RenderedNewRows = content.NewRows.Select(row => new RenderedMarkdownRowProjection(row)).ToArray();
+        IsRenderedMarkdown = true;
+    }
+
+    public void ClearRendered() {
+        IsRenderedMarkdown = false;
+        RenderedRows = Array.Empty<RenderedMarkdownRowProjection>();
+        RenderedOldRows = Array.Empty<RenderedMarkdownRowProjection>();
+        RenderedNewRows = Array.Empty<RenderedMarkdownRowProjection>();
     }
 
     public void ClearContent() {
@@ -295,6 +360,7 @@ public static class DiffRowBuilder {
     public static void AppendFile(List<IDiffRowProjection> rows, DiffFileProjection file, GitKay.Core.DiffLayout layout) {
         rows.Add(file.Header);
         if (!file.IsLoaded || file.IsCollapsed) return;
+        if (file.IsRenderedMarkdown) { rows.AddRange(file.RenderedDisplayRows(file.RenderedChangesOnly, layout)); return; }
 
         var blocks = Microsoft.FSharp.Collections.ListModule.OfSeq(file.Blocks.Select(block => block switch {
             DiffGapProjection gap => GitKay.Core.DiffRows.Block<DiffGapProjection, DiffHunkProjection, DiffLineProjection>.NewGap(gap),

@@ -5,6 +5,17 @@ open Swensen.Unquote
 open GitKay.Kit
 open GitKay.Core
 
+[<Fact>]
+let ``Myers returns a shortest ordered edit script`` () =
+    let edits = Myers.diff [| "a"; "b"; "c" |] [| "a"; "x"; "c"; "d" |]
+    test <@ edits = [ Equal("a", "a"); Delete "b"; Insert "x"; Equal("c", "c"); Insert "d" ] @>
+
+[<Fact>]
+let ``Myers handles empty and repeated sequences`` () =
+    test <@ Myers.diff [||] [| 1; 1 |] = [ Insert 1; Insert 1 ] @>
+    let edits = Myers.diff [| 1; 2; 1 |] [| 1; 1 |]
+    test <@ edits |> List.sumBy (function Equal _ -> 0 | _ -> 1) = 1 @>
+
 let private spansOf (query: TextQuery) text =
     query.Spans text |> List.map (fun struct (start, length) -> start, length)
 

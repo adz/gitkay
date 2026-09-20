@@ -13,7 +13,7 @@
                 BorderBrush="{DynamicResource GitKayHairlineBrush}"
                 BorderThickness="0,0,0,1"
                 Padding="10,4">
-            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
                 <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                     <TextBlock Text="{Binding ShortHash}" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="12"
                                Foreground="{DynamicResource GitKayMutedTextBrush}" VerticalAlignment="Center" />
@@ -21,10 +21,25 @@
                                TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
                     <TextBlock Text="{Binding LoadStatus}" FontSize="11" Foreground="{DynamicResource GitKayMutedTextBrush}" VerticalAlignment="Center" />
                 </StackPanel>
-                <Button Grid.Column="1" Classes="inline" Padding="8,2" Command="{Binding OpenInVsCodeCommand}" ToolTip.Tip="Open in VS Code, rooted at the repository">
-                    <TextBlock Text="Open in VS Code" FontSize="11" />
+                <Button Grid.Column="1" Classes="inline" Padding="8,2" Command="{Binding OpenInVsCodeCommand}" ToolTip.Tip="Open this file in VS Code, rooted at the repository">
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                        <Canvas Width="16" Height="16">
+                            <!-- VS Code's crossed ribbon silhouette. -->
+                            <Path Data="M2,5 L5,8 L2,11 L0.8,9.8 L3.2,8 L0.8,6.2 Z M5,8 L11.5,2.5 L15,4 V12 L11.5,13.5 Z M11.5,5.2 L7,8 L11.5,10.8 Z"
+                                  Fill="{DynamicResource GitKayAccentBrush}" />
+                        </Canvas>
+                        <TextBlock Text="Open in VS Code" FontSize="11" VerticalAlignment="Center" />
+                    </StackPanel>
                 </Button>
-                <Border Grid.Column="2"
+                <Button Grid.Column="2" Classes="segment" Classes.selected="{Binding IsPreview}"
+                        Command="{Binding TogglePreviewCommand}" IsVisible="{Binding IsPreviewable}"
+                        ToolTip.Tip="Preview rendered Markdown or image (Ctrl+Shift+V)">
+                    <Canvas Width="16" Height="16">
+                        <Path Data="M1,8 C4,3 12,3 15,8 C12,13 4,13 1,8 Z" Stroke="{DynamicResource GitKaySecondaryTextBrush}" StrokeThickness="1.2" Fill="Transparent" />
+                        <Ellipse Canvas.Left="6" Canvas.Top="6" Width="4" Height="4" Fill="{DynamicResource GitKayAccentBrush}" />
+                    </Canvas>
+                </Button>
+                <Border Grid.Column="3"
                         Background="{DynamicResource GitKayRaisedBrush}"
                         BorderBrush="{DynamicResource GitKayBorderBrush}"
                         BorderThickness="1" CornerRadius="4" Padding="1">
@@ -61,17 +76,27 @@
                 </Border>
             </Grid>
         </Border>
-        <Panel>
-            <ScrollViewer x:Name="RowsScrollViewer" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+        <Grid>
+            <ScrollViewer x:Name="RowsScrollViewer" IsVisible="{Binding !IsImagePreview}" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
                 <local:DiffSurfaceControl x:Name="Surface"
                                           ItemsSource="{Binding Rows}"
                                           SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
                                           DiffLayout="{Binding Layout}"
                                           CodeFontSize="{Binding Main.DiffFontSize, Mode=TwoWay}"
+                                          OldRenderedImages="{Binding OldImages}"
+                                          RenderedImages="{Binding Images}"
                                           ToggleFileCommand="{Binding ToggleCollapsedCommand}"
                                           HorizontalAlignment="Stretch" />
             </ScrollViewer>
-            <local:OverviewRuler Width="4" HorizontalAlignment="Left" ZIndex="5" Source="{Binding #Surface}" />
-        </Panel>
+            <local:OverviewRuler Width="4" HorizontalAlignment="Left" ZIndex="5" Source="{Binding #Surface}" IsVisible="{Binding !IsImagePreview}" />
+            <Border x:Name="PreviewSearchOverlay" IsVisible="False" ZIndex="20" HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Margin="0,8,20,0" Padding="6" CornerRadius="5" Background="{DynamicResource GitKayRaisedBrush}"
+                    BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="1">
+                <TextBox x:Name="PreviewSearchBox" Width="260" PlaceholderText="Find in preview" />
+            </Border>
+            <ScrollViewer IsVisible="{Binding IsImagePreview}" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                <Image Source="{Binding ImageSource}" Stretch="Uniform" Margin="24" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </ScrollViewer>
+        </Grid>
     </DockPanel>
 </Window>

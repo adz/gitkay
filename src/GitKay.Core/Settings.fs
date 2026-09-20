@@ -237,6 +237,10 @@ type Settings =
       CommitRowMetaFontSize: float
       CommitRowBadgeFontSize: float
       SearchDebounceSeconds: float
+      /// <summary>Open Markdown files in rendered mode unless a per-file preference overrides it.</summary>
+      RenderMarkdownByDefault: bool
+      /// <summary>Allow rendered Markdown to contact remote image hosts. Off protects reader privacy.</summary>
+      LoadRemoteMarkdownImages: bool
       Theme: ThemeMode
       /// <summary>Space around each pane, in pixels; 0 keeps panes flush against each other.</summary>
       PaneGap: float
@@ -276,6 +280,8 @@ module Settings =
           CommitRowMetaFontSize = 12.0
           CommitRowBadgeFontSize = 11.0
           SearchDebounceSeconds = 0.5
+          RenderMarkdownByDefault = false
+          LoadRemoteMarkdownImages = false
           Theme = SystemTheme
           PaneGap = 3.0
           HoverFocusesPane = true
@@ -415,6 +421,11 @@ module UiState =
         match repositoryKey repository, text hash with
         | Some key, Some hash -> { state with LastSelectedCommits = state.LastSelectedCommits |> Map.add key hash }
         | _ -> state
+
+    let viewPreference key state = state.ViewPreferences |> Map.tryFind key
+
+    let withViewPreference key value state =
+        { state with ViewPreferences = state.ViewPreferences |> Map.add key value }
 
     let selectedCommit (repository: string) state =
         repositoryKey repository |> Option.bind (fun key -> state.LastSelectedCommits |> Map.tryFind key)

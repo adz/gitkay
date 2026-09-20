@@ -18,6 +18,8 @@ type private SettingsWire =
       CommitRowMetaFontSize: float
       CommitRowBadgeFontSize: float
       SearchDebounceSeconds: float
+      RenderMarkdownByDefault: bool
+      LoadRemoteMarkdownImages: bool
       ThemeMode: string
       PaneGap: float
       PaneFocusEffectKey: string
@@ -65,6 +67,8 @@ module private Codecs =
             fieldAs "CommitRowMetaFontSize" _.CommitRowMetaFontSize { defaultValue d.CommitRowMetaFontSize }
             fieldAs "CommitRowBadgeFontSize" _.CommitRowBadgeFontSize { defaultValue d.CommitRowBadgeFontSize }
             fieldAs "SearchDebounceSeconds" _.SearchDebounceSeconds { defaultValue d.SearchDebounceSeconds }
+            fieldAs "RenderMarkdownByDefault" _.RenderMarkdownByDefault { defaultValue d.RenderMarkdownByDefault }
+            fieldAs "LoadRemoteMarkdownImages" _.LoadRemoteMarkdownImages { defaultValue d.LoadRemoteMarkdownImages }
             fieldAs "ThemeMode" _.ThemeMode { defaultValue (ThemeMode.key d.Theme) }
             fieldAs "PaneGap" _.PaneGap { defaultValue d.PaneGap }
             fieldAs "PaneFocusEffect" _.PaneFocusEffectKey { defaultValue (PaneFocusEffect.key d.PaneFocusEffect) }
@@ -78,11 +82,12 @@ module private Codecs =
             fieldAs "PaneBorderColor" _.PaneBorderColorKey { defaultValue (PaneEffectColor.key d.PaneBorderColor) }
             fieldAs "PaneBorderThickness" _.PaneBorderThickness { defaultValue d.PaneBorderThickness }
             fieldAs "SplitterLinesHidden" _.SplitterLinesHidden { defaultValue d.SplitterLinesHidden }
-            construct (fun showBranchRefs showStashes diffContextLines layout fontFamily monoFontFamily textSize metaSize badgeSize debounce theme paneGap paneEffect paneColor paneIntensity hoverFocuses dimUnfocused focusHighlight paneBorder borderStyle borderColor borderThickness splitterHidden ->
+            construct (fun showBranchRefs showStashes diffContextLines layout fontFamily monoFontFamily textSize metaSize badgeSize debounce renderMarkdown remoteImages theme paneGap paneEffect paneColor paneIntensity hoverFocuses dimUnfocused focusHighlight paneBorder borderStyle borderColor borderThickness splitterHidden ->
                 { ShowBranchRefs = showBranchRefs; ShowStashes = showStashes; DiffContextLines = diffContextLines
                   DiffPresentationModeKey = layout; CommitRowFontFamily = fontFamily; CommitRowMonoFontFamily = monoFontFamily
                   CommitRowTextFontSize = textSize; CommitRowMetaFontSize = metaSize; CommitRowBadgeFontSize = badgeSize
-                  SearchDebounceSeconds = debounce; ThemeMode = theme; PaneGap = paneGap; PaneFocusEffectKey = paneEffect
+                  SearchDebounceSeconds = debounce; RenderMarkdownByDefault = renderMarkdown; LoadRemoteMarkdownImages = remoteImages
+                  ThemeMode = theme; PaneGap = paneGap; PaneFocusEffectKey = paneEffect
                   PaneEffectColorKey = paneColor; PaneEffectIntensityKey = paneIntensity; HoverFocusesPane = hoverFocuses
                   PaneDimUnfocused = dimUnfocused; PaneFocusHighlight = focusHighlight; PaneBorder = paneBorder
                   PaneBorderStyleKey = borderStyle; PaneBorderColorKey = borderColor; PaneBorderThickness = borderThickness
@@ -134,6 +139,8 @@ module SettingsJson =
               CommitRowMetaFontSize = settings.CommitRowMetaFontSize
               CommitRowBadgeFontSize = settings.CommitRowBadgeFontSize
               SearchDebounceSeconds = settings.SearchDebounceSeconds
+              RenderMarkdownByDefault = settings.RenderMarkdownByDefault
+              LoadRemoteMarkdownImages = settings.LoadRemoteMarkdownImages
               ThemeMode = ThemeMode.key settings.Theme
               PaneGap = settings.PaneGap
               PaneFocusEffectKey = PaneFocusEffect.key settings.PaneFocusEffect
@@ -163,6 +170,8 @@ module SettingsJson =
                   CommitRowMetaFontSize = wire.CommitRowMetaFontSize
                   CommitRowBadgeFontSize = wire.CommitRowBadgeFontSize
                   SearchDebounceSeconds = wire.SearchDebounceSeconds
+                  RenderMarkdownByDefault = wire.RenderMarkdownByDefault
+                  LoadRemoteMarkdownImages = wire.LoadRemoteMarkdownImages
                   Theme = ThemeMode.tryParse wire.ThemeMode |> Option.defaultValue Settings.defaults.Theme
                   PaneGap = wire.PaneGap
                   PaneFocusEffect = PaneFocusEffect.tryParse wire.PaneFocusEffectKey |> Option.defaultValue Settings.defaults.PaneFocusEffect

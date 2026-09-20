@@ -544,17 +544,13 @@
                                       Margin="0,0,6,0"
                                       IsChecked="{Binding IgnoreWhitespace, Mode=TwoWay}"
                                       ToolTip.Tip="Ignore whitespace changes — hides lines that differ only in spacing">
-                            <Canvas Width="16" Height="16">
-                                <!-- Two lines with the space between them marked, struck through when ignored. -->
-                                <Rectangle Canvas.Left="1.5" Canvas.Top="3" Width="5" Height="1.5" Fill="{DynamicResource GitKaySecondaryTextBrush}" />
-                                <Rectangle Canvas.Left="9.5" Canvas.Top="3" Width="5" Height="1.5" Fill="{DynamicResource GitKaySecondaryTextBrush}" />
-                                <Rectangle Canvas.Left="7.5" Canvas.Top="3" Width="1.5" Height="1.5" Fill="{DynamicResource GitKayMutedTextBrush}" />
-                                <Rectangle Canvas.Left="1.5" Canvas.Top="11.5" Width="5" Height="1.5" Fill="{DynamicResource GitKaySecondaryTextBrush}" />
-                                <Rectangle Canvas.Left="9.5" Canvas.Top="11.5" Width="5" Height="1.5" Fill="{DynamicResource GitKaySecondaryTextBrush}" />
-                                <Rectangle Canvas.Left="6" Canvas.Top="11.5" Width="4" Height="1.5" Fill="{DynamicResource GitKayMutedTextBrush}" />
-                                <Path Data="M2,14 L14,2" Stroke="{DynamicResource GitKayAccentBrush}" StrokeThickness="1.5"
+                            <Grid Width="22" Height="16">
+                                <TextBlock Text="WS" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="10" FontWeight="SemiBold"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
+                                <Path Data="M2,14 L20,2" Stroke="{DynamicResource GitKayAccentBrush}" StrokeThickness="1.8"
                                       IsVisible="{Binding IgnoreWhitespace}" />
-                            </Canvas>
+                            </Grid>
                         </ToggleButton>
                         <Border x:Name="DiffModeButton"
                                 Grid.Column="4"
@@ -718,7 +714,11 @@
                                                           SearchHighlightUseRegex="{Binding CommitSearchDiffTermUseRegex}"
                                                           DiffLayout="{Binding DiffLayout}"
                                                           CodeFontSize="{Binding DiffFontSize, Mode=TwoWay}"
+                                                          OldRenderedImages="{Binding RenderedOldImages}"
+                                                          RenderedImages="{Binding RenderedNewImages}"
+                                                          RenderedImagesLoading="{Binding RenderedImagesLoading}"
                                                           FileContextRequested="OnDiffFileHeaderContextRequested"
+                                                          PreviewRequested="OnDiffFilePreviewRequested"
                                                           ExpandGapCommand="{Binding ExpandDiffGapCommand}"
                                                           ToggleFileCommand="{Binding ToggleDiffFileCollapsedCommand}"
                                                           ToggleFileContextCommand="{Binding ToggleDiffFileContextCommand}"

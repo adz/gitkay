@@ -225,14 +225,14 @@ public partial class MainProjection {
 
     // ----- File actions: copy paths, whole file, VS Code. -----
 
-    public event Action<FileTarget>? WholeFileRequested;
-
     public string FullPath(FileTarget target) =>
         System.IO.Path.GetFullPath(System.IO.Path.Combine(WorkingDirectory ?? "", target.Path.Replace('/', System.IO.Path.DirectorySeparatorChar)));
 
+    public void RefreshDiffRows() => RenderSelectedDiffRows();
+
     public void ShowWholeFile(FileTarget target) {
-        if (_selectedDiffHash is null or WorkingTreeDiffId || RepositoryPath == null || IsRevisionComparison) return;
-        WholeFileRequested?.Invoke(target);
+        if (RepositoryPath == null || IsRevisionComparison) return;
+        RequestWholeFile(target);
     }
 
     /// <summary>

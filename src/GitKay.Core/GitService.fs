@@ -6,6 +6,7 @@ open System.IO
 open System.Collections.Generic
 open System.Threading.Tasks
 open System.Text.RegularExpressions
+open System.Net.Http
 open Axial
 open Axial.Console
 open Axial.FileSystem
@@ -51,6 +52,11 @@ module GitService =
             NewPath: string
             DisplayPath: string
         }
+
+    type WholeFilePayload =
+        { File: FileDiff
+          Rendered: RenderedMarkdownContent option
+          ImageBytes: byte array option }
 
     type DiffSummary =
         {
@@ -1018,6 +1024,170 @@ module GitService =
             return walk commit.Tree |> Seq.toList
         }
 
+    /// Raw blob bytes at a revision, used by safe whole-file and repository-image previews.
+    let loadFileBytes (repoPath: string) (hash: string) (path: string) : Result<byte array, GitError> =
+        result {
+            use repo = new Repository(repoPath)
+            let! (commit: LibGit2Sharp.Commit) = loadCommit repo hash
+            let blob = tryBlob commit path
+            if isNull blob then
+                return! Error (GitError.OperationFailed("Load file", $"File not found: {path}"))
+            elif blob.Size > 10L * 1024L * 1024L then
+                return! Error (GitError.OperationFailed("Load file", "File is larger than the 10 MB preview limit"))
+            else
+                use stream = blob.GetContentStream()
+                use output = new System.IO.MemoryStream()
+                stream.CopyTo output
+                return output.ToArray()
+        }
+
+    let private commitImageCache = ConcurrentDictionary<struct (string * string * bool * string), byte array>()
+
+    /// Raw repository image bytes from one side of a commit diff. The old side is resolved against
+    /// the first parent; the new side against the commit itself.
+    let loadCommitSideFileBytes (repoPath: string) (hash: string) (oldSide: bool) (path: string) : Result<byte array, GitError> =
+        let key = struct (Path.GetFullPath repoPath, hash, oldSide, path)
+        match commitImageCache.TryGetValue key with
+        | true, bytes -> Ok bytes
+        | _ -> result {
+            use repo = new Repository(repoPath)
+            let! (commit: LibGit2Sharp.Commit) = loadCommit repo hash
+            let revision = if oldSide then commit.Parents |> Seq.tryHead |> Option.toObj else commit
+            if isNull revision then return! Error (GitError.OperationFailed("Load image", $"Revision has no parent: {hash}"))
+            let blob = tryBlob revision path
+            if isNull blob then return! Error (GitError.OperationFailed("Load image", $"File not found: {path}"))
+            elif blob.Size > 10L * 1024L * 1024L then return! Error (GitError.OperationFailed("Load image", "Image is larger than the 10 MB preview limit"))
+            else
+                use stream = blob.GetContentStream()
+                use output = new MemoryStream()
+                stream.CopyTo output
+                let bytes = output.ToArray()
+                commitImageCache.[key] <- bytes
+                return bytes
+        }
+
+    /// Raw repository image bytes from one side of an uncommitted diff. Staged compares HEAD/index;
+    /// unstaged compares index/worktree; untracked has only a worktree side.
+    let loadWorkingTreeSideFileBytes (repoPath: string) (section: WorkingTree.Section) (oldSide: bool) (path: string) : Result<byte array, GitError> =
+        let readBlob (blob: Blob) =
+            result {
+                if isNull blob then return! Error (GitError.OperationFailed("Load image", $"File not found: {path}"))
+                elif blob.Size > 10L * 1024L * 1024L then return! Error (GitError.OperationFailed("Load image", "Image is larger than the 10 MB preview limit"))
+                else
+                    use stream = blob.GetContentStream()
+                    use output = new MemoryStream()
+                    stream.CopyTo output
+                    return output.ToArray()
+            }
+        try
+            use repo = new Repository(repoPath)
+            match section, oldSide with
+            | WorkingTree.Staged, true ->
+                match repo.Head.Tip with
+                | null -> Error (GitError.OperationFailed("Load image", "HEAD does not exist"))
+                | head -> readBlob (tryBlob head path)
+            | WorkingTree.Staged, false
+            | WorkingTree.Unstaged, true ->
+                let entry = repo.Index.[path]
+                readBlob (if isNull entry then null else repo.Lookup<Blob>(entry.Id))
+            | WorkingTree.Unstaged, false
+            | WorkingTree.Untracked, false ->
+                let root = Path.GetFullPath(repo.Info.WorkingDirectory)
+                let fullPath = Path.GetFullPath(Path.Combine(root, path.Replace('/', Path.DirectorySeparatorChar)))
+                let relative = Path.GetRelativePath(root, fullPath)
+                // This compatibility API is the explicit synchronous boundary used by the UI preview loader.
+                // axial-allow-effect: filesystem
+                if Path.IsPathRooted relative || relative = ".." || relative.StartsWith(".." + string Path.DirectorySeparatorChar, StringComparison.Ordinal) || not (File.Exists fullPath) then
+                    Error (GitError.OperationFailed("Load image", $"File not found: {path}"))
+                else
+                    let info = FileInfo fullPath
+                    if info.Length > 10L * 1024L * 1024L then Error (GitError.OperationFailed("Load image", "Image is larger than the 10 MB preview limit"))
+                    // axial-allow-effect: filesystem
+                    else Ok(File.ReadAllBytes fullPath)
+            | WorkingTree.Untracked, true -> Error (GitError.OperationFailed("Load image", "Untracked files have no old revision"))
+        with error -> Error (GitError.OperationFailed("Load image", error.Message))
+
+    let private markdownHttp = new HttpClient(Timeout = TimeSpan.FromSeconds 10.0)
+
+    let private loadRemoteImage (url: string) =
+        try
+            use response = markdownHttp.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult()
+            response.EnsureSuccessStatusCode() |> ignore
+            let length = response.Content.Headers.ContentLength
+            if length.HasValue && length.Value > 10L * 1024L * 1024L then Error "Remote image is larger than the 10 MB preview limit"
+            else
+                use input = response.Content.ReadAsStream()
+                use output = new MemoryStream()
+                let buffer = Array.zeroCreate<byte> 81920
+                let mutable total, read = 0, 0
+                while total <= 10 * 1024 * 1024 && (read <- input.Read(buffer, 0, buffer.Length); read > 0) do
+                    output.Write(buffer, 0, read)
+                    total <- total + read
+                if total > 10 * 1024 * 1024 then Error "Remote image is larger than the 10 MB preview limit"
+                else Ok(output.ToArray())
+        with error -> Error error.Message
+
+    let loadRemoteMarkdownImage cancellationToken (url: string) =
+        task {
+            match Uri.TryCreate(url, UriKind.Absolute) with
+            | false, _ -> return Error(GitError.OperationFailed("Load remote image", "The image target is not an HTTP or HTTPS URL"))
+            | true, uri when uri.Scheme <> Uri.UriSchemeHttp && uri.Scheme <> Uri.UriSchemeHttps ->
+                return Error(GitError.OperationFailed("Load remote image", "The image target is not an HTTP or HTTPS URL"))
+            | _ ->
+                try
+                    use! response = markdownHttp.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                    response.EnsureSuccessStatusCode() |> ignore
+                    let length = response.Content.Headers.ContentLength
+                    if length.HasValue && length.Value > 10L * 1024L * 1024L then
+                        return Error(GitError.OperationFailed("Load remote image", "Remote image is larger than the 10 MB preview limit"))
+                    else
+                        use! input = response.Content.ReadAsStreamAsync(cancellationToken)
+                        use output = new MemoryStream()
+                        let buffer = Array.zeroCreate<byte> 81920
+                        let mutable total, read = 0, 0
+                        while total <= 10 * 1024 * 1024 && (read <- input.Read(buffer.AsSpan()); read > 0) do
+                            cancellationToken.ThrowIfCancellationRequested()
+                            output.Write(buffer, 0, read)
+                            total <- total + read
+                        if total > 10 * 1024 * 1024 then
+                            return Error(GitError.OperationFailed("Load remote image", "Remote image is larger than the 10 MB preview limit"))
+                        else return Ok(output.ToArray())
+                with
+                | :? OperationCanceledException as error -> return raise error
+                | error -> return Error(GitError.OperationFailed("Load remote image", error.Message))
+        }
+
+    let private imageData allowRemote loader (request: MarkdownImageRequest) =
+        match request.Target with
+        | RepositoryPath path ->
+            match loader request.Side path with
+            | Ok bytes -> { Side = request.Side; Source = request.Source; Bytes = Some bytes; Error = None }
+            | Error error -> { Side = request.Side; Source = request.Source; Bytes = None; Error = Some(GitError.describe error) }
+        | RemoteUrl url when allowRemote ->
+            match loadRemoteImage url with
+            | Ok bytes -> { Side = request.Side; Source = request.Source; Bytes = Some bytes; Error = None }
+            | Error error -> { Side = request.Side; Source = request.Source; Bytes = None; Error = Some error }
+        | RemoteUrl _ -> { Side = request.Side; Source = request.Source; Bytes = None; Error = Some "Remote image blocked" }
+        | HeadingTarget _ | InvalidTarget _ -> { Side = request.Side; Source = request.Source; Bytes = None; Error = Some "Invalid image target" }
+
+    let loadChangedFileBytes (repoPath: string) (hash: string) (oldPath: string) (newPath: string) : Result<byte array, GitError> =
+        result {
+            use repo = new Repository(repoPath)
+            let! (commit: LibGit2Sharp.Commit) = loadCommit repo hash
+            let revision, path =
+                if newPath = "/dev/null" then commit.Parents |> Seq.tryHead |> Option.toObj, oldPath
+                else commit, newPath
+            if isNull revision then return! Error (GitError.OperationFailed("Load file", $"File not found: {path}"))
+            let blob = tryBlob revision path
+            if isNull blob then return! Error (GitError.OperationFailed("Load file", $"File not found: {path}"))
+            elif blob.Size > 10L * 1024L * 1024L then return! Error (GitError.OperationFailed("Load file", "File is larger than the 10 MB preview limit"))
+            else
+                use stream = blob.GetContentStream()
+                use output = new System.IO.MemoryStream()
+                stream.CopyTo output
+                return output.ToArray()
+        }
+
     /// One file at a commit with its whole content: the change against the first parent with full context when
     /// the file changed, otherwise every line as unchanged context.
     let loadWholeFile (repoPath: string) (hash: string) (oldPath: string) (newPath: string) : Result<FileDiff, GitError> =
@@ -1054,6 +1224,174 @@ module GitService =
                         else [ { Header = $"@@ -1,{lines.Length} +1,{lines.Length} @@"; Lines = contextLines } ]
 
                     return { diff with Hunks = hunks; NewLineCount = Some lines.Length }
+        }
+
+    let private fileDiffFromSources oldPath newPath (oldSource: string) (newSource: string) =
+        let oldLines = oldSource.Replace("\r\n", "\n").Split '\n'
+        let newLines = newSource.Replace("\r\n", "\n").Split '\n'
+        let mutable oldLine, newLine = 0, 0
+        let lines =
+            GitKay.Kit.Myers.diff oldLines newLines
+            |> List.map (function
+                | GitKay.Kit.Equal(_, text) ->
+                    oldLine <- oldLine + 1; newLine <- newLine + 1
+                    { Type = Context; Content = text; OldLineNo = Some oldLine; NewLineNo = Some newLine }
+                | GitKay.Kit.Delete text ->
+                    oldLine <- oldLine + 1
+                    { Type = Removed; Content = text; OldLineNo = Some oldLine; NewLineNo = None }
+                | GitKay.Kit.Insert text ->
+                    newLine <- newLine + 1
+                    { Type = Added; Content = text; OldLineNo = None; NewLineNo = Some newLine })
+        { OldPath = oldPath; NewPath = newPath
+          Hunks = if lines.IsEmpty then [] else [ { Header = $"@@ -1,{oldLines.Length} +1,{newLines.Length} @@"; Lines = lines } ]
+          NewLineCount = Some newLines.Length }
+
+    let private revisionBlobText (repo: Repository) (revision: string) (path: string) =
+        if path = "/dev/null" then Ok ""
+        else
+            let commit = repo.Lookup<LibGit2Sharp.Commit>(revision)
+            if isNull commit then Error(GitError.OperationFailed("Render Markdown", $"Revision not found: {revision}"))
+            else
+                let blob = tryBlob commit path
+                if isNull blob then Ok "" else Ok(blob.GetContentText())
+
+    let private revisionBlobBytes (repoPath: string) (revision: string) (path: string) =
+        try
+            use repo = new Repository(repoPath)
+            let commit = repo.Lookup<LibGit2Sharp.Commit>(revision)
+            if isNull commit then Error(GitError.OperationFailed("Load image", $"Revision not found: {revision}"))
+            else
+                let blob = tryBlob commit path
+                if isNull blob then Error(GitError.OperationFailed("Load image", $"File not found: {path}"))
+                elif blob.Size > 10L * 1024L * 1024L then Error(GitError.OperationFailed("Load image", "Image is larger than the 10 MB preview limit"))
+                else
+                    use input = blob.GetContentStream()
+                    use output = new MemoryStream()
+                    input.CopyTo output
+                    Ok(output.ToArray())
+        with error -> Error(GitError.OperationFailed("Load image", error.Message))
+
+    let loadRevisionRenderedMarkdown (repoPath: string) (comparison: RevisionComparison) (oldPath: string) (newPath: string) (allowRemote: bool) =
+        result {
+            use repo = new Repository(repoPath)
+            let! oldSource = revisionBlobText repo comparison.BaseHash oldPath
+            let! newSource = revisionBlobText repo comparison.TargetHash newPath
+            if Text.Encoding.UTF8.GetByteCount(oldSource) > 1024 * 1024 || Text.Encoding.UTF8.GetByteCount(newSource) > 1024 * 1024 then
+                return! Error(GitError.OperationFailed("Render Markdown", "Files over 1 MB stay in source view"))
+            let oldBlocks, newBlocks = Markdown.parse oldSource, Markdown.parse newSource
+            if oldBlocks.Length > 5000 || newBlocks.Length > 5000 then
+                return! Error(GitError.OperationFailed("Render Markdown", "Files over 5,000 blocks stay in source view"))
+            let oldDocumentPath = if oldPath = "/dev/null" then newPath else oldPath
+            let newDocumentPath = if newPath = "/dev/null" then oldPath else newPath
+            let loader side path = revisionBlobBytes repoPath (if side = MarkdownImageSide.Old then comparison.BaseHash else comparison.TargetHash) path
+            let images = Markdown.imageRequests oldDocumentPath newDocumentPath oldSource newSource |> List.map (imageData allowRemote loader)
+            let file = fileDiffFromSources oldPath newPath oldSource newSource
+            let diffRows = Markdown.renderDiff oldSource newSource |> Markdown.markChangedImages images
+            return { File = file; DiffRows = diffRows; OldRows = Markdown.renderDocument oldSource
+                     NewRows = Markdown.renderDocument newSource; Images = images }
+        }
+
+    let loadRevisionWholeFilePayload repoPath comparison oldPath newPath allowRemote =
+        result {
+            let previewPath = if newPath = "/dev/null" then oldPath else newPath
+            match Markdown.previewKind previewPath with
+            | MarkdownPreview ->
+                let! rendered = loadRevisionRenderedMarkdown repoPath comparison oldPath newPath allowRemote
+                return { File = rendered.File; Rendered = Some rendered; ImageBytes = None }
+            | ImagePreview _ ->
+                use repo = new Repository(repoPath)
+                let! oldSource = revisionBlobText repo comparison.BaseHash oldPath
+                let! newSource = revisionBlobText repo comparison.TargetHash newPath
+                let file = fileDiffFromSources oldPath newPath oldSource newSource
+                let revision, path = if newPath = "/dev/null" then comparison.BaseHash, oldPath else comparison.TargetHash, newPath
+                let! bytes = revisionBlobBytes repoPath revision path
+                return { File = file; Rendered = None; ImageBytes = Some bytes }
+            | SourceOnly ->
+                use repo = new Repository(repoPath)
+                let! oldSource = revisionBlobText repo comparison.BaseHash oldPath
+                let! newSource = revisionBlobText repo comparison.TargetHash newPath
+                return { File = fileDiffFromSources oldPath newPath oldSource newSource; Rendered = None; ImageBytes = None }
+        }
+
+    /// Complete rendered Markdown payload for a commit comparison. Parsing, revision selection, path resolution,
+    /// image policy and Git reads happen together in Core; the UI only decodes the returned bytes.
+    let loadCommitRenderedMarkdown (repoPath: string) (hash: string) (oldPath: string) (newPath: string) (allowRemote: bool) : Result<RenderedMarkdownContent, GitError> =
+        result {
+            let! file = loadWholeFile repoPath hash oldPath newPath
+            let lines oldSide =
+                file.Hunks |> List.collect _.Lines
+                |> List.filter (fun line -> if oldSide then line.Type <> Added else line.Type <> Removed)
+                |> List.map _.Content |> String.concat "\n"
+            let oldSource, newSource = lines true, lines false
+            if Text.Encoding.UTF8.GetByteCount(oldSource) > 1024 * 1024 || Text.Encoding.UTF8.GetByteCount(newSource) > 1024 * 1024 then
+                return! Error(GitError.OperationFailed("Render Markdown", "Files over 1 MB stay in source view"))
+            let oldBlocks, newBlocks = Markdown.parse oldSource, Markdown.parse newSource
+            if oldBlocks.Length > 5000 || newBlocks.Length > 5000 then
+                return! Error(GitError.OperationFailed("Render Markdown", "Files over 5,000 blocks stay in source view"))
+            let oldDocumentPath = if oldPath = "/dev/null" then newPath else oldPath
+            let newDocumentPath = if newPath = "/dev/null" then oldPath else newPath
+            let loader side path = loadCommitSideFileBytes repoPath hash (side = MarkdownImageSide.Old) path
+            let images = Markdown.imageRequests oldDocumentPath newDocumentPath oldSource newSource |> List.map (imageData allowRemote loader)
+            let diffRows = Markdown.renderDiff oldSource newSource |> Markdown.markChangedImages images
+            return { File = file; DiffRows = diffRows
+                     OldRows = Markdown.renderDocument oldSource; NewRows = Markdown.renderDocument newSource
+                     Images = images }
+        }
+
+    let loadWorkingTreeRenderedMarkdown (repoPath: string) (section: WorkingTree.Section) (oldPath: string) (newPath: string) (allowRemote: bool) : Result<RenderedMarkdownContent, GitError> =
+        result {
+            let! file = loadWorkingTreeFile repoPath section oldPath newPath
+            let lines oldSide =
+                file.Hunks |> List.collect _.Lines
+                |> List.filter (fun line -> if oldSide then line.Type <> Added else line.Type <> Removed)
+                |> List.map _.Content |> String.concat "\n"
+            let oldSource, newSource = lines true, lines false
+            if Text.Encoding.UTF8.GetByteCount(oldSource) > 1024 * 1024 || Text.Encoding.UTF8.GetByteCount(newSource) > 1024 * 1024 then
+                return! Error(GitError.OperationFailed("Render Markdown", "Files over 1 MB stay in source view"))
+            let oldBlocks, newBlocks = Markdown.parse oldSource, Markdown.parse newSource
+            if oldBlocks.Length > 5000 || newBlocks.Length > 5000 then
+                return! Error(GitError.OperationFailed("Render Markdown", "Files over 5,000 blocks stay in source view"))
+            let oldDocumentPath = if oldPath = "/dev/null" then newPath else oldPath
+            let newDocumentPath = if newPath = "/dev/null" then oldPath else newPath
+            let loader side path = loadWorkingTreeSideFileBytes repoPath section (side = MarkdownImageSide.Old) path
+            let images = Markdown.imageRequests oldDocumentPath newDocumentPath oldSource newSource |> List.map (imageData allowRemote loader)
+            let diffRows = Markdown.renderDiff oldSource newSource |> Markdown.markChangedImages images
+            return { File = file; DiffRows = diffRows
+                     OldRows = Markdown.renderDocument oldSource; NewRows = Markdown.renderDocument newSource
+                     Images = images }
+        }
+
+    let loadCommitWholeFilePayload repoPath hash oldPath newPath allowRemote =
+        result {
+            let previewPath = if newPath = "/dev/null" then oldPath else newPath
+            match Markdown.previewKind previewPath with
+            | MarkdownPreview ->
+                let! rendered = loadCommitRenderedMarkdown repoPath hash oldPath newPath allowRemote
+                return { File = rendered.File; Rendered = Some rendered; ImageBytes = None }
+            | ImagePreview _ ->
+                let! file = loadWholeFile repoPath hash oldPath newPath
+                let! bytes = loadChangedFileBytes repoPath hash oldPath newPath
+                return { File = file; Rendered = None; ImageBytes = Some bytes }
+            | SourceOnly ->
+                let! file = loadWholeFile repoPath hash oldPath newPath
+                return { File = file; Rendered = None; ImageBytes = None }
+        }
+
+    let loadWorkingTreeWholeFilePayload repoPath section oldPath newPath allowRemote =
+        result {
+            let previewPath = if newPath = "/dev/null" then oldPath else newPath
+            match Markdown.previewKind previewPath with
+            | MarkdownPreview ->
+                let! rendered = loadWorkingTreeRenderedMarkdown repoPath section oldPath newPath allowRemote
+                return { File = rendered.File; Rendered = Some rendered; ImageBytes = None }
+            | ImagePreview _ ->
+                let! file = loadWorkingTreeFile repoPath section oldPath newPath
+                let path = if newPath = "/dev/null" then oldPath else newPath
+                let! bytes = loadWorkingTreeSideFileBytes repoPath section false path
+                return { File = file; Rendered = None; ImageBytes = Some bytes }
+            | SourceOnly ->
+                let! file = loadWorkingTreeFile repoPath section oldPath newPath
+                return { File = file; Rendered = None; ImageBytes = None }
         }
 
     /// Blobs above this size are skipped by diff text search: generated or vendored files cost seconds and rarely

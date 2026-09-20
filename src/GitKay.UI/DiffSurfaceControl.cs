@@ -10,6 +10,7 @@ using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Media;
 using Avalonia.Media.TextFormatting;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 
@@ -64,6 +65,16 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         }
 
         for (var i = 0; i < _rows.Length; i++) {
+            if (_rows[i] is RenderedMarkdownRowProjection rendered) {
+                var renderedKind = rendered.IsAdded ? OverviewMarkKind.Added : rendered.IsRemoved ? OverviewMarkKind.Removed : rendered.IsChanged ? OverviewMarkKind.Modified : (OverviewMarkKind?)null;
+                if (renderedKind != runKind || renderedKind == null) CloseRun(i);
+                if (renderedKind is { } renderedChanged && runStart < 0) { runStart = i; runKind = renderedChanged; }
+                var renderedTop = _tops[i] / total;
+                var renderedHeight = (_tops[i + 1] - _tops[i]) / total;
+                if (searchQuery.IsMatch(rendered.Text)) _overviewMarks.Add(new OverviewMark(renderedTop, renderedHeight, OverviewMarkKind.SearchMatch));
+                if (findQuery.IsMatch(rendered.Text)) _overviewMarks.Add(new OverviewMark(renderedTop, renderedHeight, OverviewMarkKind.FindMatch));
+                continue;
+            }
             if (_rows[i] is not DiffLineProjection line) {
                 CloseRun(i);
                 continue;
@@ -96,6 +107,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private const double FileChevronWidth = 32;
     private const int HeaderChevronAction = 100;
     private const int HeaderContextAction = 101;
+    private const int HeaderPreviewAction = 102;
     private const int MaxHighlightedLineLength = 240;
     private const int MaxLayoutCacheEntries = 2048;
 
@@ -103,6 +115,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     internal static int DiagRebuilds, DiagPrefetches, DiagCacheClears, DiagLayoutsBuilt, DiagHighlights, DiagRenders;
     internal static double DiagRenderMs, DiagRenderMaxMs, DiagPrefetchMs;
     private static readonly Typeface CodeTypeface = new(FontStacks.Mono);
+    private static readonly Typeface ProseTypeface = new(FontStacks.Ui);
+    private static readonly Typeface EmphasisTypeface = new(FontStacks.Ui, FontStyle.Italic, FontWeight.Normal);
+    private static readonly Typeface StrongTypeface = new(FontStacks.Ui, FontStyle.Normal, FontWeight.Bold);
     private static readonly IBrush SelectionBrush = new SolidColorBrush(Color.FromRgb(51, 51, 51)).ToImmutable();
     private static readonly IBrush FileBrush = new SolidColorBrush(Color.FromRgb(157, 167, 179)).ToImmutable();
     private static readonly IBrush HunkBrush = new SolidColorBrush(Color.FromRgb(136, 136, 136)).ToImmutable();
@@ -129,11 +144,18 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         AvaloniaProperty.Register<DiffSurfaceControl, ICommand?>(nameof(ToggleFileCommand));
     public static readonly StyledProperty<ICommand?> ToggleFileContextCommandProperty =
         AvaloniaProperty.Register<DiffSurfaceControl, ICommand?>(nameof(ToggleFileContextCommand));
+    public static readonly StyledProperty<IReadOnlyDictionary<string, Bitmap>?> RenderedImagesProperty =
+        AvaloniaProperty.Register<DiffSurfaceControl, IReadOnlyDictionary<string, Bitmap>?>(nameof(RenderedImages));
+    public static readonly StyledProperty<IReadOnlyDictionary<string, Bitmap>?> OldRenderedImagesProperty =
+        AvaloniaProperty.Register<DiffSurfaceControl, IReadOnlyDictionary<string, Bitmap>?>(nameof(OldRenderedImages));
+    public static readonly StyledProperty<bool> RenderedImagesLoadingProperty =
+        AvaloniaProperty.Register<DiffSurfaceControl, bool>(nameof(RenderedImagesLoading));
     public static readonly StyledProperty<ICommand?> ExpandGapCommandProperty =
         AvaloniaProperty.Register<DiffSurfaceControl, ICommand?>(nameof(ExpandGapCommand));
 
     private IDiffRowProjection[] _rows = Array.Empty<IDiffRowProjection>();
     private double[] _tops = [0];
+    private double _measurementWidth = 1000;
     private INotifyCollectionChanged? _collection;
     private ScrollViewer? _scrollViewer;
     private ViewportAnchor? _pendingAnchor;
@@ -153,8 +175,12 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private const double GapGutterWidth = 56;
     private bool _programmaticScroll;
     private readonly Dictionary<string, FormattedText> _plainLayouts = new(StringComparer.Ordinal);
+    private readonly List<RenderedLinkHit> _renderedLinks = new();
+    private readonly List<RenderedTextHit> _renderedTextHits = new();
 
     public event EventHandler<DiffFileMenuEventArgs>? FileContextRequested;
+    public event EventHandler<DiffFileProjection>? PreviewRequested;
+    public event EventHandler<string>? RenderedLinkRequested;
     /// <summary>Raised after text is copied, with the number of lines copied (0 for part of a line).</summary>
     public event EventHandler<int>? TextCopied;
     /// <summary>Lets the host put its own actions at the top of a line's right-click menu.</summary>
@@ -175,6 +201,10 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     public bool SearchHighlightUseRegex { get => GetValue(SearchHighlightUseRegexProperty); set => SetValue(SearchHighlightUseRegexProperty, value); }
     public ICommand? ToggleFileCommand { get => GetValue(ToggleFileCommandProperty); set => SetValue(ToggleFileCommandProperty, value); }
     public ICommand? ToggleFileContextCommand { get => GetValue(ToggleFileContextCommandProperty); set => SetValue(ToggleFileContextCommandProperty, value); }
+    /// Images for the current/new side. Kept as RenderedImages for whole-file binding compatibility.
+    public IReadOnlyDictionary<string, Bitmap>? RenderedImages { get => GetValue(RenderedImagesProperty); set => SetValue(RenderedImagesProperty, value); }
+    public IReadOnlyDictionary<string, Bitmap>? OldRenderedImages { get => GetValue(OldRenderedImagesProperty); set => SetValue(OldRenderedImagesProperty, value); }
+    public bool RenderedImagesLoading { get => GetValue(RenderedImagesLoadingProperty); set => SetValue(RenderedImagesLoadingProperty, value); }
     public ICommand? ExpandGapCommand { get => GetValue(ExpandGapCommandProperty); set => SetValue(ExpandGapCommandProperty, value); }
 
     static DiffSurfaceControl() {
@@ -187,6 +217,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         SearchHighlightQueryProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => { control.InvalidateVisual(); control.InvalidateOverview(); });
         SearchPathQueryProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => control.InvalidateVisual());
         SearchHighlightUseRegexProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => control.InvalidateVisual());
+        RenderedImagesProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => control.RebuildRows());
+        OldRenderedImagesProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => control.RebuildRows());
+        RenderedImagesLoadingProperty.Changed.AddClassHandler<DiffSurfaceControl>((control, _) => control.InvalidateVisual());
     }
 
     public DiffSurfaceControl() {
@@ -293,6 +326,36 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     public void RestoreScrollOffsetWhenReady(double offset) => _pendingScrollOffset = offset;
 
     public double CurrentScrollOffset => _scrollViewer?.Offset.Y ?? 0;
+
+    /// A semantic line anchor used while source rows are replaced by rendered blocks (or vice versa).
+    public readonly record struct MarkdownViewAnchor(int Line, double ViewportY, int? SelectedLine);
+
+    public MarkdownViewAnchor? CaptureMarkdownViewAnchor() {
+        if (_scrollViewer == null || _rows.Length == 0) return null;
+        var index = FindRow(_scrollViewer.Offset.Y);
+        int lineOf(IDiffRowProjection row) => row switch {
+            DiffLineProjection source => source.NewLineNo ?? source.OldLineNo ?? 1,
+            RenderedMarkdownRowProjection rendered => rendered.Located.FirstLine,
+            _ => 1,
+        };
+        while (index < _rows.Length && _rows[index] is not (DiffLineProjection or RenderedMarkdownRowProjection)) index++;
+        if (index >= _rows.Length) return null;
+        var selectedLine = SelectedItem is { } selected && selected is DiffLineProjection or RenderedMarkdownRowProjection ? lineOf(selected) : (int?)null;
+        return new MarkdownViewAnchor(lineOf(_rows[index]), _tops[index] - _scrollViewer.Offset.Y, selectedLine);
+    }
+
+    public void RestoreMarkdownViewAnchor(MarkdownViewAnchor? anchor) {
+        if (anchor is not { } value || _scrollViewer == null) return;
+        bool contains(IDiffRowProjection row, int line) => row switch {
+            DiffLineProjection source => (source.NewLineNo ?? source.OldLineNo) == line,
+            RenderedMarkdownRowProjection rendered => line >= rendered.Located.FirstLine && line <= rendered.Located.LastLine,
+            _ => false,
+        };
+        var index = Array.FindIndex(_rows, row => contains(row, value.Line));
+        if (index >= 0) SetOffsetWithoutScrolling(Math.Max(0, _tops[index] - value.ViewportY));
+        if (value.SelectedLine is { } selectedLine && Array.FindIndex(_rows, row => contains(row, selectedLine)) is var selectedIndex and >= 0)
+            SelectedItem = _rows[selectedIndex];
+    }
 
     private void ApplyPendingScrollOffset() {
         if (_pendingScrollOffset is not { } offset || _scrollViewer == null || !_rows.Any(row => row is DiffLineProjection)) return;
@@ -548,8 +611,15 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     private void OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) => RebuildRows();
 
-    protected override Size MeasureOverride(Size availableSize) =>
-        new(double.IsInfinity(availableSize.Width) ? 1000 : availableSize.Width, _tops[^1]);
+    protected override Size MeasureOverride(Size availableSize) {
+        var width = double.IsInfinity(availableSize.Width) ? 1000 : availableSize.Width;
+        if (Math.Abs(width - _measurementWidth) > .5) {
+            _measurementWidth = width;
+            ComputeTops();
+            InvalidateOverview();
+        }
+        return new Size(width, _tops[^1]);
+    }
 
     protected override Size ArrangeOverride(Size finalSize) {
         var size = base.ArrangeOverride(finalSize);
@@ -589,6 +659,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     }
 
     private void RenderCore(DrawingContext context) {
+        _renderedLinks.Clear();
+        _renderedTextHits.Clear();
         var offset = _scrollViewer?.Offset.Y ?? 0;
         var viewport = _scrollViewer?.Viewport.Height ?? Bounds.Height;
         // Hit testing follows what was drawn: paint a transparent backdrop so blank areas (context lines,
@@ -679,6 +751,13 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             case DiffLineProjection line:
                 DrawLine(context, line, y);
                 break;
+            case RenderedMarkdownRowProjection rendered:
+                DrawRenderedMarkdown(context, rendered, y);
+                break;
+            case RenderedMarkdownGapProjection gap:
+                context.FillRectangle(ThemeBrush("GitKayRaisedBrush", CodeBlockFallback), new Rect(12, y + 5, Math.Max(1, Bounds.Width - 24), GapHeight - 10));
+                DrawPlain(context, gap.Label, 24, y + 13, 11, ThemeBrush("GitKayMutedTextBrush", HunkBrush));
+                break;
             case DiffSectionHeaderProjection section:
                 DrawSectionHeader(context, section, y);
                 break;
@@ -712,10 +791,19 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     private Rect FileChevronRect(double y) => new(4, y + FileCardTop + 5, FileChevronWidth - 6, FileHeight - FileCardTop - 10);
 
-    private Rect FileContextRect(DiffFileHeaderProjection file, double y) {
+    private Rect FilePreviewRect(DiffFileHeaderProjection file, double y) {
         var pathWidth = Layout(file.DisplayPath, 12, FileBrush, false).Width;
         return new Rect(FileChevronWidth + 8 + pathWidth + 8, y + FileCardTop + 5, 26, FileHeight - FileCardTop - 10);
     }
+
+    private Rect FileContextRect(DiffFileHeaderProjection file, double y) {
+        var previewOffset = IsPreviewable(file.File) ? 30 : 0;
+        var rect = FilePreviewRect(file, y);
+        return new Rect(rect.X + previewOffset, rect.Y, rect.Width, rect.Height);
+    }
+
+    private static bool IsPreviewable(DiffFileProjection file) =>
+        !GitKay.Core.Markdown.previewKind(file.ContentPath).IsSourceOnly;
 
     private static bool HasContextToggle(DiffFileProjection file) =>
         file.IsLoaded && (file.HasHiddenContext || file.HasRevealedContext);
@@ -759,6 +847,13 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         ForEachMatch(file.DisplayPath, SearchPathQuery, SearchHighlightUseRegex, (start, length) =>
             DrawDottedUnderline(context, file.DisplayPath, start, length, FileChevronWidth + 8, centerY + path.Height / 2 - 1, pathUnderline, 12));
 
+        if (IsPreviewable(file)) {
+            var preview = FilePreviewRect(header, y);
+            if (IsHeaderPartActive(index, HeaderPreviewAction, out var previewPressed))
+                context.DrawRectangle(previewPressed ? ThemeBrush("GitKaySelectionBrush", SelectionBrush) : hover, null, preview, 4, 4);
+            DrawPreviewIcon(context, preview, file.IsRenderedMarkdown ? ThemeBrush("GitKayAccentBrush", FileBrush) : secondary);
+        }
+
         if (HasContextToggle(file)) {
             var toggle = FileContextRect(header, y);
             if (IsHeaderPartActive(index, HeaderContextAction, out var togglePressed))
@@ -774,9 +869,250 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         DrawDiffStat(context, file, card.Right - 12, centerY, blocksOnly: false);
     }
 
+    private void DrawRenderedMarkdown(DrawingContext context, RenderedMarkdownRowProjection row, double y) {
+        var accent = row.IsAdded ? ThemeBrush("GitKayAddedAccentBrush", Brushes.Green)
+            : row.IsRemoved ? ThemeBrush("GitKayRemovedAccentBrush", Brushes.Red)
+            : ThemeBrush("GitKayAccentBrush", FileBrush);
+        if (row.IsChanged) {
+            using (context.PushOpacity(.08)) context.FillRectangle(accent, new Rect(0, y, Bounds.Width, RowHeight(row)));
+            context.FillRectangle(accent, new Rect(8, y + 4, 3, Math.Max(1, RowHeight(row) - 8)));
+            if (row.IsMoved) DrawPlain(context, row.NewLocated != null ? "↳" : "↱", 13, y + 7, 11, accent);
+        }
+        if (row.Located.Block is GitKay.Core.MarkdownBlock.CodeBlock codeBlock) {
+            if (DiffLayout.IsSideBySide) {
+                var middle = Bounds.Width / 2;
+                context.FillRectangle(ThemeBrush("GitKayBorderBrush", HunkBrush), new Rect(middle, y, 1, RowHeight(row)));
+                if (row.OldLocated?.Block is GitKay.Core.MarkdownBlock.CodeBlock oldCode)
+                    DrawRenderedCodeBlock(context, oldCode, y, row, 18, Math.Max(40, middle - 30), true, false);
+                if (row.NewLocated?.Block is GitKay.Core.MarkdownBlock.CodeBlock newCode)
+                    DrawRenderedCodeBlock(context, newCode, y, row, middle + 12, Math.Max(40, middle - 26), false, false);
+            }
+            else DrawRenderedCodeBlock(context, codeBlock, y, row, 18, Math.Max(40, Bounds.Width - 32), false, true);
+            return;
+        }
+        if (row.Located.Block is GitKay.Core.MarkdownBlock.Table table) {
+            if (DiffLayout.IsSideBySide) {
+                var middle = Bounds.Width / 2;
+                context.FillRectangle(ThemeBrush("GitKayBorderBrush", HunkBrush), new Rect(middle, y, 1, RowHeight(row)));
+                if (row.OldLocated?.Block is GitKay.Core.MarkdownBlock.Table oldTable)
+                    DrawRenderedTable(context, oldTable, y, 22, Math.Max(80, middle - 34));
+                if (row.NewLocated?.Block is GitKay.Core.MarkdownBlock.Table newTable)
+                    DrawRenderedTable(context, newTable, y, middle + 14, Math.Max(80, middle - 28));
+            }
+            else DrawRenderedTable(context, table, y, 22, Math.Max(80, Bounds.Width - 44));
+            return;
+        }
+        if (TryImageInline(row, out var oldImageInline, out var newImageInline)) {
+            if (DiffLayout.IsSideBySide || row.Kind == GitKay.Core.MarkdownChangeKind.Modified && oldImageInline != null && newImageInline != null) {
+                var middle = Bounds.Width / 2;
+                context.FillRectangle(ThemeBrush("GitKayBorderBrush", HunkBrush), new Rect(middle, y, 1, RowHeight(row)));
+                DrawRenderedImage(context, oldImageInline, OldRenderedImages, 22, y + 8, Math.Max(80, middle - 44));
+                DrawRenderedImage(context, newImageInline, RenderedImages, middle + 14, y + 8, Math.Max(80, middle - 30));
+            }
+            else DrawRenderedImage(context, newImageInline ?? oldImageInline, newImageInline != null ? RenderedImages : OldRenderedImages, 22, y + 8, Math.Max(80, _measurementWidth - 44));
+            return;
+        }
+        var renderedSize = row.Located.Block is GitKay.Core.MarkdownBlock.Heading heading ? Math.Max(CodeFontSize + 1, CodeFontSize + 8 - heading.level) : CodeFontSize + 1;
+        var renderedText = row.Located.Block switch {
+            GitKay.Core.MarkdownBlock.ListItem item => (item.marker is GitKay.Core.MarkdownListMarker.Ordered ordered ? $"{ordered.Item}. " : "• ") + row.Text,
+            GitKay.Core.MarkdownBlock.Quote _ => "▍ " + row.Text,
+            _ => row.Text,
+        };
+        if (DiffLayout.IsSideBySide) {
+            var middle = Bounds.Width / 2;
+            context.FillRectangle(ThemeBrush("GitKayBorderBrush", HunkBrush), new Rect(middle, y, 1, RowHeight(row)));
+            if (row.Kind == GitKay.Core.MarkdownChangeKind.Modified && row.Words.Count > 0) {
+                DrawRenderedWords(context, row.Words.Where(span => span.Kind != GitKay.Core.MarkdownWordSpanKind.Inserted).ToArray(), 0, 22, y + 8, Math.Max(40, middle - 38));
+                DrawRenderedWords(context, row.Words.Where(span => span.Kind != GitKay.Core.MarkdownWordSpanKind.Deleted).ToArray(), 1, middle + 14, y + 8, Math.Max(40, middle - 30));
+            }
+            else {
+                DrawRenderedSpans(context, row.OldSpans, 0, 22, y + 8, Math.Max(40, middle - 38), row.IsRemoved ? accent : ThemeBrush("GitKayTextBrush", FileBrush), renderedSize);
+                DrawRenderedSpans(context, row.NewSpans, 1, middle + 14, y + 8, Math.Max(40, middle - 30), row.IsAdded ? accent : ThemeBrush("GitKayTextBrush", FileBrush), renderedSize);
+            }
+        }
+        else if (row.Kind == GitKay.Core.MarkdownChangeKind.Modified && row.Words.Count > 0) DrawRenderedWords(context, row.Words, 0, 22, y + 8, Math.Max(40, Bounds.Width - 38));
+        else if (row.NewSpans.Count > 0) DrawRenderedSpans(context, row.NewSpans, 0, 22, y + 8, Math.Max(40, Bounds.Width - 38), ThemeBrush("GitKayTextBrush", FileBrush), renderedSize);
+        else DrawRenderedText(context, renderedText, 22, y + 8, Math.Max(40, Bounds.Width - 38), ThemeBrush("GitKayTextBrush", FileBrush), renderedSize);
+    }
+
+    private void DrawRenderedCodeBlock(DrawingContext context, GitKay.Core.MarkdownBlock.CodeBlock block, double y, RenderedMarkdownRowProjection row, double x, double width, bool oldSide, bool unified) {
+        var bounds = new Rect(x, y + 5, width, RowHeight(row) - 10);
+        context.DrawRectangle(ThemeBrush("GitKayRaisedBrush", CodeBlockFallback), new Pen(ThemeBrush("GitKayBorderBrush", HunkBrush), .7), bounds, 5, 5);
+        using var clip = context.PushClip(bounds);
+        var lineY = y + 9;
+        if (row.CodeLines.Count > 0) {
+            foreach (var line in row.CodeLines) {
+                void DrawVersion(Microsoft.FSharp.Core.FSharpOption<string>? text, bool removed, bool added) {
+                    if (text == null) { if (!unified) lineY += LineHeight; return; }
+                    var tint = removed ? ThemeBrush("GitKayRemovedStrongBrush", Brushes.Transparent) : added ? ThemeBrush("GitKayAddedStrongBrush", Brushes.Transparent) : Brushes.Transparent;
+                    if (tint != Brushes.Transparent) context.FillRectangle(tint, new Rect(x, lineY - 2, width, LineHeight));
+                    if (line.Change == GitKay.Core.MarkdownChangeKind.Modified && line.Previous != null && line.Current != null) {
+                        var span = GitKay.Core.DiffText.changedSpan(line.Previous.Value, line.Current.Value);
+                        if (span.IsSome) DrawChangedSpan(context, text.Value, span.Value.Item1, removed ? span.Value.Item2 : span.Value.Item3, x + 10, lineY - 2, tint);
+                    }
+                    DrawCode(context, text.Value, x + 10, lineY, ThemeBrush("GitKayTextBrush", FileBrush), SyntaxFlavour.Code);
+                    lineY += LineHeight;
+                }
+                if (unified) {
+                    if (line.Change == GitKay.Core.MarkdownChangeKind.Modified) {
+                        DrawVersion(line.Previous, true, false);
+                        DrawVersion(line.Current, false, true);
+                    }
+                    else DrawVersion(line.Current ?? line.Previous, line.Change == GitKay.Core.MarkdownChangeKind.Removed, line.Change == GitKay.Core.MarkdownChangeKind.Added);
+                }
+                else DrawVersion(oldSide ? line.Previous : line.Current,
+                    line.Change == GitKay.Core.MarkdownChangeKind.Removed || oldSide && line.Change == GitKay.Core.MarkdownChangeKind.Modified,
+                    line.Change == GitKay.Core.MarkdownChangeKind.Added || !oldSide && line.Change == GitKay.Core.MarkdownChangeKind.Modified);
+            }
+        }
+        else foreach (var line in block.text.Replace("\r\n", "\n").Split('\n')) {
+            DrawCode(context, line, x + 10, lineY, ThemeBrush("GitKayTextBrush", FileBrush), SyntaxFlavour.Code);
+            lineY += LineHeight;
+        }
+    }
+
+    private void DrawRenderedTable(DrawingContext context, GitKay.Core.MarkdownBlock.Table table, double y, double left, double width) {
+        var rows = new List<IReadOnlyList<Microsoft.FSharp.Collections.FSharpList<GitKay.Core.MarkdownInline>>>();
+        var hasHeader = !table.header.IsEmpty;
+        if (hasHeader) rows.Add(table.header);
+        rows.AddRange(table.rows);
+        var columns = Math.Max(1, rows.Select(row => row.Count).DefaultIfEmpty(1).Max());
+        var cellWidth = width / columns;
+        var top = y + 7;
+        for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++) {
+            var layouts = new FormattedText?[columns];
+            var rowHeight = LineHeight;
+            for (var column = 0; column < columns; column++) {
+                if (column >= rows[rowIndex].Count) continue;
+                var text = string.Concat(rows[rowIndex][column].Select(GitKay.Core.Markdown.inlineText));
+                layouts[column] = new FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+                    rowIndex == 0 && hasHeader ? StrongTypeface : ProseTypeface, CodeFontSize + 1, ThemeBrush("GitKayTextBrush", FileBrush)) { MaxTextWidth = Math.Max(10, cellWidth - 10) };
+                rowHeight = Math.Max(rowHeight, layouts[column]!.Height + 4);
+            }
+            for (var column = 0; column < columns; column++) {
+                var rect = new Rect(left + column * cellWidth, top, cellWidth, rowHeight);
+                context.DrawRectangle(null, new Pen(ThemeBrush("GitKayBorderBrush", HunkBrush), .7), rect);
+                if (layouts[column] is not { } layout) continue;
+                var alignment = column < table.alignments.Length ? table.alignments[column] : GitKay.Core.MarkdownAlignment.Default;
+                var textX = alignment.IsRight ? rect.Right - 5 - layout.Width
+                    : alignment.IsCenter ? rect.X + (rect.Width - layout.Width) / 2 : rect.X + 5;
+                context.DrawText(layout, new Point(Math.Max(rect.X + 5, textX), rect.Y + 2));
+            }
+            top += rowHeight;
+        }
+    }
+
+    private static Typeface RenderedTypeface(GitKay.Core.MarkdownSpanStyle style) => style switch {
+        GitKay.Core.MarkdownSpanStyle.Emphasis => EmphasisTypeface,
+        GitKay.Core.MarkdownSpanStyle.Strong => StrongTypeface,
+        GitKay.Core.MarkdownSpanStyle.Code or GitKay.Core.MarkdownSpanStyle.Html => CodeTypeface,
+        _ => ProseTypeface,
+    };
+
+    private void DrawRenderedSpans(DrawingContext context, IReadOnlyList<GitKay.Core.RenderedMarkdownSpan> spans,
+        int side, double x, double y, double width, IBrush defaultBrush, double size) {
+        var currentX = x;
+        var currentY = y;
+        var lineHeight = Math.Round(size * 1.45);
+        var proseBaseline = new FormattedText("Ag", CultureInfo.CurrentCulture, FlowDirection.LeftToRight, ProseTypeface, size, defaultBrush).Baseline;
+        var logicalOffset = 0;
+        foreach (var span in spans) {
+            var typeface = RenderedTypeface(span.Style);
+            var brush = span.Style == GitKay.Core.MarkdownSpanStyle.Link ? ThemeBrush("GitKayAccentBrush", defaultBrush) : defaultBrush;
+            // Keep whitespace attached to its preceding word. This preserves authored spacing while allowing
+            // wrapping at word boundaries across differently styled spans.
+            foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(span.Text, @"[^\s]+[ \t]*|\r?\n|[ \t]+")) {
+                var value = match.Value;
+                if (value.Contains('\n')) { logicalOffset += value.Length; currentX = x; currentY += lineHeight; continue; }
+                var layout = new FormattedText(value, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, typeface, size, brush);
+                var spanWidth = layout.WidthIncludingTrailingWhitespace;
+                if (currentX > x && currentX + spanWidth > x + width) { currentX = x; currentY += lineHeight; }
+                var drawY = currentY + proseBaseline - layout.Baseline;
+                var textHit = new RenderedTextHit(_drawingRowIndex, side, new Rect(currentX, drawY, Math.Max(1, spanWidth), layout.Height), logicalOffset, value, typeface, size);
+                DrawRenderedSegmentSelection(context, textHit);
+                _renderedTextHits.Add(textHit);
+                context.DrawText(layout, new Point(currentX, drawY));
+                if (span.Style is GitKay.Core.MarkdownSpanStyle.Strikethrough)
+                    context.DrawLine(new Pen(brush, 1), new Point(currentX, drawY + layout.Height / 2), new Point(currentX + spanWidth, drawY + layout.Height / 2));
+                if (span.Style is GitKay.Core.MarkdownSpanStyle.Link) {
+                    context.DrawLine(new Pen(brush, 1), new Point(currentX, drawY + layout.Height), new Point(currentX + spanWidth, drawY + layout.Height));
+                    if (span.Target is { } target) _renderedLinks.Add(new RenderedLinkHit(new Rect(currentX, drawY, spanWidth, layout.Height + 2), target.Value));
+                }
+                currentX += spanWidth;
+                logicalOffset += value.Length;
+            }
+        }
+    }
+
+    private void DrawRenderedSegmentSelection(DrawingContext context, RenderedTextHit hit) {
+        if (_textSelection == null || hit.Side != _textSelection.Side || OrderedSelection() is not { } ordered) return;
+        var (start, end) = ordered;
+        if (hit.Row < start.Row || hit.Row > end.Row) return;
+        var selectionStart = hit.Row == start.Row ? start.Char : 0;
+        var selectionEnd = hit.Row == end.Row ? end.Char : int.MaxValue;
+        var from = Math.Clamp(selectionStart - hit.Start, 0, hit.Text.Length);
+        var to = Math.Clamp(selectionEnd - hit.Start, 0, hit.Text.Length);
+        if (to <= from) return;
+        double width(string value) => new FormattedText(value, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, hit.Typeface, hit.Size, Brushes.Transparent).WidthIncludingTrailingWhitespace;
+        var left = hit.Bounds.X + width(hit.Text[..from]);
+        var selectedWidth = width(hit.Text[from..to]);
+        context.FillRectangle(ThemeBrush("GitKayTextSelectionBrush", TextSelectionFallback), new Rect(left, hit.Bounds.Y, Math.Max(1, selectedWidth), hit.Bounds.Height));
+    }
+
+    private void DrawRenderedText(DrawingContext context, string text, double x, double y, double width, IBrush brush, double? size = null) {
+        if (string.IsNullOrEmpty(text)) return;
+        var layout = Layout(text, size ?? CodeFontSize + 1, brush, false);
+        layout.MaxTextWidth = width;
+        context.DrawText(layout, new Point(x, y));
+    }
+
+    private void DrawRenderedWords(DrawingContext context, IReadOnlyList<GitKay.Core.MarkdownWordSpan> words, int side, double x, double y, double width) {
+        var currentX = x;
+        var currentY = y;
+        var lineHeight = Math.Round((CodeFontSize + 1) * 1.45);
+        var proseBaseline = new FormattedText("Ag", CultureInfo.CurrentCulture, FlowDirection.LeftToRight, ProseTypeface, CodeFontSize + 1, ThemeBrush("GitKayTextBrush", FileBrush)).Baseline;
+        string? previous = null;
+        var logicalOffset = 0;
+        foreach (var span in words) {
+            var deleted = span.Kind == GitKay.Core.MarkdownWordSpanKind.Deleted;
+            var inserted = span.Kind == GitKay.Core.MarkdownWordSpanKind.Inserted;
+            var brush = deleted ? ThemeBrush("GitKayRemovedAccentBrush", Brushes.Red)
+                : inserted ? ThemeBrush("GitKayAddedAccentBrush", Brushes.Green)
+                : span.Style == GitKay.Core.MarkdownSpanStyle.Link ? ThemeBrush("GitKayAccentBrush", FileBrush)
+                : ThemeBrush("GitKayTextBrush", FileBrush);
+            var needsSpace = previous != null && char.IsLetterOrDigit(previous[^1]) && span.Text.Length > 0 && char.IsLetterOrDigit(span.Text[0]);
+            var value = (needsSpace ? " " : "") + span.Text;
+            var layout = new FormattedText(value, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+                RenderedTypeface(span.Style), CodeFontSize + 1, brush);
+            var itemWidth = layout.WidthIncludingTrailingWhitespace;
+            if (currentX > x && currentX + itemWidth > x + width) { currentX = x; currentY += lineHeight; }
+            var drawY = currentY + proseBaseline - layout.Baseline;
+            var textHit = new RenderedTextHit(_drawingRowIndex, side, new Rect(currentX, drawY, Math.Max(1, itemWidth), layout.Height), logicalOffset, value, RenderedTypeface(span.Style), CodeFontSize + 1);
+            DrawRenderedSegmentSelection(context, textHit);
+            _renderedTextHits.Add(textHit);
+            if (inserted || deleted) using (context.PushOpacity(.16)) context.FillRectangle(brush, new Rect(currentX, drawY, itemWidth, layout.Height));
+            context.DrawText(layout, new Point(currentX, drawY));
+            if (deleted || span.Style == GitKay.Core.MarkdownSpanStyle.Strikethrough)
+                context.DrawLine(new Pen(brush, 1), new Point(currentX, drawY + layout.Height / 2), new Point(currentX + itemWidth, drawY + layout.Height / 2));
+            if (span.Style == GitKay.Core.MarkdownSpanStyle.Link && span.Target is { } target)
+                _renderedLinks.Add(new RenderedLinkHit(new Rect(currentX, drawY, itemWidth, layout.Height + 2), target.Value));
+            currentX += itemWidth;
+            logicalOffset += value.Length;
+            previous = span.Text;
+        }
+    }
+
     private bool IsHeaderPartActive(int index, int action, out bool pressed) {
         pressed = _pressedGapAction.Row == index && _pressedGapAction.Action == action;
         return pressed || (_hoveredGapAction.Row == index && _hoveredGapAction.Action == action);
+    }
+
+    private static void DrawPreviewIcon(DrawingContext context, Rect bounds, IBrush brush) {
+        var pen = new Pen(brush, 1.2, lineCap: PenLineCap.Round);
+        var center = bounds.Center;
+        var geometry = StreamGeometry.Parse($"M {center.X - 8},{center.Y} C {center.X - 4},{center.Y - 6} {center.X + 4},{center.Y - 6} {center.X + 8},{center.Y} C {center.X + 4},{center.Y + 6} {center.X - 4},{center.Y + 6} {center.X - 8},{center.Y} Z");
+        context.DrawGeometry(null, pen, geometry);
+        context.DrawEllipse(brush, null, center, 2.2, 2.2);
     }
 
     /// <summary>Arrows pointing away from (expand) or toward (collapse) a dotted centre line.</summary>
@@ -916,6 +1252,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         var index = RowAt(position, out var headerTop);
         if ((uint)index < (uint)_rows.Length && _rows[index] is DiffFileHeaderProjection header) {
             if (FileChevronRect(headerTop).Contains(position)) return new GapActionHit(index, HeaderChevronAction);
+            if (IsPreviewable(header.File) && FilePreviewRect(header, headerTop).Contains(position))
+                return new GapActionHit(index, HeaderPreviewAction);
             if (HasContextToggle(header.File) && FileContextRect(header, headerTop).Contains(position))
                 return new GapActionHit(index, HeaderContextAction);
             return GapActionHit.None;
@@ -1084,6 +1422,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         context.FillRectangle(brush, new Rect(x + prefixWidth, y, changedWidth, LineHeight - 1));
     }
 
+    private static readonly IBrush CodeBlockFallback = new SolidColorBrush(Color.FromArgb(18, 110, 118, 129)).ToImmutable();
     private static readonly IBrush LineNumberFallback = new SolidColorBrush(Color.FromRgb(110, 118, 129)).ToImmutable();
 
     private void DrawLineNumber(DrawingContext context, string text, double x, double y, IBrush foreground) {
@@ -1194,9 +1533,137 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             DiffHunkHeaderProjection => HunkHeight,
             DiffGapProjection => GapHeight,
             DiffSectionHeaderProjection => SectionHeight,
+            RenderedMarkdownRowProjection rendered => RenderedHeight(rendered),
+            RenderedMarkdownGapProjection => GapHeight,
             _ => LineHeight
         };
         return _growProgress < 1 && _growingRows.Contains(row) ? height * EaseOut(_growProgress) : height;
+    }
+
+    private static GitKay.Core.MarkdownInline.Image? ImageInline(GitKay.Core.LocatedMarkdownBlock? located) {
+        if (located?.Block is not GitKay.Core.MarkdownBlock.Paragraph paragraph
+            || paragraph.Item is not { IsEmpty: false, Tail.IsEmpty: true }
+            || paragraph.Item.Head is not GitKay.Core.MarkdownInline.Image image) return null;
+        return image;
+    }
+
+    private static bool TryImageInline(RenderedMarkdownRowProjection row, out GitKay.Core.MarkdownInline.Image? oldImage, out GitKay.Core.MarkdownInline.Image? newImage) {
+        oldImage = ImageInline(row.OldLocated);
+        newImage = ImageInline(row.NewLocated);
+        return oldImage != null || newImage != null;
+    }
+
+    private void DrawRenderedImage(DrawingContext context, GitKay.Core.MarkdownInline.Image? markdownImage,
+        IReadOnlyDictionary<string, Bitmap>? images, double x, double y, double maxWidth) {
+        if (markdownImage == null) return;
+        if (markdownImage.source.EndsWith(".svg", StringComparison.OrdinalIgnoreCase)) {
+            var svgPlaceholder = new Rect(x, y, maxWidth, 54);
+            context.DrawRectangle(ThemeBrush("GitKayRaisedBrush", CodeBlockFallback), new Pen(ThemeBrush("GitKayBorderBrush", HunkBrush), .7), svgPlaceholder, 4, 4);
+            DrawPlain(context, "SVG image", x + 10, y + 8, 12, ThemeBrush("GitKaySecondaryTextBrush", FileBrush));
+            DrawPlain(context, string.IsNullOrWhiteSpace(markdownImage.alt) ? markdownImage.source : markdownImage.alt, x + 10, y + 28, 11, ThemeBrush("GitKayMutedTextBrush", HunkBrush));
+            return;
+        }
+        if (images?.TryGetValue(markdownImage.source, out var image) == true && image != null) {
+            var scale = Math.Min(1, maxWidth / Math.Max(1, image.Size.Width));
+            context.DrawImage(image, new Rect(image.Size), new Rect(x, y, image.Size.Width * scale, image.Size.Height * scale));
+            if (!string.IsNullOrWhiteSpace(markdownImage.title))
+                DrawPlain(context, markdownImage.title, x, y + image.Size.Height * scale + 4, 11, ThemeBrush("GitKayMutedTextBrush", HunkBrush));
+            return;
+        }
+        var remote = Uri.TryCreate(markdownImage.source, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+        var label = remote ? $"Load image from {uri!.Host}" : RenderedImagesLoading ? "Loading image…" : "Missing image";
+        var detail = string.IsNullOrWhiteSpace(markdownImage.alt) ? markdownImage.source : markdownImage.alt;
+        var placeholder = new Rect(x, y, maxWidth, 54);
+        context.DrawRectangle(ThemeBrush("GitKayRaisedBrush", CodeBlockFallback), new Pen(ThemeBrush("GitKayBorderBrush", HunkBrush), .7), placeholder, 4, 4);
+        if (remote) _renderedLinks.Add(new RenderedLinkHit(placeholder, "gitkay-load-image:" + markdownImage.source));
+        DrawPlain(context, label, x + 10, y + 8, 12, remote ? ThemeBrush("GitKayAccentBrush", FileBrush) : ThemeBrush("GitKaySecondaryTextBrush", FileBrush));
+        DrawPlain(context, detail, x + 10, y + 28, 11, ThemeBrush("GitKayMutedTextBrush", HunkBrush));
+    }
+
+    private double RenderedHeight(RenderedMarkdownRowProjection row) {
+        if (row.Located.Block is GitKay.Core.MarkdownBlock.CodeBlock code) {
+            var codeLineCount = row.CodeLines.Count > 0
+                ? DiffLayout.IsSideBySide ? row.CodeLines.Count : row.CodeLines.Sum(line => line.Change == GitKay.Core.MarkdownChangeKind.Modified ? 2 : 1)
+                : code.text.Replace("\r\n", "\n").Split('\n').Length;
+            return 18 + Math.Max(1, codeLineCount) * LineHeight;
+        }
+        if (row.Located.Block is GitKay.Core.MarkdownBlock.Table table) {
+            var tableWidth = Math.Max(80, (DiffLayout.IsSideBySide ? _measurementWidth / 2 : _measurementWidth) - 44);
+            var height = RenderedTableHeight(table, tableWidth);
+            if (row.OldLocated?.Block is GitKay.Core.MarkdownBlock.Table oldTable) height = Math.Max(height, RenderedTableHeight(oldTable, tableWidth));
+            if (row.NewLocated?.Block is GitKay.Core.MarkdownBlock.Table newTable) height = Math.Max(height, RenderedTableHeight(newTable, tableWidth));
+            return 14 + height;
+        }
+        if (TryImageInline(row, out var oldImageInline, out var newImageInline)) {
+            var splitImages = DiffLayout.IsSideBySide || row.Kind == GitKay.Core.MarkdownChangeKind.Modified && oldImageInline != null && newImageInline != null;
+            var widthForImage = Math.Max(80, (splitImages ? _measurementWidth / 2 : _measurementWidth) - 44);
+            double height(GitKay.Core.MarkdownInline.Image? inline, IReadOnlyDictionary<string, Bitmap>? images) {
+                if (inline == null) return 0;
+                if (images?.TryGetValue(inline.source, out var bitmap) != true || bitmap == null) return 54;
+                return bitmap.Size.Height * Math.Min(1, widthForImage / Math.Max(1, bitmap.Size.Width)) + (string.IsNullOrWhiteSpace(inline.title) ? 0 : 20);
+            }
+            return 16 + Math.Max(height(oldImageInline, OldRenderedImages), height(newImageInline, RenderedImages));
+        }
+        var width = Math.Max(80, (DiffLayout.IsSideBySide ? _measurementWidth / 2 : _measurementWidth) - 38);
+        var size = row.Located.Block is GitKay.Core.MarkdownBlock.Heading heading ? Math.Max(CodeFontSize + 1, CodeFontSize + 8 - heading.level) : CodeFontSize + 1;
+        var lines = !DiffLayout.IsSideBySide && row.Kind == GitKay.Core.MarkdownChangeKind.Modified && row.Words.Count > 0
+            ? RenderedWordLineCount(row.Words, width, size)
+            : DiffLayout.IsSideBySide
+                ? row.Kind == GitKay.Core.MarkdownChangeKind.Modified && row.Words.Count > 0
+                    ? Math.Max(RenderedWordLineCount(row.Words.Where(span => span.Kind != GitKay.Core.MarkdownWordSpanKind.Inserted).ToArray(), width, size),
+                        RenderedWordLineCount(row.Words.Where(span => span.Kind != GitKay.Core.MarkdownWordSpanKind.Deleted).ToArray(), width, size))
+                    : Math.Max(RenderedSpanLineCount(row.OldSpans, width, size), RenderedSpanLineCount(row.NewSpans, width, size))
+                : RenderedSpanLineCount(row.NewSpans.Count > 0 ? row.NewSpans : row.OldSpans, width, size);
+        return 16 + Math.Max(1, lines) * Math.Round(size * 1.45);
+    }
+
+    private double RenderedTableHeight(GitKay.Core.MarkdownBlock.Table table, double width) {
+        var rows = new List<IReadOnlyList<Microsoft.FSharp.Collections.FSharpList<GitKay.Core.MarkdownInline>>>();
+        if (!table.header.IsEmpty) rows.Add(table.header);
+        rows.AddRange(table.rows);
+        var columns = Math.Max(1, rows.Select(row => row.Count).DefaultIfEmpty(1).Max());
+        var cellWidth = width / columns;
+        var total = 0.0;
+        for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++) {
+            var rowHeight = LineHeight;
+            foreach (var cell in rows[rowIndex]) {
+                var text = string.Concat(cell.Select(GitKay.Core.Markdown.inlineText));
+                var layout = new FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+                    rowIndex == 0 ? StrongTypeface : ProseTypeface, CodeFontSize + 1, Brushes.Transparent) { MaxTextWidth = Math.Max(10, cellWidth - 10) };
+                rowHeight = Math.Max(rowHeight, layout.Height + 4);
+            }
+            total += rowHeight;
+        }
+        return total;
+    }
+
+    private static int RenderedWordLineCount(IReadOnlyList<GitKay.Core.MarkdownWordSpan> words, double width, double size) {
+        var lines = 1;
+        var x = 0.0;
+        foreach (var word in words) {
+            var layout = new FormattedText(word.Text + " ", CultureInfo.CurrentCulture, FlowDirection.LeftToRight, ProseTypeface, size, Brushes.Transparent);
+            var itemWidth = layout.WidthIncludingTrailingWhitespace;
+            if (x > 0 && x + itemWidth > width) { lines++; x = 0; }
+            x += itemWidth;
+        }
+        return lines;
+    }
+
+    private static int RenderedSpanLineCount(IReadOnlyList<GitKay.Core.RenderedMarkdownSpan> spans, double width, double size) {
+        var lines = 1;
+        var x = 0.0;
+        foreach (var span in spans) {
+            foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(span.Text, @"[^\s]+[ \t]*|\r?\n|[ \t]+")) {
+                var value = match.Value;
+                if (value.Contains('\n')) { lines++; x = 0; continue; }
+                var layout = new FormattedText(value, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+                    RenderedTypeface(span.Style), size, Brushes.Transparent);
+                var itemWidth = layout.WidthIncludingTrailingWhitespace;
+                if (x > 0 && x + itemWidth > width) { lines++; x = 0; }
+                x += itemWidth;
+            }
+        }
+        return lines;
     }
 
     private static double EaseOut(double t) => 1 - (1 - t) * (1 - t);
@@ -1204,6 +1671,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private readonly record struct ViewportAnchor(int? OldLineNo, int? NewLineNo, string Content, double ViewportOffset, IDiffRowProjection? Row = null);
     private sealed record ExpansionAnchor(GitKay.Core.DiffExpansion.DiffGap Gap, ViewportAnchor Anchor, long StartedAt);
     private readonly record struct GapCell(GitKay.Core.DiffExpansion.ExpandDirection Direction, Rect Bounds);
+    private readonly record struct RenderedLinkHit(Rect Bounds, string Target);
+    private readonly record struct RenderedTextHit(int Row, int Side, Rect Bounds, int Start, string Text, Typeface Typeface, double Size);
     private readonly record struct GapActionHit(int Row, int Action) {
         public static readonly GapActionHit None = new(-1, -1);
         public bool IsNone => Row < 0;
@@ -1233,18 +1702,25 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             if (headerChanged) InvalidateVisual();
         }
 
-        var hit = GapActionAt(e.GetPosition(this));
-        if (hit == _hoveredGapAction) return;
+        var point = e.GetPosition(this);
+        var hit = GapActionAt(point);
+        var renderedLink = _renderedLinks.FirstOrDefault(candidate => candidate.Bounds.Contains(point));
+        var overLink = !string.IsNullOrEmpty(renderedLink.Target);
+        ToolTip.SetTip(this, overLink ? (renderedLink.Target.StartsWith("gitkay-load-image:", StringComparison.Ordinal) ? renderedLink.Target[18..] : renderedLink.Target) : null);
+        if (hit == _hoveredGapAction && overLink == _hoveredRenderedLink) return;
         _hoveredGapAction = hit;
-        Cursor = hit.IsNone ? Cursor.Default : new Cursor(StandardCursorType.Hand);
+        _hoveredRenderedLink = overLink;
+        Cursor = !hit.IsNone || overLink ? new Cursor(StandardCursorType.Hand) : Cursor.Default;
         InvalidateVisual();
     }
 
     protected override void OnPointerExited(PointerEventArgs e) {
         base.OnPointerExited(e);
-        if (_hoveredGapAction.IsNone && _pressedGapAction.IsNone) return;
+        if (_hoveredGapAction.IsNone && _pressedGapAction.IsNone && !_hoveredRenderedLink) return;
         _hoveredGapAction = GapActionHit.None;
         _pressedGapAction = GapActionHit.None;
+        _hoveredRenderedLink = false;
+        ToolTip.SetTip(this, null);
         Cursor = Cursor.Default;
         InvalidateVisual();
     }
@@ -1286,7 +1762,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
                 SelectedItem = _rows[index];
             if ((uint)index < (uint)_rows.Length && _rows[index] is DiffFileHeaderProjection clickedHeader && e.ClickCount == 2)
                 ToggleFileAnchored(clickedHeader, ToggleFileCommand);
-            if ((uint)index < (uint)_rows.Length && _rows[index] is DiffLineProjection)
+            if ((uint)index < (uint)_rows.Length && _rows[index] is DiffLineProjection or RenderedMarkdownRowProjection)
                 BeginTextSelection(index, position, e.ClickCount, e.KeyModifiers.HasFlag(KeyModifiers.Shift), e.Pointer);
         }
         e.Handled = true;
@@ -1308,6 +1784,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
                 DiffHunkHeaderProjection => new GitKay.Core.DiffNavigation.Row(GitKay.Core.DiffNavigation.RowKind.HunkHeader, -1, -1),
                 DiffGapProjection => new GitKay.Core.DiffNavigation.Row(GitKay.Core.DiffNavigation.RowKind.CollapsedGap, -1, -1),
                 DiffLineProjection line => new GitKay.Core.DiffNavigation.Row(GitKay.Core.DiffNavigation.RowKind.Line, line.OldLineNo ?? -1, line.NewLineNo ?? -1),
+                RenderedMarkdownRowProjection rendered => new GitKay.Core.DiffNavigation.Row(GitKay.Core.DiffNavigation.RowKind.Line, rendered.Located.FirstLine, rendered.Located.FirstLine),
                 _ => new GitKay.Core.DiffNavigation.Row(GitKay.Core.DiffNavigation.RowKind.HunkHeader, -1, -1),
             }).ToArray();
             _navigationRowsFor = _rows;
@@ -1318,16 +1795,48 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private GitKay.Core.DiffNavigation.Row[] _navigationRows = [];
     private IDiffRowProjection[]? _navigationRowsFor;
 
+    private static string RenderedWordsText(IEnumerable<GitKay.Core.MarkdownWordSpan> words) {
+        var output = new System.Text.StringBuilder();
+        string? previous = null;
+        foreach (var span in words) {
+            if (previous != null && char.IsLetterOrDigit(previous[^1]) && span.Text.Length > 0 && char.IsLetterOrDigit(span.Text[0])) output.Append(' ');
+            output.Append(span.Text);
+            previous = span.Text;
+        }
+        return output.ToString();
+    }
+
+    private string RenderedRowText(RenderedMarkdownRowProjection rendered, int side) {
+        if (rendered.Kind == GitKay.Core.MarkdownChangeKind.Modified && rendered.Words.Count > 0) {
+            var words = DiffLayout.IsSideBySide
+                ? side == 0 ? rendered.Words.Where(span => span.Kind != GitKay.Core.MarkdownWordSpanKind.Inserted)
+                    : rendered.Words.Where(span => span.Kind != GitKay.Core.MarkdownWordSpanKind.Deleted)
+                : rendered.Words;
+            return RenderedWordsText(words);
+        }
+        var spans = DiffLayout.IsSideBySide
+            ? side == 0 ? rendered.OldSpans : rendered.NewSpans
+            : rendered.NewSpans.Count > 0 ? rendered.NewSpans : rendered.OldSpans;
+        return string.Concat(spans.Select(span => span.Text));
+    }
+
     /// <summary>A row's text on a selection side, or null for rows that aren't lines.</summary>
+    private string? RowText(int row, int side) => _rows[row] switch {
+        DiffLineProjection line => TextFor(line, side),
+        RenderedMarkdownRowProjection rendered => RenderedRowText(rendered, side),
+        _ => null,
+    };
+
     private Microsoft.FSharp.Core.FSharpFunc<int, string> TextAt(int side) =>
-        Microsoft.FSharp.Core.FuncConvert.FromFunc<int, string>(row => _rows[row] is DiffLineProjection line ? TextFor(line, side) : null!);
+        Microsoft.FSharp.Core.FuncConvert.FromFunc<int, string>(row => RowText(row, side)!);
 
     private Microsoft.FSharp.Core.FSharpFunc<int, int> LengthAt(int side) =>
-        Microsoft.FSharp.Core.FuncConvert.FromFunc<int, int>(row => _rows[row] is DiffLineProjection line ? TextFor(line, side).Length : 0);
+        Microsoft.FSharp.Core.FuncConvert.FromFunc<int, int>(row => RowText(row, side)?.Length ?? 0);
     private sealed record TextSelection(TextPosition Anchor, TextPosition Active, int Side);
 
     private TextSelection? _textSelection;
     private bool _selectingText;
+    private bool _hoveredRenderedLink;
     private int _drawingRowIndex = -1;
     private object? _lastItemsSource;
 
@@ -1338,6 +1847,10 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     }
 
     internal int RowIndexAt(double documentY) => FindRow(documentY);
+    internal (int Row, int Character) TextPositionAtForTest(Point point, int side = 0) {
+        var position = PositionAt(point, side);
+        return (position.Row, position.Char);
+    }
 
     internal string RowKindAt(double documentY) {
         var index = FindRow(documentY);
@@ -1426,6 +1939,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     /// <summary>Scrolls horizontally just enough to show the caret.</summary>
     private void EnsureCaretVisible() {
+        if (SelectedItem is RenderedMarkdownRowProjection) { InvalidateVisual(); return; }
         if (SelectedItem is not DiffLineProjection line) return;
         var side = CaretSide(line);
         var text = TextFor(line, side);
@@ -1459,16 +1973,41 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         return low;
     }
 
+    private int RenderedCharIndexAt(RenderedTextHit hit, double x) {
+        if (x <= hit.Bounds.X) return hit.Start;
+        if (x >= hit.Bounds.Right) return hit.Start + hit.Text.Length;
+        var target = x - hit.Bounds.X;
+        var low = 0;
+        var high = hit.Text.Length;
+        double width(int length) => length == 0 ? 0 : new FormattedText(hit.Text[..length], CultureInfo.CurrentCulture, FlowDirection.LeftToRight, hit.Typeface, hit.Size, Brushes.Transparent).WidthIncludingTrailingWhitespace;
+        while (low < high) {
+            var mid = (low + high + 1) / 2;
+            if (width(mid) <= target) low = mid; else high = mid - 1;
+        }
+        if (low < hit.Text.Length && target - width(low) > width(low + 1) - target) low++;
+        return hit.Start + low;
+    }
+
     private TextPosition PositionAt(Point point, int side) {
         var index = Math.Clamp(FindRow(point.Y), 0, Math.Max(0, _rows.Length - 1));
-        // Header, hunk and gap rows aren't selectable text: snap to the nearest line in the drag direction.
+        if (_rows[index] is RenderedMarkdownRowProjection) {
+            var hits = _renderedTextHits.Where(hit => hit.Row == index && hit.Side == side).ToArray();
+            if (hits.Length == 0) return new TextPosition(index, 0);
+            var visualLine = hits.GroupBy(hit => hit.Bounds.Y)
+                .OrderBy(group => Math.Abs(point.Y - (group.Key + group.Max(hit => hit.Bounds.Height) / 2)))
+                .First().OrderBy(hit => hit.Bounds.X).ToArray();
+            var hit = visualLine.FirstOrDefault(candidate => point.X <= candidate.Bounds.Right);
+            if (hit.Text == null) hit = visualLine[^1];
+            return new TextPosition(index, RenderedCharIndexAt(hit, point.X));
+        }
+        // Header, hunk and gap rows aren't selectable text: snap to the nearest textual row in the drag direction.
         if (_rows[index] is not DiffLineProjection) {
             var anchorRow = _textSelection?.Anchor.Row ?? index;
             var step = index >= anchorRow ? -1 : 1;
-            while (index >= 0 && index < _rows.Length && _rows[index] is not DiffLineProjection) index += step;
+            while (index >= 0 && index < _rows.Length && _rows[index] is not (DiffLineProjection or RenderedMarkdownRowProjection)) index += step;
             index = Math.Clamp(index, 0, _rows.Length - 1);
-            if (_rows[index] is not DiffLineProjection line0) return new TextPosition(index, 0);
-            return new TextPosition(index, step < 0 ? TextFor(line0, side).Length : 0);
+            var snapped = RowText(index, side);
+            return new TextPosition(index, step < 0 ? snapped?.Length ?? 0 : 0);
         }
 
         var line = (DiffLineProjection)_rows[index];
@@ -1481,7 +2020,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         var position = PositionAt(point, side);
         _caretSide = side;
         _caretChar = position.Char;
-        var text = TextFor((DiffLineProjection)_rows[index], side);
+        var text = RowText(index, side) ?? "";
 
         if (clickCount >= 3) {
             _textSelection = new TextSelection(new TextPosition(index, 0), new TextPosition(index, text.Length), side);
@@ -1551,7 +2090,11 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         if (OrderedSelection() is var (start, end) && _textSelection != null)
             return GitKay.Core.DiffNavigation.selectedText(ToCore(start), ToCore(end), TextAt(_textSelection.Side));
 
-        return SelectedItem is DiffLineProjection selected ? LineText(selected) : null;
+        return SelectedItem switch {
+            DiffLineProjection selected => LineText(selected),
+            RenderedMarkdownRowProjection rendered => rendered.Source,
+            _ => null,
+        };
     }
 
     private string LineText(DiffLineProjection line) =>
@@ -1582,7 +2125,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     public bool IsVisualMode => _visualAnchorRow >= 0;
 
-    private int SelectedLineIndex => SelectedItem is DiffLineProjection && Array.IndexOf(_rows, SelectedItem) is var index and >= 0 ? index : -1;
+    private int SelectedLineIndex => SelectedItem is DiffLineProjection or RenderedMarkdownRowProjection && Array.IndexOf(_rows, SelectedItem) is var index and >= 0 ? index : -1;
 
     /// <summary>The caret's column: side-by-side starts on the new side, and an empty side (an added or removed line) yields to the other.</summary>
     private int CaretSide(DiffLineProjection line) {
@@ -1623,11 +2166,11 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
         var index = SelectedItem == null ? -1 : Array.IndexOf(_rows, SelectedItem);
         if (index < 0 && _scrollViewer != null) index = FindRow(_scrollViewer.Offset.Y);
-        while (index >= 0 && index < _rows.Length && _rows[index] is not DiffLineProjection) index++;
-        if (index < 0 || index >= _rows.Length || _rows[index] is not DiffLineProjection line) return;
-        SelectedItem = line;
-        _caretSide = CaretSide(line);
-        _caretChar = Math.Min(_caretChar, TextFor(line, _caretSide).Length);
+        while (index >= 0 && index < _rows.Length && _rows[index] is not (DiffLineProjection or RenderedMarkdownRowProjection)) index++;
+        if (index < 0 || index >= _rows.Length) return;
+        SelectedItem = _rows[index];
+        _caretSide = _rows[index] is DiffLineProjection line ? CaretSide(line) : 0;
+        _caretChar = Math.Min(_caretChar, RowText(index, _caretSide)?.Length ?? 0);
         _visualAnchorRow = index;
         _visualAnchorChar = _caretChar;
         _visualLinewise = linewise;
@@ -1635,8 +2178,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     }
 
     private void UpdateVisualSelection(int activeRow) {
-        if (_visualAnchorRow < 0 || _visualAnchorRow >= _rows.Length || _rows[_visualAnchorRow] is not DiffLineProjection anchorLine) return;
-        var side = CaretSide(anchorLine);
+        if (_visualAnchorRow < 0 || _visualAnchorRow >= _rows.Length || _rows[_visualAnchorRow] is not (DiffLineProjection or RenderedMarkdownRowProjection)) return;
+        var side = _rows[_visualAnchorRow] is DiffLineProjection anchorLine ? CaretSide(anchorLine) : _caretSide < 0 ? 0 : _caretSide;
         if (_visualLinewise) {
             if (GitKay.Core.DiffNavigation.linewise(NavigationRows, _visualAnchorRow, activeRow, LengthAt(side)) is not { IsSome: true } lines) return;
             var (first, last) = lines.Value;
@@ -1717,11 +2260,13 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     GitKay.Core.Vim.VimPane GitKay.Core.Vim.IVimHost.Pane => GitKay.Core.Vim.VimPane.Diff;
 
+    private int EffectiveSide(int row) => _rows[row] is DiffLineProjection line ? CaretSide(line) : _caretSide < 0 ? 0 : _caretSide;
+
     string GitKay.Core.Vim.IVimHost.LineText =>
-        SelectedLineIndex is var row && row >= 0 && _rows[row] is DiffLineProjection line ? TextFor(line, CaretSide(line)) : null!;
+        SelectedLineIndex is var row && row >= 0 ? RowText(row, EffectiveSide(row))! : null!;
 
     int GitKay.Core.Vim.IVimHost.Caret =>
-        SelectedItem is DiffLineProjection line ? Math.Min(_caretChar, TextFor(line, CaretSide(line)).Length) : 0;
+        SelectedLineIndex is var row && row >= 0 ? Math.Min(_caretChar, RowText(row, EffectiveSide(row))?.Length ?? 0) : 0;
 
     string GitKay.Core.Vim.IVimHost.OtherSideText {
         get {
@@ -1738,7 +2283,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     int GitKay.Core.Vim.IVimHost.HalfPageRows => Math.Max(1, ViewportRowCount / 2);
 
     void GitKay.Core.Vim.IVimHost.SetCaret(int column) {
-        if (SelectedLineIndex is var row && row >= 0 && _rows[row] is DiffLineProjection line) PlaceCaret(row, CaretSide(line), column);
+        if (SelectedLineIndex is var row && row >= 0) PlaceCaret(row, _rows[row] is DiffLineProjection line ? CaretSide(line) : 0, column);
     }
 
     void GitKay.Core.Vim.IVimHost.SwitchSide(int column) {
@@ -1811,9 +2356,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     void GitKay.Core.Vim.IVimHost.CopySelection() => CopySelection();
 
     void GitKay.Core.Vim.IVimHost.CopyRange(int from, int until, bool wholeLine) {
-        if (SelectedLineIndex is not (var row and >= 0) || _rows[row] is not DiffLineProjection line) return;
-        var side = CaretSide(line);
-        var text = TextFor(line, side);
+        if (SelectedLineIndex is not (var row and >= 0)) return;
+        var side = _rows[row] is DiffLineProjection line ? CaretSide(line) : 0;
+        var text = RowText(row, side) ?? "";
         from = Math.Clamp(from, 0, text.Length);
         until = Math.Clamp(until, from, text.Length);
         CopyText(text[from..until]);
@@ -1931,6 +2476,11 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
                 e.Handled = true;
                 return;
             }
+
+            if (e.Key == Key.Enter && index >= 0 && _rows[index] is RenderedMarkdownRowProjection rendered) {
+                var target = rendered.NewSpans.Concat(rendered.OldSpans).FirstOrDefault(span => span.Style == GitKay.Core.MarkdownSpanStyle.Link)?.Target;
+                if (target is { } link) { RenderedLinkRequested?.Invoke(this, link.Value); e.Handled = true; return; }
+            }
         }
 
         base.OnKeyDown(e);
@@ -1968,11 +2518,16 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e) {
         base.OnPointerReleased(e);
+        if (e.InitialPressMouseButton == MouseButton.Left) {
+            var point = e.GetPosition(this);
+            var link = _renderedLinks.FirstOrDefault(candidate => candidate.Bounds.Contains(point));
+            if (!string.IsNullOrEmpty(link.Target)) { RenderedLinkRequested?.Invoke(this, link.Target); e.Handled = true; return; }
+        }
         if (_selectingText) {
             _selectingText = false;
             e.Pointer.Capture(null);
             // The caret follows the end of a drag, so keyboard selection continues from there.
-            if (_textSelection is { } dragged && (uint)dragged.Active.Row < (uint)_rows.Length && _rows[dragged.Active.Row] is DiffLineProjection) {
+            if (_textSelection is { } dragged && (uint)dragged.Active.Row < (uint)_rows.Length && _rows[dragged.Active.Row] is DiffLineProjection or RenderedMarkdownRowProjection) {
                 SelectedItem = _rows[dragged.Active.Row];
                 _caretChar = dragged.Active.Char;
                 InvalidateVisual();
@@ -1989,7 +2544,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         // Only a release inside the same bounded control activates it.
         if (GapActionAt(e.GetPosition(this)) != pressed) return;
         if (_rows[pressed.Row] is DiffFileHeaderProjection header) {
-            ToggleFileAnchored(header, pressed.Action == HeaderChevronAction ? ToggleFileCommand : ToggleFileContextCommand);
+            if (pressed.Action == HeaderPreviewAction) PreviewRequested?.Invoke(this, header.File);
+            else ToggleFileAnchored(header, pressed.Action == HeaderChevronAction ? ToggleFileCommand : ToggleFileContextCommand);
             e.Handled = true;
             return;
         }
@@ -2008,9 +2564,24 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     public int ViewportRowCount => _scrollViewer == null ? 20 : Math.Max(1, (int)(_scrollViewer.Viewport.Height / LineHeight));
 
     /// <summary>Selects the next or previous hunk (or gap) boundary, like vim's ]c / [c.</summary>
+    public bool MoveToHeading(string target) {
+        var wanted = target.TrimStart('#');
+        for (var i = 0; i < _rows.Length; i++)
+            if (_rows[i] is RenderedMarkdownRowProjection { Located.Block: GitKay.Core.MarkdownBlock.Heading heading }
+                && string.Equals(GitKay.Core.Markdown.headingSlug(string.Concat(heading.Item2.Select(GitKay.Core.Markdown.inlineText))), wanted, StringComparison.OrdinalIgnoreCase)) {
+                SelectedItem = _rows[i]; ScrollIntoView(_rows[i]); return true;
+            }
+        return false;
+    }
+
     public void MoveToHunk(int direction) {
         if (_rows.Length == 0) return;
         var focus = SelectedItem == null ? -1 : Array.IndexOf(_rows, SelectedItem);
+        // Rendered Markdown uses changed blocks as hunk boundaries.
+        var rendered = direction > 0
+            ? Enumerable.Range(Math.Max(0, focus + 1), Math.Max(0, _rows.Length - Math.Max(0, focus + 1))).FirstOrDefault(i => _rows[i] is RenderedMarkdownRowProjection { IsChanged: true }, -1)
+            : Enumerable.Range(0, Math.Max(0, focus)).Reverse().FirstOrDefault(i => _rows[i] is RenderedMarkdownRowProjection { IsChanged: true }, -1);
+        if (rendered >= 0) { SelectedItem = _rows[rendered]; ScrollIntoView(_rows[rendered]); return; }
         // The first line of the hunk, so the change itself is in view.
         var index = GitKay.Core.DiffNavigation.hunkTarget(NavigationRows, focus, direction > 0);
         if (index < 0) return;

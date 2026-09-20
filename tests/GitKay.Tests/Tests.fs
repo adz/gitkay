@@ -1097,6 +1097,61 @@ summary Another line
             | Ok () -> failwith "the hook should have stopped the commit"
             | Error error -> test <@ (GitError.describe error).Contains "lint failed: tabs" @>)
 
+    [<Fact>]
+    let ``untracked markdown file can load a rendered working-tree preview`` () =
+        withTempRepository (fun root repo ->
+            commitFile repo root "seed.txt" "seed\n" "seed" |> ignore
+            writeFile root "README.md" "# Untracked\n\nPreview me.\n"
+            let rendered = GitService.loadWorkingTreeRenderedMarkdown root WorkingTree.Untracked "/dev/null" "README.md" false
+            match rendered with
+            | Error error -> failwith (GitError.describe error)
+            | Ok content ->
+                test <@ content.OldRows.IsEmpty @>
+                test <@ content.NewRows |> List.exists (fun row -> row.CurrentText = "Untracked") @>)
+
+    [<Fact>]
+    let ``root commit markdown file can load a rendered preview`` () =
+        withTempRepository (fun root repo ->
+            let added = commitFile repo root "README.md" "# Root\n\nPreview me.\n" "initial docs"
+            let rendered = GitService.loadCommitRenderedMarkdown root added.Sha "/dev/null" "README.md" false
+            match rendered with
+            | Error error -> failwith (GitError.describe error)
+            | Ok content -> test <@ content.NewRows |> List.exists (fun row -> row.CurrentText = "Root") @>)
+
+    [<Fact>]
+    let ``added markdown file can load a rendered commit preview`` () =
+        withTempRepository (fun root repo ->
+            commitFile repo root "seed.txt" "seed\n" "seed" |> ignore
+            let added = commitFile repo root "README.md" "# Added\n\nPreview me.\n" "add docs"
+            let payload = GitService.loadCommitWholeFilePayload root added.Sha "/dev/null" "README.md" false
+            match payload with
+            | Error error -> failwith (GitError.describe error)
+            | Ok payload ->
+                test <@ payload.Rendered.IsSome @>
+                let content = payload.Rendered.Value
+                test <@ content.OldRows.IsEmpty @>
+                test <@ content.NewRows |> List.exists (fun row -> row.CurrentText = "Added") @>
+                test <@ content.DiffRows |> List.forall (fun row -> row.Change = MarkdownChangeKind.Added) @>)
+
+    [<Fact>]
+    let ``arbitrary revision markdown uses the selected base and target blobs`` () =
+        withTempRepository (fun root repo ->
+            let first = commitFile repo root "README.md" "# Base\n\nold text\n" "base"
+            writeFile root "image.png" "old-image"
+            Commands.Stage(repo, "image.png")
+            let signature = Signature("GitKay Tests", "gitkay@example.com", DateTimeOffset(2024, 1, 2, 0, 0, 0, TimeSpan.Zero))
+            repo.Commit("base image", signature, signature) |> ignore
+            writeFile root "README.md" "# Target\n\nnew text\n"
+            File.WriteAllText(Path.Combine(root, "image.png"), "new-image")
+            Commands.Stage(repo, "README.md")
+            Commands.Stage(repo, "image.png")
+            let target = repo.Commit("target", signature, signature)
+            let comparison : GitService.RevisionComparison =
+                { BaseRevision = first.Sha; TargetRevision = target.Sha; BaseHash = first.Sha; TargetHash = target.Sha }
+            let rendered = GitService.loadRevisionRenderedMarkdown root comparison "README.md" "README.md" false |> Result.defaultWith (GitError.describe >> failwith)
+            test <@ rendered.OldRows |> List.exists (fun row -> row.PreviousText = "Base") @>
+            test <@ rendered.NewRows |> List.exists (fun row -> row.CurrentText = "Target") @>)
+
 module AppTests =
 
     let private sampleCommit hash subject : Models.Commit =
@@ -1366,6 +1421,8 @@ module AppTests =
             SelectedDiff = None
             SelectedDiffFileKey = None
             DiffExpansions = Map.empty
+            RenderedMarkdown = None
+            WholeFile = None
             SelectionStartedAtTicks = None
             SelectedDiffStartedAtTicks = None
             SearchStartedAtTicks = None
@@ -2648,6 +2705,42 @@ module AppTests =
         test <@ current.SelectedDiff = Some loadedDiff @>
         test <@ current.SelectedDiffStartedAtTicks = None @>
 
+    [<Fact>]
+    let ``rendered markdown rejects stale results and applies only the current request`` () =
+        let key : GitService.DiffFileKey = { OldPath = "README.md"; NewPath = "README.md" }
+        let pending, _ = App.update (App.Msg.SetRenderedMarkdown(key, "", true, false, 20L)) emptyModel
+        let file : Models.FileDiff = { OldPath = key.OldPath; NewPath = key.NewPath; Hunks = []; NewLineCount = None }
+        let content : RenderedMarkdownContent = { File = file; DiffRows = []; OldRows = []; NewRows = []; Images = [] }
+        let stale, _ = App.update (App.Msg.RenderedMarkdownLoaded(key, "", 19L, Ok content)) pending
+        let current, _ = App.update (App.Msg.RenderedMarkdownLoaded(key, "", 20L, Ok content)) stale
+        test <@ stale.RenderedMarkdown.Value.Content = None @>
+        test <@ current.RenderedMarkdown.Value.Content = Some content @>
+
+    [<Fact>]
+    let ``remote image completion updates active diff and whole-file payloads`` () =
+        let key : GitService.DiffFileKey = { OldPath = "README.md"; NewPath = "README.md" }
+        let file : Models.FileDiff = { OldPath = key.OldPath; NewPath = key.NewPath; Hunks = []; NewLineCount = None }
+        let blocked = { Side = MarkdownImageSide.New; Source = "https://example.test/image.png"; Bytes = None; Error = Some "Remote image blocked" }
+        let content : RenderedMarkdownContent = { File = file; DiffRows = []; OldRows = []; NewRows = []; Images = [ blocked ] }
+        let payload : GitService.WholeFilePayload = { File = file; Rendered = Some content; ImageBytes = None }
+        let initial =
+            { emptyModel with
+                RenderedMarkdown = Some { Key = key; Section = ""; RequestId = 1L; Content = Some content }
+                WholeFile = Some { Key = key; Section = ""; RequestId = 2L; Preview = true; Payload = Some payload } }
+        let updated, _ = App.update (App.Msg.RemoteMarkdownImageLoaded(blocked.Source, Ok [| 1uy; 2uy |])) initial
+        test <@ updated.RenderedMarkdown.Value.Content.Value.Images.Head.Bytes = Some [| 1uy; 2uy |] @>
+        test <@ updated.WholeFile.Value.Payload.Value.Rendered.Value.Images.Head.Error = None @>
+
+    [<Fact>]
+    let ``whole file payload rejects completion after dismissal`` () =
+        let key : GitService.DiffFileKey = { OldPath = "README.md"; NewPath = "README.md" }
+        let pending, _ = App.update (App.Msg.OpenWholeFile(key, "", true, false, 30L)) emptyModel
+        let dismissed, _ = App.update (App.Msg.DismissWholeFile 30L) pending
+        let file : Models.FileDiff = { OldPath = key.OldPath; NewPath = key.NewPath; Hunks = []; NewLineCount = None }
+        let payload : GitService.WholeFilePayload = { File = file; Rendered = None; ImageBytes = None }
+        let stale, _ = App.update (App.Msg.WholeFileLoaded(key, "", 30L, Ok payload)) dismissed
+        test <@ stale.WholeFile = None @>
+
 
 module DiffExpansionTests =
 
@@ -3812,6 +3905,17 @@ module CliTests =
             let added = GitService.loadWholeFile root second.Sha "/dev/null" "b.txt" |> unwrap
             test <@ added.Hunks |> List.collect _.Lines |> List.map _.Type = [ Models.Added ] @>
             test <@ GitService.workingDirectory root = Path.TrimEndingDirectorySeparator(Path.GetFullPath root) @>
+
+            // Embedded assets are revision-correct on both sides of a rendered diff.
+            let writeImage value =
+                File.WriteAllBytes(Path.Combine(root, "image.png"), [| value |])
+                Commands.Stage(repo, "image.png")
+                repo.Commit($"image {value}", signature, signature)
+            let imageOld = writeImage 1uy
+            let imageNew = writeImage 2uy
+            let oldBytes = GitService.loadCommitSideFileBytes root imageNew.Sha true "image.png" |> unwrap
+            let newBytes = GitService.loadCommitSideFileBytes root imageNew.Sha false "image.png" |> unwrap
+            test <@ imageOld.Sha <> imageNew.Sha && oldBytes = [| 1uy |] && newBytes = [| 2uy |] @>
         finally
             try Directory.Delete(root, true) with _ -> ()
 
@@ -3851,7 +3955,8 @@ module SettingsSerializationTests =
         let settings =
             { ShowBranchRefs = true; ShowStashes = true; DiffContextLines = 7; DiffLayout = DiffLayout.SideBySide
               CommitRowFontFamily = "Inter"; CommitRowMonoFontFamily = "Iosevka"; CommitRowTextFontSize = 14.5
-              CommitRowMetaFontSize = 12.0; CommitRowBadgeFontSize = 10.0; SearchDebounceSeconds = 0.25; Theme = DarkTheme
+              CommitRowMetaFontSize = 12.0; CommitRowBadgeFontSize = 10.0; SearchDebounceSeconds = 0.25
+              RenderMarkdownByDefault = true; LoadRemoteMarkdownImages = true; Theme = DarkTheme
               PaneGap = 5.0; HoverFocusesPane = false; PaneDimUnfocused = false; PaneFocusHighlight = true
               PaneFocusEffect = PaneShadow; PaneEffectColor = TealEffectColor; PaneEffectIntensity = QuarterIntensity
               PaneBorder = true; PaneBorderStyle = CustomBorder; PaneBorderColor = PinkEffectColor
@@ -3923,4 +4028,108 @@ module HistoryScopeTests =
         test <@ projection.HasHistoryTipFilter && projection.HistoryTipFilter = "origin/main" @>
         projection.ClearHistoryTipFilter()
         test <@ messages.ToArray() |> Array.last = App.Msg.SetHistoryTargets [ GitStartup.Path "src/a.fs" ] @>
+
+module MarkdownTests =
+    [<Fact>]
+    let ``markdown parser converts common rich blocks and drops front matter`` () =
+        let source = "---\ntitle: Demo\n---\n# Heading\n\nA **strong** and *soft* paragraph.\n\n- one\n- two\n\n| A | B |\n| - | -: |\n| x | y |"
+        let blocks = Markdown.parse source |> List.map _.Block
+        test <@ blocks |> List.exists (function Heading(1, _) -> true | _ -> false) @>
+        test <@ blocks |> List.exists (function Paragraph xs -> xs |> List.exists (function Strong _ -> true | _ -> false) | _ -> false) @>
+        test <@ blocks |> List.exists (function ListItem _ -> true | _ -> false) @>
+        test <@ blocks |> List.exists (function Table _ -> true | _ -> false) @>
+        test <@ blocks |> List.exists (function HtmlBlock text when text.Contains "title:" -> true | _ -> false) |> not @>
+
+    [<Fact>]
+    let ``markdown parser preserves links images code and source locations`` () =
+        let blocks = Markdown.parse "Before [docs](guide.md) ![logo](img/logo.png) `code`."
+        test <@ blocks.Head.FirstLine = 1 && blocks.Head.LastLine = 1 @>
+        match blocks.Head.Block with
+        | Paragraph xs ->
+            test <@ xs |> List.exists (function Link("guide.md", _) -> true | _ -> false) @>
+            test <@ xs |> List.exists (function Image("img/logo.png", "logo", _) -> true | _ -> false) @>
+            test <@ xs |> List.exists (function Code "code" -> true | _ -> false) @>
+        | _ -> failwith "expected paragraph"
+
+    [<Fact>]
+    let ``rendered markdown alignment ignores rewrapping and marks changed words`` () =
+        let oldDocument = Markdown.parse "A paragraph wrapped\nover two lines.\n\nSame."
+        let newDocument = Markdown.parse "A paragraph wrapped over two lines.\n\nChanged."
+        let changes = Markdown.align oldDocument newDocument
+        test <@ changes.Head.IsUnchanged @>
+        match changes.Tail.Head with
+        | Modified(_, _, words) ->
+            test <@ words |> List.exists (fun span -> span.Kind = MarkdownWordSpanKind.Deleted) @>
+            test <@ words |> List.exists (fun span -> span.Kind = MarkdownWordSpanKind.Inserted) @>
+        | _ -> failwith "expected modified paragraph"
+
+    [<Fact>]
+    let ``markdown projection owns source slices paths and preview classification`` () =
+        let rows = Markdown.renderDiff "Old paragraph." "New paragraph."
+        test <@ rows.Head.Change = MarkdownChangeKind.Modified @>
+        test <@ rows.Head.Source = "New paragraph." @>
+        test <@ Markdown.previewKind "README.md" = MarkdownPreview @>
+        test <@ Markdown.previewKind "logo.webp" = ImagePreview "webp" @>
+        test <@ Markdown.resolveTarget "docs/guide.md" "../img/logo.png" = RepositoryPath "img/logo.png" @>
+        test <@ Markdown.resolveTarget "docs/guide.md" "#usage" = HeadingTarget "usage" @>
+        test <@ Markdown.headingSlug "What's New: API_v2!" = "whats-new-api_v2" @>
+
+    [<Fact>]
+    let ``footnote references and definitions remain navigable rendered content`` () =
+        let blocks = Markdown.parse "Text with note[^a].\n\n[^a]: Footnote body."
+        test <@ blocks |> List.exists (fun located ->
+            match located.Block with
+            | Paragraph inlines -> inlines |> List.exists (function Link("#fn-a", [ Text "[a]" ]) -> true | _ -> false)
+            | _ -> false) @>
+        test <@ blocks |> List.exists (fun located -> match located.Block with Footnote("a", _) -> true | _ -> false) @>
+
+    [<Fact>]
+    let ``unchanged blocks moved in the document are paired instead of added and removed`` () =
+        let oldText = "First paragraph.\n\nSecond paragraph.\n\nLast paragraph."
+        let newText = "Second paragraph.\n\nFirst paragraph.\n\nLast paragraph."
+        let changes = Markdown.align (Markdown.parse oldText) (Markdown.parse newText)
+        test <@ changes |> List.filter (function MovedFrom _ | MovedTo _ -> true | _ -> false) |> List.length = 2 @>
+        test <@ changes |> List.exists (function Added _ | Removed _ -> true | _ -> false) |> not @>
+        let rows = Markdown.projectRows oldText newText changes
+        test <@ rows |> List.filter (fun row -> row.Change = MarkdownChangeKind.Moved) |> List.forall (fun row -> row.MoveCounterpartLine.IsSome) @>
+
+    [<Fact>]
+    let ``changes only collapses long unchanged runs with surrounding context`` () =
+        let oldText = [ for n in 1..12 -> if n = 7 then "old" else $"same {n}" ] |> String.concat "\n\n"
+        let newText = oldText.Replace("old", "new")
+        let display = Markdown.renderDiff oldText newText |> Markdown.changesOnly 2
+        test <@ display |> List.exists (function UnchangedSections 2 -> true | _ -> false) @>
+        test <@ display |> List.exists (function RenderedBlock row when row.Change <> MarkdownChangeKind.Unchanged -> true | _ -> false) @>
+
+    [<Fact>]
+    let ``tables quotes footnotes and nested lists flatten into independently aligned leaves`` () =
+        let table = Markdown.parse "| A |\n| - |\n| one |\n| two |"
+        let quote = Markdown.parse "> first\n>\n> second"
+        let nested = Markdown.parse "- parent\n  - child"
+        test <@ table |> List.filter (fun block -> match block.Block with Table _ -> true | _ -> false) |> List.length = 3 @>
+        test <@ quote |> List.filter (fun block -> match block.Block with Quote _ -> true | _ -> false) |> List.length = 2 @>
+        test <@ nested |> List.filter (fun block -> match block.Block with ListItem _ -> true | _ -> false) |> List.length = 2 @>
+
+    [<Fact>]
+    let ``word changes retain inline formatting and code changes align by line`` () =
+        let prose = Markdown.renderDiff "A **small bold phrase** here." "A **large bold phrase** here."
+        test <@ prose.Head.Words |> List.exists (fun span -> span.Kind = MarkdownWordSpanKind.Inserted && span.Text = "large" && span.Style = MarkdownSpanStyle.Strong) @>
+        let code = Markdown.renderDiff "```fsharp\nlet answer = 41\nprintfn \"done\"\n```" "```fsharp\nlet answer = 42\nprintfn \"done\"\n```"
+        test <@ code.Head.CodeLines |> List.exists (fun line -> line.Change = MarkdownChangeKind.Modified && line.Previous = Some "let answer = 41" && line.Current = Some "let answer = 42") @>
+
+    [<Fact>]
+    let ``an image blob change promotes unchanged markdown to a modified row`` () =
+        let rows = Markdown.renderDiff "![logo](logo.png)" "![logo](logo.png)"
+        let images =
+            [ { Side = MarkdownImageSide.Old; Source = "logo.png"; Bytes = Some [| 1uy |]; Error = None }
+              { Side = MarkdownImageSide.New; Source = "logo.png"; Bytes = Some [| 2uy |]; Error = None } ]
+        let marked = Markdown.markChangedImages images rows
+        test <@ marked.Head.Change = MarkdownChangeKind.Modified @>
+
+    [<Fact>]
+    let ``task list state belongs to the list marker and not its text`` () =
+        let blocks = Markdown.parse "- [x] done\n- [ ] later" |> List.map _.Block
+        test <@ blocks =
+            [ ListItem(0, Bullet '-', Some true, [ Paragraph [ Text "done" ] ])
+              ListItem(0, Bullet '-', Some false, [ Paragraph [ Text "later" ] ]) ] @>
 

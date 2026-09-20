@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Collections;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Microsoft.FSharp.Collections;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -152,6 +153,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private int _diffContextLineCount = GitKay.Core.SettingsModule.defaults.DiffContextLines;
     [ObservableProperty] private string _searchQuery = "";
     [ObservableProperty] private double _searchDebounceSeconds = GitKay.Core.SettingsModule.defaults.SearchDebounceSeconds;
+    [ObservableProperty] private bool _renderMarkdownByDefault = GitKay.Core.SettingsModule.defaults.RenderMarkdownByDefault;
+    [ObservableProperty] private bool _renderedMarkdownChangesOnly;
+    [ObservableProperty] private bool _loadRemoteMarkdownImages = GitKay.Core.SettingsModule.defaults.LoadRemoteMarkdownImages;
     [ObservableProperty] private string _commitFindQuery = "";
     [ObservableProperty] private SearchScopeProjection? _selectedSearchScope;
     [ObservableProperty] private bool _hasSearchResults;
@@ -300,6 +304,11 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private bool _startupFilterApplied;
     private string? _lastRunSearchQuery;
 
+    public event Action? RenderedMarkdownChanged;
+    public event Action<GitKay.Core.App.WholeFileState>? WholeFileReady;
+    public event Action<GitKay.Core.App.WholeFileState>? WholeFileChanged;
+    private long _presentedWholeFileRequestId = -1;
+    private GitKay.Core.GitService.WholeFilePayload? _presentedWholeFilePayload;
     public ObservableCollection<CommitProjection> Commits { get; } = new();
     public ObservableCollection<SearchResultProjection> SearchResults { get; } = new();
     public ObservableCollection<DiffFileProjection> SelectedDiffFiles { get; } = new();
@@ -330,6 +339,11 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private SearchResultProjection? _selectedSearchResult;
     [ObservableProperty] private DiffFileProjection? _selectedDiffFile;
     [ObservableProperty] private IDiffRowProjection? _selectedDiffRow;
+    [ObservableProperty] private IReadOnlyDictionary<string, Bitmap> _renderedOldImages = new Dictionary<string, Bitmap>();
+    [ObservableProperty] private IReadOnlyDictionary<string, Bitmap> _renderedNewImages = new Dictionary<string, Bitmap>();
+    [ObservableProperty] private bool _renderedImagesLoading;
+    private long _appliedRenderedRequestId = -1;
+    private GitKay.Core.RenderedMarkdownContent? _appliedRenderedContent;
 
     public FontFamily CommitRowFont => FontStacks.Resolve(CommitRowFontFamily);
     public FontFamily CommitRowMonoFont => FontStacks.Resolve(CommitRowMonoFontFamily);
@@ -362,6 +376,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             CommitRowMetaFontSize = normalized.CommitRowMetaFontSize;
             CommitRowBadgeFontSize = normalized.CommitRowBadgeFontSize;
             SearchDebounceSeconds = normalized.SearchDebounceSeconds;
+            RenderMarkdownByDefault = normalized.RenderMarkdownByDefault;
+            LoadRemoteMarkdownImages = normalized.LoadRemoteMarkdownImages;
             DiffContextLineCount = normalized.DiffContextLines;
             SelectedDiffContextLineCount =
                 DiffContextLineCounts.FirstOrDefault(option => option.Count == normalized.DiffContextLines)
@@ -400,6 +416,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         CommitRowMetaFontSize,
         CommitRowBadgeFontSize,
         SearchDebounceSeconds,
+        RenderMarkdownByDefault,
+        LoadRemoteMarkdownImages,
         SelectedThemeMode?.Mode ?? GitKay.Core.SettingsModule.defaults.Theme,
         PaneGap,
         HoverToFocus,
@@ -423,6 +441,11 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private static void LogTiming(string message) {
         var line = $"[timing] {message}";
         Trace.WriteLine(line);
+    }
+
+    partial void OnRenderedMarkdownChangesOnlyChanged(bool value) {
+        foreach (var file in SelectedDiffFiles) file.RenderedChangesOnly = value;
+        RefreshDiffRows();
     }
 
     partial void OnCommitRowFontFamilyChanged(string value) {
@@ -476,6 +499,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         UpdateDiffPresentationState(model);
         UpdateSearchState(model);
         UpdateDiffState(model);
+        UpdateRenderedMarkdown(model);
+        UpdateWholeFile(model);
         UpdateCommits(model);
         UpdateSelectedCommit(model);
         UpdateCommitRelations(model);
@@ -485,6 +510,82 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         var elapsed = Stopwatch.GetElapsedTime(startedAtTicks);
         LogTiming($"ui projection elapsed={elapsed.TotalMilliseconds:F1}ms commits={model.Commits.Length} searchResults={SearchResults.Count} diffFiles={SelectedDiffFiles.Count} diffRows={SelectedDiffRows.Count}");
     }
+
+    public void LoadRemoteMarkdownImage(string source) =>
+        _dispatch?.Invoke(GitKay.Core.App.Msg.NewLoadRemoteMarkdownImage(source));
+
+    public void ToggleRenderedMarkdown(DiffFileProjection file) {
+        var enable = !file.IsRenderedMarkdown;
+        var requestId = Stopwatch.GetTimestamp();
+        _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetRenderedMarkdown(
+            new GitKay.Core.GitService.DiffFileKey(file.Key.OldPath, file.Key.NewPath), file.Key.Section, enable, LoadRemoteMarkdownImages, requestId));
+    }
+
+    private void UpdateRenderedMarkdown(GitKay.Core.App.Model model) {
+        if (model.RenderedMarkdown == null) {
+            var rendered = SelectedDiffFiles.FirstOrDefault(file => file.IsRenderedMarkdown);
+            var hadState = _appliedRenderedRequestId >= 0 || rendered != null || RenderedImagesLoading;
+            _appliedRenderedRequestId = -1;
+            _appliedRenderedContent = null;
+            RenderedImagesLoading = false;
+            rendered?.ClearRendered();
+            if (!hadState) return;
+            foreach (var bitmap in RenderedOldImages.Values) bitmap.Dispose();
+            foreach (var bitmap in RenderedNewImages.Values) bitmap.Dispose();
+            RenderedOldImages = new Dictionary<string, Bitmap>();
+            RenderedNewImages = new Dictionary<string, Bitmap>();
+            RefreshDiffRows();
+            RenderedMarkdownChanged?.Invoke();
+            return;
+        }
+        var state = model.RenderedMarkdown.Value;
+        RenderedImagesLoading = state.Content == null;
+        if (state.Content == null || ReferenceEquals(state.Content.Value, _appliedRenderedContent)) return;
+        var file = SelectedDiffFiles.FirstOrDefault(candidate => candidate.Key.OldPath == state.Key.OldPath
+            && candidate.Key.NewPath == state.Key.NewPath && candidate.Key.Section == state.Section);
+        if (file == null) return;
+        file.ApplyRenderedContent(state.Content.Value);
+        file.RenderedChangesOnly = RenderedMarkdownChangesOnly;
+        var oldImages = new Dictionary<string, Bitmap>(StringComparer.Ordinal);
+        var newImages = new Dictionary<string, Bitmap>(StringComparer.Ordinal);
+        foreach (var image in state.Content.Value.Images) {
+            if (image.Bytes == null) continue;
+            try {
+                var bitmap = new Bitmap(new System.IO.MemoryStream(image.Bytes.Value));
+                (image.Side.IsOld ? oldImages : newImages)[image.Source] = bitmap;
+            }
+            catch { }
+        }
+        foreach (var bitmap in RenderedOldImages.Values) bitmap.Dispose();
+        foreach (var bitmap in RenderedNewImages.Values) bitmap.Dispose();
+        RenderedOldImages = oldImages;
+        RenderedNewImages = newImages;
+        _appliedRenderedRequestId = state.RequestId;
+        _appliedRenderedContent = state.Content.Value;
+        RefreshDiffRows();
+        RenderedMarkdownChanged?.Invoke();
+    }
+
+    private void UpdateWholeFile(GitKay.Core.App.Model model) {
+        if (model.WholeFile == null || model.WholeFile.Value.Payload == null) return;
+        var state = model.WholeFile.Value;
+        if (ReferenceEquals(state.Payload.Value, _presentedWholeFilePayload)) return;
+        _presentedWholeFilePayload = state.Payload.Value;
+        if (state.RequestId == _presentedWholeFileRequestId) WholeFileChanged?.Invoke(state);
+        else {
+            _presentedWholeFileRequestId = state.RequestId;
+            WholeFileReady?.Invoke(state);
+        }
+    }
+
+    public void RequestWholeFile(FileTarget target, bool preview = false) {
+        var requestId = Stopwatch.GetTimestamp();
+        _dispatch?.Invoke(GitKay.Core.App.Msg.NewOpenWholeFile(
+            new GitKay.Core.GitService.DiffFileKey(target.OldPath, target.NewPath), target.Changed?.Key.Section ?? "",
+            preview, LoadRemoteMarkdownImages, requestId));
+    }
+
+    public void DismissWholeFile(long requestId) => _dispatch?.Invoke(GitKay.Core.App.Msg.NewDismissWholeFile(requestId));
 
     private void UpdateSearchState(GitKay.Core.App.Model model) {
         var searchResultsSource = model.SearchResults != null ? (object?)model.SearchResults.Value : null;

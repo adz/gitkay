@@ -250,7 +250,7 @@
                         <GroupBox Header="Diff presentation">
                             <Border Padding="12">
                                 <!-- Labels in one column and inputs in the next, so the fields line up down the panel. -->
-                                <Grid ColumnDefinitions="150,Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="10">
+                                <Grid ColumnDefinitions="150,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="10">
                                     <TextBlock Text="Mode" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
                                     <ComboBox Grid.Column="1" Width="180" HorizontalAlignment="Left"
                                               ItemsSource="{Binding DiffPresentationModes}"
@@ -273,8 +273,21 @@
                                         </ComboBox.ItemTemplate>
                                     </ComboBox>
 
-                                    <TextBlock Grid.Row="2" Text="Search debounce" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
-                                    <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Grid.Row="2" Text="Markdown" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                                    <CheckBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Content="Render Markdown by default"
+                                              IsChecked="{Binding RenderMarkdownByDefault, Mode=TwoWay}" />
+
+                                    <TextBlock Grid.Row="3" Text="Remote images" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                                    <CheckBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Content="Load remote Markdown images"
+                                              IsChecked="{Binding LoadRemoteMarkdownImages, Mode=TwoWay}"
+                                              ToolTip.Tip="Contacts external hosts and may reveal that you opened the document" />
+
+                                    <TextBlock Grid.Row="4" Text="Rendered diffs" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                                    <CheckBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Content="Collapse long unchanged runs"
+                                              IsChecked="{Binding RenderedMarkdownChangesOnly, Mode=TwoWay}" />
+
+                                    <TextBlock Grid.Row="5" Text="Search debounce" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                                    <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" Spacing="8">
                                         <NumericUpDown Width="120" Minimum="0" Maximum="5" Increment="0.25" FormatString="0.##"
                                                        Value="{Binding SearchDebounceSeconds, Mode=TwoWay}" />
                                         <TextBlock Text="seconds" Foreground="{DynamicResource GitKaySecondaryTextBrush}" VerticalAlignment="Center" />

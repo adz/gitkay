@@ -22,6 +22,9 @@ module App =
     let private workingTreeChangesJob = AxialLatestSlot(runtime)
     let private searchJob = AxialLatestSlot(runtime)
     let private contextJobs = AxialLatestSlotRegistry<GitService.DiffFileKey>(runtime)
+    let private renderedMarkdownJob = AxialLatestSlot(runtime)
+    let private wholeFileJob = AxialLatestSlot(runtime)
+    let private remoteMarkdownImageJob = AxialLatestSlot(runtime)
 
     /// Presentation-only expansion state for one file of the selected diff.
     type FileExpansion =
@@ -49,6 +52,19 @@ module App =
         | NoSelection
         | CommitSelected of hash: string
         | WorkingTreeSelected
+
+    type RenderedMarkdownState =
+        { Key: GitService.DiffFileKey
+          Section: string
+          RequestId: int64
+          Content: RenderedMarkdownContent option }
+
+    type WholeFileState =
+        { Key: GitService.DiffFileKey
+          Section: string
+          RequestId: int64
+          Preview: bool
+          Payload: GitService.WholeFilePayload option }
 
     type Model =
         {
@@ -79,6 +95,9 @@ module App =
             SelectedDiff: Models.FileDiff list option
             SelectedDiffFileKey: GitService.DiffFileKey option
             DiffExpansions: Map<GitService.DiffFileKey, FileExpansion>
+            /// The selected file's rendered payload. Bytes remain managed data until the Avalonia view decodes them.
+            RenderedMarkdown: RenderedMarkdownState option
+            WholeFile: WholeFileState option
             SelectionStartedAtTicks: int64 option
             SelectedDiffStartedAtTicks: int64 option
             SearchStartedAtTicks: int64 option
@@ -133,6 +152,13 @@ module App =
         | RevisionComparisonLoaded of baseRevision:string * targetRevision:string * startedAtTicks:int64 * Result<GitService.RevisionComparison * Models.FileDiff list, GitError>
         | CloseRevisionComparison
         | SelectDiffFile of hash:string * oldPath:string * newPath:string
+        | SetRenderedMarkdown of key:GitService.DiffFileKey * section:string * enabled:bool * allowRemoteImages:bool * requestId:int64
+        | RenderedMarkdownLoaded of key:GitService.DiffFileKey * section:string * requestId:int64 * Result<RenderedMarkdownContent, GitError>
+        | OpenWholeFile of key:GitService.DiffFileKey * section:string * preview:bool * allowRemoteImages:bool * requestId:int64
+        | WholeFileLoaded of key:GitService.DiffFileKey * section:string * requestId:int64 * Result<GitService.WholeFilePayload, GitError>
+        | DismissWholeFile of requestId:int64
+        | LoadRemoteMarkdownImage of source:string
+        | RemoteMarkdownImageLoaded of source:string * Result<byte array, GitError>
         /// A startup --select revision (short hash, branch, tag, HEAD~n) resolved to a full hash.
         | SelectionRevisionResolved of revision:string * Result<string, GitError>
         | ExpandDiffGap of hash:string * gap:DiffExpansion.DiffGap * direction:DiffExpansion.ExpandDirection * requestedAtTicks:int64
@@ -452,6 +478,8 @@ module App =
                 SelectedDiff = None
                 SelectedDiffFileKey = None
                 DiffExpansions = Map.empty
+                RenderedMarkdown = None
+                WholeFile = None
                 SelectionStartedAtTicks = None
                 SelectedDiffStartedAtTicks = None
                 SearchStartedAtTicks = None
@@ -498,6 +526,8 @@ module App =
                     SelectedDiff = None
                     SelectedDiffFileKey = None
                     DiffExpansions = Map.empty
+                    RenderedMarkdown = None
+                    WholeFile = None
                     SelectionStartedAtTicks = None
                     SelectedDiffStartedAtTicks = None
                     SearchStartedAtTicks = None
@@ -524,6 +554,62 @@ module App =
                     [ loadHistory gitEnv (Some historyLimit) startupOptions.ShowStashes startupOptions.StartupTargets
                       startWorkingTreeStatusLoad gitEnv
                       resolveSelection ]
+
+    let private startRenderedMarkdownLoad (model: Model) (key: GitService.DiffFileKey) section allowRemoteImages requestId =
+        let load () =
+            if model.IsWorkingTreeSelected then
+                match WorkingTree.tryParseSection section with
+                | Some parsed -> GitService.loadWorkingTreeRenderedMarkdown model.GitEnv.RepoPath parsed key.OldPath key.NewPath allowRemoteImages
+                | None -> Error(GitError.OperationFailed("Render Markdown", $"Unknown working-tree section: {section}"))
+            else
+                match model.RevisionComparison, model.SelectedDiffHash with
+                | Some comparison, _ -> GitService.loadRevisionRenderedMarkdown model.GitEnv.RepoPath comparison key.OldPath key.NewPath allowRemoteImages
+                | None, Some hash -> GitService.loadCommitRenderedMarkdown model.GitEnv.RepoPath hash key.OldPath key.NewPath allowRemoteImages
+                | _ -> Error(GitError.OperationFailed("Render Markdown", "No revision is selected"))
+        Cmd.OfFlow.ofFlowLatest
+            $"render markdown {key.NewPath}"
+            renderedMarkdownJob
+            model.GitEnv
+            // LibGit2Sharp blob reads do not accept cancellation; latest-slot cancellation still rejects stale results.
+            // axial-allow-discarded-cancellation
+            (Flow.fromTaskResult (fun _ -> Threading.Tasks.Task.Run load))
+            (fun content -> RenderedMarkdownLoaded(key, section, requestId, Ok content))
+            (fun error -> RenderedMarkdownLoaded(key, section, requestId, Error error))
+
+    let private startWholeFileLoad (model: Model) (key: GitService.DiffFileKey) section allowRemoteImages requestId =
+        let load () =
+            if model.IsWorkingTreeSelected then
+                if String.IsNullOrWhiteSpace section then
+                    GitService.loadCommitWholeFilePayload model.GitEnv.RepoPath "HEAD" key.OldPath key.NewPath allowRemoteImages
+                else
+                    match WorkingTree.tryParseSection section with
+                    | Some parsed -> GitService.loadWorkingTreeWholeFilePayload model.GitEnv.RepoPath parsed key.OldPath key.NewPath allowRemoteImages
+                    | None -> Error(GitError.OperationFailed("Open file", $"Unknown working-tree section: {section}"))
+            else
+                match model.RevisionComparison, model.SelectedDiffHash with
+                | Some comparison, _ ->
+                    GitService.loadRevisionWholeFilePayload model.GitEnv.RepoPath comparison key.OldPath key.NewPath allowRemoteImages
+                | None, Some hash ->
+                    GitService.loadCommitWholeFilePayload model.GitEnv.RepoPath hash key.OldPath key.NewPath allowRemoteImages
+                | _ -> Error(GitError.OperationFailed("Open file", "No commit revision is selected"))
+        Cmd.OfFlow.ofFlowLatest
+            $"whole file {key.NewPath}"
+            wholeFileJob
+            model.GitEnv
+            // LibGit2Sharp reads have no cancellation overload; the latest slot rejects stale completion.
+            // axial-allow-discarded-cancellation
+            (Flow.fromTaskResult (fun _ -> Threading.Tasks.Task.Run load))
+            (fun payload -> WholeFileLoaded(key, section, requestId, Ok payload))
+            (fun error -> WholeFileLoaded(key, section, requestId, Error error))
+
+    let private startRemoteMarkdownImageLoad (model: Model) source =
+        Cmd.OfFlow.ofFlowLatest
+            $"remote markdown image {source}"
+            remoteMarkdownImageJob
+            model.GitEnv
+            (Flow.fromTaskResult (fun cancellationToken -> GitService.loadRemoteMarkdownImage cancellationToken source))
+            (fun bytes -> RemoteMarkdownImageLoaded(source, Ok bytes))
+            (fun error -> RemoteMarkdownImageLoaded(source, Error error))
 
     let update msg model : Model * Cmd<Msg> =
         match msg with
@@ -591,6 +677,7 @@ module App =
             selectionJob.Cancel()
             diffJob.Cancel()
             contextJobs.CancelAll()
+            renderedMarkdownJob.Cancel()
             { model with
                 Selection = WorkingTreeSelected
                 RevisionComparison = None
@@ -599,6 +686,7 @@ module App =
                 SelectedDiff = None
                 SelectedDiffFileKey = None
                 DiffExpansions = Map.empty
+                RenderedMarkdown = None
                 SelectionStartedAtTicks = None
                 SelectedDiffStartedAtTicks = None
                 WorkingTreeStartedAtTicks = Some startedAtTicks },
@@ -760,6 +848,7 @@ module App =
             selectionJob.Cancel()
             diffJob.Cancel()
             contextJobs.CancelAll()
+            renderedMarkdownJob.Cancel()
             { model with
                 Status = $"Comparing {baseRevision}…{targetRevision}…"
                 RevisionComparison = None
@@ -768,6 +857,7 @@ module App =
                 SelectedDiff = None
                 SelectedDiffFileKey = None
                 DiffExpansions = Map.empty
+                RenderedMarkdown = None
                 SelectionStartedAtTicks = None
                 SelectedDiffStartedAtTicks = Some startedAtTicks },
             startRevisionComparisonLoad model.GitEnv baseRevision targetRevision startedAtTicks model.DiffContextLines model.IgnoreWhitespace
@@ -797,6 +887,7 @@ module App =
             selectionJob.Cancel()
             diffJob.Cancel()
             contextJobs.CancelAll()
+            renderedMarkdownJob.Cancel()
             let nextModel =
                 {
                     model with
@@ -807,6 +898,7 @@ module App =
                         SelectedDiff = None
                         SelectedDiffFileKey = None
                         DiffExpansions = Map.empty
+                        RenderedMarkdown = None
                         SelectionStartedAtTicks = Some startedAtTicks
                         SelectedDiffStartedAtTicks = Some startedAtTicks
                         WorkingTreeChanges = None
@@ -967,6 +1059,52 @@ module App =
                 { model with SelectedDiffFileKey = Some key }, Cmd.none
             else
                 model, Cmd.none
+        | SetRenderedMarkdown (key, section, enabled, allowRemoteImages, requestId) ->
+            if not enabled then
+                { model with RenderedMarkdown = None }, Cmd.none
+            else
+                { model with RenderedMarkdown = Some { Key = key; Section = section; RequestId = requestId; Content = None }; Status = "Rendering Markdown…" },
+                startRenderedMarkdownLoad model key section allowRemoteImages requestId
+        | RenderedMarkdownLoaded (key, section, requestId, result) ->
+            match model.RenderedMarkdown with
+            | Some pending when pending.Key = key && pending.Section = section && pending.RequestId = requestId ->
+                match result with
+                | Ok content -> { model with RenderedMarkdown = Some { pending with Content = Some content }; Status = "" }, Cmd.none
+                | Error error -> { model with RenderedMarkdown = None; Status = "Markdown preview unavailable: " + GitError.describe error }, Cmd.none
+            | _ -> model, Cmd.none
+        | OpenWholeFile (key, section, preview, allowRemoteImages, requestId) ->
+            { model with WholeFile = Some { Key = key; Section = section; RequestId = requestId; Preview = preview; Payload = None }; Status = "Loading file…" },
+            startWholeFileLoad model key section allowRemoteImages requestId
+        | WholeFileLoaded (key, section, requestId, result) ->
+            match model.WholeFile with
+            | Some pending when pending.Key = key && pending.Section = section && pending.RequestId = requestId ->
+                match result with
+                | Ok payload -> { model with WholeFile = Some { pending with Payload = Some payload }; Status = "" }, Cmd.none
+                | Error error -> { model with WholeFile = None; Status = GitError.describe error }, Cmd.none
+            | _ -> model, Cmd.none
+        | DismissWholeFile requestId ->
+            match model.WholeFile with
+            | Some current when current.RequestId = requestId -> { model with WholeFile = None }, Cmd.none
+            | _ -> model, Cmd.none
+        | LoadRemoteMarkdownImage source ->
+            model, startRemoteMarkdownImageLoad model source
+        | RemoteMarkdownImageLoaded (source, result) ->
+            let updateImages images =
+                images |> List.map (fun image ->
+                    if image.Source <> source then image
+                    else match result with
+                         | Ok bytes -> { image with Bytes = Some bytes; Error = None }
+                         | Error error -> { image with Error = Some(GitError.describe error) })
+            let updateContent content = { content with Images = updateImages content.Images }
+            let updatePayload (payload: GitService.WholeFilePayload) =
+                { payload with Rendered = payload.Rendered |> Option.map updateContent }
+            let renderedMarkdown =
+                model.RenderedMarkdown
+                |> Option.map (fun state -> { state with Content = state.Content |> Option.map updateContent })
+            let wholeFile =
+                model.WholeFile
+                |> Option.map (fun state -> { state with Payload = state.Payload |> Option.map updatePayload })
+            { model with RenderedMarkdown = renderedMarkdown; WholeFile = wholeFile }, Cmd.none
         | ExpandDiffGap (hash, gap, direction, requestedAtTicks) ->
             let key: GitService.DiffFileKey = { OldPath = gap.OldPath; NewPath = gap.NewPath }
             revealDiffRange model hash key (DiffExpansion.revealRange direction gap) requestedAtTicks

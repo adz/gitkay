@@ -1,6 +1,6 @@
 # Rendered markdown
 
-Status: accepted. Not implemented. Builds after uncommitted changes and the commit window.
+Status: implemented.
 
 ## Problem
 
