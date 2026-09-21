@@ -831,6 +831,29 @@ public partial class MainWindow : Window, IVimCommands {
         return value == null ? null : string.Equals(value.Value, "rendered", StringComparison.Ordinal);
     }
 
+    /// <summary>Every per-file preview choice, whatever repository it was made in.</summary>
+    private const string MarkdownPreviewPrefix = "markdown-preview|";
+
+    /// <summary>
+    /// Forgets the per-file preview choices, so every file follows the "render markdown by default" setting again.
+    /// Without this a toggle made once silently outranks that setting forever, with nothing on screen to say why.
+    /// </summary>
+    private void ForgetMarkdownPreviewPreferences() {
+        var store = new AppUiStateStore();
+        var state = store.Load();
+        var forgotten = GitKay.Core.UiStateModule.countViewPreferences(MarkdownPreviewPrefix, state);
+        if (forgotten == 0) {
+            if (_projection != null) _projection.Status = "No per-file preview choices to forget";
+            return;
+        }
+
+        store.Save(GitKay.Core.UiStateModule.withoutViewPreferences(MarkdownPreviewPrefix, state));
+        if (_projection != null)
+            _projection.Status = forgotten == 1
+                ? "Forgot 1 per-file preview choice"
+                : $"Forgot {forgotten} per-file preview choices";
+    }
+
     private static void SaveMarkdownPreviewPreference(string repository, string path, bool rendered) {
         var store = new AppUiStateStore();
         var state = GitKay.Core.UiStateModule.withViewPreference(MarkdownPreviewKey(repository, path), rendered ? "rendered" : "source", store.Load());
@@ -1186,6 +1209,9 @@ public partial class MainWindow : Window, IVimCommands {
                 break;
             case "commit-window":
                 OpenCommitWindow();
+                break;
+            case "forget-preview-choices":
+                ForgetMarkdownPreviewPreferences();
                 break;
             case "copy-hash" or "copy-subject" when _projection?.SelectedCommit is { IsWorkingTree: false } commit && Clipboard is { } clipboard:
                 await clipboard.SetTextAsync(command == "copy-hash" ? commit.FullHash : commit.Subject);

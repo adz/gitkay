@@ -282,6 +282,7 @@ public partial class MainProjection {
             Command(ShowBranchRefs ? "Hide branch markers" : "Show branch markers", "Commit list", () => ShowBranchRefs = !ShowBranchRefs),
             Command(ShowStashes ? "Hide stashes" : "Show stashes", "Commit list", () => ShowStashes = !ShowStashes),
             Command(IsAllBranches ? "History: current branch only" : "History: all branches", IsAllBranches ? "What HEAD reaches, like gitk" : "Every branch, tag and remote, like --all", () => IsAllBranches = !IsAllBranches),
+            Command("Forget per-file preview choices", "Markdown files follow the default again", () => WindowCommandRequested?.Invoke("forget-preview-choices")),
             Command("Copy commit hash", SelectedCommit?.FullHash ?? "", () => WindowCommandRequested?.Invoke("copy-hash"), "y"),
             Command("Copy commit subject", SelectedCommit?.Subject ?? "", () => WindowCommandRequested?.Invoke("copy-subject"), "Y"),
             Command("Commit…", "Stage changes and commit, like git gui", () => WindowCommandRequested?.Invoke("commit-window"), "Ctrl+Shift+C"),

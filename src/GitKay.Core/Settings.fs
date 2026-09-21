@@ -505,6 +505,19 @@ module UiState =
     let withViewPreference key value state =
         { state with ViewPreferences = state.ViewPreferences |> Map.add key value }
 
+    /// <summary>
+    /// Forgets every view preference whose key starts with <paramref name="prefix"/>. These are written on every
+    /// toggle and never expire, so a choice made once outlives any memory of making it: this is how they are cleared.
+    /// </summary>
+    let withoutViewPreferences (prefix: string) state =
+        if String.IsNullOrEmpty prefix then state
+        else { state with ViewPreferences = state.ViewPreferences |> Map.filter (fun key _ -> not (key.StartsWith(prefix, StringComparison.Ordinal))) }
+
+    /// <summary>How many view preferences share a prefix, so a command can say what it is about to forget.</summary>
+    let countViewPreferences (prefix: string) state =
+        if String.IsNullOrEmpty prefix then 0
+        else state.ViewPreferences |> Map.filter (fun key _ -> key.StartsWith(prefix, StringComparison.Ordinal)) |> Map.count
+
     let selectedCommit (repository: string) state =
         repositoryKey repository |> Option.bind (fun key -> state.LastSelectedCommits |> Map.tryFind key)
 

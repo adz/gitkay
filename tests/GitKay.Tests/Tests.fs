@@ -3971,6 +3971,22 @@ module SettingsSerializationTests =
         test <@ (decoded """{"PaneGap":0,"PaneFocusEffect":"none"}""") = { Settings.defaults with PaneGap = 0.0; PaneFocusEffect = NoPaneEffect } @>
 
     [<Fact>]
+    let ``forgetting per-file preview choices clears only those keys`` () =
+        let state =
+            UiState.empty
+            |> UiState.withViewPreferences
+                [ "markdown-preview|/repo|README.md", "source"
+                  "markdown-preview|/repo|docs/spec.md", "rendered"
+                  "FileTree", "true" ]
+        let cleared = state |> UiState.withoutViewPreferences "markdown-preview|"
+        // The count is what the command reports before forgetting them.
+        test <@ state |> UiState.countViewPreferences "markdown-preview|" = 2 @>
+        test <@ Map.toList cleared.ViewPreferences = [ "FileTree", "true" ] @>
+        test <@ cleared |> UiState.countViewPreferences "markdown-preview|" = 0 @>
+        // An empty prefix would forget everything; it forgets nothing instead.
+        test <@ (state |> UiState.withoutViewPreferences "") = state @>
+
+    [<Fact>]
     let ``an unknown chrome background or colour falls back to the default`` () =
         let read = decoded """{"ChromeBackground":"hologram","ChromeColor":"chartreuse"}"""
         test <@ read.ChromeBackground = Settings.defaults.ChromeBackground && read.ChromeColor = Settings.defaults.ChromeColor @>
