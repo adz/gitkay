@@ -791,6 +791,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             case RenderedMarkdownRowProjection rendered:
                 DrawRenderedMarkdown(context, rendered, y);
                 break;
+            case ImagePreviewRowProjection image:
+                DrawImagePreview(context, image, y);
+                break;
             case RenderedMarkdownGapProjection gap:
                 context.FillRectangle(ThemeBrush("GitKayRaisedBrush", CodeBlockFallback), new Rect(12, y + 5, Math.Max(1, Bounds.Width - 24), GapHeight - 10));
                 DrawPlain(context, gap.Label, 24, y + 13, 11, ThemeBrush("GitKayMutedTextBrush", HunkBrush));
@@ -1614,9 +1617,43 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             DiffSectionHeaderProjection => SectionHeight,
             RenderedMarkdownRowProjection rendered => RenderedHeight(rendered),
             RenderedMarkdownGapProjection => GapHeight,
+            ImagePreviewRowProjection image => ImageRowHeight(image),
             _ => LineHeight
         };
         return _growProgress < 1 && _growingRows.Contains(row) ? height * EaseOut(_growProgress) : height;
+    }
+
+    /// <summary>Room for the picture at its natural size where it fits, plus the caption under it.</summary>
+    private const double ImageCaptionHeight = 34;
+    private const double ImagePadding = 16;
+
+    private Size ImageDrawSize(ImagePreviewRowProjection image) {
+        var available = Math.Max(1, Bounds.Width - 2 * ImagePadding);
+        var pixels = image.Image.PixelSize;
+        if (pixels.Width <= 0 || pixels.Height <= 0) return new Size(0, 0);
+        // Never blown up past its own pixels: an enlarged image says something about the file that is not true.
+        var scale = Math.Min(1, available / pixels.Width);
+        return new Size(pixels.Width * scale, pixels.Height * scale);
+    }
+
+    private double ImageRowHeight(ImagePreviewRowProjection image) =>
+        ImageDrawSize(image).Height + ImageCaptionHeight + 2 * ImagePadding;
+
+    private void DrawImagePreview(DrawingContext context, ImagePreviewRowProjection image, double y) {
+        var size = ImageDrawSize(image);
+        var x = Math.Max(ImagePadding, (Bounds.Width - size.Width) / 2);
+        var top = y + ImagePadding;
+        if (size.Width > 0 && size.Height > 0) {
+            // A chequer behind it, so a transparent PNG does not read as whatever the theme is behind it.
+            var backdrop = new Rect(x, top, size.Width, size.Height);
+            context.FillRectangle(ThemeBrush("GitKayRaisedBrush", CodeBlockFallback), backdrop);
+            context.DrawImage(image.Image, new Rect(image.Image.Size), backdrop);
+            context.DrawRectangle(null, new Pen(ThemeBrush("GitKayBorderBrush", HunkBrush), 1), backdrop);
+        }
+
+        var caption = image.IsOldSide ? image.Metadata + "  ·  as it was before deletion" : image.Metadata;
+        var layout = Layout(caption, 11, ThemeBrush("GitKayMutedTextBrush", HunkBrush), false);
+        context.DrawText(layout, new Point(Math.Max(ImagePadding, (Bounds.Width - layout.Width) / 2), top + size.Height + 10));
     }
 
     private static GitKay.Core.MarkdownInline.Image? ImageInline(GitKay.Core.LocatedMarkdownBlock? located) {

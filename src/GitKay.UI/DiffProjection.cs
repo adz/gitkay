@@ -60,6 +60,31 @@ public partial class DiffFileProjection : ObservableObject {
     [ObservableProperty] private bool _isRenderedMarkdown;
     /// <summary>The file is showing its reformatted text rather than the source as committed.</summary>
     [ObservableProperty] private bool _isFormattedPreview;
+
+    /// <summary>The decoded image this file is previewed as, when it is an image.</summary>
+    public Avalonia.Media.Imaging.Bitmap? PreviewImage { get; private set; }
+    private int _previewImageBytes;
+    public bool IsImagePreview => PreviewImage != null;
+
+    /// <summary>Shows this image file as itself. Replacing one preview disposes the last, which nothing else holds.</summary>
+    public void ApplyPreviewImage(Avalonia.Media.Imaging.Bitmap image, int byteCount) {
+        PreviewImage?.Dispose();
+        PreviewImage = image;
+        _previewImageBytes = byteCount;
+        OnPropertyChanged(nameof(IsImagePreview));
+    }
+
+    public void ClearPreviewImage() {
+        if (PreviewImage == null) return;
+        PreviewImage.Dispose();
+        PreviewImage = null;
+        _previewImageBytes = 0;
+        OnPropertyChanged(nameof(IsImagePreview));
+    }
+
+    /// <summary>The single row an image preview is: the picture and what can be read off it.</summary>
+    public ImagePreviewRowProjection? ImageRow =>
+        PreviewImage is { } image ? new ImagePreviewRowProjection(image, ContentPath, _previewImageBytes, Key.NewPath == "/dev/null") : null;
     [ObservableProperty] private bool _renderedChangesOnly;
     /// <summary>Label and indent for the changed-files list: full path in patch mode, file name in tree mode.</summary>
     [ObservableProperty] private string _listLabel = "";
@@ -402,6 +427,7 @@ public static class DiffRowBuilder {
     public static void AppendFile(List<IDiffRowProjection> rows, DiffFileProjection file, GitKay.Core.DiffLayout layout) {
         rows.Add(file.Header);
         if (!file.IsLoaded || file.IsCollapsed) return;
+        if (file.ImageRow is { } imageRow) { rows.Add(imageRow); return; }
         if (file.IsRenderedMarkdown) { rows.AddRange(file.RenderedDisplayRows(file.RenderedChangesOnly, layout)); return; }
 
         var blocks = Microsoft.FSharp.Collections.ListModule.OfSeq(file.Blocks.Select(block => block switch {

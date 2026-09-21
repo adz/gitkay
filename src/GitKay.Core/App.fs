@@ -60,12 +60,19 @@ module App =
           RequestId: int64
           Content: RenderedMarkdownContent option }
 
-    /// <summary>One file shown reformatted in the diff pane, such as indented JSON.</summary>
+    /// <summary>What the diff pane shows in place of a file's source when it is previewed.</summary>
+    type FilePreview =
+        /// <summary>The file reformatted and re-diffed, such as indented JSON or XML.</summary>
+        | FormattedText of Models.FileDiff
+        /// <summary>The image itself, as its bytes. One side only: an image has nothing to diff against.</summary>
+        | PreviewImage of byte array
+
+    /// <summary>One file shown as something other than its source in the diff pane.</summary>
     type FormattedFileState =
         { Key: GitService.DiffFileKey
           Section: string
           RequestId: int64
-          Content: Models.FileDiff option }
+          Content: FilePreview option }
 
     type WholeFileState =
         { Key: GitService.DiffFileKey
@@ -162,7 +169,7 @@ module App =
         | CloseRevisionComparison
         | SelectDiffFile of hash:string * oldPath:string * newPath:string
         | SetFormattedFile of key:GitService.DiffFileKey * section:string * enabled:bool * requestId:int64
-        | FormattedFileLoaded of key:GitService.DiffFileKey * section:string * requestId:int64 * Result<Models.FileDiff, GitError>
+        | FormattedFileLoaded of key:GitService.DiffFileKey * section:string * requestId:int64 * Result<FilePreview, GitError>
         | SetRenderedMarkdown of key:GitService.DiffFileKey * section:string * enabled:bool * allowRemoteImages:bool * requestId:int64
         | RenderedMarkdownLoaded of key:GitService.DiffFileKey * section:string * requestId:int64 * Result<RenderedMarkdownContent, GitError>
         | OpenWholeFile of key:GitService.DiffFileKey * section:string * preview:bool * allowRemoteImages:bool * requestId:int64
@@ -590,15 +597,23 @@ module App =
             (fun error -> RenderedMarkdownLoaded(key, section, requestId, Error error))
 
     let private startFormattedFileLoad (model: Model) (key: GitService.DiffFileKey) section requestId =
+        let previewPath = if key.NewPath = "/dev/null" then key.OldPath else key.NewPath
+        let isImage = (Markdown.previewKind previewPath).IsImagePreview
         let load () =
             if model.IsWorkingTreeSelected then
                 match WorkingTree.tryParseSection section with
-                | Some parsed -> GitService.loadWorkingTreeFormattedFile model.GitEnv.RepoPath parsed key.OldPath key.NewPath
+                | Some parsed ->
+                    if isImage then GitService.loadWorkingTreePreviewImage model.GitEnv.RepoPath parsed key.OldPath key.NewPath |> Result.map PreviewImage
+                    else GitService.loadWorkingTreeFormattedFile model.GitEnv.RepoPath parsed key.OldPath key.NewPath |> Result.map FormattedText
                 | None -> Error(GitError.OperationFailed("Preview", $"Unknown working-tree section: {section}"))
             else
                 match model.RevisionComparison, model.SelectedDiffHash with
-                | Some comparison, _ -> GitService.loadRevisionFormattedFile model.GitEnv.RepoPath comparison key.OldPath key.NewPath
-                | None, Some hash -> GitService.loadCommitFormattedFile model.GitEnv.RepoPath hash key.OldPath key.NewPath
+                | Some comparison, _ ->
+                    if isImage then GitService.loadRevisionPreviewImage model.GitEnv.RepoPath comparison key.OldPath key.NewPath |> Result.map PreviewImage
+                    else GitService.loadRevisionFormattedFile model.GitEnv.RepoPath comparison key.OldPath key.NewPath |> Result.map FormattedText
+                | None, Some hash ->
+                    if isImage then GitService.loadCommitPreviewImage model.GitEnv.RepoPath hash key.OldPath key.NewPath |> Result.map PreviewImage
+                    else GitService.loadCommitFormattedFile model.GitEnv.RepoPath hash key.OldPath key.NewPath |> Result.map FormattedText
                 | _ -> Error(GitError.OperationFailed("Preview", "No revision is selected"))
         Cmd.OfFlow.ofFlowLatest
             $"format file {key.NewPath}"

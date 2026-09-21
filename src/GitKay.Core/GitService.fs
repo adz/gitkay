@@ -1341,6 +1341,22 @@ module GitService =
             | _ -> return! Error(GitError.OperationFailed("Preview", "This file has no formatted view"))
         }
 
+    /// <summary>
+    /// The bytes of the side of an image worth looking at: the new one, or the old one when the file was deleted.
+    /// A deleted and an added image each have only one side, so there is nothing to compare them against.
+    /// </summary>
+    let loadCommitPreviewImage (repoPath: string) (hash: string) (oldPath: string) (newPath: string) : Result<byte array, GitError> =
+        let deleted = newPath = "/dev/null"
+        loadCommitSideFileBytes repoPath hash deleted (if deleted then oldPath else newPath)
+
+    let loadWorkingTreePreviewImage (repoPath: string) (section: WorkingTree.Section) (oldPath: string) (newPath: string) =
+        let deleted = newPath = "/dev/null"
+        loadWorkingTreeSideFileBytes repoPath section deleted (if deleted then oldPath else newPath)
+
+    let loadRevisionPreviewImage (repoPath: string) (comparison: RevisionComparison) (oldPath: string) (newPath: string) =
+        let deleted = newPath = "/dev/null"
+        revisionBlobBytes repoPath (if deleted then comparison.BaseHash else comparison.TargetHash) (if deleted then oldPath else newPath)
+
     let loadWorkingTreeFormattedFile (repoPath: string) (section: WorkingTree.Section) (oldPath: string) (newPath: string) : Result<Models.FileDiff, GitError> =
         result {
             let! file = loadWorkingTreeFile repoPath section oldPath newPath

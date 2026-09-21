@@ -568,7 +568,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public void ToggleFormattedPreview(DiffFileProjection file) {
         var enable = !file.IsFormattedPreview;
         var requestId = Stopwatch.GetTimestamp();
-        if (!enable) file.ClearFormatted();
+        if (!enable) { file.ClearFormatted(); file.ClearPreviewImage(); }
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetFormattedFile(
             new GitKay.Core.GitService.DiffFileKey(file.Key.OldPath, file.Key.NewPath), file.Key.Section, enable, requestId));
         if (!enable) {
@@ -583,7 +583,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         if (model.FormattedFile == null) {
             if (_appliedFormattedRequestId < 0) return;
             _appliedFormattedRequestId = -1;
-            foreach (var file in SelectedDiffFiles) file.ClearFormatted();
+            foreach (var file in SelectedDiffFiles) { file.ClearFormatted(); file.ClearPreviewImage(); }
             RefreshDiffRows();
             RenderedMarkdownChanged?.Invoke();
             return;
@@ -595,7 +595,15 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             && candidate.Key.NewPath == state.Key.NewPath && candidate.Key.Section == state.Section);
         if (target == null) return;
         _appliedFormattedRequestId = state.RequestId;
-        target.ApplyFormatted(state.Content.Value);
+        switch (state.Content.Value) {
+            case GitKay.Core.App.FilePreview.FormattedText formatted:
+                target.ApplyFormatted(formatted.Item);
+                break;
+            case GitKay.Core.App.FilePreview.PreviewImage image:
+                try { target.ApplyPreviewImage(new Bitmap(new System.IO.MemoryStream(image.Item)), image.Item.Length); }
+                catch (Exception error) { Status = $"Cannot preview image: {error.Message}"; return; }
+                break;
+        }
         RefreshDiffRows();
         RenderedMarkdownChanged?.Invoke();
     }

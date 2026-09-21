@@ -1436,3 +1436,53 @@ module SearchBoxFocusTests =
             finally
                 window.Close()
                 Headless.pump ())
+
+module ImagePreviewTests =
+    /// A tiny PNG, encoded here so the test does not depend on a file in the repository.
+    let private pngBytes () =
+        use bitmap = new SkiaSharp.SKBitmap(6, 4)
+        bitmap.SetPixel(0, 0, SkiaSharp.SKColors.Red)
+        use image = SkiaSharp.SKImage.FromBitmap bitmap
+        use data = image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100)
+        data.ToArray()
+
+    [<Fact>]
+    let ``an image file previews as one row carrying the picture and its metadata`` () =
+        Headless.run (fun () ->
+            let bytes = pngBytes ()
+            let file = DiffFileProjection({ OldPath = "docs/logo.png"; NewPath = "docs/logo.png"; DisplayPath = "docs/logo.png" } : GitService.DiffFileSummary)
+            file.ApplyContent({ OldPath = "docs/logo.png"; NewPath = "docs/logo.png"; Hunks = []; NewLineCount = None } : Models.FileDiff)
+            file.ApplyPreviewImage(new Media.Imaging.Bitmap(new IO.MemoryStream(bytes)), bytes.Length)
+
+            test <@ file.IsImagePreview @>
+            let row = file.ImageRow
+            test <@ not (isNull (box row)) @>
+            // Only what the file itself says: the decoder's pixel size, the format, and the bytes on disk.
+            let metadata = row.Metadata
+            test <@ metadata.Contains "PNG" @>
+            test <@ metadata.Contains "6 × 4" @>
+            test <@ metadata.Contains (ImagePreviewRowProjection.DescribeBytes(int64 bytes.Length)) @>
+            test <@ not row.IsOldSide @>
+
+            // The picture replaces the file's rows rather than sitting among them.
+            let rows = ResizeArray<IDiffRowProjection>()
+            DiffRowBuilder.AppendFile(rows, file, DiffLayout.Unified)
+            let images = rows |> Seq.filter (fun r -> r :? ImagePreviewRowProjection) |> Seq.length
+            test <@ images = 1 && rows.Count = 2 @>
+
+            file.ClearPreviewImage()
+            test <@ not file.IsImagePreview && isNull (box file.ImageRow) @>)
+
+    [<Fact>]
+    let ``a deleted image says the picture is how it was`` () =
+        Headless.run (fun () ->
+            let bytes = pngBytes ()
+            let file = DiffFileProjection({ OldPath = "docs/logo.png"; NewPath = "/dev/null"; DisplayPath = "docs/logo.png" } : GitService.DiffFileSummary)
+            file.ApplyPreviewImage(new Media.Imaging.Bitmap(new IO.MemoryStream(bytes)), bytes.Length)
+            test <@ file.ImageRow.IsOldSide @>)
+
+    [<Fact>]
+    let ``byte counts read as sizes rather than digits`` () =
+        test <@ ImagePreviewRowProjection.DescribeBytes 512L = "512 B" @>
+        test <@ ImagePreviewRowProjection.DescribeBytes 2048L = "2 KB" @>
+        test <@ ImagePreviewRowProjection.DescribeBytes (3L * 1024L * 1024L) = "3 MB" @>
