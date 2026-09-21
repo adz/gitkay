@@ -50,6 +50,9 @@ public sealed partial class FolderProjection : ObservableObject {
     public FolderMode Mode { get; }
     public string LeftRoot { get; }
     public string? RightRoot { get; }
+    /// <summary>What the left-hand folder is called here: one folder is just the folder, two have sides.</summary>
+    public string LeftLabel => Mode == FolderMode.Compare ? "Left" : "Folder";
+    public string ChangeFoldersLabel => Mode == FolderMode.Compare ? "Change folders…" : "Change folder…";
     public string WindowTitle { get; }
     public string Subtitle { get; }
     public string ModeLabel => Mode == FolderMode.Compare ? "COMPARE" : "PREVIEW";
@@ -156,8 +159,16 @@ public sealed partial class FolderProjection : ObservableObject {
         return null;
     }
 
-    /// <summary>Whether rendered Markdown may fetch images from the internet. Off, as it is for repositories.</summary>
-    public bool LoadRemoteImages { get; set; }
+    /// <summary>
+    /// Whether rendered Markdown may fetch images from the internet. Off by default, as it is for repositories:
+    /// fetching one tells its host that this document was opened.
+    /// </summary>
+    [ObservableProperty] private bool _loadRemoteImages;
+
+    partial void OnLoadRemoteImagesChanged(bool value) {
+        // Re-render what is on screen, so the setting takes effect on the document being read rather than the next one.
+        if (SelectedFile is { IsRenderedMarkdown: true } file) { TogglePreview(file); TogglePreview(file); }
+    }
 
     [ObservableProperty] private IReadOnlyDictionary<string, Avalonia.Media.Imaging.Bitmap> _oldImages =
         new Dictionary<string, Avalonia.Media.Imaging.Bitmap>();
@@ -202,6 +213,29 @@ public partial class FolderWindow : Window {
     public FolderWindow(FolderProjection projection) : this() {
         DataContext = projection;
         Opened += (_, _) => Surface.Focus();
+    }
+
+    /// <summary>Choosing what this window shows, without going back to a repository window to do it.</summary>
+    private async void OnChangeFoldersClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) {
+        if (DataContext is not FolderProjection projection) return;
+        try {
+            if (projection.Mode == FolderMode.Compare) {
+                if (await OpenFoldersDialog.ShowAsync(this, projection.LeftRoot) is not { } folders) return;
+                ExternalTools.StartGitKay(folders.Left, "diff", folders.Left, folders.Right);
+            }
+            else {
+                var folders = await StorageProvider.OpenFolderPickerAsync(new Avalonia.Platform.Storage.FolderPickerOpenOptions {
+                    Title = "Browse folder",
+                    AllowMultiple = false,
+                    SuggestedStartLocation = await StorageProvider.TryGetFolderFromPathAsync(new Uri(projection.LeftRoot)),
+                });
+                if (folders.Count == 0 || Avalonia.Platform.Storage.StorageProviderExtensions.TryGetLocalPath(folders[0]) is not { } path) return;
+                ExternalTools.StartGitKay(path, "browse", path);
+            }
+        }
+        catch (Exception error) {
+            projection.Status = $"Could not open: {error.Message}";
+        }
     }
 
     private void OnPreviewRequested(object? sender, DiffFileProjection file) {

@@ -65,7 +65,11 @@ public partial class App : Application {
                 return;
             }
 
-            var window = new FolderWindow(new FolderProjection(mode, left, right, built.Pairs)) {
+            var projection = new FolderProjection(mode, left, right, built.Pairs) {
+                // The same saved choice repository windows use; folders are no less private than commits.
+                LoadRemoteImages = settings.LoadRemoteMarkdownImages,
+            };
+            var window = new FolderWindow(projection) {
                 WindowStartupLocation = Avalonia.Controls.WindowStartupLocation.CenterScreen,
             };
             desktop.MainWindow = window;

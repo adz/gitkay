@@ -7,20 +7,44 @@
         Width="1200" Height="820" MinWidth="560" MinHeight="320"
         Background="{DynamicResource GitKayWindowBrush}">
     <DockPanel>
-        <Border DockPanel.Dock="Top" MinHeight="37"
+        <!-- Where a repository window shows its commits, a folder window shows the folders themselves. -->
+        <Border DockPanel.Dock="Top"
                 Background="{DynamicResource GitKayChromeBrush}"
                 BorderBrush="{DynamicResource GitKayHairlineBrush}"
                 BorderThickness="0,0,0,1"
-                Padding="10,4">
-            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
-                <TextBlock Text="{Binding ModeLabel}" FontSize="11" LetterSpacing="0.6"
-                           Foreground="{DynamicResource GitKayMutedTextBrush}" VerticalAlignment="Center" />
-                <TextBlock Grid.Column="1" Text="{Binding Subtitle}" FontSize="12"
-                           Foreground="{DynamicResource GitKayTextBrush}"
-                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
-                           ToolTip.Tip="{Binding Subtitle}" />
-                <TextBlock Grid.Column="2" Text="{Binding Status}" FontSize="11"
-                           Foreground="{DynamicResource GitKayMutedTextBrush}" VerticalAlignment="Center" />
+                Padding="10,6">
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12" RowDefinitions="Auto,Auto" RowSpacing="4">
+                <TextBlock Text="{Binding ModeLabel}" FontSize="11" LetterSpacing="0.6" VerticalAlignment="Center"
+                           Foreground="{DynamicResource GitKayMutedTextBrush}" />
+
+                <Grid Grid.Column="1" Grid.RowSpan="2" ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto"
+                      ColumnSpacing="8" RowSpacing="3">
+                    <TextBlock Text="{Binding LeftLabel}" FontSize="11" VerticalAlignment="Center"
+                               Foreground="{DynamicResource GitKayMutedTextBrush}" />
+                    <TextBlock Grid.Column="1" Text="{Binding LeftRoot}" FontSize="12" VerticalAlignment="Center"
+                               FontFamily="{x:Static local:FontStacks.Mono}"
+                               Foreground="{DynamicResource GitKayTextBrush}"
+                               TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding LeftRoot}" />
+                    <TextBlock Grid.Row="1" Text="Right" FontSize="11" VerticalAlignment="Center"
+                               IsVisible="{Binding ShowsChanges}"
+                               Foreground="{DynamicResource GitKayMutedTextBrush}" />
+                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding RightRoot}" FontSize="12" VerticalAlignment="Center"
+                               IsVisible="{Binding ShowsChanges}"
+                               FontFamily="{x:Static local:FontStacks.Mono}"
+                               Foreground="{DynamicResource GitKayTextBrush}"
+                               TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding RightRoot}" />
+                </Grid>
+
+                <StackPanel Grid.Column="2" Grid.RowSpan="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Status}" FontSize="11" VerticalAlignment="Center"
+                               Foreground="{DynamicResource GitKayMutedTextBrush}" />
+                    <CheckBox Content="Remote images" IsChecked="{Binding LoadRemoteImages, Mode=TwoWay}"
+                              FontSize="11" VerticalAlignment="Center"
+                              ToolTip.Tip="Let rendered Markdown fetch images from the internet. Off keeps reading a document private." />
+                    <Button Classes="inline" Padding="10,3" Click="OnChangeFoldersClick"
+                            Content="{Binding ChangeFoldersLabel}"
+                            ToolTip.Tip="Choose what this window is showing" />
+                </StackPanel>
             </Grid>
         </Border>
 

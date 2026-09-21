@@ -1685,3 +1685,37 @@ module FolderWindowTests =
                     Headless.pump ()
             finally
                 try Directory.Delete(root, true) with _ -> ())
+
+    [<Fact>]
+    let ``comparing needs two different folders that both exist`` () =
+        let root, left, right = folders (fun left right -> write left "a.txt" "a"; write right "a.txt" "b")
+        try
+            // Nothing chosen, or a path that is not a folder, is said plainly rather than opening an empty window.
+            test <@ OpenFoldersDialog.Problem("", right) = "Choose both folders." @>
+            test <@ OpenFoldersDialog.Problem(left, "") = "Choose both folders." @>
+            test <@ (OpenFoldersDialog.Problem(Path.Combine(root, "nope"), right)).StartsWith "Not a folder" @>
+            // The same folder twice would compare a thing with itself.
+            test <@ OpenFoldersDialog.Problem(left, left) = "These are the same folder; nothing would differ." @>
+            // Two real, different folders are fine.
+            test <@ isNull (OpenFoldersDialog.Problem(left, right)) @>
+        finally
+            try Directory.Delete(root, true) with _ -> ()
+
+    [<Fact>]
+    let ``the folder window names its folders where a repository window names its commits`` () =
+        Headless.run (fun () ->
+            let root, left, right = folders (fun left right -> write left "a.txt" "a"; write right "a.txt" "b")
+            try
+                let pairs = Folder.pair (entriesOf left) (entriesOf right) |> FolderSource.changedPairs
+                let compare = FolderProjection(FolderMode.Compare, left, right, ResizeArray pairs)
+                test <@ compare.LeftLabel = "Left" && compare.ShowsChanges @>
+                test <@ compare.RightRoot = right @>
+                test <@ compare.ChangeFoldersLabel = "Change folders…" @>
+
+                // Browsing has one folder, so it is not called a side and there is no right-hand one to show.
+                let browse = FolderProjection(FolderMode.Preview, left, null, ResizeArray(Folder.pair Seq.empty (entriesOf left)))
+                test <@ browse.LeftLabel = "Folder" && not browse.ShowsChanges @>
+                test <@ isNull browse.RightRoot @>
+                test <@ browse.ChangeFoldersLabel = "Change folder…" @>
+            finally
+                try Directory.Delete(root, true) with _ -> ())

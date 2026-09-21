@@ -964,9 +964,9 @@ public partial class MainWindow : Window, IVimCommands {
                 break;
             }
             case "compare": {
-                if (await pick("Compare: the folder on the left") is not { } left) return;
-                if (await pick("Compare: the folder on the right") is not { } right) return;
-                Launch(projection, left, $"Comparing {left} with {right}", "diff", left, right);
+                // One dialog for both, so a wrong first choice can be corrected without starting again.
+                if (await OpenFoldersDialog.ShowAsync(this, projection.RepositoryPath) is not { } folders) return;
+                Launch(projection, folders.Left, $"Comparing {folders.Left} with {folders.Right}", "diff", folders.Left, folders.Right);
                 break;
             }
         }
