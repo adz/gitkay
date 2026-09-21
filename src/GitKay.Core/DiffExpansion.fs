@@ -46,7 +46,7 @@ module DiffExpansion =
         | GapBlock of DiffGap
         | HunkBlock of DiffHunk
 
-    let private isDevNull (path: string) = path = "/dev/null"
+    let private isDevNull = FileChange.isMissing
 
     let private hunkHeaderPattern = Regex("^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$", RegexOptions.Compiled)
 

@@ -896,7 +896,7 @@ public partial class MainWindow : Window, IVimCommands {
     private void PresentWholeFile(GitKay.Core.App.WholeFileState state) {
         if (_projection is not { } projection || state.Payload == null) return;
         var target = _pendingWholeFileTarget ?? new FileTarget(state.Key.OldPath, state.Key.NewPath,
-            state.Key.NewPath == "/dev/null" ? state.Key.OldPath : state.Key.NewPath, null);
+            GitKay.Core.FileChange.currentPath(state.Key.OldPath, state.Key.NewPath), null);
         var label = projection.IsWorkingTreeDiffShown ? (state.Section.Length == 0 ? "HEAD" : state.Section.ToLowerInvariant())
             : projection.SelectedCommit?.Hash ?? "file";
         var subject = projection.IsWorkingTreeDiffShown ? "Uncommitted changes" : projection.SelectedCommit?.Subject ?? "";

@@ -150,7 +150,7 @@ module WorkingTree =
                       |> Array.mapi (fun index line ->
                           ({ Type = Models.Added; Content = line; OldLineNo = None; NewLineNo = Some(index + 1) }: Models.DiffLine))
                       |> List.ofArray } ]
-        { OldPath = "/dev/null"; NewPath = path; Hunks = hunks; NewLineCount = Some lines.Length }
+        { OldPath = FileChange.missing; NewPath = path; Hunks = hunks; NewLineCount = Some lines.Length }
 
     /// <summary>
     /// File diffs from <c>git diff</c> output (with a/ and b/ prefixes). Hunks are read by their line counts, so
@@ -161,7 +161,7 @@ module WorkingTree =
         let lines = if String.IsNullOrEmpty output then [||] else output.Replace("\r\n", "\n").Split '\n'
         let stripPrefix (prefix: string) (path: string) =
             let path = path.TrimEnd '\t'
-            if path = "/dev/null" then path elif path.StartsWith prefix then path.Substring prefix.Length else path
+            if FileChange.isMissing path then path elif path.StartsWith prefix then path.Substring prefix.Length else path
         // "diff --git a/<p> b/<p>": without rename lines both halves name the same path, so split at the middle.
         let headerPaths (line: string) =
             let rest = line.Substring "diff --git ".Length
@@ -193,8 +193,8 @@ module WorkingTree =
                     let current = lines[index]
                     if current.StartsWith "rename from " then oldPath <- current.Substring "rename from ".Length
                     elif current.StartsWith "rename to " then newPath <- current.Substring "rename to ".Length
-                    elif current.StartsWith "new file mode" then oldPath <- "/dev/null"
-                    elif current.StartsWith "deleted file mode" then newPath <- "/dev/null"
+                    elif current.StartsWith "new file mode" then oldPath <- FileChange.missing
+                    elif current.StartsWith "deleted file mode" then newPath <- FileChange.missing
                     elif current.StartsWith "--- " then oldPath <- stripPrefix "a/" (current.Substring 4)
                     elif current.StartsWith "+++ " then newPath <- stripPrefix "b/" (current.Substring 4)
 

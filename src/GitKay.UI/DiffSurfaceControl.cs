@@ -2714,7 +2714,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         var header = index;
         while (header >= 0 && _rows[header] is not DiffFileHeaderProjection) header--;
         if (header >= 0 && _rows[header] is DiffFileHeaderProjection file) {
-            var path = file.File.Key.NewPath == "/dev/null" ? file.File.Key.OldPath : file.File.Key.NewPath;
+            var path = GitKay.Core.FileChange.currentPath(file.File.Key.OldPath, file.File.Key.NewPath);
             if (FileContextRequested == null) {
                 Add("Copy file path", true, () => CopyText(path));
             }

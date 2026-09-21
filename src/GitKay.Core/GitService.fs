@@ -161,13 +161,13 @@ module GitService =
         // Match the unified diff's file identity: added and deleted files name /dev/null on the missing side.
         let oldPath =
             if entry.Status = ChangeKind.Added || String.IsNullOrWhiteSpace entry.OldPath then
-                "/dev/null"
+                FileChange.missing
             else
                 entry.OldPath
 
         let newPath =
             if entry.Status = ChangeKind.Deleted || String.IsNullOrWhiteSpace entry.Path then
-                "/dev/null"
+                FileChange.missing
             else
                 entry.Path
 
@@ -294,7 +294,7 @@ module GitService =
         }
 
     let private tryBlob (commit: LibGit2Sharp.Commit) (path: string) =
-        if isNull commit || path = "/dev/null" then
+        if isNull commit || FileChange.isMissing path then
             null
         else
             match commit.[path] with
@@ -750,7 +750,7 @@ module GitService =
 
     /// Complete context for one file in an arbitrary revision comparison.
     let fetchRevisionDiffFileFullContext (comparison: RevisionComparison) (oldPath: string) (newPath: string) : Flow<GitEnv, GitError, FileDiff> =
-        let paths = [ oldPath; newPath ] |> List.filter ((<>) "/dev/null") |> List.distinct
+        let paths = FileChange.paths oldPath newPath
         plainGit ([ "diff"; "--no-ext-diff"; $"-U{int UInt16.MaxValue}"; comparison.BaseHash; comparison.TargetHash; "--" ] @ paths)
         |> Flow.map WorkingTree.parsePatch
         |> Flow.map (fun files -> files |> List.tryHead |> Option.defaultValue { OldPath = oldPath; NewPath = newPath; Hunks = []; NewLineCount = None })
@@ -778,11 +778,11 @@ module GitService =
         try
             let info = IO.FileInfo full
             if not info.Exists || info.Length > untrackedSizeLimit then
-                { OldPath = "/dev/null"; NewPath = path; Hunks = []; NewLineCount = None }
+                { OldPath = FileChange.missing; NewPath = path; Hunks = []; NewLineCount = None }
             else
                 WorkingTree.untrackedDiff path (IO.File.ReadAllText full) // axial-allow-effect: filesystem
         with :? IO.IOException | :? UnauthorizedAccessException ->
-            { OldPath = "/dev/null"; NewPath = path; Hunks = []; NewLineCount = None }
+            { OldPath = FileChange.missing; NewPath = path; Hunks = []; NewLineCount = None }
 
     /// <summary>The staged, unstaged and untracked diffs, with <paramref name="contextLines"/> lines of context.</summary>
     /// <summary>The commit HEAD would replace when amending, or None on a repository's first commit.</summary>
@@ -820,8 +820,8 @@ module GitService =
     let fetchWorkingTreeFile (section: WorkingTree.Section) (oldPath: string) (newPath: string) : Flow<GitEnv, GitError, FileDiff> =
         flow {
             let paths =
-                if oldPath = "/dev/null" || oldPath = newPath then [ newPath ]
-                elif newPath = "/dev/null" then [ oldPath ]
+                if FileChange.isMissing oldPath || oldPath = newPath then [ newPath ]
+                elif FileChange.isMissing newPath then [ oldPath ]
                 else [ oldPath; newPath ]
 
             match section with
@@ -1175,7 +1175,7 @@ module GitService =
             use repo = new Repository(repoPath)
             let! (commit: LibGit2Sharp.Commit) = loadCommit repo hash
             let revision, path =
-                if newPath = "/dev/null" then commit.Parents |> Seq.tryHead |> Option.toObj, oldPath
+                if FileChange.isDeleted oldPath newPath then commit.Parents |> Seq.tryHead |> Option.toObj, oldPath
                 else commit, newPath
             if isNull revision then return! Error (GitError.OperationFailed("Load file", $"File not found: {path}"))
             let blob = tryBlob revision path
@@ -1201,7 +1201,7 @@ module GitService =
             if not diff.Hunks.IsEmpty then
                 return diff
             else
-                let blob = tryBlob commit (if newPath = "/dev/null" then oldPath else newPath)
+                let blob = tryBlob commit (FileChange.currentPath oldPath newPath)
 
                 if isNull blob || blob.IsBinary then
                     return diff
@@ -1247,7 +1247,7 @@ module GitService =
           NewLineCount = Some newLines.Length }
 
     let private revisionBlobText (repo: Repository) (revision: string) (path: string) =
-        if path = "/dev/null" then Ok ""
+        if FileChange.isMissing path then Ok ""
         else
             let commit = repo.Lookup<LibGit2Sharp.Commit>(revision)
             if isNull commit then Error(GitError.OperationFailed("Render Markdown", $"Revision not found: {revision}"))
@@ -1281,8 +1281,8 @@ module GitService =
             let oldBlocks, newBlocks = Markdown.parse oldSource, Markdown.parse newSource
             if oldBlocks.Length > 5000 || newBlocks.Length > 5000 then
                 return! Error(GitError.OperationFailed("Render Markdown", "Files over 5,000 blocks stay in source view"))
-            let oldDocumentPath = if oldPath = "/dev/null" then newPath else oldPath
-            let newDocumentPath = if newPath = "/dev/null" then oldPath else newPath
+            let oldDocumentPath = FileChange.previousPath oldPath newPath
+            let newDocumentPath = FileChange.currentPath oldPath newPath
             let loader side path = revisionBlobBytes repoPath (if side = MarkdownImageSide.Old then comparison.BaseHash else comparison.TargetHash) path
             let images = Markdown.imageRequests oldDocumentPath newDocumentPath oldSource newSource |> List.map (imageData allowRemote loader)
             let file = fileDiffFromSources oldPath newPath oldSource newSource
@@ -1293,7 +1293,7 @@ module GitService =
 
     let loadRevisionWholeFilePayload repoPath comparison oldPath newPath allowRemote =
         result {
-            let previewPath = if newPath = "/dev/null" then oldPath else newPath
+            let previewPath = FileChange.currentPath oldPath newPath
             match Markdown.previewKind previewPath with
             | MarkdownPreview ->
                 let! rendered = loadRevisionRenderedMarkdown repoPath comparison oldPath newPath allowRemote
@@ -1303,7 +1303,8 @@ module GitService =
                 let! oldSource = revisionBlobText repo comparison.BaseHash oldPath
                 let! newSource = revisionBlobText repo comparison.TargetHash newPath
                 let file = fileDiffFromSources oldPath newPath oldSource newSource
-                let revision, path = if newPath = "/dev/null" then comparison.BaseHash, oldPath else comparison.TargetHash, newPath
+                let revision, path =
+                    if FileChange.isDeleted oldPath newPath then comparison.BaseHash, oldPath else comparison.TargetHash, newPath
                 let! bytes = revisionBlobBytes repoPath revision path
                 return { File = file; Rendered = None; ImageBytes = Some bytes }
             | FormattedPreview _ | SourceOnly ->
@@ -1335,7 +1336,7 @@ module GitService =
     let loadCommitFormattedFile (repoPath: string) (hash: string) (oldPath: string) (newPath: string) : Result<Models.FileDiff, GitError> =
         result {
             let! file = loadWholeFile repoPath hash oldPath newPath
-            let previewPath = if newPath = "/dev/null" then oldPath else newPath
+            let previewPath = FileChange.currentPath oldPath newPath
             match Markdown.previewKind previewPath with
             | FormattedPreview format -> return! formattedDiff format oldPath newPath file
             | _ -> return! Error(GitError.OperationFailed("Preview", "This file has no formatted view"))
@@ -1346,21 +1347,21 @@ module GitService =
     /// A deleted and an added image each have only one side, so there is nothing to compare them against.
     /// </summary>
     let loadCommitPreviewImage (repoPath: string) (hash: string) (oldPath: string) (newPath: string) : Result<byte array, GitError> =
-        let deleted = newPath = "/dev/null"
+        let deleted = FileChange.isDeleted oldPath newPath
         loadCommitSideFileBytes repoPath hash deleted (if deleted then oldPath else newPath)
 
     let loadWorkingTreePreviewImage (repoPath: string) (section: WorkingTree.Section) (oldPath: string) (newPath: string) =
-        let deleted = newPath = "/dev/null"
+        let deleted = FileChange.isDeleted oldPath newPath
         loadWorkingTreeSideFileBytes repoPath section deleted (if deleted then oldPath else newPath)
 
     let loadRevisionPreviewImage (repoPath: string) (comparison: RevisionComparison) (oldPath: string) (newPath: string) =
-        let deleted = newPath = "/dev/null"
+        let deleted = FileChange.isDeleted oldPath newPath
         revisionBlobBytes repoPath (if deleted then comparison.BaseHash else comparison.TargetHash) (if deleted then oldPath else newPath)
 
     let loadWorkingTreeFormattedFile (repoPath: string) (section: WorkingTree.Section) (oldPath: string) (newPath: string) : Result<Models.FileDiff, GitError> =
         result {
             let! file = loadWorkingTreeFile repoPath section oldPath newPath
-            let previewPath = if newPath = "/dev/null" then oldPath else newPath
+            let previewPath = FileChange.currentPath oldPath newPath
             match Markdown.previewKind previewPath with
             | FormattedPreview format -> return! formattedDiff format oldPath newPath file
             | _ -> return! Error(GitError.OperationFailed("Preview", "This file has no formatted view"))
@@ -1372,7 +1373,7 @@ module GitService =
             let! oldSource = revisionBlobText repo comparison.BaseHash oldPath
             let! newSource = revisionBlobText repo comparison.TargetHash newPath
             let file = fileDiffFromSources oldPath newPath oldSource newSource
-            let previewPath = if newPath = "/dev/null" then oldPath else newPath
+            let previewPath = FileChange.currentPath oldPath newPath
             match Markdown.previewKind previewPath with
             | FormattedPreview format -> return! formattedDiff format oldPath newPath file
             | _ -> return! Error(GitError.OperationFailed("Preview", "This file has no formatted view"))
@@ -1393,8 +1394,8 @@ module GitService =
             let oldBlocks, newBlocks = Markdown.parse oldSource, Markdown.parse newSource
             if oldBlocks.Length > 5000 || newBlocks.Length > 5000 then
                 return! Error(GitError.OperationFailed("Render Markdown", "Files over 5,000 blocks stay in source view"))
-            let oldDocumentPath = if oldPath = "/dev/null" then newPath else oldPath
-            let newDocumentPath = if newPath = "/dev/null" then oldPath else newPath
+            let oldDocumentPath = FileChange.previousPath oldPath newPath
+            let newDocumentPath = FileChange.currentPath oldPath newPath
             let loader side path = loadCommitSideFileBytes repoPath hash (side = MarkdownImageSide.Old) path
             let images = Markdown.imageRequests oldDocumentPath newDocumentPath oldSource newSource |> List.map (imageData allowRemote loader)
             let diffRows = Markdown.renderDiff oldSource newSource |> Markdown.markChangedImages images
@@ -1416,8 +1417,8 @@ module GitService =
             let oldBlocks, newBlocks = Markdown.parse oldSource, Markdown.parse newSource
             if oldBlocks.Length > 5000 || newBlocks.Length > 5000 then
                 return! Error(GitError.OperationFailed("Render Markdown", "Files over 5,000 blocks stay in source view"))
-            let oldDocumentPath = if oldPath = "/dev/null" then newPath else oldPath
-            let newDocumentPath = if newPath = "/dev/null" then oldPath else newPath
+            let oldDocumentPath = FileChange.previousPath oldPath newPath
+            let newDocumentPath = FileChange.currentPath oldPath newPath
             let loader side path = loadWorkingTreeSideFileBytes repoPath section (side = MarkdownImageSide.Old) path
             let images = Markdown.imageRequests oldDocumentPath newDocumentPath oldSource newSource |> List.map (imageData allowRemote loader)
             let diffRows = Markdown.renderDiff oldSource newSource |> Markdown.markChangedImages images
@@ -1428,7 +1429,7 @@ module GitService =
 
     let loadCommitWholeFilePayload repoPath hash oldPath newPath allowRemote =
         result {
-            let previewPath = if newPath = "/dev/null" then oldPath else newPath
+            let previewPath = FileChange.currentPath oldPath newPath
             match Markdown.previewKind previewPath with
             | MarkdownPreview ->
                 let! rendered = loadCommitRenderedMarkdown repoPath hash oldPath newPath allowRemote
@@ -1444,14 +1445,14 @@ module GitService =
 
     let loadWorkingTreeWholeFilePayload repoPath section oldPath newPath allowRemote =
         result {
-            let previewPath = if newPath = "/dev/null" then oldPath else newPath
+            let previewPath = FileChange.currentPath oldPath newPath
             match Markdown.previewKind previewPath with
             | MarkdownPreview ->
                 let! rendered = loadWorkingTreeRenderedMarkdown repoPath section oldPath newPath allowRemote
                 return { File = rendered.File; Rendered = Some rendered; ImageBytes = None }
             | ImagePreview _ ->
                 let! file = loadWorkingTreeFile repoPath section oldPath newPath
-                let path = if newPath = "/dev/null" then oldPath else newPath
+                let path = FileChange.currentPath oldPath newPath
                 let! bytes = loadWorkingTreeSideFileBytes repoPath section false path
                 return { File = file; Rendered = None; ImageBytes = Some bytes }
             | FormattedPreview _ | SourceOnly ->
@@ -1569,7 +1570,7 @@ module GitService =
 
     let fetchFileBlame (revision: string) (path: string) : Flow<GitEnv, GitError, Map<int, BlameInfo>> =
         flow {
-            if path = "/dev/null" then
+            if FileChange.isMissing path then
                 return Map.empty
             else
                 let! output =

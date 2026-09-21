@@ -547,7 +547,7 @@ public sealed partial class CommitWindowProjection : ObservableObject {
 
     // A rename's old path moves with it, so the index doesn't keep half of it.
     private static IEnumerable<string> Paths(CommitFileRow row) =>
-        row.Diff.OldPath != row.Diff.NewPath && row.Diff.OldPath != "/dev/null" && row.Diff.NewPath != "/dev/null"
+        GitKay.Core.FileChange.isRenamed(row.Diff.OldPath, row.Diff.NewPath)
             ? [row.Diff.OldPath, row.Diff.NewPath]
             : [row.Path];
 

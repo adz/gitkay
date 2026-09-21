@@ -4311,3 +4311,30 @@ module PresentationTests =
         test <@ ChangeBlocks.split 50 50 = (2, 3) @>
         let green, red = ChangeBlocks.split 100 100
         test <@ green + red = ChangeBlocks.count @>
+
+module FileSideTests =
+    open GitKay.Core
+
+    [<Fact>]
+    let ``a missing side is asked about in one place`` () =
+        let added, deleted, renamed, changed = (FileChange.missing, "new.txt"), ("old.txt", FileChange.missing), ("old.txt", "new.txt"), ("same.txt", "same.txt")
+        let kindOf (o, n) = FileChange.kind o n
+        test <@ [ kindOf added; kindOf deleted; kindOf renamed; kindOf changed ]
+                 = [ FileChange.Added; FileChange.Deleted; FileChange.Renamed; FileChange.Modified ] @>
+
+        // The side that exists, which is what nearly every caller wanted from the sentinel.
+        test <@ FileChange.currentPath (fst deleted) (snd deleted) = "old.txt" @>
+        test <@ FileChange.currentPath (fst added) (snd added) = "new.txt" @>
+        test <@ FileChange.previousPath (fst added) (snd added) = "new.txt" @>
+        test <@ FileChange.previousPath (fst renamed) (snd renamed) = "old.txt" @>
+
+        // Only a rename has two real paths; nothing else reports the sentinel as a path.
+        test <@ FileChange.paths (fst renamed) (snd renamed) = [ "old.txt"; "new.txt" ] @>
+        test <@ FileChange.paths (fst changed) (snd changed) = [ "same.txt" ] @>
+        test <@ FileChange.paths (fst deleted) (snd deleted) = [ "old.txt" ] @>
+        test <@ FileChange.paths (fst added) (snd added) = [ "new.txt" ] @>
+
+        // A rename needs both sides present: an added or deleted file is not one.
+        test <@ FileChange.isRenamed (fst renamed) (snd renamed) @>
+        test <@ not (FileChange.isRenamed (fst added) (snd added)) @>
+        test <@ not (FileChange.isRenamed (fst deleted) (snd deleted)) @>

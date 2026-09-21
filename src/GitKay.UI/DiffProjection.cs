@@ -52,7 +52,7 @@ public partial class DiffFileProjection : ObservableObject {
     }
 
     public DiffFileKey Key { get; }
-    public string ContentPath => Key.NewPath == "/dev/null" ? Key.OldPath : Key.NewPath;
+    public string ContentPath => GitKay.Core.FileChange.currentPath(Key.OldPath, Key.NewPath);
     [ObservableProperty] private string _displayPath = "";
     [ObservableProperty] private bool _isLoaded;
     /// <summary>Presentation-only: hides this file's diff rows beneath its header.</summary>
@@ -91,7 +91,7 @@ public partial class DiffFileProjection : ObservableObject {
 
     /// <summary>The single row an image preview is: the picture and what can be read off it.</summary>
     public ImagePreviewRowProjection? ImageRow =>
-        PreviewImage is { } image ? new ImagePreviewRowProjection(image, ContentPath, _previewImageBytes, Key.NewPath == "/dev/null", this) : null;
+        PreviewImage is { } image ? new ImagePreviewRowProjection(image, ContentPath, _previewImageBytes, GitKay.Core.FileChange.isDeleted(Key.OldPath, Key.NewPath), this) : null;
     [ObservableProperty] private bool _renderedChangesOnly;
     /// <summary>Label and indent for the changed-files list: full path in patch mode, file name in tree mode.</summary>
     [ObservableProperty] private string _listLabel = "";

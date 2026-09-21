@@ -597,7 +597,7 @@ module App =
             (fun error -> RenderedMarkdownLoaded(key, section, requestId, Error error))
 
     let private startFormattedFileLoad (model: Model) (key: GitService.DiffFileKey) section requestId =
-        let previewPath = if key.NewPath = "/dev/null" then key.OldPath else key.NewPath
+        let previewPath = FileChange.currentPath key.OldPath key.NewPath
         let isImage = (Markdown.previewKind previewPath).IsImagePreview
         let load () =
             if model.IsWorkingTreeSelected then

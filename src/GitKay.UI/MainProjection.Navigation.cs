@@ -217,7 +217,7 @@ public partial class MainProjection {
     private List<PaletteItem> BuildPaletteItems(PaletteMode mode) => mode switch {
         PaletteMode.Refs => BuildRefItems(),
         PaletteMode.Files => SelectedDiffFiles
-            .Select(file => new PaletteItem(file.Key.NewPath == "/dev/null" ? file.Key.OldPath : file.Key.NewPath,
+            .Select(file => new PaletteItem(GitKay.Core.FileChange.currentPath(file.Key.OldPath, file.Key.NewPath),
                 $"{file.ChangeKind} · +{file.AddedLines} −{file.RemovedLines}", "▤", () => { SelectedDiffFile = file; FileJumpRequested?.Invoke(file); }))
             .Concat(UnchangedFilePaths().Select(path =>
                 new PaletteItem(path, "unchanged · open whole file", "·", () => ShowWholeFile(new FileTarget(path, path, path, null)))))

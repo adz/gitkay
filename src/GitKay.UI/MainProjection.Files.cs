@@ -11,7 +11,7 @@ namespace GitKay.UI;
 
 /// <summary>A file the user can act on from a context menu: changed in the commit, or unchanged in its tree.</summary>
 public sealed record FileTarget(string OldPath, string NewPath, string DisplayPath, DiffFileProjection? Changed) {
-    public string Path => NewPath == "/dev/null" ? OldPath : NewPath;
+    public string Path => GitKay.Core.FileChange.currentPath(OldPath, NewPath);
 
     public static FileTarget From(DiffFileProjection file) => new(file.Key.OldPath, file.Key.NewPath, file.DisplayPath, file);
     public static FileTarget From(RepoFileRow row) => new(row.Path, row.Path, row.Path, null);

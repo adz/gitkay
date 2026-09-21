@@ -839,7 +839,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     // A rename moves with both of its paths, so the index doesn't keep half of it.
     private static IEnumerable<string> PathsOf(DiffFileProjection file) =>
-        file.Key.OldPath != file.Key.NewPath && file.Key.OldPath != "/dev/null" && file.Key.NewPath != "/dev/null"
+        GitKay.Core.FileChange.isRenamed(file.Key.OldPath, file.Key.NewPath)
             ? [file.Key.OldPath, file.Key.NewPath]
             : [DiffFileTree.PathOf(file)];
 

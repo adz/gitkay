@@ -163,7 +163,7 @@ module GitParsing =
                     currentFile
                     |> Option.map (fun f ->
                         let oldPath =
-                            if line = "--- /dev/null" then "/dev/null"
+                            if line = "--- " + FileChange.missing then FileChange.missing
                             elif line.StartsWith("--- a/") then line.Substring(6)
                             else line.Substring(4)
 
@@ -173,7 +173,7 @@ module GitParsing =
                     currentFile
                     |> Option.map (fun f ->
                         let newPath =
-                            if line = "+++ /dev/null" then "/dev/null"
+                            if line = "+++ " + FileChange.missing then FileChange.missing
                             elif line.StartsWith("+++ b/") then line.Substring(6)
                             else line.Substring(4)
 
