@@ -1798,3 +1798,65 @@ module FolderWindowTests =
                 test <@ not plain.SelectedFile.IsFormattedPreview @>
             finally
                 try Directory.Delete(root, true) with _ -> ())
+
+module PreviewByDefaultTests =
+    let private jsonFile () =
+        let file = DiffFileProjection({ OldPath = "config.json"; NewPath = "config.json"; DisplayPath = "config.json" } : GitService.DiffFileSummary)
+        file.ApplyContent({ OldPath = "config.json"; NewPath = "config.json"; NewLineCount = Some 1
+                            Hunks = [ { Header = "@@ -1 +1 @@"
+                                        Lines = [ { Type = Models.Context; Content = """{"a":1}"""; OldLineNo = Some 1; NewLineNo = Some 1 } ] } ] } : Models.FileDiff)
+        file
+
+    [<Fact>]
+    let ``selecting a json file with preview on by default asks for its preview`` () =
+        Headless.run (fun () ->
+            let projection = MainProjection(RepositoryPath = "/tmp/not-a-real-repo")
+            let sent = ResizeArray<GitKay.Core.App.Msg>()
+            projection.SetDispatch(fun msg -> sent.Add msg)
+            projection.ApplySettings { Settings.defaults with PreviewByDefault = true }
+            let window = MainWindow(Width = 1200.0, Height = 800.0, DataContext = projection)
+            try
+                window.Show()
+                window.UpdateLayout()
+                Headless.pump ()
+                test <@ projection.PreviewByDefault @>
+
+                let file = jsonFile ()
+                projection.SelectedDiffFiles.Add file
+                projection.SelectedDiffFile <- file
+                Headless.pump ()
+                Headless.pump ()
+
+                // Nothing here can render it without a repository, but the request must have been made.
+                test <@ sent |> Seq.exists (fun (m: GitKay.Core.App.Msg) -> m.IsSetFormattedFile) @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``a formatted preview is not replaced by the source when the model re-syncs`` () =
+        Headless.run (fun () ->
+            let source : Models.FileDiff =
+                { OldPath = "config.json"; NewPath = "config.json"; NewLineCount = Some 1
+                  Hunks = [ { Header = "@@ -1 +1 @@"
+                              Lines = [ { Type = Models.Context; Content = """{"a":1}"""; OldLineNo = Some 1; NewLineNo = Some 1 } ] } ] }
+            let file = DiffFileProjection({ OldPath = "config.json"; NewPath = "config.json"; DisplayPath = "config.json" } : GitService.DiffFileSummary)
+            file.ApplyContent source
+
+            let formatted : Models.FileDiff =
+                { source with
+                    Hunks = [ { Header = "@@ -1,3 +1,3 @@"
+                                Lines = [ for i, text in List.indexed [ "{"; "  \"a\": 1"; "}" ] ->
+                                            ({ Type = Models.Context; Content = text; OldLineNo = Some(i + 1); NewLineNo = Some(i + 1) } : Models.DiffLine) ] } ] }
+            file.ApplyFormatted formatted
+            test <@ file.IsFormattedPreview && (file.Hunks |> Seq.collect _.Lines |> Seq.length) = 3 @>
+
+            // Every model update re-syncs the selected files; the preview must survive that.
+            file.ApplySourceContent source
+            test <@ file.IsFormattedPreview @>
+            test <@ (file.Hunks |> Seq.collect _.Lines |> Seq.length) = 3 @>
+
+            // And going back gives the source as it was last synced, not a stale copy.
+            file.ClearFormatted()
+            test <@ not file.IsFormattedPreview @>
+            test <@ (file.Hunks |> Seq.collect _.Lines |> Seq.head).Content = """{"a":1}""" @>)

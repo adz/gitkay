@@ -880,7 +880,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
                     // A refresh keeps revealed context for files whose change is the same.
                     if (!_workingTreeContents.TryGetValue(key, out var previous) || !previous.Equals(diff)) _workingTreeExpansions.Remove(key);
                     _workingTreeContents[key] = diff;
-                    file.ApplyContent(diff, _workingTreeExpansions.GetValueOrDefault(key));
+                    file.ApplySourceContent(diff, _workingTreeExpansions.GetValueOrDefault(key));
                     file.IsCollapsed = collapsed.Contains(key);
                     file.Marker = markers.GetValueOrDefault(DiffFileTree.PathOf(file), "");
                     SelectedDiffFiles.Add(file);
@@ -1941,7 +1941,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
         foreach (var fileProjection in SelectedDiffFiles) {
             if (filesByKey.TryGetValue(fileProjection.Key, out var loadedFile)) {
-                fileProjection.ApplyContent(loadedFile, FindExpansion(expansions, fileProjection.Key));
+                fileProjection.ApplySourceContent(loadedFile, FindExpansion(expansions, fileProjection.Key));
             }
             else {
                 fileProjection.ClearContent();

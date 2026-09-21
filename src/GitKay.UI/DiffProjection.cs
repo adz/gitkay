@@ -174,6 +174,21 @@ public partial class DiffFileProjection : ObservableObject {
         Header.UpdateDisplayPath(summary.DisplayPath);
     }
 
+    /// <summary>
+    /// The file's own content, as the repository has it. While a formatted preview is showing it is kept aside
+    /// rather than drawn: a model update re-syncs every selected file, and without this the preview is replaced by
+    /// the source underneath it while the header still says "Preview". Rendered Markdown keeps its own rows, which
+    /// is why only the reformatted kinds ever showed this.
+    /// </summary>
+    public void ApplySourceContent(GitKay.Core.Models.FileDiff file, GitKay.Core.App.FileExpansion? expansion = null) {
+        if (IsFormattedPreview) {
+            _sourceContent = file;
+            return;
+        }
+
+        ApplyContent(file, expansion);
+    }
+
     public void ApplyContent(GitKay.Core.Models.FileDiff file, GitKay.Core.App.FileExpansion? expansion = null) {
         _content = file;
         var lines = file.Hunks.SelectMany(hunk => hunk.Lines).ToArray();

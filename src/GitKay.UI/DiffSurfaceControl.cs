@@ -836,9 +836,18 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     /// <summary>Where a file header's title starts, inside the card.</summary>
     private static double FileLabelX => FileCardInset + FileChevronWidth + 8;
 
+    /// <summary>
+    /// The preview control is a labelled pill, not a bare icon. A rendered Markdown file is obviously rendered, but
+    /// reformatted JSON and XML are still text: without a label nothing on screen says which of the two is showing.
+    /// </summary>
+    private static string PreviewLabel(DiffFileProjection file) =>
+        file.IsRenderedMarkdown || file.IsFormattedPreview || file.IsImagePreview ? "Preview" : "Source";
+
+    private double PreviewPillWidth(DiffFileProjection file) => 22 + Layout(PreviewLabel(file), 10, FileBrush, false).Width;
+
     private Rect FilePreviewRect(DiffFileHeaderProjection file, double y) {
         var pathWidth = Layout(file.DisplayPath, 12, FileBrush, false).Width;
-        return new Rect(FileLabelX + pathWidth + 8, y + FileCardTop + 5, 26, FileHeight - FileCardTop - 10);
+        return new Rect(FileLabelX + pathWidth + 8, y + FileCardTop + 5, PreviewPillWidth(file.File), FileHeight - FileCardTop - 10);
     }
 
     /// <summary>Only while the file is rendered: it says what to do with the parts of the document that did not change.</summary>
@@ -846,16 +855,16 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     private Rect FileChangesOnlyRect(DiffFileHeaderProjection file, double y) {
         var rect = FilePreviewRect(file, y);
-        return new Rect(rect.X + (IsPreviewable(file.File) ? ActionStep : 0), rect.Y, rect.Width, rect.Height);
+        return new Rect(rect.Right + (IsPreviewable(file.File) ? 6 : 0), rect.Y, 26, rect.Height);
     }
 
     /// <summary>How far apart the header's action icons sit.</summary>
     private const double ActionStep = 30;
 
     private Rect FileContextRect(DiffFileHeaderProjection file, double y) {
-        var offset = (IsPreviewable(file.File) ? ActionStep : 0) + (HasChangesOnlyToggle(file.File) ? ActionStep : 0);
+        var after = HasChangesOnlyToggle(file.File) ? FileChangesOnlyRect(file, y).Right : FilePreviewRect(file, y).Right;
         var rect = FilePreviewRect(file, y);
-        return new Rect(rect.X + offset, rect.Y, rect.Width, rect.Height);
+        return new Rect(after + (IsPreviewable(file.File) || HasChangesOnlyToggle(file.File) ? 6 : 0), rect.Y, 26, rect.Height);
     }
 
     /// <summary>Anything the diff pane can show as something other than its source text.</summary>
@@ -906,11 +915,18 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
         if (IsPreviewable(file)) {
             var preview = FilePreviewRect(header, y);
-            if (IsHeaderPartActive(index, HeaderPreviewAction, out var previewPressed))
-                context.DrawRectangle(previewPressed ? ThemeBrush("GitKaySelectionBrush", SelectionBrush) : hover, null, preview, 4, 4);
-            DrawPreviewIcon(context, preview, file.IsRenderedMarkdown || file.IsFormattedPreview
-                ? ThemeBrush("GitKayAccentBrush", FileBrush)
-                : secondary);
+            var showingPreview = PreviewLabel(file) == "Preview";
+            IsHeaderPartActive(index, HeaderPreviewAction, out var previewPressed);
+            // Filled while previewing, outlined while showing source: the state is the pill, not a tint on a glyph.
+            var accent = ThemeBrush("GitKayAccentBrush", FileBrush);
+            var fill = previewPressed ? ThemeBrush("GitKaySelectionBrush", SelectionBrush)
+                : showingPreview ? accent
+                : ThemeBrush("GitKayRaisedBrush", CodeBlockFallback);
+            context.DrawRectangle(fill, new Pen(showingPreview ? accent : ThemeBrush("GitKayBorderBrush", secondary), 1), preview, 9, 9);
+            var label = showingPreview ? ThemeBrush("GitKayWindowBrush", StickyWindowFallback) : secondary;
+            DrawPreviewIcon(context, new Rect(preview.X + 3, preview.Y, 16, preview.Height), label);
+            var pillText = Layout(PreviewLabel(file), 10, label, false);
+            context.DrawText(pillText, new Point(preview.X + 19, preview.Y + (preview.Height - pillText.Height) / 2));
         }
 
         if (HasChangesOnlyToggle(file)) {

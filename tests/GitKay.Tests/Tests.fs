@@ -4487,3 +4487,23 @@ module FolderSourceTests =
                 let diff = FolderSource.diff pair
                 test <@ diff.Hunks = [] @>
                 test <@ FileChange.currentPath diff.OldPath diff.NewPath = "logo.png" @>)
+
+module FormattedFileLoadTests =
+    open GitKay.Core
+
+    [<Fact>]
+    let ``a formatted preview loads for a real file in this repository`` () =
+        let repo = GitService.tryDiscoverRepositoryPath ()
+        if String.IsNullOrEmpty repo then () else
+
+        let head =
+            use repository = new LibGit2Sharp.Repository(repo)
+            repository.Head.Tip.Sha
+
+        // Directory.Build.props is XML and is in this repository at HEAD.
+        match GitService.loadCommitFormattedFile repo head "Directory.Build.props" "Directory.Build.props" with
+        | Error error -> failwith (GitError.describe error)
+        | Ok file ->
+            let lines = file.Hunks |> List.collect _.Lines
+            test <@ not lines.IsEmpty @>
+            test <@ lines |> List.exists (fun line -> line.Content.Contains "VersionPrefix") @>
