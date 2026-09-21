@@ -1,7 +1,6 @@
 <Project>
   <PropertyGroup>
     <ArtifactsPath>$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
-    <FSharpCoreImplicitPackageVersion>10.1.401</FSharpCoreImplicitPackageVersion>
     <AxialGuardrailsSeverity>error</AxialGuardrailsSeverity>
 
     <!-- Local/dev default only; the release workflow stamps the real version via -p:Version from the release tag. -->
