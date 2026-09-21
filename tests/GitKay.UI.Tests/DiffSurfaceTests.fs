@@ -1710,12 +1710,56 @@ module FolderWindowTests =
                 let compare = FolderProjection(FolderMode.Compare, left, right, ResizeArray pairs)
                 test <@ compare.LeftLabel = "Left" && compare.ShowsChanges @>
                 test <@ compare.RightRoot = right @>
-                test <@ compare.ChangeFoldersLabel = "Change folders…" @>
+                test <@ compare.CompareLabel = "Compare" @>
+                // The bar starts on the folders the window is showing, and swaps without retyping either.
+                test <@ compare.ChosenLeft = left && compare.ChosenRight = right @>
+                compare.SwapFolders()
+                test <@ compare.ChosenLeft = right && compare.ChosenRight = left @>
 
                 // Browsing has one folder, so it is not called a side and there is no right-hand one to show.
                 let browse = FolderProjection(FolderMode.Preview, left, null, ResizeArray(Folder.pair Seq.empty (entriesOf left)))
                 test <@ browse.LeftLabel = "Folder" && not browse.ShowsChanges @>
                 test <@ isNull browse.RightRoot @>
-                test <@ browse.ChangeFoldersLabel = "Change folder…" @>
+                test <@ browse.CompareLabel = "Open" @>
+            finally
+                try Directory.Delete(root, true) with _ -> ())
+
+    [<Fact>]
+    let ``the file list groups by folder the three ways the commit list does`` () =
+        Headless.run (fun () ->
+            let root, left, right =
+                folders (fun left right ->
+                    write left "src/app.fs" "one"
+                    write right "src/app.fs" "two"
+                    write left "src/kept.fs" "same"
+                    write right "src/kept.fs" "same"
+                    write left "README.md" "a"
+                    write right "README.md" "b")
+            try
+                let all = Folder.pair (entriesOf left) (entriesOf right)
+                let changed = FolderSource.changedPairs all
+                let projection = FolderProjection(FolderMode.Compare, left, right, ResizeArray all, ResizeArray changed)
+
+                // Patch: every changed file as its full path, no folders.
+                test <@ projection.FileRows |> Seq.forall (fun row -> row :? DiffFileProjection) @>
+                test <@ projection.FileRows.Count = 2 @>
+
+                // Tree: the same files, under the folders that hold them.
+                projection.SetFileListMode "tree"
+                let folderRows () = projection.FileRows |> Seq.filter (fun r -> r :? CommitFolderRow) |> Seq.length
+                test <@ folderRows () = 1 @>
+                test <@ projection.FileRows |> Seq.filter (fun r -> r :? DiffFileProjection) |> Seq.length = 2 @>
+
+                // All folders: the unchanged file appears too, greyed rather than counted as a change.
+                projection.SetFileListMode "all"
+                let unchanged = projection.FileRows |> Seq.filter (fun r -> r :? RepoFileRow) |> Seq.length
+                test <@ unchanged = 1 @>
+
+                // Folding a folder away hides what is under it.
+                let before = projection.FileRows.Count
+                projection.ToggleFolder "src"
+                test <@ projection.FileRows.Count < before @>
+                projection.ToggleFolder "src"
+                test <@ projection.FileRows.Count = before @>
             finally
                 try Directory.Delete(root, true) with _ -> ())

@@ -13,38 +13,88 @@
                 BorderBrush="{DynamicResource GitKayHairlineBrush}"
                 BorderThickness="0,0,0,1"
                 Padding="10,6">
-            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12" RowDefinitions="Auto,Auto" RowSpacing="4">
-                <TextBlock Text="{Binding ModeLabel}" FontSize="11" LetterSpacing="0.6" VerticalAlignment="Center"
-                           Foreground="{DynamicResource GitKayMutedTextBrush}" />
-
-                <Grid Grid.Column="1" Grid.RowSpan="2" ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto"
-                      ColumnSpacing="8" RowSpacing="3">
-                    <TextBlock Text="{Binding LeftLabel}" FontSize="11" VerticalAlignment="Center"
+            <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,Auto,Auto" ColumnSpacing="8">
+                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <Button Width="28" Height="28" Padding="0" Background="Transparent" BorderThickness="0" ToolTip.Tip="Menu">
+                        <PathIcon Width="14" Height="14"
+                                  Data="M1,3h14v1.6H1z M1,7.2h14v1.6H1z M1,11.4h14v1.6H1z"
+                                  Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
+                        <Button.Flyout>
+                            <MenuFlyout Placement="BottomEdgeAlignedLeft">
+                                <MenuItem Header="_Find in file" Click="OnFindMenuItemClick" InputGesture="Ctrl+F" />
+                                <MenuItem Header="_Go to file…" Click="OnGoToFileMenuItemClick" InputGesture="Ctrl+P" />
+                                <Separator />
+                                <MenuItem Header="_Layout">
+                                    <MenuItem Header="_Unified" Click="OnLayoutMenuItemClick" Tag="unified" />
+                                    <MenuItem Header="_Side by side" Click="OnLayoutMenuItemClick" Tag="side-by-side" />
+                                    <MenuItem Header="_New file" Click="OnLayoutMenuItemClick" Tag="new" />
+                                    <MenuItem Header="_Old file" Click="OnLayoutMenuItemClick" Tag="old" />
+                                </MenuItem>
+                                <MenuItem Header="_Files">
+                                    <MenuItem Header="_Patch list" Click="OnFileModeMenuItemClick" Tag="patch" />
+                                    <MenuItem Header="_Tree" Click="OnFileModeMenuItemClick" Tag="tree" />
+                                    <MenuItem Header="_All folders" Click="OnFileModeMenuItemClick" Tag="all" />
+                                </MenuItem>
+                                <Separator />
+                                <MenuItem Header="_Open">
+                                    <MenuItem Header="Git _repository…" Click="OnOpenRepositoryMenuItemClick" />
+                                    <MenuItem Header="_Folder…" Click="OnOpenFolderMenuItemClick" />
+                                    <MenuItem Header="_Compare two folders…" Click="OnCompareFoldersMenuItemClick" />
+                                </MenuItem>
+                                <MenuItem Header="_Settings…" Click="OnSettingsMenuItemClick" />
+                                <Separator />
+                                <MenuItem Header="_About GitKay…" Click="OnAboutMenuItemClick" />
+                                <MenuItem Header="_Close" Click="OnCloseMenuItemClick" InputGesture="Escape" />
+                            </MenuFlyout>
+                        </Button.Flyout>
+                    </Button>
+                    <TextBlock Text="{Binding ModeLabel}" FontSize="11" LetterSpacing="0.6" VerticalAlignment="Center"
                                Foreground="{DynamicResource GitKayMutedTextBrush}" />
-                    <TextBlock Grid.Column="1" Text="{Binding LeftRoot}" FontSize="12" VerticalAlignment="Center"
-                               FontFamily="{x:Static local:FontStacks.Mono}"
-                               Foreground="{DynamicResource GitKayTextBrush}"
-                               TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding LeftRoot}" />
-                    <TextBlock Grid.Row="1" Text="Right" FontSize="11" VerticalAlignment="Center"
-                               IsVisible="{Binding ShowsChanges}"
-                               Foreground="{DynamicResource GitKayMutedTextBrush}" />
-                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding RightRoot}" FontSize="12" VerticalAlignment="Center"
-                               IsVisible="{Binding ShowsChanges}"
-                               FontFamily="{x:Static local:FontStacks.Mono}"
-                               Foreground="{DynamicResource GitKayTextBrush}"
-                               TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding RightRoot}" />
-                </Grid>
-
-                <StackPanel Grid.Column="2" Grid.RowSpan="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding Status}" FontSize="11" VerticalAlignment="Center"
-                               Foreground="{DynamicResource GitKayMutedTextBrush}" />
-                    <CheckBox Content="Remote images" IsChecked="{Binding LoadRemoteImages, Mode=TwoWay}"
-                              FontSize="11" VerticalAlignment="Center"
-                              ToolTip.Tip="Let rendered Markdown fetch images from the internet. Off keeps reading a document private." />
-                    <Button Classes="inline" Padding="10,3" Click="OnChangeFoldersClick"
-                            Content="{Binding ChangeFoldersLabel}"
-                            ToolTip.Tip="Choose what this window is showing" />
                 </StackPanel>
+
+                <!-- The left folder on the left, the right one on the right, as the comparison reads. -->
+                <Button Grid.Column="1" Classes="pathChip" Click="OnPickLeftClick"
+                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                        ToolTip.Tip="{Binding ChosenLeft}">
+                    <StackPanel Orientation="Horizontal" Spacing="7">
+                        <TextBlock Text="{Binding LeftLabel}" FontSize="10" LetterSpacing="0.5" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource GitKayMutedTextBrush}" />
+                        <TextBlock Text="{Binding ChosenLeft}" FontSize="12" VerticalAlignment="Center"
+                                   FontFamily="{x:Static local:FontStacks.Mono}"
+                                   Foreground="{DynamicResource GitKayTextBrush}"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Button>
+
+                <Button Grid.Column="2" Classes="inline" Padding="7,3" Click="OnSwapFoldersClick"
+                        IsVisible="{Binding ShowsChanges}" VerticalAlignment="Center"
+                        Content="↔" FontSize="14"
+                        ToolTip.Tip="Swap the two folders, so the comparison reads the other way" />
+
+                <Button Grid.Column="3" Classes="pathChip" Click="OnPickRightClick"
+                        IsVisible="{Binding ShowsChanges}"
+                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                        ToolTip.Tip="{Binding ChosenRight}">
+                    <StackPanel Orientation="Horizontal" Spacing="7">
+                        <TextBlock Text="RIGHT" FontSize="10" LetterSpacing="0.5" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource GitKayMutedTextBrush}" />
+                        <TextBlock Text="{Binding ChosenRight}" FontSize="12" VerticalAlignment="Center"
+                                   FontFamily="{x:Static local:FontStacks.Mono}"
+                                   Foreground="{DynamicResource GitKayTextBrush}"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Button>
+
+                <Button Grid.Column="4" Classes="inline" Padding="12,3" Click="OnCompareClick"
+                        VerticalAlignment="Center" Content="{Binding CompareLabel}"
+                        ToolTip.Tip="Open these folders in a new window" />
+
+                <CheckBox Grid.Column="5" Content="Remote images" IsChecked="{Binding LoadRemoteImages, Mode=TwoWay}"
+                          FontSize="11" VerticalAlignment="Center"
+                          ToolTip.Tip="Let rendered Markdown fetch images from the internet. Off keeps reading a document private." />
+
+                <TextBlock Grid.Column="6" Text="{Binding Status}" FontSize="11" VerticalAlignment="Center"
+                           Foreground="{DynamicResource GitKayMutedTextBrush}" />
             </Grid>
         </Border>
 
@@ -57,11 +107,32 @@
                                                   SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
                                                   DiffLayout="{Binding Layout}"
                                                   PreviewRequested="OnPreviewRequested"
+                                                  FindQuery="{Binding FindQuery}"
                                                   OldRenderedImages="{Binding OldImages}"
                                                   RenderedImages="{Binding Images}"
                                                   HorizontalAlignment="Stretch" />
                     </ScrollViewer>
                     <local:OverviewRuler Width="4" HorizontalAlignment="Left" ZIndex="5" Source="{Binding #Surface}" />
+                    <Border x:Name="FindOverlay" IsVisible="False" ZIndex="20" HorizontalAlignment="Right" VerticalAlignment="Top"
+                            Margin="0,8,20,0" Padding="6" CornerRadius="5" Background="{DynamicResource GitKayRaisedBrush}"
+                            BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="1">
+                        <TextBox x:Name="FindBox" Width="280" PlaceholderText="Find in this file" />
+                    </Border>
+                    <Border x:Name="FilePaletteOverlay" IsVisible="False" ZIndex="25" HorizontalAlignment="Center" VerticalAlignment="Top"
+                            Margin="0,40,0,0" Padding="8" CornerRadius="6" Width="520"
+                            Background="{DynamicResource GitKayRaisedBrush}"
+                            BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="1">
+                        <DockPanel>
+                            <TextBox x:Name="FilePaletteBox" DockPanel.Dock="Top" PlaceholderText="Go to file" />
+                            <ListBox x:Name="FilePaletteList" MaxHeight="320" Background="Transparent" BorderThickness="0" Margin="0,6,0,0">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="local:DiffFileProjection">
+                                        <TextBlock Text="{Binding DisplayPath}" FontSize="12" Padding="4,3" />
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
+                    </Border>
                     <TextBlock Text="{Binding EmptyMessage}" IsVisible="{Binding IsEmpty}"
                                HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="13"
                                Foreground="{DynamicResource GitKayMutedTextBrush}" />
@@ -86,13 +157,38 @@
                         </Grid>
                     </Border>
                     <ListBox x:Name="FileListBox"
-                             ItemsSource="{Binding Files}"
+                             ItemsSource="{Binding FileRows}"
                              SelectedItem="{Binding SelectedFile, Mode=TwoWay}"
+                             DoubleTapped="OnFileRowDoubleTapped"
                              Background="Transparent" BorderThickness="0">
-                        <ListBox.ItemTemplate>
+                        <ListBox.DataTemplates>
+                            <DataTemplate x:DataType="local:CommitFolderRow">
+                                <Border Padding="8,4" Background="Transparent">
+                                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="{Binding Indent}">
+                                        <TextBlock Text="{Binding IsExpanded, Converter={x:Static local:FolderGlyphConverter.Instance}}"
+                                                   FontSize="11" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource GitKayMutedTextBrush}" />
+                                        <TextBlock Text="{Binding Name}" FontSize="12" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
+                                        <TextBlock Text="{Binding CountText}" FontSize="11" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource GitKayMutedTextBrush}" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                            <DataTemplate x:DataType="local:RepoFileRow">
+                                <Border Padding="8,4" Background="Transparent"
+                                        ToolTip.Tip="Unchanged">
+                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="7" Margin="{Binding Indent}">
+                                        <Border Width="14" Height="14" />
+                                        <TextBlock Grid.Column="1" Text="{Binding Name}" FontSize="12"
+                                                   Foreground="{DynamicResource GitKayMutedTextBrush}"
+                                                   TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
                             <DataTemplate x:DataType="local:DiffFileProjection">
                                 <Border Padding="8,4" Background="Transparent">
-                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="7" ToolTip.Tip="{Binding ChangeToolTip}">
+                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="7" ToolTip.Tip="{Binding ChangeToolTip}" Margin="{Binding ListIndent}">
                                         <Border Classes="fileChange" Width="14" Height="14" CornerRadius="3"
                                                 IsVisible="{Binding $parent[Window].((local:FolderProjection)DataContext).ShowsChanges}"
                                                 BorderThickness="0" VerticalAlignment="Center"
@@ -119,7 +215,7 @@
                                     </Grid>
                                 </Border>
                             </DataTemplate>
-                        </ListBox.ItemTemplate>
+                        </ListBox.DataTemplates>
                     </ListBox>
                 </DockPanel>
             </Border>

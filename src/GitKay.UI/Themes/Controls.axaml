@@ -120,6 +120,21 @@
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
+    <!-- A folder path that can be clicked to change it: it reads as a field, not as a button. -->
+    <Style Selector="Button.pathChip">
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Padding" Value="8,4" />
+        <Setter Property="Background" Value="{DynamicResource GitKayRaisedBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GitKayBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="Cursor" Value="Hand" />
+    </Style>
+    <Style Selector="Button.pathChip:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource GitKayControlHoverBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GitKayHoverEdgeBrush}" />
+    </Style>
+
     <Style Selector="ToggleButton.inline">
         <Setter Property="Width" Value="22" />
         <Setter Property="Height" Value="20" />

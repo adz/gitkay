@@ -65,7 +65,7 @@ public partial class App : Application {
                 return;
             }
 
-            var projection = new FolderProjection(mode, left, right, built.Pairs) {
+            var projection = new FolderProjection(mode, left, right, built.Pairs, built.Changed) {
                 // The same saved choice repository windows use; folders are no less private than commits.
                 LoadRemoteImages = settings.LoadRemoteMarkdownImages,
             };
@@ -82,21 +82,22 @@ public partial class App : Application {
     }
 
     /// <summary>Reads the folders and pairs their files, off the UI thread. A folder that cannot be read says so.</summary>
-    private static (IReadOnlyList<GitKay.Core.Folder.Pair> Pairs, string? Error) BuildFolderPairs(FolderMode mode, string left, string? right) {
+    private static (IReadOnlyList<GitKay.Core.Folder.Pair> Pairs, IReadOnlyList<GitKay.Core.Folder.Pair> Changed, string? Error) BuildFolderPairs(FolderMode mode, string left, string? right) {
+        var empty = Array.Empty<GitKay.Core.Folder.Pair>();
         var leftEntries = GitKay.Core.FolderSource.read(left);
-        if (leftEntries.IsError) return (Array.Empty<GitKay.Core.Folder.Pair>(), GitKay.Core.GitErrorModule.describe(leftEntries.ErrorValue));
+        if (leftEntries.IsError) return (empty, empty, GitKay.Core.GitErrorModule.describe(leftEntries.ErrorValue));
 
         if (mode == FolderMode.Preview) {
             // One folder: every file paired against nothing, so it reads as the folder's contents rather than a diff.
-            var only = GitKay.Core.Folder.pair(Microsoft.FSharp.Collections.SeqModule.Empty<GitKay.Core.Folder.Entry>(), leftEntries.ResultValue);
-            return (only.ToList(), null);
+            var only = GitKay.Core.Folder.pair(Microsoft.FSharp.Collections.SeqModule.Empty<GitKay.Core.Folder.Entry>(), leftEntries.ResultValue).ToList();
+            return (only, only, null);
         }
 
         var rightEntries = GitKay.Core.FolderSource.read(right ?? "");
-        if (rightEntries.IsError) return (Array.Empty<GitKay.Core.Folder.Pair>(), GitKay.Core.GitErrorModule.describe(rightEntries.ErrorValue));
+        if (rightEntries.IsError) return (empty, empty, GitKay.Core.GitErrorModule.describe(rightEntries.ErrorValue));
 
         var pairs = GitKay.Core.Folder.pair(leftEntries.ResultValue, rightEntries.ResultValue);
-        return (GitKay.Core.FolderSource.changedPairs(pairs).ToList(), null);
+        return (pairs.ToList(), GitKay.Core.FolderSource.changedPairs(pairs).ToList(), null);
     }
 
     /// <summary>gitkay gui: only the commit window, with the saved theme; closing it exits.</summary>
