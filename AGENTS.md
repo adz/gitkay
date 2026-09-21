@@ -40,6 +40,16 @@
   - Flow returns `Result`.
   - Elmish reducer applies the result only if it is still current.
 
+## Where Code Lives
+- **Anything that could be tested without a window belongs in F#.** The split is by purity, not by layer: C# is for
+  drawing, input and binding; every decision those make is a pure function that belongs in `GitKay.Core`.
+- Arithmetic over sizes, scales, thresholds, colours, byte counts and text is core logic even when it exists only to
+  serve one control. `Presentation.fs` is where that lives when it has no better home.
+- The tell is a test: if checking a rule means showing a window and reading a control's `DesiredSize`, the rule is in
+  the wrong language. Those tests are slow, indirect, and fail for reasons unrelated to what they assert.
+- A C# `Render` or `MeasureOverride` should read as a sequence of draw and arrange calls over answers computed in the
+  core, not as a place where the answers are worked out.
+
 ## Code Style
 - Keep changes small and explicit.
 - Prefer typed data over raw strings once UI features need structure.
