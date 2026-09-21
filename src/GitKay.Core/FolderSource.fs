@@ -88,6 +88,21 @@ module FolderSource =
             | _ -> false
         | _ -> false
 
+    /// <summary>
+    /// An image referenced by a document, read from the folder it sits in. The path is relative to the folder root,
+    /// the same way a repository path is relative to the repository, so resolution is identical on both sides.
+    /// </summary>
+    let imageBytes (root: string) (relativePath: string) : Result<byte array, GitError> =
+        try
+            let full = Path.GetFullPath(Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar)))
+            // Never outside the folder being read: a document can ask for anything, and "../.." is a path too.
+            let rooted = Path.GetFullPath root
+            if not (full.StartsWith(rooted, StringComparison.Ordinal)) then
+                Error(GitError.OperationFailed("Load image", "Outside the folder"))
+            elif not (File.Exists full) then Error(GitError.OperationFailed("Load image", $"Not found: {relativePath}"))
+            else Ok(File.ReadAllBytes full)
+        with error -> Error(GitError.OperationFailed("Load image", error.Message))
+
     /// <summary>The pairs worth showing: everything except files that are identical on both sides.</summary>
     let changedPairs (pairs: Folder.Pair list) =
         pairs |> List.filter (fun pair -> Folder.couldDiffer pair || not (holdsSameBytes pair))

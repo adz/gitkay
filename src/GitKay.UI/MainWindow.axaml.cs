@@ -910,6 +910,10 @@ public partial class MainWindow : Window, IVimCommands {
 
     private void OnOpenRepositoryMenuItemClick(object? sender, RoutedEventArgs e) => OnWindowCommandRequested("open-repository");
 
+    private void OnOpenFolderMenuItemClick(object? sender, RoutedEventArgs e) => OnWindowCommandRequested("open-folder");
+
+    private void OnCompareFoldersMenuItemClick(object? sender, RoutedEventArgs e) => OnWindowCommandRequested("open-compare");
+
     private DiagnosticsWindow? _diagnosticsWindow;
 
     private void OnDiagnosticsMenuItemClick(object? sender, RoutedEventArgs e) => ShowDiagnostics();
@@ -933,23 +937,48 @@ public partial class MainWindow : Window, IVimCommands {
 
     private void OnFetchAllMenuItemClick(object? sender, RoutedEventArgs e) => OnWindowCommandRequested("fetch-all");
 
-    private async System.Threading.Tasks.Task OpenRepositoryAsync() {
-        var folders = await StorageProvider.OpenFolderPickerAsync(new Avalonia.Platform.Storage.FolderPickerOpenOptions {
-            Title = "Open Git repository",
-            AllowMultiple = false,
-        });
-        if (folders.Count == 0 || Avalonia.Platform.Storage.StorageProviderExtensions.TryGetLocalPath(folders[0]) is not { } path || _projection is not { } projection) return;
-        if (!IsInsideRepository(path)) {
-            projection.Status = $"Not a Git repository: {path}";
-            return;
+    /// <summary>
+    /// Open…: a repository, a folder to browse, or two folders to compare. Each opens its own window, so what is
+    /// already on screen is left where it is.
+    /// </summary>
+    private async System.Threading.Tasks.Task OpenAsync(string what) {
+        async System.Threading.Tasks.Task<string?> pick(string title) {
+            var folders = await StorageProvider.OpenFolderPickerAsync(new Avalonia.Platform.Storage.FolderPickerOpenOptions {
+                Title = title,
+                AllowMultiple = false,
+            });
+            return folders.Count == 0 ? null : Avalonia.Platform.Storage.StorageProviderExtensions.TryGetLocalPath(folders[0]);
         }
 
+        if (_projection is not { } projection) return;
+        switch (what) {
+            case "repository": {
+                if (await pick("Open Git repository") is not { } path) return;
+                if (!IsInsideRepository(path)) { projection.Status = $"Not a Git repository: {path}"; return; }
+                Launch(projection, path, $"Opened {path} in a new window");
+                break;
+            }
+            case "folder": {
+                if (await pick("Browse folder") is not { } path) return;
+                Launch(projection, path, $"Browsing {path} in a new window", "browse", path);
+                break;
+            }
+            case "compare": {
+                if (await pick("Compare: the folder on the left") is not { } left) return;
+                if (await pick("Compare: the folder on the right") is not { } right) return;
+                Launch(projection, left, $"Comparing {left} with {right}", "diff", left, right);
+                break;
+            }
+        }
+    }
+
+    private static void Launch(MainProjection projection, string directory, string status, params string[] arguments) {
         try {
-            ExternalTools.StartGitKay(path);
-            projection.Status = $"Opened {path} in a new window";
+            ExternalTools.StartGitKay(directory, arguments);
+            projection.Status = status;
         }
         catch (Exception exception) {
-            projection.Status = $"Could not open {path}: {exception.Message}";
+            projection.Status = $"Could not open {directory}: {exception.Message}";
         }
     }
 
@@ -1217,7 +1246,13 @@ public partial class MainWindow : Window, IVimCommands {
                 CommitFindBox.SelectAll();
                 break;
             case "open-repository":
-                await OpenRepositoryAsync();
+                await OpenAsync("repository");
+                break;
+            case "open-folder":
+                await OpenAsync("folder");
+                break;
+            case "open-compare":
+                await OpenAsync("compare");
                 break;
             case "diagnostics":
                 ShowDiagnostics();

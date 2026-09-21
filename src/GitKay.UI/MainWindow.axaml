@@ -116,7 +116,14 @@
                                         <MenuItem Header="Show _stashes" ToggleType="CheckBox" IsChecked="{Binding ShowStashes, Mode=TwoWay}" />
                                         <MenuItem Header="_All branches (--all)" ToggleType="CheckBox" IsChecked="{Binding IsAllBranches, Mode=TwoWay}" />
                                         <Separator />
-                                        <MenuItem Header="_Open repository…" Click="OnOpenRepositoryMenuItemClick" />
+                                        <MenuItem Header="_Open">
+                                            <MenuItem Header="Git _repository…" Click="OnOpenRepositoryMenuItemClick"
+                                                      ToolTip.Tip="Open another local Git repository, with its history" />
+                                            <MenuItem Header="_Folder…" Click="OnOpenFolderMenuItemClick"
+                                                      ToolTip.Tip="Browse a folder: its files, previews and syntax highlighting" />
+                                            <MenuItem Header="_Compare two folders…" Click="OnCompareFoldersMenuItemClick"
+                                                      ToolTip.Tip="Compare two folders, with no repository involved" />
+                                        </MenuItem>
                                         <MenuItem Header="_Commit…" Click="OnCommitWindowMenuItemClick" InputGesture="Ctrl+Shift+C"
                                                   IsEnabled="{Binding HasUncommittedChanges}" />
                                         <Separator />

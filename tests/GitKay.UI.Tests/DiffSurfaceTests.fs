@@ -1599,12 +1599,16 @@ module FolderWindowTests =
                     window.UpdateLayout()
                     Headless.pump ()
                     test <@ projection.ModeLabel = "PREVIEW" @>
-                    // Everything reads as added, because there is no other side: the file is simply there.
+                    // Browsing lists files, not changes: nothing was added, so nothing says it was.
                     let file = Seq.exactlyOne projection.Files
-                    test <@ file.DisplayPath = "notes.md (new file)" @>
+                    test <@ file.DisplayPath = "notes.md" @>
+                    test <@ not file.ShowsAsChange @>
                     projection.SelectedFile <- file
                     Headless.pump ()
-                    test <@ file.AddedLines = 3 && file.RemovedLines = 0 @>
+                    test <@ not file.HasAddedText && not file.HasRemovedText @>
+                    test <@ not projection.HasTotals @>
+                    // The file is still shown in full, which is the point of browsing it.
+                    test <@ projection.Rows |> Seq.filter (fun r -> r :? DiffLineProjection) |> Seq.length = 3 @>
                 finally
                     window.Close()
                     Headless.pump ()
@@ -1637,6 +1641,45 @@ module FolderWindowTests =
                     test <@ file.IsFormattedPreview @>
                     let lines = projection.Rows |> Seq.filter (fun r -> r :? DiffLineProjection) |> Seq.length
                     test <@ lines > 3 @>
+                finally
+                    window.Close()
+                    Headless.pump ()
+            finally
+                try Directory.Delete(root, true) with _ -> ())
+
+    [<Fact>]
+    let ``markdown in a folder renders with the images beside it`` () =
+        Headless.run (fun () ->
+            let root, left, right =
+                folders (fun left right ->
+                    write left "docs/guide.md" "# Guide\n\n![logo](logo.png)\n\nOld words."
+                    write right "docs/guide.md" "# Guide\n\n![logo](logo.png)\n\nNew words.")
+            try
+                // A real PNG beside each document, which is how a folder resolves an image: relative to the root.
+                let png =
+                    use bitmap = new SkiaSharp.SKBitmap(4, 4, true)
+                    use image = SkiaSharp.SKImage.FromBitmap bitmap
+                    use data = image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100)
+                    data.ToArray()
+                File.WriteAllBytes(Path.Combine(left, "docs", "logo.png"), png)
+                File.WriteAllBytes(Path.Combine(right, "docs", "logo.png"), png)
+
+                let pairs = Folder.pair (entriesOf left) (entriesOf right) |> FolderSource.changedPairs
+                let projection = FolderProjection(FolderMode.Compare, left, right, ResizeArray pairs)
+                let window = FolderWindow(projection)
+                try
+                    window.Show()
+                    window.UpdateLayout()
+                    Headless.pump ()
+                    let file = projection.Files |> Seq.find (fun f -> f.DisplayPath.EndsWith "guide.md")
+                    projection.SelectedFile <- file
+                    Headless.pump ()
+
+                    projection.TogglePreview file
+                    Headless.pump ()
+                    test <@ file.IsRenderedMarkdown @>
+                    // The image was found on disk and decoded, not reported as missing.
+                    test <@ projection.Images.Count = 1 && projection.Images.ContainsKey "logo.png" @>
                 finally
                     window.Close()
                     Headless.pump ()

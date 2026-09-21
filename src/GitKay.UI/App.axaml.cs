@@ -149,6 +149,13 @@ public partial class App : Application {
                 return (settingsStore.Load(), uiStateStore.Load(), GitService.tryDiscoverRepositoryPath());
             });
 
+            // Started somewhere that is not a repository and given nothing to show: browse the folder instead of
+            // opening a history window with no history in it.
+            if (string.IsNullOrEmpty(repoKey) && StartupArgs.Length == 0) {
+                await InitializeFolderWindowAsync(desktop, FolderMode.Preview, Environment.CurrentDirectory, null);
+                return;
+            }
+
             var settingsStore = new AppSettingsStore();
             var uiStateStore = new AppUiStateStore();
             var currentUiState = persistedUiState;

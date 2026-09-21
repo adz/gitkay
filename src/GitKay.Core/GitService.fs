@@ -1170,6 +1170,38 @@ module GitService =
         | RemoteUrl _ -> { Side = request.Side; Source = request.Source; Bytes = None; Error = Some "Remote image blocked" }
         | HeadingTarget _ | InvalidTarget _ -> { Side = request.Side; Source = request.Source; Bytes = None; Error = Some "Invalid image target" }
 
+    /// <summary>
+    /// The rendered-Markdown payload for two sources. Everything except where the text and the images come from is
+    /// the same for a commit, the working tree, a revision comparison and two folders, so it is written once here;
+    /// callers differ only in the loader they hand it.
+    /// </summary>
+    let renderedMarkdownOf (file: Models.FileDiff) (oldPath: string) (newPath: string)
+                           (oldSource: string) (newSource: string) (allowRemote: bool)
+                           (loader: MarkdownImageSide -> string -> Result<byte array, GitError>)
+                           : Result<RenderedMarkdownContent, GitError> =
+        result {
+            if Text.Encoding.UTF8.GetByteCount(oldSource) > 1024 * 1024 || Text.Encoding.UTF8.GetByteCount(newSource) > 1024 * 1024 then
+                return! Error(GitError.OperationFailed("Render Markdown", "Files over 1 MB stay in source view"))
+            let oldBlocks, newBlocks = Markdown.parse oldSource, Markdown.parse newSource
+            if oldBlocks.Length > 5000 || newBlocks.Length > 5000 then
+                return! Error(GitError.OperationFailed("Render Markdown", "Files over 5,000 blocks stay in source view"))
+            let oldDocumentPath = FileChange.previousPath oldPath newPath
+            let newDocumentPath = FileChange.currentPath oldPath newPath
+            let images = Markdown.imageRequests oldDocumentPath newDocumentPath oldSource newSource |> List.map (imageData allowRemote loader)
+            let diffRows = Markdown.renderDiff oldSource newSource |> Markdown.markChangedImages images
+            return { File = file; DiffRows = diffRows
+                     OldRows = Markdown.renderDocument oldSource; NewRows = Markdown.renderDocument newSource
+                     Images = images }
+        }
+
+    /// <summary>Both sides of a loaded file as whole text, for anything that reads a document rather than a diff.</summary>
+    let sidesOf (file: Models.FileDiff) =
+        let lines oldSide =
+            file.Hunks |> List.collect _.Lines
+            |> List.filter (fun line -> if oldSide then line.Type <> Added else line.Type <> Removed)
+            |> List.map _.Content |> String.concat "\n"
+        lines true, lines false
+
     let loadChangedFileBytes (repoPath: string) (hash: string) (oldPath: string) (newPath: string) : Result<byte array, GitError> =
         result {
             use repo = new Repository(repoPath)
@@ -1256,19 +1288,9 @@ module GitService =
             use repo = new Repository(repoPath)
             let! oldSource = revisionBlobText repo comparison.BaseHash oldPath
             let! newSource = revisionBlobText repo comparison.TargetHash newPath
-            if Text.Encoding.UTF8.GetByteCount(oldSource) > 1024 * 1024 || Text.Encoding.UTF8.GetByteCount(newSource) > 1024 * 1024 then
-                return! Error(GitError.OperationFailed("Render Markdown", "Files over 1 MB stay in source view"))
-            let oldBlocks, newBlocks = Markdown.parse oldSource, Markdown.parse newSource
-            if oldBlocks.Length > 5000 || newBlocks.Length > 5000 then
-                return! Error(GitError.OperationFailed("Render Markdown", "Files over 5,000 blocks stay in source view"))
-            let oldDocumentPath = FileChange.previousPath oldPath newPath
-            let newDocumentPath = FileChange.currentPath oldPath newPath
             let loader side path = revisionBlobBytes repoPath (if side = MarkdownImageSide.Old then comparison.BaseHash else comparison.TargetHash) path
-            let images = Markdown.imageRequests oldDocumentPath newDocumentPath oldSource newSource |> List.map (imageData allowRemote loader)
             let file = SourceDiff.between oldPath newPath oldSource newSource
-            let diffRows = Markdown.renderDiff oldSource newSource |> Markdown.markChangedImages images
-            return { File = file; DiffRows = diffRows; OldRows = Markdown.renderDocument oldSource
-                     NewRows = Markdown.renderDocument newSource; Images = images }
+            return! renderedMarkdownOf file oldPath newPath oldSource newSource allowRemote loader
         }
 
     let loadRevisionWholeFilePayload repoPath comparison oldPath newPath allowRemote =
@@ -1364,47 +1386,32 @@ module GitService =
     let loadCommitRenderedMarkdown (repoPath: string) (hash: string) (oldPath: string) (newPath: string) (allowRemote: bool) : Result<RenderedMarkdownContent, GitError> =
         result {
             let! file = loadWholeFile repoPath hash oldPath newPath
-            let lines oldSide =
-                file.Hunks |> List.collect _.Lines
-                |> List.filter (fun line -> if oldSide then line.Type <> Added else line.Type <> Removed)
-                |> List.map _.Content |> String.concat "\n"
-            let oldSource, newSource = lines true, lines false
-            if Text.Encoding.UTF8.GetByteCount(oldSource) > 1024 * 1024 || Text.Encoding.UTF8.GetByteCount(newSource) > 1024 * 1024 then
-                return! Error(GitError.OperationFailed("Render Markdown", "Files over 1 MB stay in source view"))
-            let oldBlocks, newBlocks = Markdown.parse oldSource, Markdown.parse newSource
-            if oldBlocks.Length > 5000 || newBlocks.Length > 5000 then
-                return! Error(GitError.OperationFailed("Render Markdown", "Files over 5,000 blocks stay in source view"))
-            let oldDocumentPath = FileChange.previousPath oldPath newPath
-            let newDocumentPath = FileChange.currentPath oldPath newPath
+            let oldSource, newSource = sidesOf file
             let loader side path = loadCommitSideFileBytes repoPath hash (side = MarkdownImageSide.Old) path
-            let images = Markdown.imageRequests oldDocumentPath newDocumentPath oldSource newSource |> List.map (imageData allowRemote loader)
-            let diffRows = Markdown.renderDiff oldSource newSource |> Markdown.markChangedImages images
-            return { File = file; DiffRows = diffRows
-                     OldRows = Markdown.renderDocument oldSource; NewRows = Markdown.renderDocument newSource
-                     Images = images }
+            return! renderedMarkdownOf file oldPath newPath oldSource newSource allowRemote loader
+        }
+
+    /// <summary>
+    /// Rendered Markdown for a file in a folder comparison, images and all. The images come off disk instead of out
+    /// of a blob; everything after that is the same rendering a commit gets.
+    /// </summary>
+    let loadFolderRenderedMarkdown (leftRoot: string) (rightRoot: string) (pair: Folder.Pair) (allowRemote: bool)
+                                   : Result<RenderedMarkdownContent, GitError> =
+        result {
+            let! (oldSource, newSource) = FolderSource.sideTexts pair
+            let loader side path =
+                let root = if side = MarkdownImageSide.Old then leftRoot else rightRoot
+                FolderSource.imageBytes root path
+            let file = SourceDiff.between pair.OldPath pair.NewPath oldSource newSource
+            return! renderedMarkdownOf file pair.OldPath pair.NewPath oldSource newSource allowRemote loader
         }
 
     let loadWorkingTreeRenderedMarkdown (repoPath: string) (section: WorkingTree.Section) (oldPath: string) (newPath: string) (allowRemote: bool) : Result<RenderedMarkdownContent, GitError> =
         result {
             let! file = loadWorkingTreeFile repoPath section oldPath newPath
-            let lines oldSide =
-                file.Hunks |> List.collect _.Lines
-                |> List.filter (fun line -> if oldSide then line.Type <> Added else line.Type <> Removed)
-                |> List.map _.Content |> String.concat "\n"
-            let oldSource, newSource = lines true, lines false
-            if Text.Encoding.UTF8.GetByteCount(oldSource) > 1024 * 1024 || Text.Encoding.UTF8.GetByteCount(newSource) > 1024 * 1024 then
-                return! Error(GitError.OperationFailed("Render Markdown", "Files over 1 MB stay in source view"))
-            let oldBlocks, newBlocks = Markdown.parse oldSource, Markdown.parse newSource
-            if oldBlocks.Length > 5000 || newBlocks.Length > 5000 then
-                return! Error(GitError.OperationFailed("Render Markdown", "Files over 5,000 blocks stay in source view"))
-            let oldDocumentPath = FileChange.previousPath oldPath newPath
-            let newDocumentPath = FileChange.currentPath oldPath newPath
+            let oldSource, newSource = sidesOf file
             let loader side path = loadWorkingTreeSideFileBytes repoPath section (side = MarkdownImageSide.Old) path
-            let images = Markdown.imageRequests oldDocumentPath newDocumentPath oldSource newSource |> List.map (imageData allowRemote loader)
-            let diffRows = Markdown.renderDiff oldSource newSource |> Markdown.markChangedImages images
-            return { File = file; DiffRows = diffRows
-                     OldRows = Markdown.renderDocument oldSource; NewRows = Markdown.renderDocument newSource
-                     Images = images }
+            return! renderedMarkdownOf file oldPath newPath oldSource newSource allowRemote loader
         }
 
     let loadCommitWholeFilePayload repoPath hash oldPath newPath allowRemote =

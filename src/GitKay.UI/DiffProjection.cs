@@ -109,8 +109,14 @@ public partial class DiffFileProjection : ObservableObject {
     /// <summary>The exact counts, which the five-block graph can only approximate: two files can fill it equally and differ fourfold.</summary>
     public string AddedText => $"+{AddedLines}";
     public string RemovedText => $"−{RemovedLines}";
-    public bool HasAddedText => IsLoaded && AddedLines > 0;
-    public bool HasRemovedText => IsLoaded && RemovedLines > 0;
+    /// <summary>
+    /// Whether this file is being shown as a change at all. Browsing a folder lists files rather than comparing
+    /// them, and there every line counts as added, which says nothing true about the file.
+    /// </summary>
+    public bool ShowsAsChange { get; init; } = true;
+
+    public bool HasAddedText => ShowsAsChange && IsLoaded && AddedLines > 0;
+    public bool HasRemovedText => ShowsAsChange && IsLoaded && RemovedLines > 0;
 
     partial void OnAddedLinesChanged(int value) {
         OnPropertyChanged(nameof(AddedText));

@@ -32,12 +32,13 @@ public static class ExternalTools {
     }
 
     /// <summary>Starts another GitKay in <paramref name="directory"/>; repository discovery starts from the working directory.</summary>
-    public static void StartGitKay(string directory) {
+    public static void StartGitKay(string directory, params string[] arguments) {
         var path = Environment.ProcessPath ?? throw new InvalidOperationException("Unknown GitKay executable path");
         var info = new ProcessStartInfo(path) { WorkingDirectory = directory, UseShellExecute = false };
         // `dotnet gitkay.dll` runs under the dotnet host; pass the app's entry dll along.
         if (Path.GetFileNameWithoutExtension(path).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
             info.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "gitkay.dll"));
+        foreach (var argument in arguments) info.ArgumentList.Add(argument);
         Process.Start(info);
     }
 

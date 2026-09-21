@@ -30,8 +30,14 @@ public sealed partial class FolderProjection : ObservableObject {
         RightRoot = rightRoot;
         _pairs = pairs.ToList();
         foreach (var pair in _pairs) {
-            var summary = new GitKay.Core.GitService.DiffFileSummary(pair.OldPath, pair.NewPath, GitKay.Core.Folder.displayPathOf(pair));
-            Files.Add(new DiffFileProjection(summary));
+            // Browsing shows files, not changes: the pairing calls them added because there is no other side, but
+            // nothing was added, so they are named plainly and their change glyph is left off.
+            var displayPath = mode == FolderMode.Compare
+                ? GitKay.Core.Folder.displayPathOf(pair)
+                : GitKay.Core.FileChange.currentPath(pair.OldPath, pair.NewPath);
+            Files.Add(new DiffFileProjection(new GitKay.Core.GitService.DiffFileSummary(pair.OldPath, pair.NewPath, displayPath)) {
+                ShowsAsChange = mode == FolderMode.Compare,
+            });
         }
 
         WindowTitle = mode == FolderMode.Compare
@@ -65,7 +71,10 @@ public sealed partial class FolderProjection : ObservableObject {
     public string FileCountLabel =>
         Files.Count == 1 ? "1 file" : $"{Files.Count} files";
 
-    public bool HasTotals => Files.Any(file => file.IsLoaded);
+    /// <summary>Browsing has nothing to compare, so added and removed counts would be the file's own length.</summary>
+    public bool ShowsChanges => Mode == FolderMode.Compare;
+
+    public bool HasTotals => ShowsChanges && Files.Any(file => file.IsLoaded);
     public string TotalAddedText => $"+{Files.Sum(file => file.AddedLines)}";
     public string TotalRemovedText => $"−{Files.Sum(file => file.RemovedLines)}";
 
@@ -117,8 +126,10 @@ public sealed partial class FolderProjection : ObservableObject {
             if (!ApplyFormatted(file, pair, formatted.format)) return;
         }
         else if (kind.IsMarkdownPreview) {
-            Status = "Markdown rendering needs a repository for its images; showing source";
-            return;
+            var rendered = GitKay.Core.GitService.loadFolderRenderedMarkdown(
+                LeftRoot, RightRoot ?? LeftRoot, pair, LoadRemoteImages);
+            if (rendered.IsError) { Status = GitKay.Core.GitErrorModule.describe(rendered.ErrorValue); return; }
+            ApplyRendered(file, rendered.ResultValue);
         }
 
         Rebuild();
@@ -143,6 +154,33 @@ public sealed partial class FolderProjection : ObservableObject {
         if (result.IsOk) return result.ResultValue;
         Status = result.ErrorValue;
         return null;
+    }
+
+    /// <summary>Whether rendered Markdown may fetch images from the internet. Off, as it is for repositories.</summary>
+    public bool LoadRemoteImages { get; set; }
+
+    [ObservableProperty] private IReadOnlyDictionary<string, Avalonia.Media.Imaging.Bitmap> _oldImages =
+        new Dictionary<string, Avalonia.Media.Imaging.Bitmap>();
+    [ObservableProperty] private IReadOnlyDictionary<string, Avalonia.Media.Imaging.Bitmap> _images =
+        new Dictionary<string, Avalonia.Media.Imaging.Bitmap>();
+
+    /// <summary>Decodes the images the rendering asked for, so the surface can draw them beside their text.</summary>
+    private void ApplyRendered(DiffFileProjection file, GitKay.Core.RenderedMarkdownContent content) {
+        file.ApplyRenderedContent(content);
+        var oldImages = new Dictionary<string, Avalonia.Media.Imaging.Bitmap>(StringComparer.Ordinal);
+        var newImages = new Dictionary<string, Avalonia.Media.Imaging.Bitmap>(StringComparer.Ordinal);
+        foreach (var image in content.Images) {
+            if (image.Bytes == null) continue;
+            try {
+                var bitmap = new Avalonia.Media.Imaging.Bitmap(new System.IO.MemoryStream(image.Bytes.Value));
+                (image.Side.IsOld ? oldImages : newImages)[image.Source] = bitmap;
+            }
+            catch { /* An image that will not decode is simply not drawn; its text stays. */ }
+        }
+        foreach (var bitmap in OldImages.Values) bitmap.Dispose();
+        foreach (var bitmap in Images.Values) bitmap.Dispose();
+        OldImages = oldImages;
+        Images = newImages;
     }
 
     private void Rebuild() {
