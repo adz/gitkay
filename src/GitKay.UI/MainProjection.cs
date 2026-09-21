@@ -166,7 +166,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private int _diffContextLineCount = GitKay.Core.SettingsModule.defaults.DiffContextLines;
     [ObservableProperty] private string _searchQuery = "";
     [ObservableProperty] private double _searchDebounceSeconds = GitKay.Core.SettingsModule.defaults.SearchDebounceSeconds;
-    [ObservableProperty] private bool _renderMarkdownByDefault = GitKay.Core.SettingsModule.defaults.RenderMarkdownByDefault;
+    [ObservableProperty] private bool _previewByDefault = GitKay.Core.SettingsModule.defaults.PreviewByDefault;
     [ObservableProperty] private bool _renderedMarkdownChangesOnly;
     [ObservableProperty] private bool _loadRemoteMarkdownImages = GitKay.Core.SettingsModule.defaults.LoadRemoteMarkdownImages;
     [ObservableProperty] private string _commitFindQuery = "";
@@ -410,7 +410,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             CommitRowMetaFontSize = normalized.CommitRowMetaFontSize;
             CommitRowBadgeFontSize = normalized.CommitRowBadgeFontSize;
             SearchDebounceSeconds = normalized.SearchDebounceSeconds;
-            RenderMarkdownByDefault = normalized.RenderMarkdownByDefault;
+            PreviewByDefault = normalized.PreviewByDefault;
             LoadRemoteMarkdownImages = normalized.LoadRemoteMarkdownImages;
             DiffContextLineCount = normalized.DiffContextLines;
             SelectedDiffContextLineCount =
@@ -452,7 +452,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         CommitRowMetaFontSize,
         CommitRowBadgeFontSize,
         SearchDebounceSeconds,
-        RenderMarkdownByDefault,
+        PreviewByDefault,
         LoadRemoteMarkdownImages,
         SelectedThemeMode?.Mode ?? GitKay.Core.SettingsModule.defaults.Theme,
         PaneGap,

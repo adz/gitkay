@@ -3957,7 +3957,7 @@ module SettingsSerializationTests =
             { ShowBranchRefs = true; ShowStashes = true; DiffContextLines = 7; DiffLayout = DiffLayout.SideBySide
               CommitRowFontFamily = "Inter"; CommitRowMonoFontFamily = "Iosevka"; CommitRowTextFontSize = 14.5
               CommitRowMetaFontSize = 12.0; CommitRowBadgeFontSize = 10.0; SearchDebounceSeconds = 0.25
-              RenderMarkdownByDefault = true; LoadRemoteMarkdownImages = true; Theme = DarkTheme
+              PreviewByDefault = true; LoadRemoteMarkdownImages = true; Theme = DarkTheme
               PaneGap = 5.0; HoverFocusesPane = false; PaneDimUnfocused = false; PaneFocusHighlight = true
               PaneFocusEffect = PaneShadow; PaneEffectColor = TealEffectColor; PaneEffectIntensity = QuarterIntensity
               PaneBorder = true; PaneBorderStyle = CustomBorder; PaneBorderColor = PinkEffectColor
@@ -4005,6 +4005,16 @@ module SettingsSerializationTests =
         test <@ cleared |> UiState.countViewPreferences "markdown-preview|" = 0 @>
         // An empty prefix would forget everything; it forgets nothing instead.
         test <@ (state |> UiState.withoutViewPreferences "") = state @>
+
+    [<Fact>]
+    let ``preview by default still reads the settings file written when it was Markdown only`` () =
+        // The on-disk name predates previewing JSON and XML; a file saved by an older build must keep its choice.
+        let read = decoded """{"RenderMarkdownByDefault":false}"""
+        test <@ read.PreviewByDefault = false @>
+        test <@ (decoded """{"RenderMarkdownByDefault":true}""").PreviewByDefault @>
+        // And it is still written under that name, so an older build reads what this one saves.
+        let json = { Settings.defaults with PreviewByDefault = false } |> SettingsJson.encode
+        test <@ json.Contains "\"RenderMarkdownByDefault\":false" @>
 
     [<Fact>]
     let ``an unknown chrome background or colour falls back to the default`` () =

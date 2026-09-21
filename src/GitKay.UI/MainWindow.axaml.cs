@@ -879,12 +879,15 @@ public partial class MainWindow : Window, IVimCommands {
             SaveMarkdownPreviewPreference(repository, file.ContentPath, !file.IsRenderedMarkdown);
             projection.ToggleRenderedMarkdown(file);
         }
-        else projection.ToggleFormattedPreview(file);
+        else {
+            SaveMarkdownPreviewPreference(repository, file.ContentPath, !file.IsFormattedPreview);
+            projection.ToggleFormattedPreview(file);
+        }
     }
 
     private void OpenWholeFile(FileTarget target, bool preview = false) {
         if (_projection is not { RepositoryPath: { } repo } projection) return;
-        var preferredPreview = preview || (MarkdownPreviewPreference(repo, target.Path) ?? projection.RenderMarkdownByDefault);
+        var preferredPreview = preview || (MarkdownPreviewPreference(repo, target.Path) ?? projection.PreviewByDefault);
         _pendingWholeFileTarget = target;
         projection.RequestWholeFile(target, preferredPreview);
     }
@@ -1246,13 +1249,17 @@ public partial class MainWindow : Window, IVimCommands {
                 DiffRowsListBox.RestoreScrollOffsetWhenReady(offset);
         }
 
+        // "Preview by default" covers every kind the diff pane can preview, not only Markdown.
         if (e.PropertyName == nameof(MainProjection.SelectedDiffFile)
-            && _projection is { RepositoryPath: { } repository, SelectedDiffFile: { IsRenderedMarkdown: false } file } markdownProjection
-            && GitKay.Core.Markdown.previewKind(file.ContentPath).IsMarkdownPreview) {
-            var desired = MarkdownPreviewPreference(repository, file.ContentPath) ?? markdownProjection.RenderMarkdownByDefault;
+            && _projection is { RepositoryPath: { } repository, SelectedDiffFile: { } file } previewProjection
+            && !file.IsRenderedMarkdown && !file.IsFormattedPreview) {
+            var kind = GitKay.Core.Markdown.previewKind(file.ContentPath);
+            var previewable = kind.IsMarkdownPreview || kind.IsFormattedPreview;
+            var desired = previewable
+                && (MarkdownPreviewPreference(repository, file.ContentPath) ?? previewProjection.PreviewByDefault);
             if (desired)
                 Dispatcher.UIThread.Post(() => {
-                    if (ReferenceEquals(_projection?.SelectedDiffFile, file) && !file.IsRenderedMarkdown)
+                    if (ReferenceEquals(_projection?.SelectedDiffFile, file) && !file.IsRenderedMarkdown && !file.IsFormattedPreview)
                         OnDiffFilePreviewRequested(this, file);
                 }, DispatcherPriority.Background);
         }

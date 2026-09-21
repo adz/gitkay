@@ -302,9 +302,10 @@
                                         </ComboBox.ItemTemplate>
                                     </ComboBox>
 
-                                    <TextBlock Grid.Row="2" Text="Markdown" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
-                                    <CheckBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Content="Render Markdown by default"
-                                              IsChecked="{Binding RenderMarkdownByDefault, Mode=TwoWay}" />
+                                    <TextBlock Grid.Row="2" Text="Preview" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                                    <CheckBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Content="Preview by default"
+                                              IsChecked="{Binding PreviewByDefault, Mode=TwoWay}"
+                                              ToolTip.Tip="Rendered Markdown, and JSON and XML reformatted for reading" />
 
                                     <TextBlock Grid.Row="3" Text="Remote images" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
                                     <CheckBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Content="Load remote Markdown images"

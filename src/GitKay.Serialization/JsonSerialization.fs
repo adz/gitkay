@@ -18,7 +18,7 @@ type private SettingsWire =
       CommitRowMetaFontSize: float
       CommitRowBadgeFontSize: float
       SearchDebounceSeconds: float
-      RenderMarkdownByDefault: bool
+      PreviewByDefaultFlag: bool
       LoadRemoteMarkdownImages: bool
       ThemeMode: string
       PaneGap: float
@@ -69,7 +69,8 @@ module private Codecs =
             fieldAs "CommitRowMetaFontSize" _.CommitRowMetaFontSize { defaultValue d.CommitRowMetaFontSize }
             fieldAs "CommitRowBadgeFontSize" _.CommitRowBadgeFontSize { defaultValue d.CommitRowBadgeFontSize }
             fieldAs "SearchDebounceSeconds" _.SearchDebounceSeconds { defaultValue d.SearchDebounceSeconds }
-            fieldAs "RenderMarkdownByDefault" _.RenderMarkdownByDefault { defaultValue d.RenderMarkdownByDefault }
+            // The on-disk name predates previewing anything but Markdown; it stays so saved settings keep working.
+            fieldAs "RenderMarkdownByDefault" _.PreviewByDefaultFlag { defaultValue d.PreviewByDefault }
             fieldAs "LoadRemoteMarkdownImages" _.LoadRemoteMarkdownImages { defaultValue d.LoadRemoteMarkdownImages }
             fieldAs "ThemeMode" _.ThemeMode { defaultValue (ThemeMode.key d.Theme) }
             fieldAs "PaneGap" _.PaneGap { defaultValue d.PaneGap }
@@ -90,7 +91,7 @@ module private Codecs =
                 { ShowBranchRefs = showBranchRefs; ShowStashes = showStashes; DiffContextLines = diffContextLines
                   DiffPresentationModeKey = layout; CommitRowFontFamily = fontFamily; CommitRowMonoFontFamily = monoFontFamily
                   CommitRowTextFontSize = textSize; CommitRowMetaFontSize = metaSize; CommitRowBadgeFontSize = badgeSize
-                  SearchDebounceSeconds = debounce; RenderMarkdownByDefault = renderMarkdown; LoadRemoteMarkdownImages = remoteImages
+                  SearchDebounceSeconds = debounce; PreviewByDefaultFlag = renderMarkdown; LoadRemoteMarkdownImages = remoteImages
                   ThemeMode = theme; PaneGap = paneGap; PaneFocusEffectKey = paneEffect
                   PaneEffectColorKey = paneColor; PaneEffectIntensityKey = paneIntensity; HoverFocusesPane = hoverFocuses
                   PaneDimUnfocused = dimUnfocused; PaneFocusHighlight = focusHighlight; PaneBorder = paneBorder
@@ -143,7 +144,7 @@ module SettingsJson =
               CommitRowMetaFontSize = settings.CommitRowMetaFontSize
               CommitRowBadgeFontSize = settings.CommitRowBadgeFontSize
               SearchDebounceSeconds = settings.SearchDebounceSeconds
-              RenderMarkdownByDefault = settings.RenderMarkdownByDefault
+              PreviewByDefaultFlag = settings.PreviewByDefault
               LoadRemoteMarkdownImages = settings.LoadRemoteMarkdownImages
               ThemeMode = ThemeMode.key settings.Theme
               PaneGap = settings.PaneGap
@@ -176,7 +177,7 @@ module SettingsJson =
                   CommitRowMetaFontSize = wire.CommitRowMetaFontSize
                   CommitRowBadgeFontSize = wire.CommitRowBadgeFontSize
                   SearchDebounceSeconds = wire.SearchDebounceSeconds
-                  RenderMarkdownByDefault = wire.RenderMarkdownByDefault
+                  PreviewByDefault = wire.PreviewByDefaultFlag
                   LoadRemoteMarkdownImages = wire.LoadRemoteMarkdownImages
                   Theme = ThemeMode.tryParse wire.ThemeMode |> Option.defaultValue Settings.defaults.Theme
                   PaneGap = wire.PaneGap

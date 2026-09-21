@@ -309,8 +309,9 @@ type Settings =
       CommitRowMetaFontSize: float
       CommitRowBadgeFontSize: float
       SearchDebounceSeconds: float
-      /// <summary>Open Markdown files in rendered mode unless a per-file preference overrides it.</summary>
-      RenderMarkdownByDefault: bool
+      /// <summary>Open previewable files — rendered Markdown, reformatted JSON and XML — in their preview
+      /// unless a per-file preference overrides it.</summary>
+      PreviewByDefault: bool
       /// <summary>Allow rendered Markdown to contact remote image hosts. Off protects reader privacy.</summary>
       LoadRemoteMarkdownImages: bool
       Theme: ThemeMode
@@ -356,7 +357,7 @@ module Settings =
           CommitRowMetaFontSize = 12.0
           CommitRowBadgeFontSize = 11.0
           SearchDebounceSeconds = 0.5
-          RenderMarkdownByDefault = true
+          PreviewByDefault = true
           LoadRemoteMarkdownImages = false
           Theme = SystemTheme
           PaneGap = 3.0
