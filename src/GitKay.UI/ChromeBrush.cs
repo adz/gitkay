@@ -1,3 +1,4 @@
+using System;
 using Avalonia.Controls;
 using Avalonia.Media;
 
@@ -25,11 +26,7 @@ internal static class ChromeBrush {
 
         // Over the window's own background rather than on its own: a translucent bar would let content scroll through it.
         var under = themed("GitKayWindowBrush") is ISolidColorBrush window ? window.Color : Colors.Black;
-        return new SolidColorBrush(Blend(under, tint, TintAlpha)).ToImmutable();
-    }
-
-    private static Color Blend(Color under, Color over, byte alpha) {
-        byte mix(byte a, byte b) => (byte)((a * (255 - alpha) + b * alpha) / 255);
-        return Color.FromRgb(mix(under.R, over.R), mix(under.G, over.G), mix(under.B, over.B));
+        var blended = GitKay.Core.Presentation.Colour.blend(under.R, under.G, under.B, tint.R, tint.G, tint.B, TintAlpha);
+        return new SolidColorBrush(Color.FromRgb(blended.Item1, blended.Item2, blended.Item3)).ToImmutable();
     }
 }

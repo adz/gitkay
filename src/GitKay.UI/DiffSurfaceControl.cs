@@ -1629,9 +1629,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     private Size ImageDrawSize(ImagePreviewRowProjection image) {
         var pixels = image.Image.PixelSize;
-        if (pixels.Width <= 0 || pixels.Height <= 0) return new Size(0, 0);
-        var scale = image.Zoom > 0 ? image.Zoom : FitScale(image);
-        return new Size(pixels.Width * scale, pixels.Height * scale);
+        var scale = GitKay.Core.Presentation.ImageView.scale(image.Zoom, ContentWidth - 2 * ImagePadding, pixels.Width);
+        var drawn = GitKay.Core.Presentation.ImageView.drawnSize(scale, pixels.Width, pixels.Height);
+        return new Size(drawn.Item1, drawn.Item2);
     }
 
     /// <summary>
@@ -1640,11 +1640,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     /// </summary>
     private double ContentWidth => _measurementWidth > 0 ? _measurementWidth : Bounds.Width;
 
-    /// <summary>Fitted to the pane, but never blown up past its own pixels: an enlarged image misreports the file.</summary>
-    private double FitScale(ImagePreviewRowProjection image) {
-        var available = Math.Max(1, ContentWidth - 2 * ImagePadding);
-        return Math.Min(1, available / image.Image.PixelSize.Width);
-    }
+    private double FitScale(ImagePreviewRowProjection image) =>
+        GitKay.Core.Presentation.ImageView.fitScale(ContentWidth - 2 * ImagePadding, image.Image.PixelSize.Width);
 
     /// <summary>
     /// Zooms one image about the middle of the viewport, keeping its top where it is so the page does not jump
@@ -1654,10 +1651,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         var index = Array.IndexOf(_rows, image);
         if (index < 0) return;
         var current = image.Zoom > 0 ? image.Zoom : FitScale(image);
-        var next = direction == 0
-            ? 0
-            : Math.Clamp(direction > 0 ? current * ImagePreviewRowProjection.ZoomStep : current / ImagePreviewRowProjection.ZoomStep,
-                         ImagePreviewRowProjection.MinZoom, ImagePreviewRowProjection.MaxZoom);
+        var next = GitKay.Core.Presentation.ImageView.step(direction, current);
         if (Math.Abs(next - image.Zoom) < 0.0001) return;
 
         if (_scrollViewer != null)

@@ -4239,3 +4239,74 @@ module XmlPreviewTests =
     let ``xml that is not well formed is reported rather than shown as empty`` () =
         test <@ Markdown.formatForPreview "xml" "<a><b></a>" |> Result.isError @>
         test <@ Markdown.formatForPreview "xml" "" |> Result.isError @>
+
+module PresentationTests =
+    open GitKay.Core.Presentation
+
+    [<Fact>]
+    let ``byte counts read as sizes rather than digits`` () =
+        test <@ Sizes.describeBytes 512L = "512 B" @>
+        test <@ Sizes.describeBytes 2048L = "2 KB" @>
+        test <@ Sizes.describeBytes 1536L = "1.5 KB" @>
+        test <@ Sizes.describeBytes (3L * 1024L * 1024L) = "3 MB" @>
+
+    [<Fact>]
+    let ``an image fits the room it has and is never blown up past its own pixels`` () =
+        // Wider than the pane: scaled down to fit.
+        test <@ ImageView.fitScale 400.0 800 = 0.5 @>
+        // Smaller than the pane: left alone rather than enlarged.
+        test <@ ImageView.fitScale 400.0 100 = 1.0 @>
+        // A zoom of its own wins over fitting; zero means fit.
+        test <@ ImageView.scale 2.0 400.0 800 = 2.0 @>
+        test <@ ImageView.scale 0.0 400.0 800 = 0.5 @>
+
+    [<Fact>]
+    let ``zoom steps stay inside their range and zero returns to fitting`` () =
+        test <@ ImageView.step 1 1.0 = 1.25 @>
+        test <@ ImageView.step -1 1.25 = 1.0 @>
+        test <@ ImageView.step 0 4.0 = 0.0 @>
+        // Held at the ends rather than running away.
+        test <@ ImageView.step 1 ImageView.maxZoom = ImageView.maxZoom @>
+        test <@ ImageView.step -1 ImageView.minZoom = ImageView.minZoom @>
+
+    [<Fact>]
+    let ``drawn size is the pixels at a scale, and nothing at all for an empty image`` () =
+        test <@ ImageView.drawnSize 0.5 (800, 600) = (400.0, 300.0) @>
+        test <@ ImageView.drawnSize 1.0 (0, 0) = (0.0, 0.0) @>
+
+    [<Fact>]
+    let ``the collapsible item costs more to bring back than to keep`` () =
+        // Room for everything: shown either way.
+        test <@ FileRow.showsCollapsible 300.0 100.0 40.0 30.0 true @>
+        test <@ FileRow.showsCollapsible 300.0 100.0 40.0 30.0 false @>
+        // No room: dropped either way.
+        test <@ not (FileRow.showsCollapsible 150.0 100.0 40.0 30.0 true) @>
+        test <@ not (FileRow.showsCollapsible 150.0 100.0 40.0 30.0 false) @>
+        // On the boundary the answer depends on where it came from, which is what stops the flicker.
+        let boundary = 100.0 + 40.0 + 30.0 + 5.0
+        test <@ FileRow.showsCollapsible boundary 100.0 40.0 30.0 true @>
+        test <@ not (FileRow.showsCollapsible boundary 100.0 40.0 30.0 false) @>
+
+    [<Fact>]
+    let ``a blended colour lands between the two and stays opaque`` () =
+        let under, over = (0uy, 0uy, 0uy), (255uy, 255uy, 255uy)
+        test <@ Colour.blend under over 0uy = under @>
+        test <@ Colour.blend under over 255uy = over @>
+        let r, _, _ = Colour.blend under over 128uy
+        test <@ r > 100uy && r < 155uy @>
+
+    [<Fact>]
+    let ``change blocks scale small changes and never read as one-sided`` () =
+        // A one-line change fills one block, not the whole bar.
+        test <@ ChangeBlocks.split 1 0 = (1, 0) @>
+        test <@ ChangeBlocks.split 0 1 = (0, 1) @>
+        test <@ ChangeBlocks.split 0 0 = (0, 0) @>
+        // A lopsided change still shows the smaller side.
+        let green, red = ChangeBlocks.split 500 1
+        test <@ red = 1 && green = 4 @>
+        let green, red = ChangeBlocks.split 1 500
+        test <@ green = 1 && red = 4 @>
+        // Anything large fills the bar. An even split cannot divide five blocks evenly; rounding gives red the odd one.
+        test <@ ChangeBlocks.split 50 50 = (2, 3) @>
+        let green, red = ChangeBlocks.split 100 100
+        test <@ green + red = ChangeBlocks.count @>

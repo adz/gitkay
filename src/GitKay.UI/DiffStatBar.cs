@@ -27,16 +27,10 @@ public sealed class DiffStatBar : Control {
     protected override Size MeasureOverride(Size availableSize) =>
         new(5 * BlockSize + 4 * Spacing, BlockSize);
 
-    /// <summary>Returns (green, red) block counts out of five, scaled like GitHub for small changes.</summary>
+    /// <summary>Returns (green, red) block counts out of five; the scaling itself is core's.</summary>
     public static (int Green, int Red) Blocks(int added, int removed) {
-        var total = added + removed;
-        if (total == 0) return (0, 0);
-        var filled = System.Math.Min(5, total);
-        var green = (int)System.Math.Round(filled * (double)added / total);
-        if (added > 0 && green == 0) green = 1;
-        var red = filled - green;
-        if (removed > 0 && red == 0) { red = 1; green = filled - 1; }
-        return (System.Math.Max(0, green), System.Math.Max(0, red));
+        var split = GitKay.Core.Presentation.ChangeBlocks.split(added, removed);
+        return (split.Item1, split.Item2);
     }
 
     public override void Render(DrawingContext context) {

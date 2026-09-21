@@ -23,12 +23,6 @@ public sealed class FileRowLayout : Panel {
     /// </summary>
     private double _collapsibleWidth;
 
-    /// <summary>
-    /// How much wider than it strictly needs to be the row must get before a dropped child comes back. Without it
-    /// the show and hide widths are the same pixel, and resting a splitter on it flickers the child in and out.
-    /// </summary>
-    private const double Hysteresis = 12;
-
     protected override Size MeasureOverride(Size availableSize) {
         if (Children.Count == 0) return default;
         var name = Children[0];
@@ -54,11 +48,9 @@ public sealed class FileRowLayout : Panel {
         height = Math.Max(height, name.DesiredSize.Height);
 
         var collapsibleWidth = _collapsibleWidth > 0 ? _collapsibleWidth + Spacing : 0;
-        // Room for the name in full, the items that always show, and the collapsible one too. Coming back costs
-        // a little more than staying put, so a width hovering on the boundary settles instead of flickering.
-        var needed = nameWidth + fixedWidth + collapsibleWidth + (collapsible is { IsVisible: false } ? Hysteresis : 0);
         var showCollapsible = collapsible != null
-            && (double.IsInfinity(availableSize.Width) || needed <= availableSize.Width);
+            && GitKay.Core.Presentation.FileRow.showsCollapsible(
+                availableSize.Width, nameWidth, fixedWidth, collapsibleWidth, collapsible.IsVisible);
         if (collapsible != null && collapsible.IsVisible != showCollapsible) {
             collapsible.IsVisible = showCollapsible;
             if (showCollapsible) collapsible.Measure(Size.Infinity);

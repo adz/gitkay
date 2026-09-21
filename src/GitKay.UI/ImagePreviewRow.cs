@@ -22,10 +22,7 @@ public sealed class ImagePreviewRowProjection : IDiffRowProjection {
     /// <summary>0 fits the picture to the pane; otherwise a scale against its own pixels.</summary>
     public double Zoom { get => File.PreviewImageZoom; set => File.PreviewImageZoom = value; }
 
-    /// <summary>The smallest and largest the picture goes, and how far one step of zoom moves it.</summary>
-    public const double MinZoom = 0.1;
-    public const double MaxZoom = 16;
-    public const double ZoomStep = 1.25;
+
 
     public Bitmap Image { get; }
     public string Path { get; }
@@ -47,16 +44,10 @@ public sealed class ImagePreviewRowProjection : IDiffRowProjection {
             // Density is only worth showing when it is not the default the decoder assumes.
             var dpi = Math.Round(Image.Dpi.X);
             if (dpi > 0 && Math.Abs(dpi - 96) > 0.5) parts += $"  ·  {dpi:0} dpi";
-            var caption = $"{parts}  ·  {DescribeBytes(ByteCount)}";
+            var caption = $"{parts}  ·  {GitKay.Core.Presentation.Sizes.describeBytes(ByteCount)}";
             // Only once it is not showing the whole picture at its fitted size: a percentage on every image is noise.
             return Zoom > 0 ? $"{caption}  ·  {Zoom * 100:0}%" : caption;
         }
     }
 
-    internal static string DescribeBytes(long count) =>
-        count switch {
-            < 1024 => $"{count} B",
-            < 1024 * 1024 => $"{count / 1024.0:0.#} KB",
-            _ => $"{count / (1024.0 * 1024.0):0.##} MB",
-        };
 }

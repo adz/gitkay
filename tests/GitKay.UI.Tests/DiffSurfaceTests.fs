@@ -1059,39 +1059,6 @@ module FileRowLayoutTests =
             let withoutGraph = measure 260.0 longPath
             test <@ withGraph = withoutGraph @>)
 
-    [<Fact>]
-    let ``the graph costs more to bring back than it does to keep, so a boundary width settles`` () =
-        Headless.run (fun () ->
-            let name = TextBlock(Text = "src/GitKay.UI/SomeModeratelyLongFileName.fs", TextWrapping = Media.TextWrapping.NoWrap)
-            let counts = TextBlock(Text = "+12 \u22123")
-            let graph = DiffStatBar(Added = 12, Removed = 3, IsKnown = true, BlockSize = 5.0)
-            let layout = FileRowLayout(Spacing = 7.0)
-            layout.Children.Add name
-            layout.Children.Add counts
-            layout.Children.Add graph
-            let host = Border(Child = layout)
-            let window = Window(Width = 700.0, Height = 60.0, Content = host)
-            try
-                window.Show()
-                Headless.pump ()
-                let visibleAt w =
-                    host.Width <- w
-                    window.UpdateLayout()
-                    Headless.pump ()
-                    graph.IsVisible
-
-                // Narrowing from wide: the width at which the graph gives up its place.
-                let widths = [ 500.0 .. -1.0 .. 200.0 ]
-                let hidesAt = widths |> List.find (fun w -> not (visibleAt w))
-                // Widening from there: the width at which it comes back.
-                let showsAt = [ hidesAt .. 1.0 .. 500.0 ] |> List.find visibleAt
-
-                // A single shared boundary would make these equal, and a splitter resting there would flicker.
-                test <@ showsAt - hidesAt >= 8.0 @>
-            finally
-                window.Close()
-                Headless.pump ())
-
 module ChromeBrushTests =
     /// A control carrying the two theme tones the chrome is mixed from.
     let private host () =
@@ -1461,7 +1428,7 @@ module ImagePreviewTests =
             let metadata = row.Metadata
             test <@ metadata.Contains "PNG" @>
             test <@ metadata.Contains "6 × 4" @>
-            test <@ metadata.Contains (ImagePreviewRowProjection.DescribeBytes(int64 bytes.Length)) @>
+            test <@ metadata.Contains (GitKay.Core.Presentation.Sizes.describeBytes(int64 bytes.Length)) @>
             test <@ not row.IsOldSide @>
 
             // The picture replaces the file's rows rather than sitting among them.
@@ -1480,12 +1447,6 @@ module ImagePreviewTests =
             let file = DiffFileProjection({ OldPath = "docs/logo.png"; NewPath = "/dev/null"; DisplayPath = "docs/logo.png" } : GitService.DiffFileSummary)
             file.ApplyPreviewImage(new Media.Imaging.Bitmap(new IO.MemoryStream(bytes)), bytes.Length)
             test <@ file.ImageRow.IsOldSide @>)
-
-    [<Fact>]
-    let ``byte counts read as sizes rather than digits`` () =
-        test <@ ImagePreviewRowProjection.DescribeBytes 512L = "512 B" @>
-        test <@ ImagePreviewRowProjection.DescribeBytes 2048L = "2 KB" @>
-        test <@ ImagePreviewRowProjection.DescribeBytes (3L * 1024L * 1024L) = "3 MB" @>
 
 module ImageZoomTests =
     let private pngBytes (width: int) (height: int) =
