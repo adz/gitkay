@@ -47,6 +47,20 @@ module Presentation =
             if pixelWidth <= 0 || pixelHeight <= 0 then 0.0, 0.0
             else float pixelWidth * scale, float pixelHeight * scale
 
+    /// <summary>
+    /// A row's widths, named so they cannot be swapped: four bare floats in a row are four chances to pass them
+    /// in the wrong order, and every wrong order still compiles.
+    /// </summary>
+    type RowWidths =
+        { /// <summary>The width the row has to lay out in.</summary>
+          Available: float
+          /// <summary>What the name wants if nothing trims it.</summary>
+          Name: float
+          /// <summary>The items that always show, together with the space between them.</summary>
+          Fixed: float
+          /// <summary>The item that gives way first, together with the space before it.</summary>
+          Collapsible: float }
+
     /// A changed-file row: a name that takes what is left, and trailing items pinned to the right.
     module FileRow =
         /// <summary>
@@ -59,11 +73,11 @@ module Presentation =
         /// Whether the item that gives way first still fits. It costs a little more to bring back than to keep, so
         /// a width hovering on the boundary settles instead of flickering.
         /// </summary>
-        let showsCollapsible (available: float) (nameWidth: float) (fixedWidth: float) (collapsibleWidth: float) (shownNow: bool) =
-            if Double.IsInfinity available then true
+        let showsCollapsible (widths: RowWidths) (shownNow: bool) =
+            if Double.IsInfinity widths.Available then true
             else
-                let needed = nameWidth + fixedWidth + collapsibleWidth + (if shownNow then 0.0 else hysteresis)
-                needed <= available
+                let needed = widths.Name + widths.Fixed + widths.Collapsible + (if shownNow then 0.0 else hysteresis)
+                needed <= widths.Available
 
     /// The five-block change indicator beside a changed file.
     module ChangeBlocks =

@@ -50,7 +50,8 @@ public sealed class FileRowLayout : Panel {
         var collapsibleWidth = _collapsibleWidth > 0 ? _collapsibleWidth + Spacing : 0;
         var showCollapsible = collapsible != null
             && GitKay.Core.Presentation.FileRow.showsCollapsible(
-                availableSize.Width, nameWidth, fixedWidth, collapsibleWidth, collapsible.IsVisible);
+                new GitKay.Core.Presentation.RowWidths(availableSize.Width, nameWidth, fixedWidth, collapsibleWidth),
+                collapsible.IsVisible);
         if (collapsible != null && collapsible.IsVisible != showCollapsible) {
             collapsible.IsVisible = showCollapsible;
             if (showCollapsible) collapsible.Measure(Size.Infinity);

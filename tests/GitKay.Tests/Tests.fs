@@ -4277,16 +4277,17 @@ module PresentationTests =
 
     [<Fact>]
     let ``the collapsible item costs more to bring back than to keep`` () =
+        let widths available = { Available = available; Name = 100.0; Fixed = 40.0; Collapsible = 30.0 }
         // Room for everything: shown either way.
-        test <@ FileRow.showsCollapsible 300.0 100.0 40.0 30.0 true @>
-        test <@ FileRow.showsCollapsible 300.0 100.0 40.0 30.0 false @>
+        test <@ FileRow.showsCollapsible (widths 300.0) true @>
+        test <@ FileRow.showsCollapsible (widths 300.0) false @>
         // No room: dropped either way.
-        test <@ not (FileRow.showsCollapsible 150.0 100.0 40.0 30.0 true) @>
-        test <@ not (FileRow.showsCollapsible 150.0 100.0 40.0 30.0 false) @>
+        test <@ not (FileRow.showsCollapsible (widths 150.0) true) @>
+        test <@ not (FileRow.showsCollapsible (widths 150.0) false) @>
         // On the boundary the answer depends on where it came from, which is what stops the flicker.
-        let boundary = 100.0 + 40.0 + 30.0 + 5.0
-        test <@ FileRow.showsCollapsible boundary 100.0 40.0 30.0 true @>
-        test <@ not (FileRow.showsCollapsible boundary 100.0 40.0 30.0 false) @>
+        let boundary = widths (100.0 + 40.0 + 30.0 + 5.0)
+        test <@ FileRow.showsCollapsible boundary true @>
+        test <@ not (FileRow.showsCollapsible boundary false) @>
 
     [<Fact>]
     let ``a blended colour lands between the two and stays opaque`` () =
