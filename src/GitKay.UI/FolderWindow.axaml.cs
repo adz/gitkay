@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using Avalonia;
 using Avalonia.Collections;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -53,7 +54,10 @@ public sealed partial class FolderProjection : ObservableObject {
         ChosenLeft = leftRoot;
         ChosenRight = rightRoot;
         RebuildFileRows();
-        SelectedFile = Files.FirstOrDefault();
+        // Selected without previewing: the settings that decide whether to preview have not been applied yet, and
+        // a file previewed here would stay previewed however they turn out.
+        _selectedFile = Files.FirstOrDefault();
+        if (_selectedFile != null) { Load(_selectedFile); Rebuild(); }
     }
 
     public FolderMode Mode { get; }
@@ -158,6 +162,29 @@ public sealed partial class FolderProjection : ObservableObject {
     [ObservableProperty] private string _findQuery = "";
     [ObservableProperty] private GitKay.Core.DiffLayout _layout = GitKay.Core.DiffLayout.Unified;
 
+    /// <summary>The font size the diff is drawn at, from settings and the zoom keys.</summary>
+    [ObservableProperty] private double _diffFontSize = DiffSurfaceControl.DefaultCodeFontSize;
+
+    /// <summary>Takes the settings that mean something here; the git-only ones have nothing to act on.</summary>
+    public void ApplySettings(GitKay.Core.Settings settings) {
+        var normalized = GitKay.Core.SettingsModule.normalize(settings);
+        Layout = normalized.DiffLayout;
+        LoadRemoteImages = normalized.LoadRemoteMarkdownImages;
+        PreviewByDefault = normalized.PreviewByDefault;
+        // The file chosen before the settings arrived still follows them.
+        if (SelectedFile is { } file) ApplyPreviewDefault(file);
+    }
+
+    /// <summary>Opens a previewable file in its preview, when that is what the settings ask for.</summary>
+    private void ApplyPreviewDefault(DiffFileProjection file) {
+        if (!PreviewByDefault || file.IsRenderedMarkdown || file.IsFormattedPreview || file.IsImagePreview) return;
+        if (GitKay.Core.Markdown.previewKind(file.ContentPath).IsSourceOnly) return;
+        TogglePreview(file);
+    }
+
+    /// <summary>Whether a previewable file opens in its preview, as it does in a repository window.</summary>
+    public bool PreviewByDefault { get; private set; } = GitKay.Core.SettingsModule.defaults.PreviewByDefault;
+
     public bool IsEmpty => Files.Count == 0;
 
     public string EmptyMessage => Mode == FolderMode.Compare
@@ -184,6 +211,8 @@ public sealed partial class FolderProjection : ObservableObject {
         if (value == null) { Rows.Clear(); return; }
         Load(value);
         Rebuild();
+        // "Preview by default" means the same thing here: a previewable file opens in its preview.
+        ApplyPreviewDefault(value);
     }
 
     /// <summary>
@@ -305,6 +334,13 @@ public partial class FolderWindow : Window {
 
     public FolderWindow(FolderProjection projection) : this() {
         DataContext = projection;
+        // The diff and file panes get the same chrome, gap and focus treatment the repository panes get.
+        _paneChrome.Add("diff", DiffPaneEffect, DiffPaneContent);
+        _paneChrome.Add("files", FilesPaneEffect, FilesPaneContent);
+        // Only the chrome is the window's to apply; what the projection shows is the caller's decision.
+        var chrome = new MainProjection();
+        chrome.ApplySettings(new AppSettingsStore().Load());
+        ApplyChrome(chrome);
         Opened += (_, _) => Surface.Focus();
     }
 
@@ -370,10 +406,40 @@ public partial class FolderWindow : Window {
     private void OnGoToFileMenuItemClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => OpenFilePalette();
     private void OnCloseMenuItemClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => Close();
     private void OnAboutMenuItemClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => new AboutWindow().ShowDialog(this);
-    private void OnSettingsMenuItemClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) {
-        if (DataContext is FolderProjection projection)
-            projection.Status = "Settings live in the repository window";
+    /// <summary>
+    /// The same settings a repository window opens: theme, pane chrome, typography, diff presentation and preview
+    /// defaults all apply here. The git-only parts (branch refs, stashes) simply have nothing to act on.
+    /// </summary>
+    private async void OnSettingsMenuItemClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) {
+        if (DataContext is not FolderProjection projection) return;
+
+        var store = new AppSettingsStore();
+        var settings = new MainProjection();
+        settings.ApplySettings(store.Load());
+        var window = new SettingsWindow { DataContext = settings };
+        await window.ShowDialog(this);
+
+        var chosen = settings.CaptureSettings();
+        store.Save(chosen);
+        projection.ApplySettings(chosen);
+        ApplyChrome(settings);
     }
+
+    /// <summary>Pane chrome is drawn by the window, so it is re-read when the settings that describe it change.</summary>
+    private void ApplyChrome(MainProjection settings) {
+        if (Application.Current is { } application)
+            application.RequestedThemeVariant =
+                settings.SelectedThemeMode?.Mode is { IsLightTheme: true } ? Avalonia.Styling.ThemeVariant.Light
+                : settings.SelectedThemeMode?.Mode is { IsDarkTheme: true } ? Avalonia.Styling.ThemeVariant.Dark
+                : Avalonia.Styling.ThemeVariant.Default;
+
+        if (ChromeBrush.Resolve(this, settings.ChromeBackground, settings.ChromeColor) is { } brush)
+            Resources["GitKayChromeBrush"] = brush;
+
+        _paneChrome.Update(MainWindow.PaneChromeSettingsFor(settings));
+    }
+
+    private readonly PaneChrome _paneChrome = new();
 
     private void OnOpenRepositoryMenuItemClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => OpenElsewhere("repository");
     private void OnOpenFolderMenuItemClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => OpenElsewhere("folder");
@@ -482,7 +548,9 @@ public partial class FolderWindow : Window {
         if (e.Key == Key.F && e.KeyModifiers == KeyModifiers.Control) { OpenFind(); e.Handled = true; return; }
         if (e.Key == Key.Oem2 && e.KeyModifiers == KeyModifiers.None && !Surface.IsFocused) { OpenFind(); e.Handled = true; return; }
         if (MainWindow.DiffZoomDirection(e) is { } zoom && DataContext is FolderProjection) {
-            Surface.CodeFontSize = Math.Clamp(Surface.CodeFontSize + (zoom == 0 ? 0 : zoom), 7, 32);
+            projection.DiffFontSize = zoom == 0
+                ? DiffSurfaceControl.DefaultCodeFontSize
+                : Math.Clamp(projection.DiffFontSize + zoom, 7, 32);
             e.Handled = true;
             return;
         }

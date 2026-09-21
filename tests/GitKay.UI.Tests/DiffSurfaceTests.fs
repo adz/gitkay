@@ -1593,6 +1593,7 @@ module FolderWindowTests =
             try
                 let pairs = Folder.pair Seq.empty (entriesOf left)
                 let projection = FolderProjection(FolderMode.Preview, left, null, ResizeArray pairs)
+                projection.ApplySettings { Settings.defaults with PreviewByDefault = false }
                 let window = FolderWindow(projection)
                 try
                     window.Show()
@@ -1625,6 +1626,7 @@ module FolderWindowTests =
             try
                 let pairs = Folder.pair (entriesOf left) (entriesOf right) |> FolderSource.changedPairs
                 let projection = FolderProjection(FolderMode.Compare, left, right, ResizeArray pairs)
+                projection.ApplySettings { Settings.defaults with PreviewByDefault = false }
                 let window = FolderWindow(projection)
                 try
                     window.Show()
@@ -1666,6 +1668,7 @@ module FolderWindowTests =
 
                 let pairs = Folder.pair (entriesOf left) (entriesOf right) |> FolderSource.changedPairs
                 let projection = FolderProjection(FolderMode.Compare, left, right, ResizeArray pairs)
+                projection.ApplySettings { Settings.defaults with PreviewByDefault = false }
                 let window = FolderWindow(projection)
                 try
                     window.Show()
@@ -1761,5 +1764,37 @@ module FolderWindowTests =
                 test <@ projection.FileRows.Count < before @>
                 projection.ToggleFolder "src"
                 test <@ projection.FileRows.Count = before @>
+            finally
+                try Directory.Delete(root, true) with _ -> ())
+
+    [<Fact>]
+    let ``folder windows take the settings that mean something to them`` () =
+        Headless.run (fun () ->
+            let root, left, right = folders (fun left right -> write left "a.json" """{"a":1}"""; write right "a.json" """{"a":2}""")
+            try
+                let pairs = Folder.pair (entriesOf left) (entriesOf right)
+                let projection = FolderProjection(FolderMode.Compare, left, right, ResizeArray pairs)
+
+                // Diff presentation, remote images and the preview default all apply away from a repository.
+                let settings =
+                    { Settings.defaults with
+                        DiffLayout = DiffLayout.SideBySide
+                        LoadRemoteMarkdownImages = true
+                        PreviewByDefault = true }
+                projection.ApplySettings settings
+                test <@ projection.Layout = DiffLayout.SideBySide @>
+                test <@ projection.LoadRemoteImages @>
+
+                // A previewable file opens previewed, because that is what the setting asks for.
+                projection.SelectedFile <- Seq.exactlyOne projection.Files
+                Headless.pump ()
+                test <@ projection.SelectedFile.IsFormattedPreview @>
+
+                // And turning it off leaves the source alone.
+                let plain = FolderProjection(FolderMode.Compare, left, right, ResizeArray pairs)
+                plain.ApplySettings { settings with PreviewByDefault = false }
+                plain.SelectedFile <- Seq.exactlyOne plain.Files
+                Headless.pump ()
+                test <@ not plain.SelectedFile.IsFormattedPreview @>
             finally
                 try Directory.Delete(root, true) with _ -> ())

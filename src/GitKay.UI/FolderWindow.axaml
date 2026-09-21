@@ -99,13 +99,17 @@
         </Border>
 
         <Grid ColumnDefinitions="*,4,320">
-            <Border Grid.Column="0" Background="{DynamicResource GitKayWindowBrush}">
+            <!-- The panes carry the same gap, border and focus effect the repository window's panes do. -->
+            <Border x:Name="DiffPaneEffect" Grid.Column="0" IsHitTestVisible="False" ZIndex="20" />
+            <Border x:Name="FilesPaneEffect" Grid.Column="2" IsHitTestVisible="False" ZIndex="20" />
+            <Border x:Name="DiffPaneContent" Grid.Column="0" Background="{DynamicResource GitKayWindowBrush}">
                 <Grid>
                     <ScrollViewer x:Name="RowsScrollViewer" HorizontalScrollBarVisibility="Disabled">
                         <local:DiffSurfaceControl x:Name="Surface"
                                                   ItemsSource="{Binding Rows}"
                                                   SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
                                                   DiffLayout="{Binding Layout}"
+                                                  CodeFontSize="{Binding DiffFontSize, Mode=TwoWay}"
                                                   PreviewRequested="OnPreviewRequested"
                                                   FindQuery="{Binding FindQuery}"
                                                   OldRenderedImages="{Binding OldImages}"
@@ -142,7 +146,7 @@
             <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                           ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" />
 
-            <Border Grid.Column="2" Background="{DynamicResource GitKayWindowBrush}"
+            <Border x:Name="FilesPaneContent" Grid.Column="2" Background="{DynamicResource GitKayWindowBrush}"
                     BorderBrush="{DynamicResource GitKayHairlineBrush}" BorderThickness="1,0,0,0">
                 <DockPanel>
                     <Border DockPanel.Dock="Top" MinHeight="37" Padding="8,4"

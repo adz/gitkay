@@ -65,10 +65,9 @@ public partial class App : Application {
                 return;
             }
 
-            var projection = new FolderProjection(mode, left, right, built.Pairs, built.Changed) {
-                // The same saved choice repository windows use; folders are no less private than commits.
-                LoadRemoteImages = settings.LoadRemoteMarkdownImages,
-            };
+            var projection = new FolderProjection(mode, left, right, built.Pairs, built.Changed);
+            // The saved settings that mean something away from a repository: layout, previews, remote images.
+            projection.ApplySettings(settings);
             var window = new FolderWindow(projection) {
                 WindowStartupLocation = Avalonia.Controls.WindowStartupLocation.CenterScreen,
             };
