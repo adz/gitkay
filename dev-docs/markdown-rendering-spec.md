@@ -111,7 +111,7 @@ type LeafChange =
     | Modified of old: Located * current: Located * words: WordSpan list
 ```
 
-Moved blocks show as removed and added; detecting moves is future work.
+A block that moved is marked `Moved` on both sides, pairing the place it left with the place it arrived.
 
 Code blocks are leaves too. A modified code block shows its lines with GitKay's normal intraline highlight rather
 than word spans, since code is line-oriented.

@@ -2,14 +2,14 @@
 
 ## Project Shape
 - GitKay is an Avalonia v12 desktop app with a C# UI layer and an F# core.
-- The solution uses `.slnx`, `mise`, and .NET 10.0.
+- The solution uses `.slnx`, `mise`, and .NET 11.0.
 - Core code lives in `src/GitKay.Core`; UI code lives in `src/GitKay.UI`; tests live in `tests/GitKay.Tests`.
 
 ## Current Architecture
 - The app is Elmish-style at the core, bridged into Avalonia through `ElmishGlue`.
 - Commit history, graph projection, and git command execution currently live in the F# core.
 - UI projections are C# view models with `ObservableObject` / `RelayCommand`.
-- The diff pane renders structured diffs. History and diff loading use LibGit2Sharp on the read path. Blame is absent from normal diff loading; the remaining API is file-scoped and only runs when explicitly called.
+- The diff pane renders structured diffs. History and diff loading use LibGit2Sharp on the read path. Blame is absent from diff loading: `GitService.fetchFileBlame` exists and is file-scoped, but nothing in the UI calls it yet.
 
 ## Performance And Design Direction
 - Prefer in-process Git access over repeated shelling out when a feature becomes interactive or high frequency.
@@ -17,7 +17,6 @@
 - History-wide scans that git accelerates run the `git` executable through Axial.Process, with a LibGit2Sharp fallback when it can't run: path-limited history uses `git log -- <paths>`, which reads commit-graph changed-path Bloom filters. Network operations (push, pull, fetch) also use the CLI.
 - Commit search reads contents through per-worker LibGit2Sharp handles in parallel, streams matches as they are found, and never caches diffs. libgit2's blob cache is enabled at startup (`NativeGitOptions`), and freed native memory is trimmed on Linux (`NativeMemory`).
 - Keep commit selection fast. Expensive work should be lazy, cancellable, and scoped to the current selection.
-- File selection in the diff view should drive focus in the left pane rather than only rendering a list.
 
 ## Visual Stability (non-negotiable)
 - **Nothing the user is looking at may jump.** Disorienting jolts are a major antipattern: treat them as bugs, not polish.
@@ -47,20 +46,8 @@
 - Add tests for parsers and state transitions when behavior changes.
 - Preserve existing work; do not revert user changes unless explicitly asked.
 
-## Current Next Steps
-- Finish moving any remaining write-side Git operations off the CLI if they become hot.
-- Add file focus/selection behavior in the diff pane.
-- Implement search and navigation parity with `gitk`, especially:
-  - commit hash search
-  - commit message/subject search
-  - author search
-  - file/path search
-  - text search within commits/diffs
-  - ref/tag/branch lookup
-- Finish graph edge rendering and selection/scroll polish.
-- Improve the top-level error dialog path for unrecoverable failures.
-
 ## Task Format For `scripts/ralph-loop-tasks.sh`
+The loop reads `TASKS.md`, which is absent while there is no queued work. Recreate it when queueing some.
 - Keep loopable work items in `TASKS.md` as a numbered checklist under `## Next`.
 - Use the exact syntax `1. [ ] Task text` for open items.
 - Use the exact syntax `1. [x] Task text` for completed items.

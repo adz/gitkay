@@ -1,4 +1,4 @@
-# Design Decisions
+# Design decisions
 
 ## 2026-09-01 - Make operational effects explicit with Axial
 Core workflows use Axial `Flow` as their orchestration seam and declare process and clock capabilities in `GitEnv`. Native process execution goes through `Axial.Process`; write signatures use `IClock`; direct ambient effects are rejected by `Axial.Guardrails`. The repository-discovery entry point is the sole intentional environment boundary.

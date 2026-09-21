@@ -3,21 +3,21 @@
 ## Vision
 GitKay is a modern, high-performance Git history visualizer designed as a lean and fast alternative to `gitk`. It focuses on a streamlined subset of features, providing a responsive and aesthetically pleasing experience for viewing commit history and performing common branch/tag operations.
 
-## The Core Requirements
-
+## Core Requirements
 - **Three-Pane Layout**:
-    - **Top (Tree/Graph)**: A visual representation of the git commit graph and history.
-    - **Middle (Commit Info)**: Details about the selected commit (message, author, hash, etc.).
-    - **Bottom (Diff View)**: Detailed changes introduced by the commit.
+  - **Top (Tree/Graph)**: A visual representation of the git commit graph and history.
+  - **Middle (Commit Info)**: Details about the selected commit (message, author, hash, etc.).
+  - **Bottom (Diff View)**: Detailed changes introduced by the commit.
 - **Modern UI/UX**:
-    - Fast startup and smooth navigation.
-    - Minimalist menu structure (primarily "Reread Refs").
-    - Modern aesthetics suitable for contemporary development environments.
+  - Fast startup and smooth navigation.
+  - Minimalist menu structure (primarily "Reread Refs").
+  - Modern aesthetics suitable for contemporary development environments.
 - **Workflow Integration**:
-    - Contextual actions available directly from the commit graph.
-    - Integrated blame functionality within the diff view.
+  - Contextual actions available directly from the commit graph.
+  - Integrated blame functionality within the diff view.
 
 ## Core Functionality
+
 ### Navigation & Visualization
 - Visual commit graph showing branches and merges.
 - Efficient "Reread Refs" to refresh the state from the underlying repository.
@@ -34,16 +34,16 @@ GitKay is a modern, high-performance Git history visualizer designed as a lean a
 - Inline "blame" information within the diff view for rapid history lookup.
 
 ## Tech Stack
-- **Environment Management**: `mise`
-- **Runtime**: .NET 10.0
-- **Solution Format**: `.slnx`
-- **UI Framework**: Avalonia v12.0 (C#/AXAML for UI).
+- **Environment Management**: `mise`.
+- **Runtime**: .NET 11.0.
+- **Solution Format**: `.slnx`.
+- **UI Framework**: Avalonia v12 (C#/AXAML for UI).
 - **Core Logic**: F# with Elmish-style architecture.
-- **State & Flow**: 
-    - `Axial`: For managing application flows.
-    - `ElmishGlue`: For bridging Elmish F# logic with Avalonia UI (located at `~/projects/Elmish.Avalonia.Glue/main`).
+- **State & Flow**:
+  - `Axial`: For managing application flows.
+  - `ElmishGlue`: For bridging Elmish F# logic with Avalonia UI (located at `~/projects/Elmish.Avalonia.Glue/main`).
 - **Testing**: xUnit + Unquote (F#).
-- **Git Backend**: High-performance Git CLI integration.
+- **Git Backend**: LibGit2Sharp in-process for interactive reads; the `git` executable for history-wide scans and network operations.
 
 ## Project Structure
 - `src/`: Application projects (C# UI and F# Core).
