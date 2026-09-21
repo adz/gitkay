@@ -867,11 +867,19 @@ public partial class MainWindow : Window, IVimCommands {
         projection.ToggleRenderedChangesOnly(file);
     }
 
+    /// <summary>
+    /// The header's preview icon means "show this file as something other than its source", which is a different
+    /// rendering per kind: markdown renders in place, other formats are reformatted, images show themselves.
+    /// </summary>
     private void OnDiffFilePreviewRequested(object? sender, DiffFileProjection file) {
         if (_projection is not { RepositoryPath: { } repository } projection) return;
         _pendingMarkdownAnchor = DiffRowsListBox.CaptureMarkdownViewAnchor();
-        SaveMarkdownPreviewPreference(repository, file.ContentPath, !file.IsRenderedMarkdown);
-        projection.ToggleRenderedMarkdown(file);
+        var kind = GitKay.Core.Markdown.previewKind(file.ContentPath);
+        if (kind.IsMarkdownPreview) {
+            SaveMarkdownPreviewPreference(repository, file.ContentPath, !file.IsRenderedMarkdown);
+            projection.ToggleRenderedMarkdown(file);
+        }
+        else projection.ToggleFormattedPreview(file);
     }
 
     private void OpenWholeFile(FileTarget target, bool preview = false) {

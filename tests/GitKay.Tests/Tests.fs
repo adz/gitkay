@@ -1422,6 +1422,7 @@ module AppTests =
             SelectedDiffFileKey = None
             DiffExpansions = Map.empty
             RenderedMarkdown = None
+            FormattedFile = None
             WholeFile = None
             SelectionStartedAtTicks = None
             SelectedDiffStartedAtTicks = None
@@ -4175,3 +4176,25 @@ module MarkdownTests =
             [ ListItem(0, Bullet '-', Some true, [ Paragraph [ Text "done" ] ])
               ListItem(0, Bullet '-', Some false, [ Paragraph [ Text "later" ] ]) ] @>
 
+
+module FormattedPreviewTests =
+    open GitKay.Core
+
+    [<Fact>]
+    let ``a formatted preview diffs the indented text, not the minified line`` () =
+        // Two one-line JSON documents differ in one field; as source that is a whole-line rewrite.
+        let oldSource = """{"name":"gitkay","version":"0.10.0","tags":["git","viewer"]}"""
+        let newSource = """{"name":"gitkay","version":"0.11.0","tags":["git","viewer"]}"""
+        let formatted source =
+            match Markdown.formatForPreview "json" source with
+            | Ok text -> text
+            | Error message -> failwith message
+        let oldText, newText = formatted oldSource, formatted newSource
+
+        // Indented, the change is one line out of several rather than the entire file.
+        let changedLines =
+            GitKay.Kit.Myers.diff (oldText.Split '\n') (newText.Split '\n')
+            |> List.filter (function GitKay.Kit.Equal _ -> false | _ -> true)
+            |> List.length
+        test <@ oldText.Split('\n').Length >= 6 @>
+        test <@ changedLines = 2 @>

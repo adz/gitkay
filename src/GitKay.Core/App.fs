@@ -23,6 +23,7 @@ module App =
     let private searchJob = AxialLatestSlot(runtime)
     let private contextJobs = AxialLatestSlotRegistry<GitService.DiffFileKey>(runtime)
     let private renderedMarkdownJob = AxialLatestSlot(runtime)
+    let private formattedFileJob = AxialLatestSlot(runtime)
     let private wholeFileJob = AxialLatestSlot(runtime)
     let private remoteMarkdownImageJob = AxialLatestSlot(runtime)
 
@@ -58,6 +59,13 @@ module App =
           Section: string
           RequestId: int64
           Content: RenderedMarkdownContent option }
+
+    /// <summary>One file shown reformatted in the diff pane, such as indented JSON.</summary>
+    type FormattedFileState =
+        { Key: GitService.DiffFileKey
+          Section: string
+          RequestId: int64
+          Content: Models.FileDiff option }
 
     type WholeFileState =
         { Key: GitService.DiffFileKey
@@ -97,6 +105,7 @@ module App =
             DiffExpansions: Map<GitService.DiffFileKey, FileExpansion>
             /// The selected file's rendered payload. Bytes remain managed data until the Avalonia view decodes them.
             RenderedMarkdown: RenderedMarkdownState option
+            FormattedFile: FormattedFileState option
             WholeFile: WholeFileState option
             SelectionStartedAtTicks: int64 option
             SelectedDiffStartedAtTicks: int64 option
@@ -152,6 +161,8 @@ module App =
         | RevisionComparisonLoaded of baseRevision:string * targetRevision:string * startedAtTicks:int64 * Result<GitService.RevisionComparison * Models.FileDiff list, GitError>
         | CloseRevisionComparison
         | SelectDiffFile of hash:string * oldPath:string * newPath:string
+        | SetFormattedFile of key:GitService.DiffFileKey * section:string * enabled:bool * requestId:int64
+        | FormattedFileLoaded of key:GitService.DiffFileKey * section:string * requestId:int64 * Result<Models.FileDiff, GitError>
         | SetRenderedMarkdown of key:GitService.DiffFileKey * section:string * enabled:bool * allowRemoteImages:bool * requestId:int64
         | RenderedMarkdownLoaded of key:GitService.DiffFileKey * section:string * requestId:int64 * Result<RenderedMarkdownContent, GitError>
         | OpenWholeFile of key:GitService.DiffFileKey * section:string * preview:bool * allowRemoteImages:bool * requestId:int64
@@ -479,6 +490,7 @@ module App =
                 SelectedDiffFileKey = None
                 DiffExpansions = Map.empty
                 RenderedMarkdown = None
+                FormattedFile = None
                 WholeFile = None
                 SelectionStartedAtTicks = None
                 SelectedDiffStartedAtTicks = None
@@ -527,6 +539,7 @@ module App =
                     SelectedDiffFileKey = None
                     DiffExpansions = Map.empty
                     RenderedMarkdown = None
+                    FormattedFile = None
                     WholeFile = None
                     SelectionStartedAtTicks = None
                     SelectedDiffStartedAtTicks = None
@@ -575,6 +588,27 @@ module App =
             (Flow.fromTaskResult (fun _ -> Threading.Tasks.Task.Run load))
             (fun content -> RenderedMarkdownLoaded(key, section, requestId, Ok content))
             (fun error -> RenderedMarkdownLoaded(key, section, requestId, Error error))
+
+    let private startFormattedFileLoad (model: Model) (key: GitService.DiffFileKey) section requestId =
+        let load () =
+            if model.IsWorkingTreeSelected then
+                match WorkingTree.tryParseSection section with
+                | Some parsed -> GitService.loadWorkingTreeFormattedFile model.GitEnv.RepoPath parsed key.OldPath key.NewPath
+                | None -> Error(GitError.OperationFailed("Preview", $"Unknown working-tree section: {section}"))
+            else
+                match model.RevisionComparison, model.SelectedDiffHash with
+                | Some comparison, _ -> GitService.loadRevisionFormattedFile model.GitEnv.RepoPath comparison key.OldPath key.NewPath
+                | None, Some hash -> GitService.loadCommitFormattedFile model.GitEnv.RepoPath hash key.OldPath key.NewPath
+                | _ -> Error(GitError.OperationFailed("Preview", "No revision is selected"))
+        Cmd.OfFlow.ofFlowLatest
+            $"format file {key.NewPath}"
+            formattedFileJob
+            model.GitEnv
+            // LibGit2Sharp blob reads do not accept cancellation; latest-slot cancellation still rejects stale results.
+            // axial-allow-discarded-cancellation
+            (Flow.fromTaskResult (fun _ -> Threading.Tasks.Task.Run load))
+            (fun content -> FormattedFileLoaded(key, section, requestId, Ok content))
+            (fun error -> FormattedFileLoaded(key, section, requestId, Error error))
 
     let private startWholeFileLoad (model: Model) (key: GitService.DiffFileKey) section allowRemoteImages requestId =
         let load () =
@@ -678,6 +712,7 @@ module App =
             diffJob.Cancel()
             contextJobs.CancelAll()
             renderedMarkdownJob.Cancel()
+            formattedFileJob.Cancel()
             { model with
                 Selection = WorkingTreeSelected
                 RevisionComparison = None
@@ -687,6 +722,7 @@ module App =
                 SelectedDiffFileKey = None
                 DiffExpansions = Map.empty
                 RenderedMarkdown = None
+                FormattedFile = None
                 SelectionStartedAtTicks = None
                 SelectedDiffStartedAtTicks = None
                 WorkingTreeStartedAtTicks = Some startedAtTicks },
@@ -849,6 +885,7 @@ module App =
             diffJob.Cancel()
             contextJobs.CancelAll()
             renderedMarkdownJob.Cancel()
+            formattedFileJob.Cancel()
             { model with
                 Status = $"Comparing {baseRevision}…{targetRevision}…"
                 RevisionComparison = None
@@ -858,6 +895,7 @@ module App =
                 SelectedDiffFileKey = None
                 DiffExpansions = Map.empty
                 RenderedMarkdown = None
+                FormattedFile = None
                 SelectionStartedAtTicks = None
                 SelectedDiffStartedAtTicks = Some startedAtTicks },
             startRevisionComparisonLoad model.GitEnv baseRevision targetRevision startedAtTicks model.DiffContextLines model.IgnoreWhitespace
@@ -888,6 +926,7 @@ module App =
             diffJob.Cancel()
             contextJobs.CancelAll()
             renderedMarkdownJob.Cancel()
+            formattedFileJob.Cancel()
             let nextModel =
                 {
                     model with
@@ -899,6 +938,7 @@ module App =
                         SelectedDiffFileKey = None
                         DiffExpansions = Map.empty
                         RenderedMarkdown = None
+                        FormattedFile = None
                         SelectionStartedAtTicks = Some startedAtTicks
                         SelectedDiffStartedAtTicks = Some startedAtTicks
                         WorkingTreeChanges = None
@@ -1059,6 +1099,19 @@ module App =
                 { model with SelectedDiffFileKey = Some key }, Cmd.none
             else
                 model, Cmd.none
+        | SetFormattedFile (key, section, enabled, requestId) ->
+            if not enabled then
+                { model with FormattedFile = None }, Cmd.none
+            else
+                { model with FormattedFile = Some { Key = key; Section = section; RequestId = requestId; Content = None }; Status = "Formatting…" },
+                startFormattedFileLoad model key section requestId
+        | FormattedFileLoaded (key, section, requestId, result) ->
+            match model.FormattedFile with
+            | Some pending when pending.Key = key && pending.Section = section && pending.RequestId = requestId ->
+                match result with
+                | Ok content -> { model with FormattedFile = Some { pending with Content = Some content }; Status = "" }, Cmd.none
+                | Error error -> { model with FormattedFile = None; Status = "Preview unavailable: " + GitError.describe error }, Cmd.none
+            | _ -> model, Cmd.none
         | SetRenderedMarkdown (key, section, enabled, allowRemoteImages, requestId) ->
             if not enabled then
                 { model with RenderedMarkdown = None }, Cmd.none

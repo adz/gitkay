@@ -855,12 +855,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         return new Rect(rect.X + offset, rect.Y, rect.Width, rect.Height);
     }
 
-    /// <summary>
-    /// The header's preview icon renders markdown in place. Images and reformatted source are previewed in the
-    /// whole-file window instead, so offering the icon for them would toggle a rendering they cannot have.
-    /// </summary>
+    /// <summary>Anything the diff pane can show as something other than its source text.</summary>
     private static bool IsPreviewable(DiffFileProjection file) =>
-        GitKay.Core.Markdown.previewKind(file.ContentPath).IsMarkdownPreview;
+        !GitKay.Core.Markdown.previewKind(file.ContentPath).IsSourceOnly;
 
     private static bool HasContextToggle(DiffFileProjection file) =>
         file.IsLoaded && (file.HasHiddenContext || file.HasRevealedContext);
@@ -908,7 +905,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             var preview = FilePreviewRect(header, y);
             if (IsHeaderPartActive(index, HeaderPreviewAction, out var previewPressed))
                 context.DrawRectangle(previewPressed ? ThemeBrush("GitKaySelectionBrush", SelectionBrush) : hover, null, preview, 4, 4);
-            DrawPreviewIcon(context, preview, file.IsRenderedMarkdown ? ThemeBrush("GitKayAccentBrush", FileBrush) : secondary);
+            DrawPreviewIcon(context, preview, file.IsRenderedMarkdown || file.IsFormattedPreview
+                ? ThemeBrush("GitKayAccentBrush", FileBrush)
+                : secondary);
         }
 
         if (HasChangesOnlyToggle(file)) {

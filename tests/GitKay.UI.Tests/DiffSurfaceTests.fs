@@ -1359,3 +1359,32 @@ module ChangesOnlyToggleTests =
             let restored = projection.SelectedDiffRows.Count
             test <@ file.RenderedChangesOnly = false @>
             test <@ filtered < whole && restored = whole @>)
+
+module FormattedPreviewProjectionTests =
+    let private jsonFile () =
+        let file = DiffFileProjection({ OldPath = "config.json"; NewPath = "config.json"; DisplayPath = "config.json" } : GitService.DiffFileSummary)
+        let line number text : Models.DiffLine =
+            { Type = Models.Context; Content = text; OldLineNo = Some number; NewLineNo = Some number }
+        file.ApplyContent({ OldPath = "config.json"; NewPath = "config.json"; NewLineCount = Some 1
+                            Hunks = [ { Header = "@@ -1 +1 @@"; Lines = [ line 1 """{"a":1}""" ] } ] } : Models.FileDiff)
+        file
+
+    [<Fact>]
+    let ``a formatted file goes back to the source it was committed as`` () =
+        Headless.run (fun () ->
+            let file = jsonFile ()
+            let sourceRows = file.Hunks |> Seq.collect _.Lines |> Seq.length
+            let formatted : Models.FileDiff =
+                { OldPath = "config.json"; NewPath = "config.json"; NewLineCount = Some 3
+                  Hunks = [ { Header = "@@ -1,3 +1,3 @@"
+                              Lines = [ for i, text in List.indexed [ "{"; "  \"a\": 1"; "}" ] ->
+                                          ({ Type = Models.Context; Content = text; OldLineNo = Some(i + 1); NewLineNo = Some(i + 1) } : Models.DiffLine) ] } ] }
+            file.ApplyFormatted formatted
+            let formattedRows = file.Hunks |> Seq.collect _.Lines |> Seq.length
+            test <@ file.IsFormattedPreview && formattedRows = 3 @>
+
+            // Going back is exact: the preview never becomes what the file is.
+            file.ClearFormatted()
+            test <@ not file.IsFormattedPreview @>
+            test <@ (file.Hunks |> Seq.collect _.Lines |> Seq.length) = sourceRows @>
+            test <@ (file.Hunks |> Seq.collect _.Lines |> Seq.head).Content = """{"a":1}""" @>)

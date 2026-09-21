@@ -58,6 +58,8 @@ public partial class DiffFileProjection : ObservableObject {
     /// <summary>Presentation-only: hides this file's diff rows beneath its header.</summary>
     [ObservableProperty] private bool _isCollapsed;
     [ObservableProperty] private bool _isRenderedMarkdown;
+    /// <summary>The file is showing its reformatted text rather than the source as committed.</summary>
+    [ObservableProperty] private bool _isFormattedPreview;
     [ObservableProperty] private bool _renderedChangesOnly;
     /// <summary>Label and indent for the changed-files list: full path in patch mode, file name in tree mode.</summary>
     [ObservableProperty] private string _listLabel = "";
@@ -174,6 +176,25 @@ public partial class DiffFileProjection : ObservableObject {
         RenderedNewRows = content.NewRows.Select(row => new RenderedMarkdownRowProjection(row)).ToArray();
         IsRenderedMarkdown = true;
     }
+
+    /// <summary>
+    /// Shows this file reformatted, keeping the source diff so going back costs nothing and reads identically.
+    /// </summary>
+    public void ApplyFormatted(GitKay.Core.Models.FileDiff formatted) {
+        _sourceContent ??= _content;
+        IsFormattedPreview = true;
+        ApplyContent(formatted, _expansion);
+        IsFormattedPreview = true;
+    }
+
+    public void ClearFormatted() {
+        if (_sourceContent is not { } source) { IsFormattedPreview = false; return; }
+        _sourceContent = null;
+        IsFormattedPreview = false;
+        ApplyContent(source, _expansion);
+    }
+
+    private GitKay.Core.Models.FileDiff? _sourceContent;
 
     public void ClearRendered() {
         IsRenderedMarkdown = false;

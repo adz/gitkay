@@ -1313,6 +1313,55 @@ module GitService =
                 return { File = fileDiffFromSources oldPath newPath oldSource newSource; Rendered = None; ImageBytes = None }
         }
 
+    /// <summary>
+    /// A file's diff as it reads once both sides are reformatted — minified JSON diffed line by line is noise, so
+    /// the preview diffs the indented text instead. Whole sides are needed, not the hunks around the changes, or
+    /// neither side would parse.
+    /// </summary>
+    let private formattedDiff (format: string) oldPath newPath (file: Models.FileDiff) =
+        let lines oldSide =
+            file.Hunks |> List.collect _.Lines
+            |> List.filter (fun line -> if oldSide then line.Type <> Added else line.Type <> Removed)
+            |> List.map _.Content |> String.concat "\n"
+        let format side =
+            let source = lines side
+            // An empty side is one the file did not have: added and deleted files format the side that exists.
+            if String.IsNullOrWhiteSpace source then Ok ""
+            else Markdown.formatForPreview format source
+        match format true, format false with
+        | Ok oldText, Ok newText -> Ok(fileDiffFromSources oldPath newPath oldText newText)
+        | Error message, _ | _, Error message -> Error(GitError.OperationFailed("Preview", message))
+
+    let loadCommitFormattedFile (repoPath: string) (hash: string) (oldPath: string) (newPath: string) : Result<Models.FileDiff, GitError> =
+        result {
+            let! file = loadWholeFile repoPath hash oldPath newPath
+            let previewPath = if newPath = "/dev/null" then oldPath else newPath
+            match Markdown.previewKind previewPath with
+            | FormattedPreview format -> return! formattedDiff format oldPath newPath file
+            | _ -> return! Error(GitError.OperationFailed("Preview", "This file has no formatted view"))
+        }
+
+    let loadWorkingTreeFormattedFile (repoPath: string) (section: WorkingTree.Section) (oldPath: string) (newPath: string) : Result<Models.FileDiff, GitError> =
+        result {
+            let! file = loadWorkingTreeFile repoPath section oldPath newPath
+            let previewPath = if newPath = "/dev/null" then oldPath else newPath
+            match Markdown.previewKind previewPath with
+            | FormattedPreview format -> return! formattedDiff format oldPath newPath file
+            | _ -> return! Error(GitError.OperationFailed("Preview", "This file has no formatted view"))
+        }
+
+    let loadRevisionFormattedFile (repoPath: string) (comparison: RevisionComparison) (oldPath: string) (newPath: string) : Result<Models.FileDiff, GitError> =
+        result {
+            use repo = new Repository(repoPath)
+            let! oldSource = revisionBlobText repo comparison.BaseHash oldPath
+            let! newSource = revisionBlobText repo comparison.TargetHash newPath
+            let file = fileDiffFromSources oldPath newPath oldSource newSource
+            let previewPath = if newPath = "/dev/null" then oldPath else newPath
+            match Markdown.previewKind previewPath with
+            | FormattedPreview format -> return! formattedDiff format oldPath newPath file
+            | _ -> return! Error(GitError.OperationFailed("Preview", "This file has no formatted view"))
+        }
+
     /// Complete rendered Markdown payload for a commit comparison. Parsing, revision selection, path resolution,
     /// image policy and Git reads happen together in Core; the UI only decodes the returned bytes.
     let loadCommitRenderedMarkdown (repoPath: string) (hash: string) (oldPath: string) (newPath: string) (allowRemote: bool) : Result<RenderedMarkdownContent, GitError> =

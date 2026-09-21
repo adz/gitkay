@@ -540,6 +540,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         UpdateRenderedMarkdown(model);
         UpdateWholeFile(model);
         UpdateCommits(model);
+        UpdateFormattedFile(model);
         UpdateSelectedCommit(model);
         UpdateCommitRelations(model);
         UpdateCommitSearchStatus(model);
@@ -559,6 +560,42 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public void ToggleRenderedChangesOnly(DiffFileProjection file) {
         if (!file.IsRenderedMarkdown) return;
         file.RenderedChangesOnly = !file.RenderedChangesOnly;
+        RefreshDiffRows();
+        RenderedMarkdownChanged?.Invoke();
+    }
+
+    /// <summary>Asks for this file's reformatted view, or drops back to the source it was committed as.</summary>
+    public void ToggleFormattedPreview(DiffFileProjection file) {
+        var enable = !file.IsFormattedPreview;
+        var requestId = Stopwatch.GetTimestamp();
+        if (!enable) file.ClearFormatted();
+        _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetFormattedFile(
+            new GitKay.Core.GitService.DiffFileKey(file.Key.OldPath, file.Key.NewPath), file.Key.Section, enable, requestId));
+        if (!enable) {
+            RefreshDiffRows();
+            RenderedMarkdownChanged?.Invoke();
+        }
+    }
+
+    private long _appliedFormattedRequestId = -1;
+
+    private void UpdateFormattedFile(GitKay.Core.App.Model model) {
+        if (model.FormattedFile == null) {
+            if (_appliedFormattedRequestId < 0) return;
+            _appliedFormattedRequestId = -1;
+            foreach (var file in SelectedDiffFiles) file.ClearFormatted();
+            RefreshDiffRows();
+            RenderedMarkdownChanged?.Invoke();
+            return;
+        }
+
+        var state = model.FormattedFile.Value;
+        if (state.Content == null || state.RequestId == _appliedFormattedRequestId) return;
+        var target = SelectedDiffFiles.FirstOrDefault(candidate => candidate.Key.OldPath == state.Key.OldPath
+            && candidate.Key.NewPath == state.Key.NewPath && candidate.Key.Section == state.Section);
+        if (target == null) return;
+        _appliedFormattedRequestId = state.RequestId;
+        target.ApplyFormatted(state.Content.Value);
         RefreshDiffRows();
         RenderedMarkdownChanged?.Invoke();
     }
