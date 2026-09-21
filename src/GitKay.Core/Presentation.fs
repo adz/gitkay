@@ -8,10 +8,18 @@ module Presentation =
 
     /// Sizes as a reader wants them, rather than as a count of bytes.
     module Sizes =
+        /// <summary>
+        /// Formatted with .NET's own number formatting rather than F#'s printf. A `%f` specifier compiles to a
+        /// generic PrintfImpl specialization resolved by MakeGenericMethod, which NativeAOT cannot generate: it
+        /// works under the JIT and throws NotSupportedException in a published binary.
+        /// </summary>
+        let private trimmed (value: float) (places: string) =
+            value.ToString(places, Globalization.CultureInfo.InvariantCulture)
+
         let describeBytes (count: int64) =
-            if count < 1024L then $"%d{count} B"
-            elif count < 1024L * 1024L then $"%.1f{float count / 1024.0} KB".Replace(".0 KB", " KB")
-            else $"%.2f{float count / (1024.0 * 1024.0)} MB".Replace(".00 MB", " MB")
+            if count < 1024L then string count + " B"
+            elif count < 1024L * 1024L then trimmed (float count / 1024.0) "0.#" + " KB"
+            else trimmed (float count / (1024.0 * 1024.0)) "0.##" + " MB"
 
     /// <summary>What a zoom gesture asks for. "Fit" is a state, not a scale, so it is a case rather than a number.</summary>
     type ZoomChange =

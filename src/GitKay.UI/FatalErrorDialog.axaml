@@ -33,13 +33,20 @@
                      Foreground="{DynamicResource GitKayTextBrush}"
                      BorderBrush="{DynamicResource GitKayBorderBrush}"
                      BorderThickness="1"
-                     Padding="10" />
+                     Padding="10"
+                     Focusable="True"
+                     IsTabStop="True"
+                     ToolTip.Tip="Select the text to copy part of it, or use Copy details for all of it" />
         </Expander>
 
         <StackPanel Grid.Row="2"
                     Orientation="Horizontal"
                     HorizontalAlignment="Right"
                     Spacing="8">
+            <!-- A crash report is only useful if it can leave the dialog. -->
+            <Button x:Name="CopyDetailsButton"
+                    Content="Copy details"
+                    Click="OnCopyDetailsClick" />
             <Button Content="Close"
                     IsDefault="True"
                     Click="OnCloseClick" />

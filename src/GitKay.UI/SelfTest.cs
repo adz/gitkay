@@ -71,6 +71,42 @@ public static class SelfTest {
             return patch.ResultValue.Contains("@@ -1,2 +1,3 @@\n one\n two\n+TWO\n") ? null : "unexpected patch: " + patch.ResultValue;
         });
 
+        Check("presentation formatting without reflection", () => {
+            // F# printf specifiers resolve through MakeGenericMethod, which NativeAOT cannot generate: these read
+            // fine under the JIT and threw NotSupportedException in a published binary until they were rewritten.
+            var sizes = new[] {
+                (512L, "512 B"), (1536L, "1.5 KB"), (2048L, "2 KB"), (3L * 1024 * 1024, "3 MB"),
+            };
+            foreach (var (count, expected) in sizes) {
+                var actual = GitKay.Core.Presentation.Sizes.describeBytes(count);
+                if (actual != expected) return $"{count} formatted as {actual}, expected {expected}";
+            }
+            return null;
+        });
+
+        Check("folders pair and diff without a repository", () => {
+            var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "gitkay-selftest-" + Guid.NewGuid().ToString("N"));
+            var left = System.IO.Path.Combine(root, "left");
+            var right = System.IO.Path.Combine(root, "right");
+            try {
+                System.IO.Directory.CreateDirectory(left);
+                System.IO.Directory.CreateDirectory(right);
+                System.IO.File.WriteAllText(System.IO.Path.Combine(left, "a.txt"), "one\ntwo");
+                System.IO.File.WriteAllText(System.IO.Path.Combine(right, "a.txt"), "one\nTWO");
+                var leftEntries = GitKay.Core.FolderSource.read(left);
+                var rightEntries = GitKay.Core.FolderSource.read(right);
+                if (leftEntries.IsError || rightEntries.IsError) return "could not read the folders";
+                var pairs = GitKay.Core.Folder.pair(leftEntries.ResultValue, rightEntries.ResultValue);
+                if (pairs.Length != 1) return $"expected one pair, got {pairs.Length}";
+                var diff = GitKay.Core.FolderSource.diff(pairs[0]);
+                var (added, removed) = GitKay.Core.SourceDiff.counts(diff).ToValueTuple();
+                return added == 1 && removed == 1 ? null : $"expected +1 -1, got +{added} -{removed}";
+            }
+            finally {
+                try { System.IO.Directory.Delete(root, true); } catch { }
+            }
+        });
+
         Check("settings round-trip through the Reified codec", () => {
             // Twenty-odd fields: records this wide threw TypeLoadException under NativeAOT before Reified 0.8.1.
             var settings = new GitKay.Core.Settings(true, true, 7, GitKay.Core.DiffLayout.SideBySide, "Inter", "Iosevka", 14.5, 12, 10, 0.25, true, false, GitKay.Core.ThemeMode.DarkTheme, 4.0, false, false, true, GitKay.Core.PaneFocusEffect.PaneShadow, GitKay.Core.PaneEffectColor.PurpleEffectColor, GitKay.Core.PaneEffectIntensity.QuarterIntensity, true, GitKay.Core.PaneBorderStyle.CustomBorder, GitKay.Core.PaneEffectColor.TealEffectColor, 2.0, true, GitKay.Core.ChromeBackground.TintedChrome, GitKay.Core.PaneEffectColor.SandEffectColor);
