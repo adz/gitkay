@@ -1263,13 +1263,18 @@ public partial class MainWindow : Window, IVimCommands {
                 return;
             }
 
+            // Focusing is posted, so it lands after the panel is laid out. Keystrokes are dispatched at a higher
+            // priority than this callback, so anything typed in between arrives first: select the text that was
+            // there when the panel opened, never what the user has since typed over it.
+            var textWhenOpened = SearchBox.Text ?? "";
             Dispatcher.UIThread.Post(() => {
                 if (!ReferenceEquals(_projection, currentProjection) || !currentProjection.IsSearchPanelExpanded) {
                     return;
                 }
 
                 SearchBox.Focus();
-                SearchBox.SelectAll();
+                if (string.Equals(SearchBox.Text ?? "", textWhenOpened, StringComparison.Ordinal)) SearchBox.SelectAll();
+                else SearchBox.CaretIndex = SearchBox.Text?.Length ?? 0;
             });
 
             return;

@@ -1388,3 +1388,51 @@ module FormattedPreviewProjectionTests =
             test <@ not file.IsFormattedPreview @>
             test <@ (file.Hunks |> Seq.collect _.Lines |> Seq.length) = sourceRows @>
             test <@ (file.Hunks |> Seq.collect _.Lines |> Seq.head).Content = """{"a":1}""" @>)
+
+module SearchBoxFocusTests =
+    [<Fact>]
+    let ``a letter typed while the search panel is opening is not selected away`` () =
+        Headless.run (fun () ->
+            let projection = MainProjection()
+            let window = MainWindow(Width = 1200.0, Height = 800.0, DataContext = projection)
+            try
+                window.Show()
+                window.UpdateLayout()
+                Headless.pump ()
+                let box = window.FindControl<TextBox>("SearchBox")
+
+                // Opening the panel queues the focus; a keystroke outruns it, because input is dispatched first.
+                projection.IsSearchPanelExpanded <- true
+                box.Text <- "a"
+                box.CaretIndex <- 1
+                Headless.pump ()
+
+                // The letter must survive: selected, the next keystroke would replace it.
+                test <@ box.Text = "a" @>
+                test <@ box.SelectionStart = box.SelectionEnd @>
+                test <@ box.CaretIndex = 1 @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``opening the panel over an old query still selects it for replacement`` () =
+        Headless.run (fun () ->
+            let projection = MainProjection()
+            let window = MainWindow(Width = 1200.0, Height = 800.0, DataContext = projection)
+            try
+                window.Show()
+                window.UpdateLayout()
+                Headless.pump ()
+                let box = window.FindControl<TextBox>("SearchBox")
+                box.Text <- "old query"
+                Headless.pump ()
+
+                projection.IsSearchPanelExpanded <- true
+                Headless.pump ()
+
+                // Nothing was typed, so the previous search is selected and typing replaces it.
+                test <@ box.SelectionStart = 0 && box.SelectionEnd = "old query".Length @>
+            finally
+                window.Close()
+                Headless.pump ())
