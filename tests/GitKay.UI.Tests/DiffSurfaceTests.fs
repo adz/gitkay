@@ -647,7 +647,7 @@ module PaneChromeTests =
     [<Fact>]
     let ``pane chrome follows the focused pane, not the pointer`` () =
         Headless.run (fun () ->
-            // The pane's two parts each carry the gap as a margin, leaving a strip between them that belongs to neither.
+            // A pane of two rows: a header bar, and the content under it.
             let header = Border(Height = 30.0, Background = Media.Brushes.Gray)
             let content = Border(Background = Media.Brushes.Gray)
             Grid.SetRow(header, 0)
@@ -727,6 +727,33 @@ module PaneChromeTests =
             finally
                 window.Close()
                 Headless.pump ())
+
+    [<Fact>]
+    let ``a header bar and the content under it leave no gap between them`` () =
+        Headless.run (fun () ->
+            let header = Border()
+            let content = Border()
+            let overlay = Border()
+            Grid.SetRow(header, 0)
+            Grid.SetRow(content, 1)
+            Grid.SetRow(overlay, 1)
+            let chrome = PaneChrome()
+            chrome.Add("diff", Border(), header, content, overlay)
+            chrome.Update(settings PaneFocusEffect.PaneGlow false false)
+            // The dark band between the bar and the content was the window showing through two facing margins.
+            test <@ header.Margin = Thickness(4.0, 4.0, 4.0, 0.0) @>
+            test <@ content.Margin = Thickness(4.0, 0.0, 4.0, 4.0) @>
+            // The focus overlay sits over the content, so it is inset the same way.
+            test <@ overlay.Margin = content.Margin @>)
+
+    [<Fact>]
+    let ``a pane of one part keeps the gap all the way round`` () =
+        Headless.run (fun () ->
+            let content = Border()
+            let chrome = PaneChrome()
+            chrome.Add("commits", Border(), content)
+            chrome.Update(settings PaneFocusEffect.PaneGlow false false)
+            test <@ content.Margin = Thickness 4.0 @>)
 
 module FatalErrorDialogTests =
 
@@ -840,9 +867,9 @@ printfn $"value = {answer}"
             try
                 window.Show()
                 Headless.pump ()
-                // Chevron + path width + padding places the preview action immediately after README.md.
-                window.MouseDown(Point(196.0, 31.0), MouseButton.Left)
-                window.MouseUp(Point(196.0, 31.0), MouseButton.Left)
+                // Card inset + chevron + path width + padding places the preview action immediately after README.md.
+                window.MouseDown(Point(202.0, 31.0), MouseButton.Left)
+                window.MouseUp(Point(202.0, 31.0), MouseButton.Left)
                 Headless.pump ()
                 test <@ requested = Some file @>
             finally
@@ -931,6 +958,339 @@ printfn $"value = {answer}"
                 let bitmap = window.CaptureRenderedFrame()
                 test <@ bitmap.PixelSize.Width = 920 @>
                 test <@ rows.Count = 3 && surface.DesiredSize.Height < 180.0 @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``a markdown anchor deep in a later file restores inside that file`` () =
+        Headless.run (fun () ->
+            use fixture = new DiffFixture(DiffLayout.Unified)
+            // Every file numbers its lines from 1, so a bare line number matches all three.
+            let anchored = fixture.Line 2 12
+            fixture.Scroller.Offset <- Vector(0.0, fixture.ViewportTop anchored + fixture.Scroller.Offset.Y)
+            Headless.pump ()
+            let before = fixture.Scroller.Offset.Y
+            let anchor = fixture.Surface.CaptureMarkdownViewAnchor()
+            fixture.Surface.RestoreMarkdownViewAnchor anchor
+            Headless.pump ()
+            let after = fixture.Scroller.Offset.Y
+            let anchoredFile = if anchor.HasValue then anchor.Value.File else "<none>"
+            test <@ anchoredFile = "c.txt" @>
+            test <@ Math.Round(after, 1) = Math.Round(before, 1) @>)
+
+module FileRowLayoutTests =
+    open Avalonia.Controls.Primitives
+    open Avalonia.Layout
+
+    /// A changed-file row at a fixed width: a path, then the counts, then the change graph.
+    let private row (width: float) (path: string) =
+        let name = TextBlock(Text = path, TextWrapping = Media.TextWrapping.NoWrap, TextTrimming = Media.TextTrimming.CharacterEllipsis)
+        let counts = TextBlock(Text = "+12 −3")
+        let graph = DiffStatBar(Added = 12, Removed = 3, IsKnown = true, BlockSize = 5.0)
+        let layout = FileRowLayout(Spacing = 7.0)
+        layout.Children.Add name
+        layout.Children.Add counts
+        layout.Children.Add graph
+        let window = Window(Width = width, Height = 60.0, Content = Border(Width = width, Child = layout))
+        window, layout, name, counts, graph
+
+    [<Fact>]
+    let ``a short file name leaves room for the change graph`` () =
+        Headless.run (fun () ->
+            let window, _, name, counts, graph = row 400.0 "a.txt"
+            try
+                window.Show()
+                Headless.pump ()
+                test <@ graph.IsVisible && counts.IsVisible @>
+                // The name is not trimmed: it got everything it asked for.
+                test <@ name.Bounds.Width >= name.DesiredSize.Width - 0.5 @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``a file name that needs the room drops the change graph and keeps the counts`` () =
+        Headless.run (fun () ->
+            let longPath = "src/GitKay.UI/" + String.replicate 12 "verylongfolder/" + "File.fs"
+            let window, _, _, counts, graph = row 260.0 longPath
+            try
+                window.Show()
+                Headless.pump ()
+                test <@ not graph.IsVisible @>
+                test <@ counts.IsVisible @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``the dropped graph stays dropped instead of flickering back in`` () =
+        Headless.run (fun () ->
+            let longPath = "src/GitKay.UI/" + String.replicate 12 "verylongfolder/" + "File.fs"
+            let window, layout, _, _, graph = row 260.0 longPath
+            try
+                window.Show()
+                Headless.pump ()
+                let first = graph.IsVisible
+                // A hidden child measures as zero wide; deciding on that would make it fit again every pass.
+                for _ in 1..3 do
+                    layout.InvalidateMeasure()
+                    Headless.pump ()
+                test <@ [ first; graph.IsVisible ] = [ false; false ] @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``dropping the graph does not change the row's height`` () =
+        Headless.run (fun () ->
+            let longPath = "src/GitKay.UI/" + String.replicate 12 "verylongfolder/" + "File.fs"
+            let measure width path =
+                let window, layout, _, _, _ = row width path
+                try
+                    window.Show()
+                    Headless.pump ()
+                    Math.Round(layout.Bounds.Height, 1)
+                finally
+                    window.Close()
+                    Headless.pump ()
+            // The rows sit in one list: a file whose graph dropped out must not be a different height from its neighbours.
+            let withGraph = measure 400.0 "a.txt"
+            let withoutGraph = measure 260.0 longPath
+            test <@ withGraph = withoutGraph @>)
+
+    [<Fact>]
+    let ``the graph costs more to bring back than it does to keep, so a boundary width settles`` () =
+        Headless.run (fun () ->
+            let name = TextBlock(Text = "src/GitKay.UI/SomeModeratelyLongFileName.fs", TextWrapping = Media.TextWrapping.NoWrap)
+            let counts = TextBlock(Text = "+12 \u22123")
+            let graph = DiffStatBar(Added = 12, Removed = 3, IsKnown = true, BlockSize = 5.0)
+            let layout = FileRowLayout(Spacing = 7.0)
+            layout.Children.Add name
+            layout.Children.Add counts
+            layout.Children.Add graph
+            let host = Border(Child = layout)
+            let window = Window(Width = 700.0, Height = 60.0, Content = host)
+            try
+                window.Show()
+                Headless.pump ()
+                let visibleAt w =
+                    host.Width <- w
+                    window.UpdateLayout()
+                    Headless.pump ()
+                    graph.IsVisible
+
+                // Narrowing from wide: the width at which the graph gives up its place.
+                let widths = [ 500.0 .. -1.0 .. 200.0 ]
+                let hidesAt = widths |> List.find (fun w -> not (visibleAt w))
+                // Widening from there: the width at which it comes back.
+                let showsAt = [ hidesAt .. 1.0 .. 500.0 ] |> List.find visibleAt
+
+                // A single shared boundary would make these equal, and a splitter resting there would flicker.
+                test <@ showsAt - hidesAt >= 8.0 @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+module ChromeBrushTests =
+    /// A control carrying the two theme tones the chrome is mixed from.
+    let private host () =
+        let border = Border()
+        border.Resources.Add("GitKayWindowBrush", Media.SolidColorBrush(Media.Color.FromRgb(0x0Duy, 0x11uy, 0x17uy)))
+        border.Resources.Add("GitKaySurfaceBrush", Media.SolidColorBrush(Media.Color.FromRgb(0x1Buy, 0x22uy, 0x2Cuy)))
+        border
+
+    let private colorOf (brush: Media.IBrush option) =
+        match brush with
+        | Some (:? Media.ISolidColorBrush as solid) -> Some solid.Color
+        | _ -> None
+
+    let private resolve background color =
+        ChromeBrush.Resolve(host (), background, color) |> Option.ofObj |> colorOf
+
+    [<Fact>]
+    let ``the default chrome is the surface tone, not the window behind it`` () =
+        Headless.run (fun () ->
+            let surface = resolve ChromeBackground.SurfaceChrome PaneEffectColor.AccentEffectColor
+            let window = resolve ChromeBackground.TransparentChrome PaneEffectColor.AccentEffectColor
+            test <@ surface = Some (Media.Color.FromRgb(0x1Buy, 0x22uy, 0x2Cuy)) @>
+            test <@ window = Some (Media.Color.FromRgb(0x0Duy, 0x11uy, 0x17uy)) @>
+            // The point of the setting: chrome that does not share the content's background.
+            test <@ surface <> window @>)
+
+    [<Fact>]
+    let ``a tinted chrome is opaque and leans towards the chosen colour`` () =
+        Headless.run (fun () ->
+            let window = Media.Color.FromRgb(0x0Duy, 0x11uy, 0x17uy)
+            match resolve ChromeBackground.TintedChrome PaneEffectColor.GreenEffectColor with
+            | Some tinted ->
+                // Opaque, or the content would scroll through the bar; and greener than the background it sits on.
+                let alpha = int tinted.A
+                let greenGain = int tinted.G - int window.G
+                let redGain = int tinted.R - int window.R
+                let differs = tinted <> window
+                test <@ alpha = 255 @>
+                test <@ greenGain > redGain @>
+                test <@ differs @>
+            | None -> failwith "no tinted brush")
+
+module HashCopyTests =
+    let private commit () =
+        CommitProjection(
+            FullHash = "74f3490a58e81f4ece0f19ad470bf0495f648604",
+            Hash = "74f3490a",
+            Subject = "Prepare version 0.11.0")
+
+    /// Clicks the middle of a control, as a pointer press and release in the same place.
+    let private click (window: Window) (target: Control) =
+        let middle = Point(target.Bounds.Width / 2.0, target.Bounds.Height / 2.0)
+        let position = target.TranslatePoint(middle, window)
+        if not position.HasValue then failwith "the hash is not in the window"
+        window.MouseDown(position.Value, MouseButton.Left)
+        window.MouseUp(position.Value, MouseButton.Left)
+        Headless.pump ()
+
+    [<Fact>]
+    let ``clicking the hash in the diff header copies the whole commit hash`` () =
+        Headless.run (fun () ->
+            let projection = MainProjection(SelectedCommit = commit ())
+            let window = MainWindow(Width = 1200.0, Height = 800.0, DataContext = projection)
+            try
+                window.Show()
+                window.UpdateLayout()
+                Headless.pump ()
+                let hash = window.FindControl<SelectableTextBlock>("HeaderHashText")
+                // The header shows the short hash; the whole one is what gets copied.
+                test <@ hash.Text = "74f3490a" @>
+                click window hash
+                // Read back out of the clipboard, not just off the status bar.
+                let copied = Avalonia.Input.Platform.ClipboardExtensions.TryGetTextAsync(window.Clipboard).GetAwaiter().GetResult()
+                test <@ copied = "74f3490a58e81f4ece0f19ad470bf0495f648604" @>
+                test <@ projection.Status = "Copied: 74f3490a58e81f4ece0f19ad470bf0495f648604" @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``clicking the full hash in the commit details copies it too`` () =
+        Headless.run (fun () ->
+            let projection = MainProjection(SelectedCommit = commit (), IsCommitDetailsExpanded = true)
+            let window = MainWindow(Width = 1200.0, Height = 800.0, DataContext = projection)
+            try
+                window.Show()
+                window.UpdateLayout()
+                Headless.pump ()
+                let hash = window.FindControl<SelectableTextBlock>("DetailHashText")
+                click window hash
+                test <@ projection.Status = "Copied: 74f3490a58e81f4ece0f19ad470bf0495f648604" @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``a click on the hash does not also open the commit details`` () =
+        Headless.run (fun () ->
+            let projection = MainProjection(SelectedCommit = commit ())
+            let window = MainWindow(Width = 1200.0, Height = 800.0, DataContext = projection)
+            try
+                window.Show()
+                window.UpdateLayout()
+                Headless.pump ()
+                let expandedBefore = projection.IsCommitDetailsExpanded
+                click window (window.FindControl<SelectableTextBlock>("HeaderHashText"))
+                // Copying is the whole of it: the bar the hash sits in does not toggle underneath the click.
+                test <@ [ expandedBefore; projection.IsCommitDetailsExpanded ] = [ false; false ] @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+module CommitContextMenuTests =
+    let private headers (menu: ContextMenu) =
+        menu.Items
+        |> Seq.choose (function :? MenuItem as item -> Some (string item.Header) | _ -> None)
+        |> List.ofSeq
+
+    [<Fact>]
+    let ``the commit row's right-click menu offers copy hash and subject`` () =
+        Headless.run (fun () ->
+            let commit =
+                CommitProjection(
+                    FullHash = "74f3490a58e81f4ece0f19ad470bf0495f648604",
+                    Hash = "74f3490a",
+                    Subject = "Prepare version 0.11.0")
+            let commits = AvaloniaList<CommitProjection>([ commit ])
+            let surface = CommitSurfaceControl(ItemsSource = commits, SelectedItem = commit)
+            let copied = ResizeArray<string>()
+            surface.add_CopyRequested (fun text -> copied.Add text)
+            let window = Window(Width = 900.0, Height = 300.0, Content = surface)
+            try
+                window.Show()
+                Headless.pump ()
+                let menu = surface.BuildContextMenu()
+                test <@ headers menu |> List.contains "Copy commit hash" @>
+                test <@ headers menu |> List.contains "Copy commit subject" @>
+
+                // The whole hash goes to the clipboard, not the shortened one the row shows.
+                let item = menu.Items |> Seq.pick (function
+                    | :? MenuItem as item when string item.Header = "Copy commit hash" -> Some item
+                    | _ -> None)
+                item.RaiseEvent(Interactivity.RoutedEventArgs(MenuItem.ClickEvent))
+                Headless.pump ()
+                test <@ List.ofSeq copied = [ "74f3490a58e81f4ece0f19ad470bf0495f648604" ] @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``the uncommitted changes row offers no commit to copy`` () =
+        Headless.run (fun () ->
+            let working = CommitProjection(IsWorkingTree = true, Subject = "Uncommitted changes")
+            let commits = AvaloniaList<CommitProjection>([ working ])
+            let surface = CommitSurfaceControl(ItemsSource = commits, SelectedItem = working)
+            let window = Window(Width = 900.0, Height = 300.0, Content = surface)
+            try
+                window.Show()
+                Headless.pump ()
+                // There is no commit there: copying its hash would copy an empty string.
+                test <@ headers (surface.BuildContextMenu()) = [ "Open commit window…" ] @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+module CommitVocabularyTests =
+    /// Every visible label in the window, so a word used for two different things shows up here.
+    let private labels (window: Window) =
+        Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window)
+        |> Seq.choose (fun (visual: Avalonia.Visual) ->
+            match visual with
+            | :? TextBlock as text -> Option.ofObj text.Text
+            | _ -> None)
+        |> List.ofSeq
+
+    [<Fact>]
+    let ``subject, hash and message each have one name`` () =
+        Headless.run (fun () ->
+            let projection =
+                MainProjection(
+                    SelectedCommit =
+                        CommitProjection(
+                            FullHash = "74f3490a58e81f4ece0f19ad470bf0495f648604",
+                            Hash = "74f3490a",
+                            Subject = "Prepare version 0.11.0",
+                            Message = "Prepare version 0.11.0\n\nWith a body under it."),
+                    IsCommitDetailsExpanded = true)
+            let window = MainWindow(Width = 1200.0, Height = 800.0, DataContext = projection)
+            try
+                window.Show()
+                window.UpdateLayout()
+                Headless.pump ()
+                let shown = labels window
+                // The column shows the message's first line, which git calls the subject.
+                test <@ shown |> List.contains "SUBJECT" @>
+                test <@ shown |> List.contains "COMMIT" |> not @>
+                // The details row labelled "Commit" held a hash, which the column beside it already calls HASH.
+                test <@ shown |> List.contains "Hash" @>
+                test <@ shown |> List.contains "Message" @>
             finally
                 window.Close()
                 Headless.pump ())

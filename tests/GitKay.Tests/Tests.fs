@@ -3960,7 +3960,8 @@ module SettingsSerializationTests =
               PaneGap = 5.0; HoverFocusesPane = false; PaneDimUnfocused = false; PaneFocusHighlight = true
               PaneFocusEffect = PaneShadow; PaneEffectColor = TealEffectColor; PaneEffectIntensity = QuarterIntensity
               PaneBorder = true; PaneBorderStyle = CustomBorder; PaneBorderColor = PinkEffectColor
-              PaneBorderThickness = 3.0; SplitterLinesHidden = true }
+              PaneBorderThickness = 3.0; SplitterLinesHidden = true
+              ChromeBackground = TintedChrome; ChromeColor = SandEffectColor }
         test <@ settings |> SettingsJson.encode |> SettingsJson.decode = Ok settings @>
 
     [<Fact>]
@@ -3968,6 +3969,12 @@ module SettingsSerializationTests =
         let read = decoded """{"PaneGap":40,"PaneBorderThickness":40,"PaneFocusEffect":"sparkle","PaneEffectColor":"chartreuse"}"""
         test <@ read.PaneGap = 8.0 && read.PaneBorderThickness = 4.0 && read.PaneFocusEffect = Settings.defaults.PaneFocusEffect && read.PaneEffectColor = Settings.defaults.PaneEffectColor @>
         test <@ (decoded """{"PaneGap":0,"PaneFocusEffect":"none"}""") = { Settings.defaults with PaneGap = 0.0; PaneFocusEffect = NoPaneEffect } @>
+
+    [<Fact>]
+    let ``an unknown chrome background or colour falls back to the default`` () =
+        let read = decoded """{"ChromeBackground":"hologram","ChromeColor":"chartreuse"}"""
+        test <@ read.ChromeBackground = Settings.defaults.ChromeBackground && read.ChromeColor = Settings.defaults.ChromeColor @>
+        test <@ (decoded """{"ChromeBackground":"transparent","ChromeColor":"lime"}""") = { Settings.defaults with ChromeBackground = TransparentChrome; ChromeColor = LimeEffectColor } @>
 
     [<Fact>]
     let ``settings missing from the file take their defaults`` () =

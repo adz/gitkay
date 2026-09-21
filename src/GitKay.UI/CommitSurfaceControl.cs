@@ -773,7 +773,8 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
     /// <summary>Text the user asked to copy (a branch or tag name).</summary>
     public event Action<string>? CopyRequested;
 
-    private ContextMenu BuildContextMenu() {
+    /// <summary>The commit row's right-click menu. Internal so tests can read what it offers for a given row.</summary>
+    internal ContextMenu BuildContextMenu() {
         MenuItem Item(string title, Func<CommitProjection, System.Windows.Input.ICommand> command) {
             var item = new MenuItem { Header = title };
             item.Click += (_, _) => { var selected = SelectedItem; if (selected != null) command(selected).Execute(null); };
@@ -802,6 +803,19 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
             }
             foreach (var filter in BuildFilterItems(selected)) menu.Items.Add(filter);
             menu.Items.Add(new Separator());
+
+            // The same two the palette and y / Y offer, where a right-click already asks about this commit.
+            var copyHash = new MenuItem { Header = "Copy commit hash", InputGesture = new KeyGesture(Key.Y) };
+            ToolTip.SetTip(copyHash, selected.FullHash);
+            copyHash.Click += (_, _) => CopyRequested?.Invoke(selected.FullHash);
+            menu.Items.Add(copyHash);
+
+            var copySubject = new MenuItem { Header = "Copy commit subject", InputGesture = new KeyGesture(Key.Y, KeyModifiers.Shift) };
+            ToolTip.SetTip(copySubject, selected.Subject);
+            copySubject.Click += (_, _) => CopyRequested?.Invoke(selected.Subject);
+            menu.Items.Add(copySubject);
+            menu.Items.Add(new Separator());
+
             var refNames = selected.RefNames.ToArray();
             foreach (var (name, kind) in refNames) {
                 var copy = new MenuItem { Header = $"Copy {kind} name “{name}”" };

@@ -71,6 +71,27 @@ public partial class DiffFileProjection : ObservableObject {
     partial void OnListMarkerChanged(string value) => OnPropertyChanged(nameof(HasListMarker));
     [ObservableProperty] private int _addedLines;
     [ObservableProperty] private int _removedLines;
+
+    /// <summary>The exact counts, which the five-block graph can only approximate: two files can fill it equally and differ fourfold.</summary>
+    public string AddedText => $"+{AddedLines}";
+    public string RemovedText => $"−{RemovedLines}";
+    public bool HasAddedText => IsLoaded && AddedLines > 0;
+    public bool HasRemovedText => IsLoaded && RemovedLines > 0;
+
+    partial void OnAddedLinesChanged(int value) {
+        OnPropertyChanged(nameof(AddedText));
+        OnPropertyChanged(nameof(HasAddedText));
+    }
+
+    partial void OnRemovedLinesChanged(int value) {
+        OnPropertyChanged(nameof(RemovedText));
+        OnPropertyChanged(nameof(HasRemovedText));
+    }
+
+    partial void OnIsLoadedChanged(bool value) {
+        OnPropertyChanged(nameof(HasAddedText));
+        OnPropertyChanged(nameof(HasRemovedText));
+    }
     /// <summary>"added", "deleted", "renamed" or "modified", derived from the file identity.</summary>
     public string ChangeKind => GitKay.Core.FileChange.kindName(Change);
     public string ChangeGlyph => GitKay.Core.FileChange.glyph(Change);

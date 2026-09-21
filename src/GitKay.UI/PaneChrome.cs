@@ -16,7 +16,7 @@ namespace GitKay.UI;
 /// effect is drawn by a border above them, so nothing moves when the focus arrives.
 /// </summary>
 internal sealed class PaneChrome {
-    private sealed record Pane(Border Effect, IReadOnlyList<Control> Parts);
+    private sealed record Pane(Border Effect, IReadOnlyList<Control> Parts, int TopRow, int BottomRow);
 
     /// <summary>What a pane's chrome should say about it. Dimming the unfocused panes is the window's own business.</summary>
     internal readonly record struct Settings(
@@ -49,7 +49,10 @@ internal sealed class PaneChrome {
 
     /// <summary>Adds a pane under a key the window uses to say which one has focus.</summary>
     public void Add(string key, Border effect, params Control[] parts) {
-        var pane = new Pane(effect, parts);
+        // A pane stacked out of a header bar and the content under it is one pane: the gap belongs around the
+        // outside of it, not between its own rows, where it would show as a band of window behind the pane.
+        var rows = parts.Select(Grid.GetRow).ToArray();
+        var pane = new Pane(effect, parts, rows.Length == 0 ? 0 : rows.Min(), rows.Length == 0 ? 0 : rows.Max());
         _panes.Add(pane);
         _byKey[key] = pane;
         effect.IsHitTestVisible = false;
@@ -181,6 +184,14 @@ internal sealed class PaneChrome {
         ApplyFocus(pane);
     }
 
+    /// <summary>The gap on the edges this part shares with the window, and none on the ones it shares with the rest of its pane.</summary>
+    private Thickness PartMargin(Pane pane, Control part) {
+        var gap = _settings.Gap;
+        if (pane.TopRow == pane.BottomRow) return new Thickness(gap);
+        var row = Grid.GetRow(part);
+        return new Thickness(gap, row == pane.TopRow ? gap : 0, gap, row == pane.BottomRow ? gap : 0);
+    }
+
     private IBrush _focusOutline = Brushes.SteelBlue;
     private IBrush _restOutline = Brushes.Gray;
 
@@ -194,8 +205,9 @@ internal sealed class PaneChrome {
         pane.Effect.BorderBrush = highlighted ? _focusOutline : _restOutline;
         pane.Effect.BoxShadow = focused ? _focusShadow : default;
         pane.Effect.Opacity = _settings.Border || highlighted || (focused && !_settings.Effect.IsNoPaneEffect) ? 1 : 0;
-        var margin = new Thickness(_settings.Gap);
-        foreach (var part in pane.Parts)
+        foreach (var part in pane.Parts) {
+            var margin = PartMargin(pane, part);
             if (part.Margin != margin) part.Margin = margin;
+        }
     }
 }

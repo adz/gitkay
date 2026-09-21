@@ -64,6 +64,8 @@ public sealed partial class WholeFileProjection : ObservableObject {
         OnPropertyChanged(nameof(IsSource));
         OnPropertyChanged(nameof(IsMarkdownPreview));
         OnPropertyChanged(nameof(IsImagePreview));
+        // The file header's preview icon reads this, so it lights up with the window's own toggle.
+        _file.IsRenderedMarkdown = value && IsMarkdown;
         Rebuild();
     }
 
@@ -172,6 +174,13 @@ public partial class WholeFileWindow : Window {
         };
         Surface.TextCopied += (_, lines) => projection.LoadStatus = lines switch { 0 => "Copied", 1 => "Copied 1 line", _ => $"Copied {lines} lines" };
         Surface.RenderedLinkRequested += (_, link) => OpenRenderedLink(projection, link);
+        // The header's preview icon toggles this window's own preview; without this it fires into nothing.
+        Surface.PreviewRequested += (_, _) => {
+            if (!projection.IsPreviewable) return;
+            var anchor = Surface.CaptureMarkdownViewAnchor();
+            projection.TogglePreviewCommand.Execute(null);
+            Surface.RestoreMarkdownViewAnchor(anchor);
+        };
         AddHandler(KeyDownEvent, OnWindowKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         _relativeLinkRequested = link => {
             var resolved = GitKay.Core.Markdown.resolveTarget(target.Path, link.Split('#')[0]);

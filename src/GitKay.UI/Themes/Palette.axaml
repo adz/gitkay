@@ -4,6 +4,8 @@
         <ResourceDictionary x:Key="Dark">
             <SolidColorBrush x:Key="GitKayWindowBrush" Color="#0D1117" />
             <SolidColorBrush x:Key="GitKaySurfaceBrush" Color="#1B222C" />
+            <!-- Toolbar, column headers and pane header bars; the window replaces this from the Chrome setting. -->
+            <SolidColorBrush x:Key="GitKayChromeBrush" Color="#1B222C" />
             <SolidColorBrush x:Key="GitKayRaisedBrush" Color="#222A35" />
             <SolidColorBrush x:Key="GitKayHoverBrush" Color="#21262D" />
             <SolidColorBrush x:Key="GitKaySelectionBrush" Color="#27364A" />
@@ -67,6 +69,8 @@
             <SolidColorBrush x:Key="GitKayTextSelectionBrush" Color="#660969DA" />
             <SolidColorBrush x:Key="GitKayWindowBrush" Color="#FFFFFF" />
             <SolidColorBrush x:Key="GitKaySurfaceBrush" Color="#EDF1F5" />
+            <!-- Toolbar, column headers and pane header bars; the window replaces this from the Chrome setting. -->
+            <SolidColorBrush x:Key="GitKayChromeBrush" Color="#EDF1F5" />
             <SolidColorBrush x:Key="GitKayRaisedBrush" Color="#E6EBF0" />
             <SolidColorBrush x:Key="GitKayHoverBrush" Color="#EAEEF2" />
             <SolidColorBrush x:Key="GitKaySelectionBrush" Color="#CCE5FF" />

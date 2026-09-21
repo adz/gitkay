@@ -48,6 +48,12 @@ public sealed class PaneEffectColorProjection(GitKay.Core.PaneEffectColor color)
                 : Avalonia.Media.Brushes.SteelBlue;
 }
 
+public sealed class ChromeBackgroundProjection(GitKay.Core.ChromeBackground background) {
+    public GitKay.Core.ChromeBackground Background { get; } = background;
+    public string Label { get; } = GitKay.Core.ChromeBackgroundModule.label(background);
+    public string Description { get; } = GitKay.Core.ChromeBackgroundModule.describe(background);
+}
+
 public sealed class PaneBorderStyleProjection(GitKay.Core.PaneBorderStyle style) {
     public GitKay.Core.PaneBorderStyle Style { get; } = style;
     public string Label { get; } = GitKay.Core.PaneBorderStyleModule.label(style);
@@ -122,6 +128,13 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public ObservableCollection<PaneEffectColorProjection> PaneBorderColors { get; } =
         new(GitKay.Core.PaneEffectColorModule.all.Select(color => new PaneEffectColorProjection(color)));
 
+    public ObservableCollection<ChromeBackgroundProjection> ChromeBackgrounds { get; } =
+        new(GitKay.Core.ChromeBackgroundModule.all.Select(background => new ChromeBackgroundProjection(background)));
+
+    /// <summary>The chrome tint's colour list, the same choices the effect and border use.</summary>
+    public ObservableCollection<PaneEffectColorProjection> ChromeColors { get; } =
+        new(GitKay.Core.PaneEffectColorModule.all.Select(color => new PaneEffectColorProjection(color)));
+
     public ObservableCollection<DiffContextLineCountProjection> DiffContextLineCounts { get; } = new()
     {
         new DiffContextLineCountProjection(0),
@@ -168,6 +181,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     [ObservableProperty] private PaneEffectIntensityProjection? _selectedPaneEffectIntensity;
     [ObservableProperty] private PaneBorderStyleProjection? _selectedPaneBorderStyle;
     [ObservableProperty] private PaneEffectColorProjection? _selectedPaneBorderColor;
+    [ObservableProperty] private ChromeBackgroundProjection? _selectedChromeBackground;
+    [ObservableProperty] private PaneEffectColorProjection? _selectedChromeColor;
 
     /// <summary>Space around each pane, in pixels.</summary>
     [ObservableProperty] private double _paneGap = GitKay.Core.SettingsModule.defaults.PaneGap;
@@ -217,6 +232,23 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         OnPropertyChanged(nameof(PaneBorderColor));
         PaneChromeChanged?.Invoke();
     }
+
+    partial void OnSelectedChromeBackgroundChanged(ChromeBackgroundProjection? value) {
+        OnPropertyChanged(nameof(ChromeBackground));
+        OnPropertyChanged(nameof(IsTintedChrome));
+        PaneChromeChanged?.Invoke();
+    }
+
+    partial void OnSelectedChromeColorChanged(PaneEffectColorProjection? value) {
+        OnPropertyChanged(nameof(ChromeColor));
+        PaneChromeChanged?.Invoke();
+    }
+
+    public GitKay.Core.ChromeBackground ChromeBackground => SelectedChromeBackground?.Background ?? GitKay.Core.SettingsModule.defaults.ChromeBackground;
+    public GitKay.Core.PaneEffectColor ChromeColor => SelectedChromeColor?.Color ?? GitKay.Core.SettingsModule.defaults.ChromeColor;
+
+    /// <summary>Whether the chrome's colour is the user's to choose.</summary>
+    public bool IsTintedChrome => ChromeBackground.IsTintedChrome;
 
     public GitKay.Core.PaneBorderStyle PaneBorderStyle => SelectedPaneBorderStyle?.Style ?? GitKay.Core.SettingsModule.defaults.PaneBorderStyle;
     public GitKay.Core.PaneEffectColor PaneBorderColor => SelectedPaneBorderColor?.Color ?? GitKay.Core.SettingsModule.defaults.PaneBorderColor;
@@ -357,6 +389,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         SelectedPaneEffectIntensity = PaneHoverIntensities.FirstOrDefault(intensity => intensity.Intensity.Equals(GitKay.Core.SettingsModule.defaults.PaneEffectIntensity)) ?? PaneHoverIntensities[0];
         SelectedPaneBorderStyle = PaneBorderStyles[0];
         SelectedPaneBorderColor = PaneBorderColors[0];
+        SelectedChromeBackground = ChromeBackgrounds.FirstOrDefault(background => background.Background.Equals(GitKay.Core.SettingsModule.defaults.ChromeBackground)) ?? ChromeBackgrounds[0];
+        SelectedChromeColor = ChromeColors[0];
     }
 
     public void ApplySettings(GitKay.Core.Settings settings) {
@@ -396,6 +430,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             SplitterLinesHidden = normalized.SplitterLinesHidden;
             SelectedPaneBorderStyle = PaneBorderStyles.FirstOrDefault(style => style.Style.Equals(normalized.PaneBorderStyle)) ?? PaneBorderStyles.First();
             SelectedPaneBorderColor = PaneBorderColors.FirstOrDefault(color => color.Color.Equals(normalized.PaneBorderColor)) ?? PaneBorderColors.First();
+            SelectedChromeBackground = ChromeBackgrounds.FirstOrDefault(background => background.Background.Equals(normalized.ChromeBackground)) ?? ChromeBackgrounds.First();
+            SelectedChromeColor = ChromeColors.FirstOrDefault(color => color.Color.Equals(normalized.ChromeColor)) ?? ChromeColors.First();
         }
         finally {
             _suppressDiffPresentationDispatch = false;
@@ -430,7 +466,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         PaneBorderStyle,
         PaneBorderColor,
         PaneBorderThickness,
-        SplitterLinesHidden));
+        SplitterLinesHidden,
+        ChromeBackground,
+        ChromeColor));
 
     /// <summary>The diff layout chosen in the view menu.</summary>
     public GitKay.Core.DiffLayout DiffLayout => SelectedDiffPresentationMode?.Layout ?? GitKay.Core.SettingsModule.defaults.DiffLayout;

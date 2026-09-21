@@ -54,7 +54,7 @@
                         <GroupBox Header="Panes">
                             <Border Padding="12">
                                 <!-- Labels in one column and inputs in the next, so the fields line up down the panel. -->
-                                <Grid ColumnDefinitions="150,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="10">
+                                <Grid ColumnDefinitions="150,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="10">
                                     <TextBlock Text="Space around panes" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
                                         <NumericUpDown Width="120" Minimum="0" Maximum="8" Increment="1" FormatString="0"
@@ -144,6 +144,35 @@
                                                        IsEnabled="{Binding PaneBorder}"
                                                        Value="{Binding PaneBorderThickness, Mode=TwoWay}" />
                                         <TextBlock Text="pixels" Foreground="{DynamicResource GitKaySecondaryTextBrush}" VerticalAlignment="Center" />
+                                    </StackPanel>
+
+                                    <TextBlock Grid.Row="5" Text="Chrome" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center"
+                                               ToolTip.Tip="The toolbar, the column headers and the bar above each pane" />
+                                    <ComboBox Grid.Row="5" Grid.Column="1" Width="150" HorizontalAlignment="Left"
+                                              ItemsSource="{Binding ChromeBackgrounds}"
+                                              SelectedItem="{Binding SelectedChromeBackground}">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="local:ChromeBackgroundProjection">
+                                                <TextBlock Text="{Binding Label}" ToolTip.Tip="{Binding Description}" />
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                    <StackPanel Grid.Row="5" Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <ComboBox Width="170" IsVisible="{Binding IsTintedChrome}"
+                                                  ItemsSource="{Binding ChromeColors}"
+                                                  SelectedItem="{Binding SelectedChromeColor}">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="local:PaneEffectColorProjection">
+                                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                                        <Border Width="14" Height="14" CornerRadius="3" Background="{Binding Swatch}" VerticalAlignment="Center" />
+                                                        <TextBlock Text="{Binding Label}" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                        <TextBlock Text="{Binding SelectedChromeBackground.Description}" IsVisible="{Binding !IsTintedChrome}"
+                                                   Foreground="{DynamicResource GitKaySecondaryTextBrush}"
+                                                   VerticalAlignment="Center" TextWrapping="Wrap" />
                                     </StackPanel>
                                 </Grid>
                             </Border>

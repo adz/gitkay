@@ -105,6 +105,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private const double SectionHeight = 34;
     private const double FileCardTop = 12;
     private const double FileChevronWidth = 32;
+    /// <summary>Breathing room down each side of a file card, so its title doesn't sit hard against the pane edge.</summary>
+    private const double FileCardInset = 6;
     private const int HeaderChevronAction = 100;
     private const int HeaderContextAction = 101;
     private const int HeaderPreviewAction = 102;
@@ -328,32 +330,61 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     public double CurrentScrollOffset => _scrollViewer?.Offset.Y ?? 0;
 
     /// A semantic line anchor used while source rows are replaced by rendered blocks (or vice versa).
-    public readonly record struct MarkdownViewAnchor(int Line, double ViewportY, int? SelectedLine);
+    /// <para>The line number is only meaningful inside its own file: every file in a multi-file diff
+    /// restarts at line 1, so the owning file travels with the anchor.</para>
+    public readonly record struct MarkdownViewAnchor(string File, int Line, double ViewportY, string? SelectedFile, int? SelectedLine);
+
+    private static int LineOfRow(IDiffRowProjection row) => row switch {
+        DiffLineProjection source => source.NewLineNo ?? source.OldLineNo ?? 1,
+        RenderedMarkdownRowProjection rendered => rendered.Located.FirstLine,
+        _ => 1,
+    };
+
+    private static bool RowContainsLine(IDiffRowProjection row, int line) => row switch {
+        DiffLineProjection source => (source.NewLineNo ?? source.OldLineNo) == line,
+        RenderedMarkdownRowProjection rendered => line >= rendered.Located.FirstLine && line <= rendered.Located.LastLine,
+        _ => false,
+    };
+
+    /// <summary>The path of the file whose header most recently preceded this row.</summary>
+    private string FileOfRow(int index) {
+        for (var i = Math.Min(index, _rows.Length - 1); i >= 0; i--)
+            if (_rows[i] is DiffFileHeaderProjection header) return header.File.ContentPath;
+        return "";
+    }
 
     public MarkdownViewAnchor? CaptureMarkdownViewAnchor() {
         if (_scrollViewer == null || _rows.Length == 0) return null;
         var index = FindRow(_scrollViewer.Offset.Y);
-        int lineOf(IDiffRowProjection row) => row switch {
-            DiffLineProjection source => source.NewLineNo ?? source.OldLineNo ?? 1,
-            RenderedMarkdownRowProjection rendered => rendered.Located.FirstLine,
-            _ => 1,
-        };
         while (index < _rows.Length && _rows[index] is not (DiffLineProjection or RenderedMarkdownRowProjection)) index++;
         if (index >= _rows.Length) return null;
-        var selectedLine = SelectedItem is { } selected && selected is DiffLineProjection or RenderedMarkdownRowProjection ? lineOf(selected) : (int?)null;
-        return new MarkdownViewAnchor(lineOf(_rows[index]), _tops[index] - _scrollViewer.Offset.Y, selectedLine);
+        string? selectedFile = null;
+        int? selectedLine = null;
+        if (SelectedItem is DiffLineProjection or RenderedMarkdownRowProjection
+            && Array.IndexOf(_rows, SelectedItem) is var selectedIndex and >= 0) {
+            selectedFile = FileOfRow(selectedIndex);
+            selectedLine = LineOfRow((IDiffRowProjection)SelectedItem);
+        }
+        return new MarkdownViewAnchor(FileOfRow(index), LineOfRow(_rows[index]),
+            _tops[index] - _scrollViewer.Offset.Y, selectedFile, selectedLine);
+    }
+
+    /// <summary>Finds a line inside one file, so an identical line number in an earlier file can't steal the anchor.</summary>
+    private int FindRowInFile(string file, int line) {
+        var current = "";
+        for (var i = 0; i < _rows.Length; i++) {
+            if (_rows[i] is DiffFileHeaderProjection header) { current = header.File.ContentPath; continue; }
+            if (current == file && RowContainsLine(_rows[i], line)) return i;
+        }
+        return -1;
     }
 
     public void RestoreMarkdownViewAnchor(MarkdownViewAnchor? anchor) {
         if (anchor is not { } value || _scrollViewer == null) return;
-        bool contains(IDiffRowProjection row, int line) => row switch {
-            DiffLineProjection source => (source.NewLineNo ?? source.OldLineNo) == line,
-            RenderedMarkdownRowProjection rendered => line >= rendered.Located.FirstLine && line <= rendered.Located.LastLine,
-            _ => false,
-        };
-        var index = Array.FindIndex(_rows, row => contains(row, value.Line));
+        var index = FindRowInFile(value.File, value.Line);
         if (index >= 0) SetOffsetWithoutScrolling(Math.Max(0, _tops[index] - value.ViewportY));
-        if (value.SelectedLine is { } selectedLine && Array.FindIndex(_rows, row => contains(row, selectedLine)) is var selectedIndex and >= 0)
+        if (value.SelectedLine is { } selectedLine && value.SelectedFile is { } selectedFile
+            && FindRowInFile(selectedFile, selectedLine) is var selectedIndex and >= 0)
             SelectedItem = _rows[selectedIndex];
     }
 
@@ -716,7 +747,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         // Opaque: rows scroll underneath the pinned header.
         var backdrop = new Rect(0, rowTop + FileCardTop - 1, Bounds.Width, cardHeight + 2);
         context.FillRectangle(ThemeBrush("GitKayWindowBrush", StickyWindowFallback), backdrop);
-        context.FillRectangle(ThemeBrush("GitKaySurfaceBrush", StickySurfaceFallback), backdrop.Deflate(new Thickness(0.5, 1, 0.5, 1)));
+        // The surface band is inset to the card's own width, so a pinned header looks like the one it replaced.
+        context.FillRectangle(ThemeBrush("GitKaySurfaceBrush", StickySurfaceFallback),
+            backdrop.Deflate(new Thickness(FileCardInset + 0.5, 1, FileCardInset + 0.5, 1)));
         DrawFileHeader(context, (DiffFileHeaderProjection)_rows[header], rowTop, header);
     }
 
@@ -787,13 +820,18 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         context.FillRectangle(ThemeBrush("GitKayBorderBrush", secondary), new Rect(ruleX, centerY, Math.Max(0, Bounds.Width - ruleX - 8), 1));
     }
 
-    private Rect FileCardRect(double y) => new(0.5, y + FileCardTop + 0.5, Math.Max(0, Bounds.Width - 1), FileHeight - FileCardTop - 1);
+    private Rect FileCardRect(double y) =>
+        new(FileCardInset + 0.5, y + FileCardTop + 0.5, Math.Max(0, Bounds.Width - 2 * FileCardInset - 1), FileHeight - FileCardTop - 1);
 
-    private Rect FileChevronRect(double y) => new(4, y + FileCardTop + 5, FileChevronWidth - 6, FileHeight - FileCardTop - 10);
+    private Rect FileChevronRect(double y) =>
+        new(FileCardInset + 4, y + FileCardTop + 5, FileChevronWidth - 6, FileHeight - FileCardTop - 10);
+
+    /// <summary>Where a file header's title starts, inside the card.</summary>
+    private static double FileLabelX => FileCardInset + FileChevronWidth + 8;
 
     private Rect FilePreviewRect(DiffFileHeaderProjection file, double y) {
         var pathWidth = Layout(file.DisplayPath, 12, FileBrush, false).Width;
-        return new Rect(FileChevronWidth + 8 + pathWidth + 8, y + FileCardTop + 5, 26, FileHeight - FileCardTop - 10);
+        return new Rect(FileLabelX + pathWidth + 8, y + FileCardTop + 5, 26, FileHeight - FileCardTop - 10);
     }
 
     private Rect FileContextRect(DiffFileHeaderProjection file, double y) {
@@ -842,10 +880,10 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         }
 
         var path = Layout(file.DisplayPath, 12, text, false);
-        context.DrawText(path, new Point(FileChevronWidth + 8, centerY - path.Height / 2));
+        context.DrawText(path, new Point(FileLabelX, centerY - path.Height / 2));
         var pathUnderline = ThemeBrush("GitKayAccentBrush", SearchMatchFallback);
         ForEachMatch(file.DisplayPath, SearchPathQuery, SearchHighlightUseRegex, (start, length) =>
-            DrawDottedUnderline(context, file.DisplayPath, start, length, FileChevronWidth + 8, centerY + path.Height / 2 - 1, pathUnderline, 12));
+            DrawDottedUnderline(context, file.DisplayPath, start, length, FileLabelX, centerY + path.Height / 2 - 1, pathUnderline, 12));
 
         if (IsPreviewable(file)) {
             var preview = FilePreviewRect(header, y);

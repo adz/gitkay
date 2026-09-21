@@ -134,6 +134,43 @@ module PaneBorderStyle =
         let normalized = if isNull text then "" else text.Trim().ToLowerInvariant()
         all |> List.tryFind (fun style -> key style = normalized)
 
+/// <summary>
+/// What the window's chrome — the toolbar, the column headers, the pane header bars — is filled with. Chrome that
+/// shares the content's own background blends into it; a surface or a tint tells the reader where content stops.
+/// </summary>
+type ChromeBackground =
+    /// <summary>The theme's surface tone, a step up from the content behind it.</summary>
+    | SurfaceChrome
+    /// <summary>No fill of its own: the chrome takes the window's background, as content does.</summary>
+    | TransparentChrome
+    /// <summary>A wash of a chosen colour over the window's background.</summary>
+    | TintedChrome
+
+module ChromeBackground =
+    let all = [ SurfaceChrome; TransparentChrome; TintedChrome ]
+
+    let key background =
+        match background with
+        | SurfaceChrome -> "surface"
+        | TransparentChrome -> "transparent"
+        | TintedChrome -> "tinted"
+
+    let label background =
+        match background with
+        | SurfaceChrome -> "Surface"
+        | TransparentChrome -> "Transparent"
+        | TintedChrome -> "Colour"
+
+    let describe background =
+        match background with
+        | SurfaceChrome -> "A step up from the content, as the file list is"
+        | TransparentChrome -> "The same background as the content it sits above"
+        | TintedChrome -> "A wash of the colour chosen below"
+
+    let tryParse (text: string) =
+        let normalized = if isNull text then "" else text.Trim().ToLowerInvariant()
+        all |> List.tryFind (fun background -> key background = normalized)
+
 /// <summary>The colour a pane's focus effect is drawn in.</summary>
 type PaneEffectColor =
     /// <summary>The theme's own accent colour.</summary>
@@ -145,11 +182,22 @@ type PaneEffectColor =
     | PinkEffectColor
     | TealEffectColor
     | WhiteEffectColor
+    | RedEffectColor
+    | AmberEffectColor
+    | LimeEffectColor
+    | CyanEffectColor
+    | IndigoEffectColor
+    | MagentaEffectColor
+    | SlateEffectColor
+    | SandEffectColor
 
 module PaneEffectColor =
+    /// <summary>Every choice is a mid-tone or lighter: a black or near-black chrome reads as a hole, not a surface.</summary>
     let all =
         [ AccentEffectColor; BlueEffectColor; GreenEffectColor; PurpleEffectColor
-          OrangeEffectColor; PinkEffectColor; TealEffectColor; WhiteEffectColor ]
+          OrangeEffectColor; PinkEffectColor; TealEffectColor; WhiteEffectColor
+          RedEffectColor; AmberEffectColor; LimeEffectColor; CyanEffectColor
+          IndigoEffectColor; MagentaEffectColor; SlateEffectColor; SandEffectColor ]
 
     let key color =
         match color with
@@ -161,6 +209,14 @@ module PaneEffectColor =
         | PinkEffectColor -> "pink"
         | TealEffectColor -> "teal"
         | WhiteEffectColor -> "white"
+        | RedEffectColor -> "red"
+        | AmberEffectColor -> "amber"
+        | LimeEffectColor -> "lime"
+        | CyanEffectColor -> "cyan"
+        | IndigoEffectColor -> "indigo"
+        | MagentaEffectColor -> "magenta"
+        | SlateEffectColor -> "slate"
+        | SandEffectColor -> "sand"
 
     let label color =
         match color with
@@ -172,6 +228,14 @@ module PaneEffectColor =
         | PinkEffectColor -> "Pink"
         | TealEffectColor -> "Teal"
         | WhiteEffectColor -> "White"
+        | RedEffectColor -> "Red"
+        | AmberEffectColor -> "Amber"
+        | LimeEffectColor -> "Lime"
+        | CyanEffectColor -> "Cyan"
+        | IndigoEffectColor -> "Indigo"
+        | MagentaEffectColor -> "Magenta"
+        | SlateEffectColor -> "Slate"
+        | SandEffectColor -> "Sand"
 
     /// <summary>The colour as #RRGGBB, or None for the theme's accent, which the window resolves.</summary>
     let hex color =
@@ -184,6 +248,14 @@ module PaneEffectColor =
         | PinkEffectColor -> Some "#FF7EB6"
         | TealEffectColor -> Some "#39C5CF"
         | WhiteEffectColor -> Some "#FFFFFF"
+        | RedEffectColor -> Some "#FF7B72"
+        | AmberEffectColor -> Some "#E3B341"
+        | LimeEffectColor -> Some "#A5D66F"
+        | CyanEffectColor -> Some "#56D4DD"
+        | IndigoEffectColor -> Some "#8B95FF"
+        | MagentaEffectColor -> Some "#E879F9"
+        | SlateEffectColor -> Some "#8B98A9"
+        | SandEffectColor -> Some "#D9C2A0"
 
     let tryParse (text: string) =
         let normalized = if isNull text then "" else text.Trim().ToLowerInvariant()
@@ -265,7 +337,11 @@ type Settings =
       /// <summary>The outline's thickness in pixels, used by <see cref="T:GitKay.Core.CustomBorder"/>.</summary>
       PaneBorderThickness: float
       /// <summary>Whether the hairline between two panes is hidden, leaving the splitter to be felt rather than seen.</summary>
-      SplitterLinesHidden: bool }
+      SplitterLinesHidden: bool
+      /// <summary>What the toolbar, column headers and pane header bars are filled with.</summary>
+      ChromeBackground: ChromeBackground
+      /// <summary>The tint's colour, used by <see cref="T:GitKay.Core.TintedChrome"/>.</summary>
+      ChromeColor: PaneEffectColor }
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module Settings =
@@ -280,7 +356,7 @@ module Settings =
           CommitRowMetaFontSize = 12.0
           CommitRowBadgeFontSize = 11.0
           SearchDebounceSeconds = 0.5
-          RenderMarkdownByDefault = false
+          RenderMarkdownByDefault = true
           LoadRemoteMarkdownImages = false
           Theme = SystemTheme
           PaneGap = 3.0
@@ -294,7 +370,9 @@ module Settings =
           PaneBorderStyle = SubtleBorder
           PaneBorderColor = AccentEffectColor
           PaneBorderThickness = 1.0
-          SplitterLinesHidden = false }
+          SplitterLinesHidden = false
+          ChromeBackground = SurfaceChrome
+          ChromeColor = AccentEffectColor }
 
     let private fontFamily fallback (value: string) = if String.IsNullOrWhiteSpace value then fallback else value
 

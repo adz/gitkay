@@ -32,7 +32,9 @@ type private SettingsWire =
       PaneBorderStyleKey: string
       PaneBorderColorKey: string
       PaneBorderThickness: float
-      SplitterLinesHidden: bool }
+      SplitterLinesHidden: bool
+      ChromeBackgroundKey: string
+      ChromeColorKey: string }
 
 type private RepoStateWire =
     { LastSelectedCommitHash: string option
@@ -82,7 +84,9 @@ module private Codecs =
             fieldAs "PaneBorderColor" _.PaneBorderColorKey { defaultValue (PaneEffectColor.key d.PaneBorderColor) }
             fieldAs "PaneBorderThickness" _.PaneBorderThickness { defaultValue d.PaneBorderThickness }
             fieldAs "SplitterLinesHidden" _.SplitterLinesHidden { defaultValue d.SplitterLinesHidden }
-            construct (fun showBranchRefs showStashes diffContextLines layout fontFamily monoFontFamily textSize metaSize badgeSize debounce renderMarkdown remoteImages theme paneGap paneEffect paneColor paneIntensity hoverFocuses dimUnfocused focusHighlight paneBorder borderStyle borderColor borderThickness splitterHidden ->
+            fieldAs "ChromeBackground" _.ChromeBackgroundKey { defaultValue (ChromeBackground.key d.ChromeBackground) }
+            fieldAs "ChromeColor" _.ChromeColorKey { defaultValue (PaneEffectColor.key d.ChromeColor) }
+            construct (fun showBranchRefs showStashes diffContextLines layout fontFamily monoFontFamily textSize metaSize badgeSize debounce renderMarkdown remoteImages theme paneGap paneEffect paneColor paneIntensity hoverFocuses dimUnfocused focusHighlight paneBorder borderStyle borderColor borderThickness splitterHidden chromeBackground chromeColor ->
                 { ShowBranchRefs = showBranchRefs; ShowStashes = showStashes; DiffContextLines = diffContextLines
                   DiffPresentationModeKey = layout; CommitRowFontFamily = fontFamily; CommitRowMonoFontFamily = monoFontFamily
                   CommitRowTextFontSize = textSize; CommitRowMetaFontSize = metaSize; CommitRowBadgeFontSize = badgeSize
@@ -91,7 +95,7 @@ module private Codecs =
                   PaneEffectColorKey = paneColor; PaneEffectIntensityKey = paneIntensity; HoverFocusesPane = hoverFocuses
                   PaneDimUnfocused = dimUnfocused; PaneFocusHighlight = focusHighlight; PaneBorder = paneBorder
                   PaneBorderStyleKey = borderStyle; PaneBorderColorKey = borderColor; PaneBorderThickness = borderThickness
-                  SplitterLinesHidden = splitterHidden })
+                  SplitterLinesHidden = splitterHidden; ChromeBackgroundKey = chromeBackground; ChromeColorKey = chromeColor })
         }
         |> Json.compile
 
@@ -153,7 +157,9 @@ module SettingsJson =
               PaneBorderStyleKey = PaneBorderStyle.key settings.PaneBorderStyle
               PaneBorderColorKey = PaneEffectColor.key settings.PaneBorderColor
               PaneBorderThickness = settings.PaneBorderThickness
-              SplitterLinesHidden = settings.SplitterLinesHidden }
+              SplitterLinesHidden = settings.SplitterLinesHidden
+              ChromeBackgroundKey = ChromeBackground.key settings.ChromeBackground
+              ChromeColorKey = PaneEffectColor.key settings.ChromeColor }
 
     /// <summary>Normalized settings, or why the text isn't a settings file. Unknown layout or theme names take the defaults.</summary>
     let decode (json: string) : Result<Settings, string> =
@@ -184,7 +190,9 @@ module SettingsJson =
                   PaneBorderStyle = PaneBorderStyle.tryParse wire.PaneBorderStyleKey |> Option.defaultValue Settings.defaults.PaneBorderStyle
                   PaneBorderColor = PaneEffectColor.tryParse wire.PaneBorderColorKey |> Option.defaultValue Settings.defaults.PaneBorderColor
                   PaneBorderThickness = wire.PaneBorderThickness
-                  SplitterLinesHidden = wire.SplitterLinesHidden })
+                  SplitterLinesHidden = wire.SplitterLinesHidden
+                  ChromeBackground = ChromeBackground.tryParse wire.ChromeBackgroundKey |> Option.defaultValue Settings.defaults.ChromeBackground
+                  ChromeColor = PaneEffectColor.tryParse wire.ChromeColorKey |> Option.defaultValue Settings.defaults.ChromeColor })
 
 /// <summary>Window size, layout and per-repository selections as the UI state file stores them.</summary>
 module UiStateJson =

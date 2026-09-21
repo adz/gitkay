@@ -1038,6 +1038,17 @@ public partial class MainWindow : Window, IVimCommands {
     }
 
     /// <summary>The hash and subject in the diff header open and close the commit details, as the chevron does.</summary>
+    /// <summary>
+    /// A click on a displayed hash copies the whole commit hash. Dragging still selects text: only a click that
+    /// selected nothing is read as "copy this", so the hash stays as selectable as it was.
+    /// </summary>
+    private void OnHashReleased(object? sender, PointerReleasedEventArgs e) {
+        if (sender is not SelectableTextBlock hash || _projection?.SelectedCommit is not { } commit) return;
+        if (e.InitialPressMouseButton != MouseButton.Left || hash.SelectionStart != hash.SelectionEnd) return;
+        CopyToClipboard(commit.FullHash, "Copied");
+        e.Handled = true;
+    }
+
     private void OnCommitHeaderPressed(object? sender, PointerPressedEventArgs e) {
         // Selecting the hash still works: a press that lands in selectable text is left to it.
         if (e.Source is Control source && source.FindAncestorOfType<SelectableTextBlock>() is not null) return;
@@ -1048,8 +1059,22 @@ public partial class MainWindow : Window, IVimCommands {
     private void ApplyPaneChrome() {
         if (_projection is { } projection) {
             _paneChrome.Update(PaneChromeSettingsFor(projection));
+            ApplyChromeBackground(projection);
             UpdatePaneFocus();
         }
+    }
+
+    /// <summary>
+    /// Publishes the chrome fill as a resource the header bars bind to, so changing it repaints them in place
+    /// without touching their size: nothing under the chrome moves.
+    /// </summary>
+    private void ApplyChromeBackground(MainProjection projection) {
+        if (ChromeBrush.Resolve(this, projection.ChromeBackground, projection.ChromeColor) is { } brush)
+            Resources["GitKayChromeBrush"] = brush;
+    }
+
+    private void OnThemeVariantChanged(object? sender, EventArgs e) {
+        if (_projection is { } projection) ApplyChromeBackground(projection);
     }
 
     /// <summary>The Panes section of settings, as the chrome wants it.</summary>
@@ -1068,6 +1093,9 @@ public partial class MainWindow : Window, IVimCommands {
         if (_projection != null) {
             _projection.PropertyChanged += OnProjectionPropertyChanged;
             _projection.PaneChromeChanged += ApplyPaneChrome;
+            // The chrome fill is mixed from theme colours, so it is mixed again whenever the theme changes.
+            ActualThemeVariantChanged -= OnThemeVariantChanged;
+            ActualThemeVariantChanged += OnThemeVariantChanged;
             _projection.RenderedMarkdownChanged += () => {
                 DiffRowsListBox.RestoreMarkdownViewAnchor(_pendingMarkdownAnchor);
                 _pendingMarkdownAnchor = null;
