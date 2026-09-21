@@ -110,6 +110,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private const int HeaderChevronAction = 100;
     private const int HeaderContextAction = 101;
     private const int HeaderPreviewAction = 102;
+    private const int HeaderChangesOnlyAction = 103;
     private const int MaxHighlightedLineLength = 240;
     private const int MaxLayoutCacheEntries = 2048;
 
@@ -182,6 +183,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     public event EventHandler<DiffFileMenuEventArgs>? FileContextRequested;
     public event EventHandler<DiffFileProjection>? PreviewRequested;
+
+    /// <summary>The rendered file's "changes only" icon was clicked.</summary>
+    public event EventHandler<DiffFileProjection>? ChangesOnlyRequested;
     public event EventHandler<string>? RenderedLinkRequested;
     /// <summary>Raised after text is copied, with the number of lines copied (0 for part of a line).</summary>
     public event EventHandler<int>? TextCopied;
@@ -834,10 +838,21 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         return new Rect(FileLabelX + pathWidth + 8, y + FileCardTop + 5, 26, FileHeight - FileCardTop - 10);
     }
 
-    private Rect FileContextRect(DiffFileHeaderProjection file, double y) {
-        var previewOffset = IsPreviewable(file.File) ? 30 : 0;
+    /// <summary>Only while the file is rendered: it says what to do with the parts of the document that did not change.</summary>
+    private static bool HasChangesOnlyToggle(DiffFileProjection file) => file.IsRenderedMarkdown;
+
+    private Rect FileChangesOnlyRect(DiffFileHeaderProjection file, double y) {
         var rect = FilePreviewRect(file, y);
-        return new Rect(rect.X + previewOffset, rect.Y, rect.Width, rect.Height);
+        return new Rect(rect.X + (IsPreviewable(file.File) ? ActionStep : 0), rect.Y, rect.Width, rect.Height);
+    }
+
+    /// <summary>How far apart the header's action icons sit.</summary>
+    private const double ActionStep = 30;
+
+    private Rect FileContextRect(DiffFileHeaderProjection file, double y) {
+        var offset = (IsPreviewable(file.File) ? ActionStep : 0) + (HasChangesOnlyToggle(file.File) ? ActionStep : 0);
+        var rect = FilePreviewRect(file, y);
+        return new Rect(rect.X + offset, rect.Y, rect.Width, rect.Height);
     }
 
     private static bool IsPreviewable(DiffFileProjection file) =>
@@ -890,6 +905,14 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             if (IsHeaderPartActive(index, HeaderPreviewAction, out var previewPressed))
                 context.DrawRectangle(previewPressed ? ThemeBrush("GitKaySelectionBrush", SelectionBrush) : hover, null, preview, 4, 4);
             DrawPreviewIcon(context, preview, file.IsRenderedMarkdown ? ThemeBrush("GitKayAccentBrush", FileBrush) : secondary);
+        }
+
+        if (HasChangesOnlyToggle(file)) {
+            var changesOnly = FileChangesOnlyRect(header, y);
+            if (IsHeaderPartActive(index, HeaderChangesOnlyAction, out var changesOnlyPressed))
+                context.DrawRectangle(changesOnlyPressed ? ThemeBrush("GitKaySelectionBrush", SelectionBrush) : hover, null, changesOnly, 4, 4);
+            DrawChangesOnlyIcon(context, changesOnly, file.RenderedChangesOnly,
+                file.RenderedChangesOnly ? ThemeBrush("GitKayAccentBrush", FileBrush) : secondary);
         }
 
         if (HasContextToggle(file)) {
@@ -1145,6 +1168,19 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         return pressed || (_hoveredGapAction.Row == index && _hoveredGapAction.Action == action);
     }
 
+    /// <summary>Three stacked lines; filtering to changes leaves the middle one as a gap, like a collapsed section.</summary>
+    private static void DrawChangesOnlyIcon(DrawingContext context, Rect bounds, bool changesOnly, IBrush brush) {
+        var x = bounds.X + bounds.Width / 2 - 5;
+        var y = bounds.Y + bounds.Height / 2 - 4;
+        context.FillRectangle(brush, new Rect(x, y, 10, 1.5));
+        if (changesOnly) {
+            var pen = new Pen(brush, 1, dashStyle: new DashStyle(new double[] { 2, 2 }, 0));
+            context.DrawLine(pen, new Point(x, y + 4.25), new Point(x + 10, y + 4.25));
+        }
+        else context.FillRectangle(brush, new Rect(x, y + 3.5, 10, 1.5));
+        context.FillRectangle(brush, new Rect(x, y + 7, 10, 1.5));
+    }
+
     private static void DrawPreviewIcon(DrawingContext context, Rect bounds, IBrush brush) {
         var pen = new Pen(brush, 1.2, lineCap: PenLineCap.Round);
         var center = bounds.Center;
@@ -1292,6 +1328,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             if (FileChevronRect(headerTop).Contains(position)) return new GapActionHit(index, HeaderChevronAction);
             if (IsPreviewable(header.File) && FilePreviewRect(header, headerTop).Contains(position))
                 return new GapActionHit(index, HeaderPreviewAction);
+            if (HasChangesOnlyToggle(header.File) && FileChangesOnlyRect(header, headerTop).Contains(position))
+                return new GapActionHit(index, HeaderChangesOnlyAction);
             if (HasContextToggle(header.File) && FileContextRect(header, headerTop).Contains(position))
                 return new GapActionHit(index, HeaderContextAction);
             return GapActionHit.None;
@@ -2583,6 +2621,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         if (GapActionAt(e.GetPosition(this)) != pressed) return;
         if (_rows[pressed.Row] is DiffFileHeaderProjection header) {
             if (pressed.Action == HeaderPreviewAction) PreviewRequested?.Invoke(this, header.File);
+            else if (pressed.Action == HeaderChangesOnlyAction) ChangesOnlyRequested?.Invoke(this, header.File);
             else ToggleFileAnchored(header, pressed.Action == HeaderChevronAction ? ToggleFileCommand : ToggleFileContextCommand);
             e.Handled = true;
             return;

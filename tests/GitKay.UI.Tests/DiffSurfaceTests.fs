@@ -1294,3 +1294,68 @@ module CommitVocabularyTests =
             finally
                 window.Close()
                 Headless.pump ())
+
+module ChangesOnlyToggleTests =
+    /// A rendered markdown file, as the diff pane holds one.
+    let private renderedFile () =
+        // Long enough that filtering has unchanged blocks to collapse: changesOnly keeps 2 either side of a change.
+        let unchanged = [ for i in 1 .. 8 -> $"Paragraph {i} stays exactly as it was." ] |> String.concat "\n\n"
+        let source = $"# Guide\n\n{unchanged}\n\nOld line."
+        let current = $"# Guide\n\n{unchanged}\n\nNew line."
+        let model : Models.FileDiff = { OldPath = "README.md"; NewPath = "README.md"; Hunks = []; NewLineCount = None }
+        let content : RenderedMarkdownContent =
+            { File = model; DiffRows = Markdown.renderDiff source current
+              OldRows = Markdown.renderDocument source; NewRows = Markdown.renderDocument current; Images = [] }
+        let file = DiffFileProjection({ OldPath = "README.md"; NewPath = "README.md"; DisplayPath = "README.md" } : GitService.DiffFileSummary)
+        file.ApplyContent model
+        file.ApplyRenderedContent content
+        file
+
+    [<Fact>]
+    let ``the changes-only icon is offered only while the file is rendered`` () =
+        Headless.run (fun () ->
+            let file = renderedFile ()
+            let rows = AvaloniaList<IDiffRowProjection>([ file.Header :> IDiffRowProjection ])
+            let surface = DiffSurfaceControl(ItemsSource = rows, Width = 500.0)
+            let window = Window(Width = 500.0, Height = 120.0, Content = surface)
+            let asked = ResizeArray<DiffFileProjection>()
+            surface.add_ChangesOnlyRequested (fun _ f -> asked.Add f)
+            try
+                window.Show()
+                Headless.pump ()
+                // The icons sit after the path, whose width depends on the font: find the one that answers.
+                let clickAt x =
+                    let point = Point(x, 31.0)
+                    window.MouseDown(point, MouseButton.Left)
+                    window.MouseUp(point, MouseButton.Left)
+                    Headless.pump ()
+                let hit =
+                    [ 100.0 .. 2.0 .. 300.0 ]
+                    |> List.tryFind (fun x -> asked.Clear(); clickAt x; asked.Count > 0)
+                test <@ hit.IsSome @>
+
+                // Source mode has no unchanged sections to hide, so the icon is not there to click.
+                file.ClearRendered()
+                surface.InvalidateVisual()
+                Headless.pump ()
+                asked.Clear()
+                for x in [ 100.0 .. 2.0 .. 300.0 ] do clickAt x
+                test <@ List.ofSeq asked = [] @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``toggling changes only drops the unchanged blocks and puts them back`` () =
+        Headless.run (fun () ->
+            let projection = MainProjection()
+            let file = renderedFile ()
+            projection.SelectedDiffFiles.Add file
+            projection.RefreshDiffRows()
+            let whole = projection.SelectedDiffRows.Count
+            projection.ToggleRenderedChangesOnly file
+            let filtered = projection.SelectedDiffRows.Count
+            projection.ToggleRenderedChangesOnly file
+            let restored = projection.SelectedDiffRows.Count
+            test <@ file.RenderedChangesOnly = false @>
+            test <@ filtered < whole && restored = whole @>)

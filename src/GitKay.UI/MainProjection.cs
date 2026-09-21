@@ -552,6 +552,17 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public void LoadRemoteMarkdownImage(string source) =>
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewLoadRemoteMarkdownImage(source));
 
+    /// <summary>
+    /// Flips one rendered file between the whole document and only what changed. The global setting sets the
+    /// starting point; this is the per-reading decision, made where the document is being read.
+    /// </summary>
+    public void ToggleRenderedChangesOnly(DiffFileProjection file) {
+        if (!file.IsRenderedMarkdown) return;
+        file.RenderedChangesOnly = !file.RenderedChangesOnly;
+        RefreshDiffRows();
+        RenderedMarkdownChanged?.Invoke();
+    }
+
     public void ToggleRenderedMarkdown(DiffFileProjection file) {
         var enable = !file.IsRenderedMarkdown;
         var requestId = Stopwatch.GetTimestamp();

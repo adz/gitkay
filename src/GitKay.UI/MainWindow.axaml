@@ -729,6 +729,7 @@
                                                           RenderedImages="{Binding RenderedNewImages}"
                                                           RenderedImagesLoading="{Binding RenderedImagesLoading}"
                                                           FileContextRequested="OnDiffFileHeaderContextRequested"
+                                                          ChangesOnlyRequested="OnDiffFileChangesOnlyRequested"
                                                           PreviewRequested="OnDiffFilePreviewRequested"
                                                           ExpandGapCommand="{Binding ExpandDiffGapCommand}"
                                                           ToggleFileCommand="{Binding ToggleDiffFileCollapsedCommand}"

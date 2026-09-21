@@ -860,6 +860,13 @@ public partial class MainWindow : Window, IVimCommands {
         store.Save(state);
     }
 
+    private void OnDiffFileChangesOnlyRequested(object? sender, DiffFileProjection file) {
+        if (_projection is not { } projection) return;
+        // Rows come and go beneath the click, so the row being read is pinned across the change.
+        _pendingMarkdownAnchor = DiffRowsListBox.CaptureMarkdownViewAnchor();
+        projection.ToggleRenderedChangesOnly(file);
+    }
+
     private void OnDiffFilePreviewRequested(object? sender, DiffFileProjection file) {
         if (_projection is not { RepositoryPath: { } repository } projection) return;
         _pendingMarkdownAnchor = DiffRowsListBox.CaptureMarkdownViewAnchor();
