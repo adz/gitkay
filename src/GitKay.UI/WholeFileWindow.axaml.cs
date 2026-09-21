@@ -28,6 +28,7 @@ public sealed partial class WholeFileProjection : ObservableObject {
         var previewKind = GitKay.Core.Markdown.previewKind(target.Path);
         IsMarkdown = previewKind.IsMarkdownPreview;
         IsImage = previewKind.IsImagePreview;
+        _formattedAs = previewKind is GitKay.Core.PreviewKind.FormattedPreview formatted ? formatted.format : null;
         Rebuild();
     }
 
@@ -38,7 +39,10 @@ public sealed partial class WholeFileProjection : ObservableObject {
     public string DocumentPath => _target.Path;
     public bool IsMarkdown { get; }
     public bool IsImage { get; }
-    public bool IsPreviewable => (IsMarkdown || IsImage) && PreviewAvailable;
+    /// <summary>The format this file can be reformatted as for reading, or null when it cannot.</summary>
+    private readonly string? _formattedAs;
+    public bool IsFormattable => _formattedAs != null;
+    public bool IsPreviewable => (IsMarkdown || IsImage || IsFormattable) && PreviewAvailable;
     public bool IsMarkdownPreview => IsPreview && IsMarkdown;
     public bool IsImagePreview => IsPreview && IsImage;
     public AvaloniaList<IDiffRowProjection> Rows { get; } = new();
@@ -130,7 +134,29 @@ public sealed partial class WholeFileProjection : ObservableObject {
 
     private void Rebuild() {
         var rows = new List<IDiffRowProjection>();
-        if (IsPreview && IsMarkdown) {
+        if (IsPreview && _formattedAs is { } format) {
+            rows.Add(_file.Header);
+            var source = _file.WholeText(Layout.IsOldFile);
+            var formatted = GitKay.Core.Markdown.formatForPreview(format, source);
+            if (formatted.IsOk) {
+                LoadStatus = "";
+                var lines = formatted.ResultValue.Replace("\r\n", "\n").Split('\n');
+                for (var i = 0; i < lines.Length; i++)
+                    rows.Add(new DiffLineProjection(new GitKay.Core.Models.DiffLine(
+                        GitKay.Core.Models.LineType.Context, lines[i],
+                        Microsoft.FSharp.Core.FSharpOption<int>.Some(i + 1),
+                        Microsoft.FSharp.Core.FSharpOption<int>.Some(i + 1))));
+            }
+            else {
+                // A file that will not parse is shown as it is rather than as an empty pane.
+                LoadStatus = formatted.ErrorValue;
+                DiffRowBuilder.AppendFile(rows, _file, Layout);
+                Rows.Clear();
+                Rows.AddRange(rows);
+                return;
+            }
+        }
+        else if (IsPreview && IsMarkdown) {
             rows.Add(_file.Header);
             if (_renderedContent is { } content) {
                 var projected = Layout.IsOldFile ? content.OldRows : Layout.IsNewFile ? content.NewRows : content.DiffRows;

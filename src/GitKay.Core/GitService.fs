@@ -1306,7 +1306,7 @@ module GitService =
                 let revision, path = if newPath = "/dev/null" then comparison.BaseHash, oldPath else comparison.TargetHash, newPath
                 let! bytes = revisionBlobBytes repoPath revision path
                 return { File = file; Rendered = None; ImageBytes = Some bytes }
-            | SourceOnly ->
+            | FormattedPreview _ | SourceOnly ->
                 use repo = new Repository(repoPath)
                 let! oldSource = revisionBlobText repo comparison.BaseHash oldPath
                 let! newSource = revisionBlobText repo comparison.TargetHash newPath
@@ -1372,7 +1372,7 @@ module GitService =
                 let! file = loadWholeFile repoPath hash oldPath newPath
                 let! bytes = loadChangedFileBytes repoPath hash oldPath newPath
                 return { File = file; Rendered = None; ImageBytes = Some bytes }
-            | SourceOnly ->
+            | FormattedPreview _ | SourceOnly ->
                 let! file = loadWholeFile repoPath hash oldPath newPath
                 return { File = file; Rendered = None; ImageBytes = None }
         }
@@ -1389,7 +1389,7 @@ module GitService =
                 let path = if newPath = "/dev/null" then oldPath else newPath
                 let! bytes = loadWorkingTreeSideFileBytes repoPath section false path
                 return { File = file; Rendered = None; ImageBytes = Some bytes }
-            | SourceOnly ->
+            | FormattedPreview _ | SourceOnly ->
                 let! file = loadWorkingTreeFile repoPath section oldPath newPath
                 return { File = file; Rendered = None; ImageBytes = None }
         }

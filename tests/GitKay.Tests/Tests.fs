@@ -3971,6 +3971,25 @@ module SettingsSerializationTests =
         test <@ (decoded """{"PaneGap":0,"PaneFocusEffect":"none"}""") = { Settings.defaults with PaneGap = 0.0; PaneFocusEffect = NoPaneEffect } @>
 
     [<Fact>]
+    let ``json previews as indented text and unreadable json stays as it is`` () =
+        test <@ Markdown.previewKind "config.json" = FormattedPreview "json" @>
+        // The extra markdown spellings are previewed too.
+        test <@ Markdown.previewKind "notes.mdown" = MarkdownPreview && Markdown.previewKind "notes.mkd" = MarkdownPreview @>
+        test <@ Markdown.previewKind "main.fs" = SourceOnly @>
+
+        // One long line is exactly the file a preview is for.
+        let formatted = Markdown.formatForPreview "json" """{"a":1,"b":[2,3]}"""
+        match formatted with
+        | Ok text ->
+            test <@ text.Split('\n').Length > 1 @>
+            test <@ text.Contains "  \"a\": 1" @>
+        | Error message -> failwith message
+
+        // A file that will not parse is reported rather than replaced with nothing.
+        test <@ Markdown.formatForPreview "json" "{ not json" |> Result.isError @>
+        test <@ Markdown.formatForPreview "yaml" "a: 1" |> Result.isError @>
+
+    [<Fact>]
     let ``forgetting per-file preview choices clears only those keys`` () =
         let state =
             UiState.empty

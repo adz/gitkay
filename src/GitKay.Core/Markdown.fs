@@ -123,6 +123,8 @@ type RenderedMarkdownContent =
 type PreviewKind =
     | MarkdownPreview
     | ImagePreview of format: string
+    /// <summary>Source that is easier to read reformatted, such as JSON written on one line.</summary>
+    | FormattedPreview of format: string
     | SourceOnly
 
 [<RequireQualifiedAccess>]
@@ -490,9 +492,27 @@ module Markdown =
 
     let previewKind (path: string) =
         match IO.Path.GetExtension(path).ToLowerInvariant() with
-        | ".md" | ".markdown" -> MarkdownPreview
+        | ".md" | ".markdown" | ".mdown" | ".mkd" -> MarkdownPreview
         | ".png" | ".jpg" | ".jpeg" | ".gif" | ".bmp" | ".webp" as format -> ImagePreview(format.TrimStart '.')
+        | ".json" -> FormattedPreview "json"
         | _ -> SourceOnly
+
+    /// <summary>
+    /// Reformats a document for reading. Minified JSON is one enormous line; indenting it is the whole point of
+    /// previewing it. Anything that will not parse is left exactly as it was, so a preview never hides the file.
+    /// </summary>
+    let formatForPreview (format: string) (text: string) =
+        match format with
+        | "json" when not (String.IsNullOrWhiteSpace text) ->
+            try
+                use document = Text.Json.JsonDocument.Parse(text, Text.Json.JsonDocumentOptions(AllowTrailingCommas = true, CommentHandling = Text.Json.JsonCommentHandling.Skip))
+                use stream = new IO.MemoryStream()
+                use writer = new Text.Json.Utf8JsonWriter(stream, Text.Json.JsonWriterOptions(Indented = true))
+                document.WriteTo writer
+                writer.Flush()
+                Ok(Text.Encoding.UTF8.GetString(stream.ToArray()))
+            with _ -> Error "This file is not valid JSON"
+        | _ -> Error "Nothing to reformat"
 
     let resolveTarget (documentPath: string) (target: string) =
         if String.IsNullOrWhiteSpace target then InvalidTarget target

@@ -344,7 +344,7 @@ public partial class MainWindow : Window, IVimCommands {
         var ctrlShift = KeyModifiers.Control | KeyModifiers.Shift;
         if (e.Key == Key.P && e.KeyModifiers == ctrlShift) { OpenPalette(PaletteMode.Commands); e.Handled = true; return; }
         if (e.Key == Key.V && e.KeyModifiers == ctrlShift && IsDiffPaneFocused && _projection?.SelectedDiffFile is { } markdownFile
-            && !GitKay.Core.Markdown.previewKind(markdownFile.ContentPath).IsSourceOnly) {
+            && GitKay.Core.Markdown.previewKind(markdownFile.ContentPath).IsMarkdownPreview) {
             OnDiffFilePreviewRequested(this, markdownFile); e.Handled = true; return;
         }
         if (e.Key == Key.P && e.KeyModifiers == KeyModifiers.Control) { OpenPalette(PaletteMode.Files); e.Handled = true; return; }
@@ -1240,7 +1240,7 @@ public partial class MainWindow : Window, IVimCommands {
 
         if (e.PropertyName == nameof(MainProjection.SelectedDiffFile)
             && _projection is { RepositoryPath: { } repository, SelectedDiffFile: { IsRenderedMarkdown: false } file } markdownProjection
-            && !GitKay.Core.Markdown.previewKind(file.ContentPath).IsSourceOnly) {
+            && GitKay.Core.Markdown.previewKind(file.ContentPath).IsMarkdownPreview) {
             var desired = MarkdownPreviewPreference(repository, file.ContentPath) ?? markdownProjection.RenderMarkdownByDefault;
             if (desired)
                 Dispatcher.UIThread.Post(() => {

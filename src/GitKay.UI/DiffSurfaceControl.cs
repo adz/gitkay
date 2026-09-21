@@ -855,8 +855,12 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         return new Rect(rect.X + offset, rect.Y, rect.Width, rect.Height);
     }
 
+    /// <summary>
+    /// The header's preview icon renders markdown in place. Images and reformatted source are previewed in the
+    /// whole-file window instead, so offering the icon for them would toggle a rendering they cannot have.
+    /// </summary>
     private static bool IsPreviewable(DiffFileProjection file) =>
-        !GitKay.Core.Markdown.previewKind(file.ContentPath).IsSourceOnly;
+        GitKay.Core.Markdown.previewKind(file.ContentPath).IsMarkdownPreview;
 
     private static bool HasContextToggle(DiffFileProjection file) =>
         file.IsLoaded && (file.HasHiddenContext || file.HasRevealedContext);
