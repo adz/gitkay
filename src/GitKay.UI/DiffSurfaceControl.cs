@@ -1628,12 +1628,78 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private const double ImagePadding = 16;
 
     private Size ImageDrawSize(ImagePreviewRowProjection image) {
-        var available = Math.Max(1, Bounds.Width - 2 * ImagePadding);
         var pixels = image.Image.PixelSize;
         if (pixels.Width <= 0 || pixels.Height <= 0) return new Size(0, 0);
-        // Never blown up past its own pixels: an enlarged image says something about the file that is not true.
-        var scale = Math.Min(1, available / pixels.Width);
+        var scale = image.Zoom > 0 ? image.Zoom : FitScale(image);
         return new Size(pixels.Width * scale, pixels.Height * scale);
+    }
+
+    /// <summary>
+    /// The width rows are laid out against. Bounds are not set during the first measure, and a picture sized from
+    /// a zero width would measure one pixel tall and only correct itself on a later pass.
+    /// </summary>
+    private double ContentWidth => _measurementWidth > 0 ? _measurementWidth : Bounds.Width;
+
+    /// <summary>Fitted to the pane, but never blown up past its own pixels: an enlarged image misreports the file.</summary>
+    private double FitScale(ImagePreviewRowProjection image) {
+        var available = Math.Max(1, ContentWidth - 2 * ImagePadding);
+        return Math.Min(1, available / image.Image.PixelSize.Width);
+    }
+
+    /// <summary>
+    /// Zooms one image about the middle of the viewport, keeping its top where it is so the page does not jump
+    /// under the pointer as the row grows or shrinks.
+    /// </summary>
+    private void ZoomImage(ImagePreviewRowProjection image, int direction) {
+        var index = Array.IndexOf(_rows, image);
+        if (index < 0) return;
+        var current = image.Zoom > 0 ? image.Zoom : FitScale(image);
+        var next = direction == 0
+            ? 0
+            : Math.Clamp(direction > 0 ? current * ImagePreviewRowProjection.ZoomStep : current / ImagePreviewRowProjection.ZoomStep,
+                         ImagePreviewRowProjection.MinZoom, ImagePreviewRowProjection.MaxZoom);
+        if (Math.Abs(next - image.Zoom) < 0.0001) return;
+
+        if (_scrollViewer != null)
+            _pendingAnchor = new ViewportAnchor(null, null, "", _tops[index] - _scrollViewer.Offset.Y, image);
+        image.Zoom = next;
+        if (next == 0 || ImageDrawSize(image).Width <= ContentWidth) SetHorizontalOffset(0);
+        // Row heights are only recomputed when the pane's width changes; this changes one row's height on its own.
+        ComputeTops();
+        InvalidateOverview();
+        InvalidateMeasure();
+        InvalidateVisual();
+        RestoreViewportAnchor();
+    }
+
+    /// <summary>
+    /// Dragging a picture moves the picture, the way every image viewer works — not a text selection, which is
+    /// what a drag means everywhere else in this pane. The row under the press decides which it is.
+    /// </summary>
+    private ImagePreviewRowProjection? _panningImage;
+    private Point _panFrom;
+    private double _panFromHorizontal;
+    private double _panFromVertical;
+
+    private void BeginImagePan(ImagePreviewRowProjection image, Point position, IPointer pointer) {
+        _panningImage = image;
+        _panFrom = position;
+        _panFromHorizontal = _horizontalOffset;
+        _panFromVertical = _scrollViewer?.Offset.Y ?? 0;
+        pointer.Capture(this);
+        Cursor = new Cursor(StandardCursorType.SizeAll);
+    }
+
+    private void UpdateImagePan(Point position) {
+        // The picture follows the pointer: dragging left moves the view right.
+        SetHorizontalOffset(_panFromHorizontal - (position.X - _panFrom.X));
+        if (_scrollViewer != null)
+            SetOffsetWithoutScrolling(Math.Max(0, _panFromVertical - (position.Y - _panFrom.Y)));
+    }
+
+    private ImagePreviewRowProjection? ImageRowAt(Point position) {
+        var index = RowAt(position, out _);
+        return (uint)index < (uint)_rows.Length ? _rows[index] as ImagePreviewRowProjection : null;
     }
 
     private double ImageRowHeight(ImagePreviewRowProjection image) =>
@@ -1641,7 +1707,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     private void DrawImagePreview(DrawingContext context, ImagePreviewRowProjection image, double y) {
         var size = ImageDrawSize(image);
-        var x = Math.Max(ImagePadding, (Bounds.Width - size.Width) / 2);
+        var x = Math.Max(ImagePadding, (Bounds.Width - size.Width) / 2) - _horizontalOffset;
         var top = y + ImagePadding;
         if (size.Width > 0 && size.Height > 0) {
             // A chequer behind it, so a transparent PNG does not read as whatever the theme is behind it.
@@ -1653,6 +1719,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
         var caption = image.IsOldSide ? image.Metadata + "  ·  as it was before deletion" : image.Metadata;
         var layout = Layout(caption, 11, ThemeBrush("GitKayMutedTextBrush", HunkBrush), false);
+        // The caption stays put while the picture pans under it: it describes the file, not the part on screen.
         context.DrawText(layout, new Point(Math.Max(ImagePadding, (Bounds.Width - layout.Width) / 2), top + size.Height + 10));
     }
 
@@ -1805,6 +1872,11 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     protected override void OnPointerMoved(PointerEventArgs e) {
         base.OnPointerMoved(e);
         TrackExpandAll(e.KeyModifiers);
+        if (_panningImage != null) {
+            UpdateImagePan(e.GetPosition(this));
+            return;
+        }
+
         if (_selectingText) {
             UpdateTextSelection(e.GetPosition(this));
             return;
@@ -1826,7 +1898,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         if (hit == _hoveredGapAction && overLink == _hoveredRenderedLink) return;
         _hoveredGapAction = hit;
         _hoveredRenderedLink = overLink;
-        Cursor = !hit.IsNone || overLink ? new Cursor(StandardCursorType.Hand) : Cursor.Default;
+        Cursor = !hit.IsNone || overLink ? new Cursor(StandardCursorType.Hand)
+            : ImageRowAt(point) != null ? new Cursor(StandardCursorType.SizeAll)
+            : Cursor.Default;
         InvalidateVisual();
     }
 
@@ -1880,6 +1954,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
                 ToggleFileAnchored(clickedHeader, ToggleFileCommand);
             if ((uint)index < (uint)_rows.Length && _rows[index] is DiffLineProjection or RenderedMarkdownRowProjection)
                 BeginTextSelection(index, position, e.ClickCount, e.KeyModifiers.HasFlag(KeyModifiers.Shift), e.Pointer);
+            else if ((uint)index < (uint)_rows.Length && _rows[index] is ImagePreviewRowProjection image
+                     && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+                BeginImagePan(image, position, e.Pointer);
         }
         e.Handled = true;
     }
@@ -2032,6 +2109,10 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         var end = Math.Min(_rows.Length, FindRow(top + height) + 1);
         var widest = 0.0;
         for (var index = start; index < end; index++) {
+            if (_rows[index] is ImagePreviewRowProjection image) {
+                widest = Math.Max(widest, ImageDrawSize(image).Width + 2 * ImagePadding - ContentWidth);
+                continue;
+            }
             if (_rows[index] is not DiffLineProjection line) continue;
             if (DiffLayout.IsSideBySide) {
                 widest = Math.Max(widest, TextWidth(line.OldContent) - ColumnWidth(0));
@@ -2514,7 +2595,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e) {
         if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.Delta.Y != 0) {
-            CodeFontSize = Math.Clamp(CodeFontSize + Math.Sign(e.Delta.Y), 7, 32);
+            // Over a picture, the code font size means nothing; zoom what is actually under the pointer.
+            if (ImageRowAt(e.GetPosition(this)) is { } image) ZoomImage(image, Math.Sign(e.Delta.Y));
+            else CodeFontSize = Math.Clamp(CodeFontSize + Math.Sign(e.Delta.Y), 7, 32);
             e.Handled = true;
             return;
         }
@@ -2544,6 +2627,21 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
     protected override void OnKeyDown(KeyEventArgs e) {
         TrackExpandAll(e.KeyModifiers | (e.Key is Key.LeftCtrl or Key.RightCtrl ? KeyModifiers.Control : KeyModifiers.None));
+        // With a picture selected, the zoom keys zoom it; 0 puts it back to fitting the pane.
+        if (SelectedItem is ImagePreviewRowProjection selectedImage && !e.KeyModifiers.HasFlag(KeyModifiers.Alt)) {
+            var zoom = e.Key switch {
+                Key.OemPlus or Key.Add => 1,
+                Key.OemMinus or Key.Subtract => -1,
+                Key.D0 or Key.NumPad0 => 0,
+                _ => (int?)null,
+            };
+            if (zoom is { } direction) {
+                ZoomImage(selectedImage, direction);
+                e.Handled = true;
+                return;
+            }
+        }
+
         // Inside the main window, the window sends keys to its shared session before they reach this view.
         if (SharedVim == null && _ownVim.Handle(this, VimKeys.From(e))) {
             e.Handled = true;
@@ -2639,6 +2737,13 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             var link = _renderedLinks.FirstOrDefault(candidate => candidate.Bounds.Contains(point));
             if (!string.IsNullOrEmpty(link.Target)) { RenderedLinkRequested?.Invoke(this, link.Target); e.Handled = true; return; }
         }
+        if (_panningImage != null) {
+            _panningImage = null;
+            e.Pointer.Capture(null);
+            Cursor = Cursor.Default;
+            return;
+        }
+
         if (_selectingText) {
             _selectingText = false;
             e.Pointer.Capture(null);

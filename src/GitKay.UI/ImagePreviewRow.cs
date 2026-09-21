@@ -8,12 +8,24 @@ namespace GitKay.UI;
 /// and telling them apart is the reader's job, not a line-by-line diff's. Deleted images show the side that existed.
 /// </summary>
 public sealed class ImagePreviewRowProjection : IDiffRowProjection {
-    public ImagePreviewRowProjection(Bitmap image, string path, int byteCount, bool isOldSide) {
+    public ImagePreviewRowProjection(Bitmap image, string path, int byteCount, bool isOldSide, DiffFileProjection file) {
         Image = image;
         Path = path;
         ByteCount = byteCount;
         IsOldSide = isOldSide;
+        File = file;
     }
+
+    /// <summary>The file this picture belongs to, which holds the zoom across re-projections of the rows.</summary>
+    public DiffFileProjection File { get; }
+
+    /// <summary>0 fits the picture to the pane; otherwise a scale against its own pixels.</summary>
+    public double Zoom { get => File.PreviewImageZoom; set => File.PreviewImageZoom = value; }
+
+    /// <summary>The smallest and largest the picture goes, and how far one step of zoom moves it.</summary>
+    public const double MinZoom = 0.1;
+    public const double MaxZoom = 16;
+    public const double ZoomStep = 1.25;
 
     public Bitmap Image { get; }
     public string Path { get; }
@@ -35,7 +47,9 @@ public sealed class ImagePreviewRowProjection : IDiffRowProjection {
             // Density is only worth showing when it is not the default the decoder assumes.
             var dpi = Math.Round(Image.Dpi.X);
             if (dpi > 0 && Math.Abs(dpi - 96) > 0.5) parts += $"  ·  {dpi:0} dpi";
-            return $"{parts}  ·  {DescribeBytes(ByteCount)}";
+            var caption = $"{parts}  ·  {DescribeBytes(ByteCount)}";
+            // Only once it is not showing the whole picture at its fitted size: a percentage on every image is noise.
+            return Zoom > 0 ? $"{caption}  ·  {Zoom * 100:0}%" : caption;
         }
     }
 

@@ -61,6 +61,12 @@ public partial class DiffFileProjection : ObservableObject {
     /// <summary>The file is showing its reformatted text rather than the source as committed.</summary>
     [ObservableProperty] private bool _isFormattedPreview;
 
+    /// <summary>
+    /// How far the previewed image is zoomed: 0 fits it to the pane, anything else is a scale against its own
+    /// pixels, so 1 is actual size. Kept on the file, so a picture stays where you put it while you read around it.
+    /// </summary>
+    public double PreviewImageZoom { get; set; }
+
     /// <summary>The decoded image this file is previewed as, when it is an image.</summary>
     public Avalonia.Media.Imaging.Bitmap? PreviewImage { get; private set; }
     private int _previewImageBytes;
@@ -71,6 +77,7 @@ public partial class DiffFileProjection : ObservableObject {
         PreviewImage?.Dispose();
         PreviewImage = image;
         _previewImageBytes = byteCount;
+        PreviewImageZoom = 0;
         OnPropertyChanged(nameof(IsImagePreview));
     }
 
@@ -84,7 +91,7 @@ public partial class DiffFileProjection : ObservableObject {
 
     /// <summary>The single row an image preview is: the picture and what can be read off it.</summary>
     public ImagePreviewRowProjection? ImageRow =>
-        PreviewImage is { } image ? new ImagePreviewRowProjection(image, ContentPath, _previewImageBytes, Key.NewPath == "/dev/null") : null;
+        PreviewImage is { } image ? new ImagePreviewRowProjection(image, ContentPath, _previewImageBytes, Key.NewPath == "/dev/null", this) : null;
     [ObservableProperty] private bool _renderedChangesOnly;
     /// <summary>Label and indent for the changed-files list: full path in patch mode, file name in tree mode.</summary>
     [ObservableProperty] private string _listLabel = "";

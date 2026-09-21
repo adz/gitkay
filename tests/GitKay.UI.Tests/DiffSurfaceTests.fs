@@ -1486,3 +1486,85 @@ module ImagePreviewTests =
         test <@ ImagePreviewRowProjection.DescribeBytes 512L = "512 B" @>
         test <@ ImagePreviewRowProjection.DescribeBytes 2048L = "2 KB" @>
         test <@ ImagePreviewRowProjection.DescribeBytes (3L * 1024L * 1024L) = "3 MB" @>
+
+module ImageZoomTests =
+    let private pngBytes (width: int) (height: int) =
+        use bitmap = new SkiaSharp.SKBitmap(width, height, true)
+        use image = SkiaSharp.SKImage.FromBitmap bitmap
+        use data = image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100)
+        data.ToArray()
+
+    /// A diff surface showing one image file, wide enough to need scaling down to fit.
+    let private imageSurface () =
+        let bytes = pngBytes 800 600
+        let file = DiffFileProjection({ OldPath = "docs/logo.png"; NewPath = "docs/logo.png"; DisplayPath = "docs/logo.png" } : GitService.DiffFileSummary)
+        file.ApplyContent({ OldPath = "docs/logo.png"; NewPath = "docs/logo.png"; Hunks = []; NewLineCount = None } : Models.FileDiff)
+        file.ApplyPreviewImage(new Media.Imaging.Bitmap(new IO.MemoryStream(bytes)), bytes.Length)
+        let row = file.ImageRow :> IDiffRowProjection
+        let rows = AvaloniaList<IDiffRowProjection>([ row ])
+        let surface = DiffSurfaceControl(ItemsSource = rows, Width = 400.0)
+        let window = Window(Width = 400.0, Height = 500.0, Content = ScrollViewer(Content = surface))
+        window, surface, file, (row :?> ImagePreviewRowProjection)
+
+    [<Fact>]
+    let ``ctrl and the wheel zoom the picture rather than the code font`` () =
+        Headless.run (fun () ->
+            let window, surface, file, row = imageSurface ()
+            try
+                window.Show()
+                window.UpdateLayout()
+                Headless.pump ()
+                let fontBefore = surface.CodeFontSize
+                let heightBefore = surface.DesiredSize.Height
+
+                window.MouseWheel(Point(200.0, 100.0), Vector(0.0, 1.0), RawInputModifiers.Control)
+                window.UpdateLayout()
+                Headless.pump ()
+
+                // The picture grew and the code font did not: over an image, font size means nothing.
+                test <@ file.PreviewImageZoom > 0.0 @>
+                test <@ surface.CodeFontSize = fontBefore @>
+                test <@ surface.DesiredSize.Height > heightBefore @>
+
+                // Zooming out again, then back to fitting the pane.
+                let zoomedIn = file.PreviewImageZoom
+                window.MouseWheel(Point(200.0, 100.0), Vector(0.0, -1.0), RawInputModifiers.Control)
+                Headless.pump ()
+                test <@ file.PreviewImageZoom < zoomedIn @>
+
+                surface.Focus() |> ignore
+                surface.SelectedItem <- row
+                window.KeyPress(Key.D0, RawInputModifiers.None, PhysicalKey.None, "0")
+                Headless.pump ()
+                test <@ file.PreviewImageZoom = 0.0 @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``dragging a picture pans it instead of selecting text`` () =
+        Headless.run (fun () ->
+            let window, surface, file, _ = imageSurface ()
+            try
+                window.Show()
+                window.UpdateLayout()
+                Headless.pump ()
+                // Zoomed past the pane there is somewhere to pan to.
+                file.PreviewImageZoom <- 4.0
+                surface.InvalidateMeasure()
+                window.UpdateLayout()
+                Headless.pump ()
+
+                window.MouseDown(Point(200.0, 100.0), MouseButton.Left)
+                window.MouseMove(Point(120.0, 100.0))
+                Headless.pump ()
+                let panned = surface.HorizontalOffset
+                window.MouseUp(Point(120.0, 100.0), MouseButton.Left)
+                Headless.pump ()
+
+                // Dragging left moved the view right, and no text selection was started.
+                test <@ panned > 0.0 @>
+                test <@ not surface.HasTextSelection @>
+            finally
+                window.Close()
+                Headless.pump ())
