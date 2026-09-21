@@ -1860,3 +1860,30 @@ module PreviewByDefaultTests =
             file.ClearFormatted()
             test <@ not file.IsFormattedPreview @>
             test <@ (file.Hunks |> Seq.collect _.Lines |> Seq.head).Content = """{"a":1}""" @>)
+
+module CommitWindowSelectionTests =
+    /// A file that was staged line by line sits in both lists at once.
+    let private row (staged: bool) path : CommitFileRow =
+        let list = if staged then CommitWindow.ListKind.StagedList else CommitWindow.ListKind.UnstagedList
+        let diff : Models.FileDiff = { OldPath = path; NewPath = path; Hunks = []; NewLineCount = None }
+        CommitFileRow(list, diff, false)
+
+    [<Fact>]
+    let ``selecting one side of a split file releases the other side's highlight`` () =
+        Headless.run (fun () ->
+            let projection = CommitWindowProjection("test-repo")
+            let unstaged = row false "a.txt"
+            let staged = row true "a.txt"
+            projection.UnstagedFiles.Add unstaged
+            projection.StagedFiles.Add staged
+
+            // The unstaged copy is selected: the list control holds it.
+            projection.SelectedUnstaged <- unstaged
+            test <@ Object.ReferenceEquals(projection.SelectedUnstagedRow, unstaged) @>
+
+            // Selecting the staged copy must let go of the unstaged one, or clicking it again raises nothing and
+            // the file cannot be reached.
+            projection.SelectedStaged <- staged
+            projection.SelectedUnstaged <- null
+            test <@ isNull (box projection.SelectedUnstagedRow) @>
+            test <@ Object.ReferenceEquals(projection.SelectedStagedRow, staged) @>)

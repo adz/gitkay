@@ -211,6 +211,9 @@ public partial class MainWindow : Window, IVimCommands {
 
     private void OnPaneHovered(Pane pane) {
         _hoveredPane = pane;
+        // Never while another window has the keys: focusing a control here activates this window, so the pointer
+        // merely crossing the history on its way somewhere else would pull the commit window out from under it.
+        if (!IsActive) return;
         if (_projection is not { HoverToFocus: true } projection || projection.IsPaletteOpen || projection.IsShortcutHelpOpen) return;
         if (TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox) return;
         if (FocusedPane != pane) FocusPane(pane);

@@ -477,12 +477,15 @@ public sealed partial class CommitWindowProjection : ObservableObject {
     }
 
     partial void OnSelectedUnstagedChanged(CommitFileRow? value) {
-        if (value != null && !ReferenceEquals(SelectedUnstagedRow, value)) SelectedUnstagedRow = value;
+        // Including when it becomes nothing. A file staged line by line sits in both lists, and a list still
+        // holding its row as SelectedItem raises nothing when that row is clicked again: the file would be
+        // unreachable until something else was selected first.
+        if (!ReferenceEquals(SelectedUnstagedRow, value)) SelectedUnstagedRow = value;
         if (!_syncing && value != null) _dispatch?.Invoke(CoreWindow.Msg.NewSelect(value.List, value.Path));
     }
 
     partial void OnSelectedStagedChanged(CommitFileRow? value) {
-        if (value != null && !ReferenceEquals(SelectedStagedRow, value)) SelectedStagedRow = value;
+        if (!ReferenceEquals(SelectedStagedRow, value)) SelectedStagedRow = value;
         if (!_syncing && value != null) _dispatch?.Invoke(CoreWindow.Msg.NewSelect(value.List, value.Path));
     }
 
@@ -611,6 +614,25 @@ public sealed partial class CommitWindowProjection : ObservableObject {
         else
             _dispatch?.Invoke(CoreWindow.Msg.NewDiscardPaths(ListModule.OfSeq([file.Path]), FSharpList<string>.Empty));
     }
+
+    /// <summary>
+    /// Throws away a staged file's changes without making the reader unstage it first. Staged and unstaged are two
+    /// views of one file, and "undo this change" is a reasonable thing to ask from either of them.
+    /// </summary>
+    [RelayCommand]
+    private async Task DiscardStaged() {
+        if (SelectedFile is not { List.IsStagedList: true } file) return;
+        if (ConfirmDiscard != null
+            && !await ConfirmDiscard($"Discard all changes to {file.Label}, staged and unstaged? This can't be undone.")) return;
+
+        var paths = ListModule.OfSeq(Paths(file));
+        // Unstaged first, or the discard would leave the staged copy behind.
+        _dispatch?.Invoke(CoreWindow.Msg.NewUnstagePaths(paths));
+        if (file.IsUntracked) _dispatch?.Invoke(CoreWindow.Msg.NewDiscardPaths(FSharpList<string>.Empty, paths));
+        else _dispatch?.Invoke(CoreWindow.Msg.NewDiscardPaths(paths, FSharpList<string>.Empty));
+    }
+
+    public void DiscardStagedFromMenu() => DiscardStagedCommand.Execute(null);
 
     /// <summary>Puts back what the last discard threw away.</summary>
     [RelayCommand]
@@ -1036,6 +1058,7 @@ public partial class CommitWindow : Window, IVimCommands {
         }
         else {
             Add("Unstage file", "Ctrl+U", () => projection.ToggleFile(row));
+            Add("Discard changes…", null, projection.DiscardStagedFromMenu);
             menu.Items.Add(new Separator());
             Add("Unstage all", null, () => projection.UnstageAllCommand.Execute(null), projection.StagedFiles.Count > 0);
         }
