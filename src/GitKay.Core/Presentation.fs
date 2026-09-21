@@ -13,6 +13,12 @@ module Presentation =
             elif count < 1024L * 1024L then $"%.1f{float count / 1024.0} KB".Replace(".0 KB", " KB")
             else $"%.2f{float count / (1024.0 * 1024.0)} MB".Replace(".00 MB", " MB")
 
+    /// <summary>What a zoom gesture asks for. "Fit" is a state, not a scale, so it is a case rather than a number.</summary>
+    type ZoomChange =
+        | ZoomIn
+        | ZoomOut
+        | ZoomToFit
+
     /// One image shown at a size the reader chose, or fitted to the room there is.
     module ImageView =
         /// <summary>The smallest and largest an image goes, and how far one step of zoom moves it.</summary>
@@ -29,12 +35,12 @@ module Presentation =
         let scale (zoom: float) (available: float) (pixelWidth: int) =
             if zoom > 0.0 then zoom else fitScale available pixelWidth
 
-        /// <summary>Where one step of zoom lands. Zero means "fit", which is a state, not a scale.</summary>
-        let step (direction: int) (current: float) =
-            if direction = 0 then 0.0
-            else
-                let next = if direction > 0 then current * zoomStep else current / zoomStep
-                Math.Clamp(next, minZoom, maxZoom)
+        /// <summary>Where one step of zoom lands. Fitting is returned as zero, which every caller reads as "fit".</summary>
+        let step (change: ZoomChange) (current: float) =
+            match change with
+            | ZoomToFit -> 0.0
+            | ZoomIn -> Math.Clamp(current * zoomStep, minZoom, maxZoom)
+            | ZoomOut -> Math.Clamp(current / zoomStep, minZoom, maxZoom)
 
         /// <summary>The drawn size of an image at a scale.</summary>
         let drawnSize (scale: float) (pixelWidth: int, pixelHeight: int) =

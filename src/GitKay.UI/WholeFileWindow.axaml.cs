@@ -40,7 +40,7 @@ public sealed partial class WholeFileProjection : ObservableObject {
     public bool IsMarkdown { get; }
     public bool IsImage { get; }
     /// <summary>The format this file can be reformatted as for reading, or null when it cannot.</summary>
-    private readonly string? _formattedAs;
+    private readonly GitKay.Core.PreviewFormat? _formattedAs;
     public bool IsFormattable => _formattedAs != null;
     public bool IsPreviewable => (IsMarkdown || IsImage || IsFormattable) && PreviewAvailable;
     public bool IsMarkdownPreview => IsPreview && IsMarkdown;

@@ -1318,17 +1318,17 @@ module GitService =
     /// the preview diffs the indented text instead. Whole sides are needed, not the hunks around the changes, or
     /// neither side would parse.
     /// </summary>
-    let private formattedDiff (format: string) oldPath newPath (file: Models.FileDiff) =
+    let private formattedDiff (format: PreviewFormat) oldPath newPath (file: Models.FileDiff) =
         let lines oldSide =
             file.Hunks |> List.collect _.Lines
             |> List.filter (fun line -> if oldSide then line.Type <> Added else line.Type <> Removed)
             |> List.map _.Content |> String.concat "\n"
-        let format side =
+        let reformat side =
             let source = lines side
             // An empty side is one the file did not have: added and deleted files format the side that exists.
             if String.IsNullOrWhiteSpace source then Ok ""
             else Markdown.formatForPreview format source
-        match format true, format false with
+        match reformat true, reformat false with
         | Ok oldText, Ok newText -> Ok(fileDiffFromSources oldPath newPath oldText newText)
         | Error message, _ | _, Error message -> Error(GitError.OperationFailed("Preview", message))
 

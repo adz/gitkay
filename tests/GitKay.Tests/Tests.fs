@@ -3973,13 +3973,13 @@ module SettingsSerializationTests =
 
     [<Fact>]
     let ``json previews as indented text and unreadable json stays as it is`` () =
-        test <@ Markdown.previewKind "config.json" = FormattedPreview "json" @>
+        test <@ Markdown.previewKind "config.json" = FormattedPreview JsonFormat @>
         // The extra markdown spellings are previewed too.
         test <@ Markdown.previewKind "notes.mdown" = MarkdownPreview && Markdown.previewKind "notes.mkd" = MarkdownPreview @>
         test <@ Markdown.previewKind "main.fs" = SourceOnly @>
 
         // One long line is exactly the file a preview is for.
-        let formatted = Markdown.formatForPreview "json" """{"a":1,"b":[2,3]}"""
+        let formatted = Markdown.formatForPreview JsonFormat """{"a":1,"b":[2,3]}"""
         match formatted with
         | Ok text ->
             test <@ text.Split('\n').Length > 1 @>
@@ -3987,8 +3987,9 @@ module SettingsSerializationTests =
         | Error message -> failwith message
 
         // A file that will not parse is reported rather than replaced with nothing.
-        test <@ Markdown.formatForPreview "json" "{ not json" |> Result.isError @>
-        test <@ Markdown.formatForPreview "yaml" "a: 1" |> Result.isError @>
+        test <@ Markdown.formatForPreview JsonFormat "{ not json" |> Result.isError @>
+        // A format with no formatter is no longer expressible: PreviewFormat is closed over the ones that exist.
+        test <@ Markdown.formatForPreview JsonFormat "" |> Result.isError @>
 
     [<Fact>]
     let ``forgetting per-file preview choices clears only those keys`` () =
@@ -4196,7 +4197,7 @@ module FormattedPreviewTests =
         let oldSource = """{"name":"gitkay","version":"0.10.0","tags":["git","viewer"]}"""
         let newSource = """{"name":"gitkay","version":"0.11.0","tags":["git","viewer"]}"""
         let formatted source =
-            match Markdown.formatForPreview "json" source with
+            match Markdown.formatForPreview JsonFormat source with
             | Ok text -> text
             | Error message -> failwith message
         let oldText, newText = formatted oldSource, formatted newSource
@@ -4213,14 +4214,14 @@ module XmlPreviewTests =
     open GitKay.Core
 
     let private formatted source =
-        match Markdown.formatForPreview "xml" source with
+        match Markdown.formatForPreview XmlFormat source with
         | Ok text -> text
         | Error message -> failwith message
 
     [<Fact>]
     let ``xml previews with one fixed shape whatever indentation it was committed with`` () =
-        test <@ Markdown.previewKind "App.axaml" = FormattedPreview "xml" @>
-        test <@ Markdown.previewKind "GitKay.UI.csproj" = FormattedPreview "xml" @>
+        test <@ Markdown.previewKind "App.axaml" = FormattedPreview XmlFormat @>
+        test <@ Markdown.previewKind "GitKay.UI.csproj" = FormattedPreview XmlFormat @>
         test <@ Markdown.previewKind "notes.txt" = SourceOnly @>
 
         let minified = """<?xml version="1.0" encoding="utf-8"?><Project Sdk="x"><PropertyGroup><A>1</A><B>2</B></PropertyGroup></Project>"""
@@ -4237,8 +4238,8 @@ module XmlPreviewTests =
 
     [<Fact>]
     let ``xml that is not well formed is reported rather than shown as empty`` () =
-        test <@ Markdown.formatForPreview "xml" "<a><b></a>" |> Result.isError @>
-        test <@ Markdown.formatForPreview "xml" "" |> Result.isError @>
+        test <@ Markdown.formatForPreview XmlFormat "<a><b></a>" |> Result.isError @>
+        test <@ Markdown.formatForPreview XmlFormat "" |> Result.isError @>
 
 module PresentationTests =
     open GitKay.Core.Presentation
@@ -4262,12 +4263,12 @@ module PresentationTests =
 
     [<Fact>]
     let ``zoom steps stay inside their range and zero returns to fitting`` () =
-        test <@ ImageView.step 1 1.0 = 1.25 @>
-        test <@ ImageView.step -1 1.25 = 1.0 @>
-        test <@ ImageView.step 0 4.0 = 0.0 @>
+        test <@ ImageView.step ZoomIn 1.0 = 1.25 @>
+        test <@ ImageView.step ZoomOut 1.25 = 1.0 @>
+        test <@ ImageView.step ZoomToFit 4.0 = 0.0 @>
         // Held at the ends rather than running away.
-        test <@ ImageView.step 1 ImageView.maxZoom = ImageView.maxZoom @>
-        test <@ ImageView.step -1 ImageView.minZoom = ImageView.minZoom @>
+        test <@ ImageView.step ZoomIn ImageView.maxZoom = ImageView.maxZoom @>
+        test <@ ImageView.step ZoomOut ImageView.minZoom = ImageView.minZoom @>
 
     [<Fact>]
     let ``drawn size is the pixels at a scale, and nothing at all for an empty image`` () =

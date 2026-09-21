@@ -1647,11 +1647,11 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     /// Zooms one image about the middle of the viewport, keeping its top where it is so the page does not jump
     /// under the pointer as the row grows or shrinks.
     /// </summary>
-    private void ZoomImage(ImagePreviewRowProjection image, int direction) {
+    private void ZoomImage(ImagePreviewRowProjection image, GitKay.Core.Presentation.ZoomChange change) {
         var index = Array.IndexOf(_rows, image);
         if (index < 0) return;
         var current = image.Zoom > 0 ? image.Zoom : FitScale(image);
-        var next = GitKay.Core.Presentation.ImageView.step(direction, current);
+        var next = GitKay.Core.Presentation.ImageView.step(change, current);
         if (Math.Abs(next - image.Zoom) < 0.0001) return;
 
         if (_scrollViewer != null)
@@ -2590,7 +2590,10 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e) {
         if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.Delta.Y != 0) {
             // Over a picture, the code font size means nothing; zoom what is actually under the pointer.
-            if (ImageRowAt(e.GetPosition(this)) is { } image) ZoomImage(image, Math.Sign(e.Delta.Y));
+            if (ImageRowAt(e.GetPosition(this)) is { } image)
+                ZoomImage(image, e.Delta.Y > 0
+                    ? GitKay.Core.Presentation.ZoomChange.ZoomIn
+                    : GitKay.Core.Presentation.ZoomChange.ZoomOut);
             else CodeFontSize = Math.Clamp(CodeFontSize + Math.Sign(e.Delta.Y), 7, 32);
             e.Handled = true;
             return;
@@ -2624,13 +2627,13 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         // With a picture selected, the zoom keys zoom it; 0 puts it back to fitting the pane.
         if (SelectedItem is ImagePreviewRowProjection selectedImage && !e.KeyModifiers.HasFlag(KeyModifiers.Alt)) {
             var zoom = e.Key switch {
-                Key.OemPlus or Key.Add => 1,
-                Key.OemMinus or Key.Subtract => -1,
-                Key.D0 or Key.NumPad0 => 0,
-                _ => (int?)null,
+                Key.OemPlus or Key.Add => GitKay.Core.Presentation.ZoomChange.ZoomIn,
+                Key.OemMinus or Key.Subtract => GitKay.Core.Presentation.ZoomChange.ZoomOut,
+                Key.D0 or Key.NumPad0 => GitKay.Core.Presentation.ZoomChange.ZoomToFit,
+                _ => null,
             };
-            if (zoom is { } direction) {
-                ZoomImage(selectedImage, direction);
+            if (zoom is { } change) {
+                ZoomImage(selectedImage, change);
                 e.Handled = true;
                 return;
             }

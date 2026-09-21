@@ -120,11 +120,16 @@ type RenderedMarkdownContent =
       NewRows: RenderedMarkdownRow list
       Images: MarkdownImageData list }
 
+/// <summary>A source format GitKay can reformat for reading. Closed, because every case needs a formatter.</summary>
+type PreviewFormat =
+    | JsonFormat
+    | XmlFormat
+
 type PreviewKind =
     | MarkdownPreview
     | ImagePreview of format: string
     /// <summary>Source that is easier to read reformatted, such as JSON written on one line.</summary>
-    | FormattedPreview of format: string
+    | FormattedPreview of format: PreviewFormat
     | SourceOnly
 
 [<RequireQualifiedAccess>]
@@ -494,18 +499,21 @@ module Markdown =
         match IO.Path.GetExtension(path).ToLowerInvariant() with
         | ".md" | ".markdown" | ".mdown" | ".mkd" -> MarkdownPreview
         | ".png" | ".jpg" | ".jpeg" | ".gif" | ".bmp" | ".webp" as format -> ImagePreview(format.TrimStart '.')
-        | ".json" -> FormattedPreview "json"
+        | ".json" -> FormattedPreview JsonFormat
         | ".xml" | ".xsd" | ".xsl" | ".xslt" | ".svg" | ".axaml" | ".xaml"
-        | ".csproj" | ".fsproj" | ".props" | ".targets" | ".slnx" | ".nuspec" -> FormattedPreview "xml"
+        | ".csproj" | ".fsproj" | ".props" | ".targets" | ".slnx" | ".nuspec" -> FormattedPreview XmlFormat
         | _ -> SourceOnly
 
     /// <summary>
     /// Reformats a document for reading. Minified JSON is one enormous line; indenting it is the whole point of
     /// previewing it. Anything that will not parse is left exactly as it was, so a preview never hides the file.
     /// </summary>
-    let formatForPreview (format: string) (text: string) =
+    let formatForPreview (format: PreviewFormat) (text: string) =
+        if String.IsNullOrWhiteSpace text then Error "There is nothing to reformat"
+        else
+
         match format with
-        | "xml" when not (String.IsNullOrWhiteSpace text) ->
+        | XmlFormat ->
             try
                 // Insignificant whitespace is dropped on the way in and written back to one fixed shape, so the
                 // same document always formats identically no matter how it was indented when it was committed.
@@ -521,7 +529,7 @@ module Markdown =
                 | null -> Ok body
                 | declaration -> Ok(string declaration + "\n" + body)
             with _ -> Error "This file is not well-formed XML"
-        | "json" when not (String.IsNullOrWhiteSpace text) ->
+        | JsonFormat ->
             try
                 use document = Text.Json.JsonDocument.Parse(text, Text.Json.JsonDocumentOptions(AllowTrailingCommas = true, CommentHandling = Text.Json.JsonCommentHandling.Skip))
                 use stream = new IO.MemoryStream()
@@ -530,7 +538,6 @@ module Markdown =
                 writer.Flush()
                 Ok(Text.Encoding.UTF8.GetString(stream.ToArray()))
             with _ -> Error "This file is not valid JSON"
-        | _ -> Error "Nothing to reformat"
 
     let resolveTarget (documentPath: string) (target: string) =
         if String.IsNullOrWhiteSpace target then InvalidTarget target
