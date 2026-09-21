@@ -1,0 +1,100 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:GitKay.UI"
+        x:Class="GitKay.UI.FolderWindow"
+        x:DataType="local:FolderProjection"
+        Title="{Binding WindowTitle}"
+        Width="1200" Height="820" MinWidth="560" MinHeight="320"
+        Background="{DynamicResource GitKayWindowBrush}">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" MinHeight="37"
+                Background="{DynamicResource GitKayChromeBrush}"
+                BorderBrush="{DynamicResource GitKayHairlineBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="10,4">
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                <TextBlock Text="{Binding ModeLabel}" FontSize="11" LetterSpacing="0.6"
+                           Foreground="{DynamicResource GitKayMutedTextBrush}" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="{Binding Subtitle}" FontSize="12"
+                           Foreground="{DynamicResource GitKayTextBrush}"
+                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                           ToolTip.Tip="{Binding Subtitle}" />
+                <TextBlock Grid.Column="2" Text="{Binding Status}" FontSize="11"
+                           Foreground="{DynamicResource GitKayMutedTextBrush}" VerticalAlignment="Center" />
+            </Grid>
+        </Border>
+
+        <Grid ColumnDefinitions="*,4,320">
+            <Border Grid.Column="0" Background="{DynamicResource GitKayWindowBrush}">
+                <Grid>
+                    <ScrollViewer x:Name="RowsScrollViewer" HorizontalScrollBarVisibility="Disabled">
+                        <local:DiffSurfaceControl x:Name="Surface"
+                                                  ItemsSource="{Binding Rows}"
+                                                  SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+                                                  DiffLayout="{Binding Layout}"
+                                                  PreviewRequested="OnPreviewRequested"
+                                                  HorizontalAlignment="Stretch" />
+                    </ScrollViewer>
+                    <local:OverviewRuler Width="4" HorizontalAlignment="Left" ZIndex="5" Source="{Binding #Surface}" />
+                    <TextBlock Text="{Binding EmptyMessage}" IsVisible="{Binding IsEmpty}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="13"
+                               Foreground="{DynamicResource GitKayMutedTextBrush}" />
+                </Grid>
+            </Border>
+
+            <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                          ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" />
+
+            <Border Grid.Column="2" Background="{DynamicResource GitKayWindowBrush}"
+                    BorderBrush="{DynamicResource GitKayHairlineBrush}" BorderThickness="1,0,0,0">
+                <DockPanel>
+                    <Border DockPanel.Dock="Top" MinHeight="37" Padding="8,4"
+                            Background="{DynamicResource GitKayChromeBrush}"
+                            BorderBrush="{DynamicResource GitKayHairlineBrush}" BorderThickness="0,0,0,1">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Text="{Binding FileCountLabel}" FontSize="11" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource GitKayMutedTextBrush}" />
+                            <TextBlock Grid.Column="1" FontSize="11" VerticalAlignment="Center" IsVisible="{Binding HasTotals}">
+                                <Run Text="{Binding TotalAddedText}" Foreground="{DynamicResource GitKayAddedAccentBrush}" /><Run Text="  " /><Run Text="{Binding TotalRemovedText}" Foreground="{DynamicResource GitKayRemovedAccentBrush}" />
+                            </TextBlock>
+                        </Grid>
+                    </Border>
+                    <ListBox x:Name="FileListBox"
+                             ItemsSource="{Binding Files}"
+                             SelectedItem="{Binding SelectedFile, Mode=TwoWay}"
+                             Background="Transparent" BorderThickness="0">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="local:DiffFileProjection">
+                                <Border Padding="8,4" Background="Transparent">
+                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="7" ToolTip.Tip="{Binding ChangeToolTip}">
+                                        <Border Classes="fileChange" Width="14" Height="14" CornerRadius="3"
+                                                BorderThickness="0" VerticalAlignment="Center"
+                                                Classes.added="{Binding IsAddedFile}"
+                                                Classes.deleted="{Binding IsDeletedFile}"
+                                                Classes.modified="{Binding IsModifiedFile}">
+                                            <TextBlock Text="{Binding ChangeGlyph}" FontSize="12" FontWeight="SemiBold"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Border>
+                                        <local:FileRowLayout Grid.Column="1" Spacing="7">
+                                            <TextBlock Text="{Binding ListLabel}" FontSize="12"
+                                                       Foreground="{DynamicResource GitKayTextBrush}"
+                                                       TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding AddedText}" IsVisible="{Binding HasAddedText}"
+                                                       FontSize="11" Foreground="{DynamicResource GitKayAddedAccentBrush}" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding RemovedText}" IsVisible="{Binding HasRemovedText}"
+                                                       FontSize="11" Foreground="{DynamicResource GitKayRemovedAccentBrush}" VerticalAlignment="Center" />
+                                            <local:DiffStatBar Classes="rowStat"
+                                                               Added="{Binding AddedLines}" Removed="{Binding RemovedLines}"
+                                                               IsKnown="{Binding IsLoaded}" BlockSize="5" VerticalAlignment="Center" />
+                                        </local:FileRowLayout>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>

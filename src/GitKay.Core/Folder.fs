@@ -73,6 +73,15 @@ module Folder =
     let diffOf (pair: Pair) (oldText: string) (newText: string) =
         SourceDiff.between pair.OldPath pair.NewPath oldText newText
 
+    /// <summary>
+    /// The side of a pair worth previewing: the new one, or the old one for a file that is only on the left. Every
+    /// pair has at least one side, so this always answers.
+    /// </summary>
+    let previewSide (pair: Pair) =
+        match pair.Right, pair.Left with
+        | Some right, _ -> Some right
+        | None, left -> left
+
     /// <summary>An entry with nothing to diff — binary, or unreadable — still listed, with no lines.</summary>
     let emptyDiffOf (pair: Pair) : Models.FileDiff =
         { OldPath = pair.OldPath; NewPath = pair.NewPath; Hunks = []; NewLineCount = None }

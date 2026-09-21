@@ -64,6 +64,21 @@ module FolderSource =
         | Some oldText, Some newText -> Folder.diffOf pair oldText newText
         | _ -> Folder.emptyDiffOf pair
 
+    /// <summary>
+    /// Both sides as text, for a caller that wants to reformat them before diffing. A side that does not exist is
+    /// empty text; a side that cannot be read as text is an error, so the caller shows the source instead.
+    /// </summary>
+    let sideTexts (pair: Folder.Pair) : Result<string * string, GitError> =
+        match sideText pair.Left, sideText pair.Right with
+        | Some oldText, Some newText -> Ok(oldText, newText)
+        | _ -> Error(GitError.OperationFailed("Read file", "This file cannot be read as text"))
+
+    /// <summary>The bytes of the side worth previewing, for an image.</summary>
+    let previewBytes (pair: Folder.Pair) : Result<byte array, GitError> =
+        match Folder.previewSide pair with
+        | Some entry -> bytesOf entry
+        | None -> Error(GitError.OperationFailed("Read file", "This file has no side to read"))
+
     /// <summary>Whether both sides hold exactly the same bytes. Only asked when their sizes already match.</summary>
     let holdsSameBytes (pair: Folder.Pair) =
         match pair.Left, pair.Right with

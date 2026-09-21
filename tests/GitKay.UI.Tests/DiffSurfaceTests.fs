@@ -1529,3 +1529,116 @@ module ImageZoomTests =
             finally
                 window.Close()
                 Headless.pump ())
+
+module FolderWindowTests =
+    open System.IO
+
+    let private folders (build: string -> string -> unit) =
+        let root = Path.Combine(Path.GetTempPath(), "gitkay-window-" + Guid.NewGuid().ToString("N"))
+        let left, right = Path.Combine(root, "left"), Path.Combine(root, "right")
+        Directory.CreateDirectory left |> ignore
+        Directory.CreateDirectory right |> ignore
+        build left right
+        root, left, right
+
+    let private write folder name (contents: string) =
+        let path = Path.Combine(folder, name)
+        Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+        File.WriteAllText(path, contents)
+
+    let private entriesOf folder =
+        match FolderSource.read folder with
+        | Ok entries -> entries
+        | Error error -> failwith (GitError.describe error)
+
+    [<Fact>]
+    let ``comparing two folders lists what differs and diffs the file that is selected`` () =
+        Headless.run (fun () ->
+            let root, left, right =
+                folders (fun left right ->
+                    write left "src/app.fs" "one\ntwo\nthree"
+                    write right "src/app.fs" "one\nTWO\nthree"
+                    write left "same.txt" "identical"
+                    write right "same.txt" "identical"
+                    write left "gone.txt" "removed")
+            try
+                let pairs = Folder.pair (entriesOf left) (entriesOf right) |> FolderSource.changedPairs
+                let projection = FolderProjection(FolderMode.Compare, left, right, ResizeArray pairs)
+                let window = FolderWindow(projection)
+                try
+                    window.Show()
+                    window.UpdateLayout()
+                    Headless.pump ()
+
+                    // The identical file is not listed; the changed and deleted ones are.
+                    test <@ projection.Files |> Seq.map _.DisplayPath |> List.ofSeq
+                             = [ "gone.txt (deleted)"; "src/app.fs" ] @>
+
+                    // Selecting a file reads it from disk and diffs it, only then.
+                    let changed = projection.Files |> Seq.find (fun f -> f.DisplayPath = "src/app.fs")
+                    projection.SelectedFile <- changed
+                    Headless.pump ()
+                    test <@ changed.IsLoaded && changed.AddedLines = 1 && changed.RemovedLines = 1 @>
+                    test <@ projection.Rows |> Seq.exists (fun row -> row :? DiffLineProjection) @>
+                finally
+                    window.Close()
+                    Headless.pump ()
+            finally
+                try Directory.Delete(root, true) with _ -> ())
+
+    [<Fact>]
+    let ``browsing one folder shows its files with nothing to compare against`` () =
+        Headless.run (fun () ->
+            let root, left, _ = folders (fun left _ -> write left "notes.md" "# Notes\n\nSome text.")
+            try
+                let pairs = Folder.pair Seq.empty (entriesOf left)
+                let projection = FolderProjection(FolderMode.Preview, left, null, ResizeArray pairs)
+                let window = FolderWindow(projection)
+                try
+                    window.Show()
+                    window.UpdateLayout()
+                    Headless.pump ()
+                    test <@ projection.ModeLabel = "PREVIEW" @>
+                    // Everything reads as added, because there is no other side: the file is simply there.
+                    let file = Seq.exactlyOne projection.Files
+                    test <@ file.DisplayPath = "notes.md (new file)" @>
+                    projection.SelectedFile <- file
+                    Headless.pump ()
+                    test <@ file.AddedLines = 3 && file.RemovedLines = 0 @>
+                finally
+                    window.Close()
+                    Headless.pump ()
+            finally
+                try Directory.Delete(root, true) with _ -> ())
+
+    [<Fact>]
+    let ``a json file previews reformatted in a folder comparison`` () =
+        Headless.run (fun () ->
+            let root, left, right =
+                folders (fun left right ->
+                    write left "config.json" """{"a":1,"b":[2,3]}"""
+                    write right "config.json" """{"a":2,"b":[2,3]}""")
+            try
+                let pairs = Folder.pair (entriesOf left) (entriesOf right) |> FolderSource.changedPairs
+                let projection = FolderProjection(FolderMode.Compare, left, right, ResizeArray pairs)
+                let window = FolderWindow(projection)
+                try
+                    window.Show()
+                    window.UpdateLayout()
+                    Headless.pump ()
+                    let file = Seq.exactlyOne projection.Files
+                    projection.SelectedFile <- file
+                    Headless.pump ()
+
+                    // One line each side as source; indented, the change is one line out of several.
+                    test <@ file.AddedLines = 1 && file.RemovedLines = 1 @>
+                    projection.TogglePreview file
+                    Headless.pump ()
+                    test <@ file.IsFormattedPreview @>
+                    let lines = projection.Rows |> Seq.filter (fun r -> r :? DiffLineProjection) |> Seq.length
+                    test <@ lines > 3 @>
+                finally
+                    window.Close()
+                    Headless.pump ()
+            finally
+                try Directory.Delete(root, true) with _ -> ())

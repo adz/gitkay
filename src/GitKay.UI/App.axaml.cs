@@ -46,6 +46,55 @@ public partial class App : Application {
         base.OnFrameworkInitializationCompleted();
     }
 
+    /// <summary>
+    /// gitkay diff &lt;a&gt; &lt;b&gt; and gitkay browse &lt;dir&gt;: GitKay over plain folders, with no repository
+    /// discovered, opened or needed. Closing the window exits.
+    /// </summary>
+    private async Task InitializeFolderWindowAsync(IClassicDesktopStyleApplicationLifetime desktop, FolderMode mode, string left, string? right) {
+        try {
+            var settings = await Task.Run(() => new AppSettingsStore().Load());
+            RequestedThemeVariant =
+                settings.Theme.IsLightTheme ? Avalonia.Styling.ThemeVariant.Light
+                : settings.Theme.IsDarkTheme ? Avalonia.Styling.ThemeVariant.Dark
+                : Avalonia.Styling.ThemeVariant.Default;
+
+            var built = await Task.Run(() => BuildFolderPairs(mode, left, right));
+            if (built.Error is { } message) {
+                Console.Error.WriteLine(message);
+                desktop.Shutdown(2);
+                return;
+            }
+
+            var window = new FolderWindow(new FolderProjection(mode, left, right, built.Pairs)) {
+                WindowStartupLocation = Avalonia.Controls.WindowStartupLocation.CenterScreen,
+            };
+            desktop.MainWindow = window;
+            desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnMainWindowClose;
+            window.Show();
+        }
+        catch (Exception ex) {
+            FatalErrorPresenter.ShowStartupFailure(desktop, ex);
+        }
+    }
+
+    /// <summary>Reads the folders and pairs their files, off the UI thread. A folder that cannot be read says so.</summary>
+    private static (IReadOnlyList<GitKay.Core.Folder.Pair> Pairs, string? Error) BuildFolderPairs(FolderMode mode, string left, string? right) {
+        var leftEntries = GitKay.Core.FolderSource.read(left);
+        if (leftEntries.IsError) return (Array.Empty<GitKay.Core.Folder.Pair>(), GitKay.Core.GitErrorModule.describe(leftEntries.ErrorValue));
+
+        if (mode == FolderMode.Preview) {
+            // One folder: every file paired against nothing, so it reads as the folder's contents rather than a diff.
+            var only = GitKay.Core.Folder.pair(Microsoft.FSharp.Collections.SeqModule.Empty<GitKay.Core.Folder.Entry>(), leftEntries.ResultValue);
+            return (only.ToList(), null);
+        }
+
+        var rightEntries = GitKay.Core.FolderSource.read(right ?? "");
+        if (rightEntries.IsError) return (Array.Empty<GitKay.Core.Folder.Pair>(), GitKay.Core.GitErrorModule.describe(rightEntries.ErrorValue));
+
+        var pairs = GitKay.Core.Folder.pair(leftEntries.ResultValue, rightEntries.ResultValue);
+        return (GitKay.Core.FolderSource.changedPairs(pairs).ToList(), null);
+    }
+
     /// <summary>gitkay gui: only the commit window, with the saved theme; closing it exits.</summary>
     private async Task InitializeCommitWindowAsync(IClassicDesktopStyleApplicationLifetime desktop) {
         try {
@@ -83,6 +132,14 @@ public partial class App : Application {
     private async Task InitializeAppAsync(IClassicDesktopStyleApplicationLifetime desktop) {
         if (LaunchMode.IsCommit) {
             await InitializeCommitWindowAsync(desktop);
+            return;
+        }
+        if (LaunchMode is GitStartup.LaunchMode.FolderCompare compare) {
+            await InitializeFolderWindowAsync(desktop, FolderMode.Compare, compare.left, compare.right);
+            return;
+        }
+        if (LaunchMode is GitStartup.LaunchMode.FolderPreview preview) {
+            await InitializeFolderWindowAsync(desktop, FolderMode.Preview, preview.folder, null);
             return;
         }
         try {

@@ -107,6 +107,10 @@ module GitStartup =
     type LaunchMode =
         | History
         | Commit
+        /// <summary>Two folders compared, with no repository involved.</summary>
+        | FolderCompare of left: string * right: string
+        /// <summary>One folder read rather than compared.</summary>
+        | FolderPreview of folder: string
 
     /// <summary>
     /// <c>gitkay gui</c> or <c>gitkay commit</c>, or starting as <c>gitkay-gui</c>, opens the commit window; the
@@ -118,12 +122,17 @@ module GitStartup =
         let name = match file.LastIndexOf '.' with -1 -> file | dot -> file.Substring(0, dot)
         match args |> Array.tryHead with
         | Some("gui" | "commit") -> Commit, Array.tail args
+        // Folder modes take their folders positionally, as diff does; the rest is left for option parsing.
+        | Some "diff" when args.Length >= 3 -> FolderCompare(args.[1], args.[2]), args.[3..]
+        | Some "browse" when args.Length >= 2 -> FolderPreview args.[1], args.[2..]
         | _ when String.Equals(name, "gitkay-gui", StringComparison.OrdinalIgnoreCase) -> Commit, args
         | _ -> History, args
 
     let getHelpText () =
         "Usage: gitkay [options] [<revision>...] [-- <path>...]\n" +
-        "       gitkay gui        Open the commit window (stage, unstage, commit), like git gui; also gitkay-gui\n\n" +
+        "       gitkay gui        Open the commit window (stage, unstage, commit), like git gui; also gitkay-gui\n" +
+        "       gitkay diff <a> <b>   Compare two folders, with no repository involved\n" +
+        "       gitkay browse <dir>   Read one folder: its files, previews and syntax highlighting\n\n" +
         "Options:\n" +
         "  --help, -h               Show this help message\n" +
         "  --version, -v            Show version information\n" +
