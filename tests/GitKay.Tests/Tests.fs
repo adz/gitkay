@@ -4339,3 +4339,151 @@ module FileSideTests =
         test <@ FileChange.isRenamed (fst renamed) (snd renamed) @>
         test <@ not (FileChange.isRenamed (fst added) (snd added)) @>
         test <@ not (FileChange.isRenamed (fst deleted) (snd deleted)) @>
+
+module FolderTests =
+    open GitKay.Core
+
+    let private entry path size : Folder.Entry =
+        { RelativePath = path; FullPath = "/tmp/" + path; Size = size }
+
+    [<Fact>]
+    let ``pairing two folders finds what was added, deleted, changed and left alone`` () =
+        let left = [ entry "same.txt" 10L; entry "changed.txt" 10L; entry "gone.txt" 10L ]
+        let right = [ entry "same.txt" 10L; entry "changed.txt" 20L; entry "new.txt" 5L ]
+        let pairs = Folder.pair left right
+
+        // Ordered by path, so two runs over the same folders agree.
+        test <@ pairs |> List.map (fun p -> FileChange.currentPath p.OldPath p.NewPath)
+                 = [ "changed.txt"; "gone.txt"; "new.txt"; "same.txt" ] @>
+
+        let kindOf path = pairs |> List.find (fun p -> FileChange.currentPath p.OldPath p.NewPath = path) |> Folder.kindOf
+        test <@ kindOf "new.txt" = FileChange.Added @>
+        test <@ kindOf "gone.txt" = FileChange.Deleted @>
+        test <@ kindOf "changed.txt" = FileChange.Modified @>
+        test <@ kindOf "same.txt" = FileChange.Modified @>
+
+    [<Fact>]
+    let ``a file on one side only is paired against the missing side`` () =
+        let pairs = Folder.pair [ entry "only-left.txt" 1L ] []
+        let pair = List.exactlyOne pairs
+        test <@ pair.NewPath = FileChange.missing && pair.Right = None @>
+        test <@ Folder.displayPathOf pair = "only-left.txt (deleted)" @>
+
+        let pairs = Folder.pair [] [ entry "only-right.txt" 1L ]
+        let pair = List.exactlyOne pairs
+        test <@ pair.OldPath = FileChange.missing && pair.Left = None @>
+        test <@ Folder.displayPathOf pair = "only-right.txt (new file)" @>
+
+    [<Fact>]
+    let ``differing sizes settle a comparison without reading either file`` () =
+        let both size other = List.exactlyOne (Folder.pair [ entry "f" size ] [ entry "f" other ])
+        // Different sizes cannot hold the same bytes, so neither file is opened.
+        test <@ Folder.couldDiffer (both 10L 20L) @>
+        // Equal sizes prove nothing on their own; the bytes still have to be read.
+        test <@ not (Folder.couldDiffer (both 10L 10L)) @>
+        // A file on one side only always differs.
+        test <@ Folder.couldDiffer (List.exactlyOne (Folder.pair [ entry "f" 10L ] [])) @>
+
+    [<Fact>]
+    let ``build output and version control state are not walked`` () =
+        test <@ Folder.isSkippedDirectory ".git" @>
+        test <@ Folder.isSkippedDirectory "node_modules" @>
+        test <@ Folder.isSkippedDirectory "obj" @>
+        test <@ not (Folder.isSkippedDirectory "src") @>
+
+    [<Fact>]
+    let ``binary content is recognised the way git recognises it`` () =
+        test <@ Folder.looksBinary [| 0x48uy; 0x00uy; 0x69uy |] @>
+        test <@ not (Folder.looksBinary (Text.Encoding.UTF8.GetBytes "plain text")) @>
+        test <@ not (Folder.looksBinary [||]) @>
+
+    [<Fact>]
+    let ``a folder pair diffs as a whole file, numbered from one`` () =
+        let pair = List.exactlyOne (Folder.pair [ entry "a.txt" 5L ] [ entry "a.txt" 6L ])
+        let diff = Folder.diffOf pair "one\ntwo" "one\nTWO"
+        let added, removed = SourceDiff.counts diff
+        test <@ added = 1 && removed = 1 @>
+        let lines = diff.Hunks |> List.collect _.Lines
+        test <@ lines |> List.map _.Content = [ "one"; "two"; "TWO" ] @>
+        test <@ (lines |> List.head).NewLineNo = Some 1 @>
+
+module FolderSourceTests =
+    open GitKay.Core
+    open System.IO
+
+    /// Two real folders on disk, cleaned up afterwards.
+    let private withFolders (build: string -> string -> unit) (check: string -> string -> unit) =
+        let root = Path.Combine(Path.GetTempPath(), "gitkay-folder-" + Guid.NewGuid().ToString("N"))
+        let left, right = Path.Combine(root, "left"), Path.Combine(root, "right")
+        Directory.CreateDirectory left |> ignore
+        Directory.CreateDirectory right |> ignore
+        try
+            build left right
+            check left right
+        finally
+            try Directory.Delete(root, true) with _ -> ()
+
+    let private write folder name (contents: string) =
+        let path = Path.Combine(folder, name)
+        Directory.CreateDirectory(Path.GetDirectoryName path) |> ignore
+        File.WriteAllText(path, contents)
+
+    [<Fact>]
+    let ``reading a folder finds its files and skips build output`` () =
+        withFolders
+            (fun left _ ->
+                write left "src/app.fs" "let x = 1"
+                write left "README.md" "# Hi"
+                write left "obj/generated.fs" "// build output"
+                write left ".git/config" "[core]")
+            (fun left _ ->
+                match FolderSource.read left with
+                | Error error -> failwith (GitError.describe error)
+                | Ok entries ->
+                    // Relative paths with forward slashes, ordered, and nothing from obj or .git.
+                    test <@ entries |> List.map _.RelativePath = [ "README.md"; "src/app.fs" ] @>)
+
+    [<Fact>]
+    let ``two folders compare by relative path`` () =
+        withFolders
+            (fun left right ->
+                write left "same.txt" "unchanged"
+                write right "same.txt" "unchanged"
+                write left "changed.txt" "before"
+                write right "changed.txt" "after"
+                write left "gone.txt" "removed"
+                write right "added.txt" "new")
+            (fun left right ->
+                let entries folder = match FolderSource.read folder with Ok e -> e | Error e -> failwith (GitError.describe e)
+                let pairs = Folder.pair (entries left) (entries right)
+                let changed = FolderSource.changedPairs pairs
+
+                // The identical file is left out; everything else is shown.
+                test <@ changed |> List.map Folder.displayPathOf
+                         = [ "added.txt (new file)"; "changed.txt"; "gone.txt (deleted)" ] @>
+
+                let diffOf name = changed |> List.find (fun p -> Folder.displayPathOf p |> _.StartsWith(name: string)) |> FolderSource.diff
+                let added, removed = SourceDiff.counts (diffOf "changed.txt")
+                test <@ added = 1 && removed = 1 @>
+                // A file only on the right is entirely added.
+                let added, removed = SourceDiff.counts (diffOf "added.txt")
+                test <@ added = 1 && removed = 0 @>)
+
+    [<Fact>]
+    let ``a missing folder is reported rather than read as empty`` () =
+        let missing = Path.Combine(Path.GetTempPath(), "gitkay-not-here-" + Guid.NewGuid().ToString("N"))
+        test <@ FolderSource.read missing |> Result.isError @>
+        test <@ FolderSource.read "" |> Result.isError @>
+
+    [<Fact>]
+    let ``a binary file is listed with no lines rather than diffed as text`` () =
+        withFolders
+            (fun left right ->
+                File.WriteAllBytes(Path.Combine(left, "logo.png"), [| 0x89uy; 0x50uy; 0x00uy; 0x01uy |])
+                File.WriteAllBytes(Path.Combine(right, "logo.png"), [| 0x89uy; 0x50uy; 0x00uy; 0x02uy |]))
+            (fun left right ->
+                let entries folder = match FolderSource.read folder with Ok e -> e | Error e -> failwith (GitError.describe e)
+                let pair = List.exactlyOne (Folder.pair (entries left) (entries right))
+                let diff = FolderSource.diff pair
+                test <@ diff.Hunks = [] @>
+                test <@ FileChange.currentPath diff.OldPath diff.NewPath = "logo.png" @>)

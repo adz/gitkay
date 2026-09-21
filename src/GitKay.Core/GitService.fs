@@ -1226,26 +1226,6 @@ module GitService =
                     return { diff with Hunks = hunks; NewLineCount = Some lines.Length }
         }
 
-    let private fileDiffFromSources oldPath newPath (oldSource: string) (newSource: string) =
-        let oldLines = oldSource.Replace("\r\n", "\n").Split '\n'
-        let newLines = newSource.Replace("\r\n", "\n").Split '\n'
-        let mutable oldLine, newLine = 0, 0
-        let lines =
-            GitKay.Kit.Myers.diff oldLines newLines
-            |> List.map (function
-                | GitKay.Kit.Equal(_, text) ->
-                    oldLine <- oldLine + 1; newLine <- newLine + 1
-                    { Type = Context; Content = text; OldLineNo = Some oldLine; NewLineNo = Some newLine }
-                | GitKay.Kit.Delete text ->
-                    oldLine <- oldLine + 1
-                    { Type = Removed; Content = text; OldLineNo = Some oldLine; NewLineNo = None }
-                | GitKay.Kit.Insert text ->
-                    newLine <- newLine + 1
-                    { Type = Added; Content = text; OldLineNo = None; NewLineNo = Some newLine })
-        { OldPath = oldPath; NewPath = newPath
-          Hunks = if lines.IsEmpty then [] else [ { Header = $"@@ -1,{oldLines.Length} +1,{newLines.Length} @@"; Lines = lines } ]
-          NewLineCount = Some newLines.Length }
-
     let private revisionBlobText (repo: Repository) (revision: string) (path: string) =
         if FileChange.isMissing path then Ok ""
         else
@@ -1285,7 +1265,7 @@ module GitService =
             let newDocumentPath = FileChange.currentPath oldPath newPath
             let loader side path = revisionBlobBytes repoPath (if side = MarkdownImageSide.Old then comparison.BaseHash else comparison.TargetHash) path
             let images = Markdown.imageRequests oldDocumentPath newDocumentPath oldSource newSource |> List.map (imageData allowRemote loader)
-            let file = fileDiffFromSources oldPath newPath oldSource newSource
+            let file = SourceDiff.between oldPath newPath oldSource newSource
             let diffRows = Markdown.renderDiff oldSource newSource |> Markdown.markChangedImages images
             return { File = file; DiffRows = diffRows; OldRows = Markdown.renderDocument oldSource
                      NewRows = Markdown.renderDocument newSource; Images = images }
@@ -1302,7 +1282,7 @@ module GitService =
                 use repo = new Repository(repoPath)
                 let! oldSource = revisionBlobText repo comparison.BaseHash oldPath
                 let! newSource = revisionBlobText repo comparison.TargetHash newPath
-                let file = fileDiffFromSources oldPath newPath oldSource newSource
+                let file = SourceDiff.between oldPath newPath oldSource newSource
                 let revision, path =
                     if FileChange.isDeleted oldPath newPath then comparison.BaseHash, oldPath else comparison.TargetHash, newPath
                 let! bytes = revisionBlobBytes repoPath revision path
@@ -1311,7 +1291,7 @@ module GitService =
                 use repo = new Repository(repoPath)
                 let! oldSource = revisionBlobText repo comparison.BaseHash oldPath
                 let! newSource = revisionBlobText repo comparison.TargetHash newPath
-                return { File = fileDiffFromSources oldPath newPath oldSource newSource; Rendered = None; ImageBytes = None }
+                return { File = SourceDiff.between oldPath newPath oldSource newSource; Rendered = None; ImageBytes = None }
         }
 
     /// <summary>
@@ -1330,7 +1310,7 @@ module GitService =
             if String.IsNullOrWhiteSpace source then Ok ""
             else Markdown.formatForPreview format source
         match reformat true, reformat false with
-        | Ok oldText, Ok newText -> Ok(fileDiffFromSources oldPath newPath oldText newText)
+        | Ok oldText, Ok newText -> Ok(SourceDiff.between oldPath newPath oldText newText)
         | Error message, _ | _, Error message -> Error(GitError.OperationFailed("Preview", message))
 
     let loadCommitFormattedFile (repoPath: string) (hash: string) (oldPath: string) (newPath: string) : Result<Models.FileDiff, GitError> =
@@ -1372,7 +1352,7 @@ module GitService =
             use repo = new Repository(repoPath)
             let! oldSource = revisionBlobText repo comparison.BaseHash oldPath
             let! newSource = revisionBlobText repo comparison.TargetHash newPath
-            let file = fileDiffFromSources oldPath newPath oldSource newSource
+            let file = SourceDiff.between oldPath newPath oldSource newSource
             let previewPath = FileChange.currentPath oldPath newPath
             match Markdown.previewKind previewPath with
             | FormattedPreview format -> return! formattedDiff format oldPath newPath file
