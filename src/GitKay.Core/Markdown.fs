@@ -495,6 +495,8 @@ module Markdown =
         | ".md" | ".markdown" | ".mdown" | ".mkd" -> MarkdownPreview
         | ".png" | ".jpg" | ".jpeg" | ".gif" | ".bmp" | ".webp" as format -> ImagePreview(format.TrimStart '.')
         | ".json" -> FormattedPreview "json"
+        | ".xml" | ".xsd" | ".xsl" | ".xslt" | ".svg" | ".axaml" | ".xaml"
+        | ".csproj" | ".fsproj" | ".props" | ".targets" | ".slnx" | ".nuspec" -> FormattedPreview "xml"
         | _ -> SourceOnly
 
     /// <summary>
@@ -503,6 +505,22 @@ module Markdown =
     /// </summary>
     let formatForPreview (format: string) (text: string) =
         match format with
+        | "xml" when not (String.IsNullOrWhiteSpace text) ->
+            try
+                // Insignificant whitespace is dropped on the way in and written back to one fixed shape, so the
+                // same document always formats identically no matter how it was indented when it was committed.
+                let settings = Xml.XmlWriterSettings(Indent = true, IndentChars = "  ", NewLineChars = "\n", OmitXmlDeclaration = true)
+                let document = Xml.Linq.XDocument.Parse(text, Xml.Linq.LoadOptions.None)
+                use writer = new IO.StringWriter()
+                use xml = Xml.XmlWriter.Create(writer, settings)
+                document.Save xml
+                xml.Flush()
+                let body = writer.ToString()
+                // The declaration is part of the file; keep the one it had rather than inventing or dropping one.
+                match document.Declaration with
+                | null -> Ok body
+                | declaration -> Ok(string declaration + "\n" + body)
+            with _ -> Error "This file is not well-formed XML"
         | "json" when not (String.IsNullOrWhiteSpace text) ->
             try
                 use document = Text.Json.JsonDocument.Parse(text, Text.Json.JsonDocumentOptions(AllowTrailingCommas = true, CommentHandling = Text.Json.JsonCommentHandling.Skip))

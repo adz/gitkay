@@ -4198,3 +4198,34 @@ module FormattedPreviewTests =
             |> List.length
         test <@ oldText.Split('\n').Length >= 6 @>
         test <@ changedLines = 2 @>
+
+module XmlPreviewTests =
+    open GitKay.Core
+
+    let private formatted source =
+        match Markdown.formatForPreview "xml" source with
+        | Ok text -> text
+        | Error message -> failwith message
+
+    [<Fact>]
+    let ``xml previews with one fixed shape whatever indentation it was committed with`` () =
+        test <@ Markdown.previewKind "App.axaml" = FormattedPreview "xml" @>
+        test <@ Markdown.previewKind "GitKay.UI.csproj" = FormattedPreview "xml" @>
+        test <@ Markdown.previewKind "notes.txt" = SourceOnly @>
+
+        let minified = """<?xml version="1.0" encoding="utf-8"?><Project Sdk="x"><PropertyGroup><A>1</A><B>2</B></PropertyGroup></Project>"""
+        let sprawling = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<Project    Sdk=\"x\">\n\n      <PropertyGroup>\n  <A>1</A>\n            <B>2</B>\n   </PropertyGroup>\n</Project>"
+
+        // Deterministic: the same document formats identically however it arrived.
+        test <@ formatted minified = formatted sprawling @>
+        // Indented two spaces per level, and the declaration it had is kept.
+        let lines = (formatted minified).Split '\n'
+        test <@ lines[0] = """<?xml version="1.0" encoding="utf-8"?>""" @>
+        test <@ lines |> Array.exists (fun line -> line = "    <A>1</A>") @>
+        // Attributes and their order are the document's own.
+        test <@ (formatted minified).Contains """<Project Sdk="x">""" @>
+
+    [<Fact>]
+    let ``xml that is not well formed is reported rather than shown as empty`` () =
+        test <@ Markdown.formatForPreview "xml" "<a><b></a>" |> Result.isError @>
+        test <@ Markdown.formatForPreview "xml" "" |> Result.isError @>
