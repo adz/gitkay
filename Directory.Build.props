@@ -4,7 +4,7 @@
     <AxialGuardrailsSeverity>error</AxialGuardrailsSeverity>
 
     <!-- Local/dev default only; the release workflow stamps the real version via -p:Version from the release tag. -->
-    <VersionPrefix>0.12.0</VersionPrefix>
+    <VersionPrefix>0.12.1</VersionPrefix>
     <Authors>Adam Davies</Authors>
     <Product>GitKay</Product>
     <RepositoryUrl>https://github.com/adz/gitkay</RepositoryUrl>

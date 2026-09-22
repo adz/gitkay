@@ -6,7 +6,7 @@
 - Core code lives in `src/GitKay.Core`; UI code lives in `src/GitKay.UI`; tests live in `tests/GitKay.Tests`.
 
 ## Current Architecture
-- GitKay also runs without a repository: `gitkay diff <a> <b>` compares two folders and `gitkay browse <dir>` reads
+- GitKay can run without a repository: `gitkay diff <a> <b>` compares two folders and `gitkay browse <dir>` reads
   one. `Folder` pairs and diffs, `FolderSource` is the filesystem boundary, and the window reuses the same file list,
   diff surface and previews the repository modes use.
 - The app is Elmish-style at the core, bridged into Avalonia through `ElmishGlue`.
