@@ -29,6 +29,29 @@ public sealed partial class CommitFileRow(CoreWindow.ListKind list, GitKay.Core.
     public bool IsStaged => List.IsStagedList;
     public string ListName => IsUntracked ? "untracked" : List.IsStagedList ? "staged" : "unstaged";
 
+    // The same change vocabulary the history window's file list uses, so one list does not describe a file
+    // differently from the other.
+    private GitKay.Core.FileChange.Kind Change { get; } =
+        untracked ? GitKay.Core.FileChange.Kind.Added : GitKay.Core.FileChange.kind(diff.OldPath, diff.NewPath);
+
+    public string ChangeGlyph => GitKay.Core.FileChange.glyph(Change);
+    public bool IsAddedFile => Change.IsAdded;
+    public bool IsDeletedFile => Change.IsDeleted;
+    public bool IsModifiedFile => Change.IsModified || Change.IsRenamed;
+
+    public string ChangeToolTip =>
+        $"{char.ToUpperInvariant(GitKay.Core.FileChange.kindName(Change)[0])}{GitKay.Core.FileChange.kindName(Change)[1..]} · {ListName} · +{AddedLines} −{RemovedLines}";
+
+    public int AddedLines { get; } =
+        diff.Hunks.SelectMany(hunk => hunk.Lines).Count(line => line.Type.IsAdded);
+
+    public int RemovedLines { get; } =
+        diff.Hunks.SelectMany(hunk => hunk.Lines).Count(line => line.Type.IsRemoved);
+
+    /// <summary>Each count keeps its column whether or not it has a number, so they line up down the list.</summary>
+    public string AddedText => AddedLines > 0 ? $"+{AddedLines}" : "";
+    public string RemovedText => RemovedLines > 0 ? $"−{RemovedLines}" : "";
+
     /// <summary>What the list shows for this file: its whole path in patch mode, its name alone in a tree.</summary>
     [ObservableProperty] private string _listLabel = "";
     [ObservableProperty] private Avalonia.Thickness _listIndent;
@@ -107,8 +130,44 @@ public sealed partial class CommitWindowProjection : ObservableObject {
     [ObservableProperty] private int _paletteIndex;
     public AvaloniaList<CommitFileRow> PaletteFiles { get; } = new();
 
+    /// <summary>One thing the palette can do, named as the reader would say it.</summary>
+    public sealed record PaletteCommand(string Title, string Detail, string Keys, Action Run);
+
+    public AvaloniaList<PaletteCommand> PaletteCommands { get; } = new();
+
+    /// <summary>Which palette is open: files (Ctrl+P) or commands (Ctrl+Shift+P), as in the history window.</summary>
+    [ObservableProperty] private bool _isCommandPalette;
+
+    public string PaletteHint => IsCommandPalette ? "Run a command" : "Go to changed file";
+
+    partial void OnIsCommandPaletteChanged(bool value) => OnPropertyChanged(nameof(PaletteHint));
+
+    /// <summary>Everything the commit window can do, for the palette and, by the same list, discoverable.</summary>
+    private IEnumerable<PaletteCommand> AllCommands() {
+        yield return new("Stage all", "Every unstaged file", "Ctrl+I", StageAll);
+        yield return new("Unstage all", "Every staged file", "", UnstageAll);
+        yield return new("Stage this file", "Or the selected lines", "Ctrl+T", () => Stage(false, stage: true));
+        yield return new("Unstage this file", "Or the selected lines", "Ctrl+U", () => Stage(false, stage: false));
+        yield return new("Discard changes…", "Asks first; can be undone", "Delete", DiscardFromKeyboard);
+        yield return new("Undo discard", "Put back what the last discard threw away", "Ctrl+Z", UndoDiscard);
+        yield return new("Rescan", "Re-read the working tree and index", "F5", () => RescanCommand.Execute(null));
+        yield return new("Commit", "", "Ctrl+Enter", Commit);
+        yield return new(Amend ? "Stop amending" : "Amend the last commit", "", "Ctrl+Shift+A", SetAmendFromKeyboard);
+        yield return new("Sign off", "Add a Signed-off-by line", "Ctrl+Shift+S", ToggleSignOff);
+        yield return new("Keyboard shortcuts", "", "F1", () => IsKeysOpen = true);
+    }
+
+    /// <summary>Ctrl+Shift+P: the commands, rather than the files.</summary>
+    public void OpenCommandPalette() {
+        IsCommandPalette = true;
+        PaletteQuery = "";
+        FilterPalette();
+        IsFilePaletteOpen = true;
+    }
+
     /// <summary>Ctrl+P: every changed file from both lists, best fuzzy matches first; a file in both lists appears twice.</summary>
     public void OpenFilePalette() {
+        IsCommandPalette = false;
         PaletteQuery = "";
         FilterPalette();
         IsFilePaletteOpen = true;
@@ -118,6 +177,20 @@ public sealed partial class CommitWindowProjection : ObservableObject {
 
     private void FilterPalette() {
         var query = PaletteQuery.Trim();
+        if (IsCommandPalette) {
+            var commands = AllCommands()
+                .Select((command, order) => (command, order, score: query.Length == 0 ? 0 : GitKay.Kit.Fuzzy.score(query, command.Title)))
+                .Where(entry => entry.score >= 0)
+                .OrderByDescending(entry => entry.score)
+                .ThenBy(entry => entry.order)
+                .Select(entry => entry.command)
+                .ToList();
+            PaletteCommands.Clear();
+            PaletteCommands.AddRange(commands);
+            PaletteIndex = commands.Count > 0 ? 0 : -1;
+            return;
+        }
+
         var ranked = UnstagedFiles.Concat(StagedFiles)
             .Select((row, order) => (row, order, score: query.Length == 0 ? 0 : GitKay.Kit.Fuzzy.score(query, row.Path)))
             .Where(entry => entry.score >= 0)
@@ -132,6 +205,18 @@ public sealed partial class CommitWindowProjection : ObservableObject {
 
     /// <summary>Shows the chosen palette file's diff.</summary>
     public void RunPalette() {
+        if (IsCommandPalette) {
+            if (PaletteIndex >= 0 && PaletteIndex < PaletteCommands.Count) {
+                var command = PaletteCommands[PaletteIndex];
+                IsFilePaletteOpen = false;
+                command.Run();
+                return;
+            }
+
+            IsFilePaletteOpen = false;
+            return;
+        }
+
         if (PaletteIndex >= 0 && PaletteIndex < PaletteFiles.Count) {
             var row = PaletteFiles[PaletteIndex];
             _dispatch?.Invoke(CoreWindow.Msg.NewSelect(row.List, row.Path));
@@ -197,6 +282,8 @@ public sealed partial class CommitWindowProjection : ObservableObject {
             new("Ctrl+S in the message · Ctrl+Shift+S", "Toggle sign off"),
             new("Ctrl+Shift+A", "Toggle amend"),
             new("F5", "Rescan the working tree and index"),
+            new("Ctrl+Shift+P", "Run a command"),
+            new("Ctrl+W o / = / _ / |", "Maximise the focused pane, or put the layout back"),
             new("Right-click", "File and line actions: stage, unstage, discard, copy path, open in VS Code"),
         ]),
         new("Finding", [
@@ -820,10 +907,63 @@ public partial class CommitWindow : Window, IVimCommands {
             case GitKay.Core.Vim.VimPaneCommand.Next: CyclePane(1); break;
             case GitKay.Core.Vim.VimPaneCommand.Previous: CyclePane(-1); break;
             case GitKay.Core.Vim.VimPaneCommand.Last: if (_lastPane != Pane.None) FocusPane(_lastPane); break;
+            case GitKay.Core.Vim.VimPaneCommand.Only: ToggleMaximised(); break;
+            case GitKay.Core.Vim.VimPaneCommand.MaximizeHeight: MaximisePane(rows: true); break;
+            case GitKay.Core.Vim.VimPaneCommand.MaximizeWidth: MaximisePane(rows: false); break;
+            case GitKay.Core.Vim.VimPaneCommand.Equalize: RestoreLayout(); break;
             default:
                 if (InDirection(FocusedPane, command) is var target and not Pane.None) FocusPane(target);
                 break;
         }
+    }
+
+    // ----- Ctrl+W o / _ / | / =, as the history window has them -----
+
+    private (GridLength Left, GridLength Right, GridLength Unstaged, GridLength Staged, GridLength Diff, GridLength Message)? _savedLayout;
+
+    private void RememberLayout() {
+        if (_savedLayout != null) return;
+        _savedLayout = (SplitGrid.ColumnDefinitions[0].Width, SplitGrid.ColumnDefinitions[2].Width,
+            ListsGrid.RowDefinitions[1].Height, ListsGrid.RowDefinitions[3].Height,
+            RightGrid.RowDefinitions[0].Height, RightGrid.RowDefinitions[2].Height);
+    }
+
+    /// <summary>Gives the focused pane all the room, or puts the layout back when it already has it.</summary>
+    private void ToggleMaximised() {
+        if (_savedLayout != null) { RestoreLayout(); return; }
+        MaximisePane(rows: true);
+        MaximisePane(rows: false);
+    }
+
+    /// <summary>Gives the focused pane its row's height, or its column's width.</summary>
+    private void MaximisePane(bool rows) {
+        RememberLayout();
+        var star = new GridLength(1, GridUnitType.Star);
+        var none = new GridLength(0, GridUnitType.Star);
+        var pane = FocusedPane;
+        if (rows) {
+            // Within the lists column, and within the diff/message column.
+            ListsGrid.RowDefinitions[1].Height = pane == Pane.Staged ? none : star;
+            ListsGrid.RowDefinitions[3].Height = pane == Pane.Unstaged ? none : star;
+            RightGrid.RowDefinitions[0].Height = pane == Pane.Message ? none : star;
+            RightGrid.RowDefinitions[2].Height = pane == Pane.Diff ? none : star;
+        }
+        else {
+            var listsFocused = pane is Pane.Unstaged or Pane.Staged;
+            SplitGrid.ColumnDefinitions[0].Width = listsFocused ? star : none;
+            SplitGrid.ColumnDefinitions[2].Width = listsFocused ? none : star;
+        }
+    }
+
+    private void RestoreLayout() {
+        if (_savedLayout is not { } saved) return;
+        SplitGrid.ColumnDefinitions[0].Width = saved.Left;
+        SplitGrid.ColumnDefinitions[2].Width = saved.Right;
+        ListsGrid.RowDefinitions[1].Height = saved.Unstaged;
+        ListsGrid.RowDefinitions[3].Height = saved.Staged;
+        RightGrid.RowDefinitions[0].Height = saved.Diff;
+        RightGrid.RowDefinitions[2].Height = saved.Message;
+        _savedLayout = null;
     }
 
     // The main window's commit-level keys have nothing to act on here.
@@ -943,6 +1083,11 @@ public partial class CommitWindow : Window, IVimCommands {
             // In the message box Ctrl+S signs off, as in git gui; elsewhere it stages, like s.
             case Key.S when ctrlShift || (ctrl && inMessage):
                 projection.ToggleSignOff();
+                Handled();
+                return;
+            case Key.P when ctrlShift:
+                projection.OpenCommandPalette();
+                Avalonia.Threading.Dispatcher.UIThread.Post(() => PaletteBox.Focus(), Avalonia.Threading.DispatcherPriority.Input);
                 Handled();
                 return;
             case Key.P when ctrl:

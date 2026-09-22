@@ -92,7 +92,7 @@
                 </Grid>
             </Border>
 
-            <Grid Grid.Row="1">
+            <Grid x:Name="SplitGrid" Grid.Row="1">
                 <Grid.ColumnDefinitions>
                     <!-- The lists keep a readable width, and so does the diff beside them. -->
                     <ColumnDefinition Width="320" MinWidth="220" />
@@ -100,7 +100,7 @@
                     <ColumnDefinition Width="*" MinWidth="380" />
                 </Grid.ColumnDefinitions>
                 <!-- Unstaged and staged files down the whole left side. -->
-                <Grid Grid.Column="0">
+                <Grid x:Name="ListsGrid" Grid.Column="0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" MinHeight="60" />
@@ -165,10 +165,29 @@
                                 <ContentControl Content="{Binding}">
                                     <ContentControl.DataTemplates>
                                         <DataTemplate x:DataType="local:CommitFileRow">
-                                            <Grid ColumnDefinitions="18,*" Margin="{Binding ListIndent}" ToolTip.Tip="{Binding Path}" Background="Transparent">
-                                                <TextBlock Text="{Binding Marker}" FontSize="12" Classes="unstagedMarker" VerticalAlignment="Center" />
-                                                <TextBlock Grid.Column="1" Text="{Binding ListLabel}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}"
-                                                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                            <!-- Laid out like the history window's changed-file list: state, change
+                                                 badge, name, then counts in columns that line up down the list. -->
+                                            <Grid ColumnDefinitions="14,Auto,*" ColumnSpacing="6" Margin="{Binding ListIndent}"
+                                                  ToolTip.Tip="{Binding ChangeToolTip}" Background="Transparent">
+                                                <TextBlock Text="{Binding Marker}" FontSize="11" Classes="unstagedMarker" VerticalAlignment="Center" />
+                                                <Border Grid.Column="1" Classes="fileChange" Width="14" Height="14" CornerRadius="3"
+                                                        BorderThickness="0" VerticalAlignment="Center"
+                                                        Classes.added="{Binding IsAddedFile}"
+                                                        Classes.deleted="{Binding IsDeletedFile}"
+                                                        Classes.modified="{Binding IsModifiedFile}">
+                                                    <TextBlock Text="{Binding ChangeGlyph}" FontSize="12" FontWeight="SemiBold"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <local:FileRowLayout Grid.Column="2" Spacing="7">
+                                                    <TextBlock Text="{Binding ListLabel}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}"
+                                                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                                    <TextBlock Text="{Binding AddedText}" FontSize="11" Width="38" TextAlignment="Right"
+                                                               FontFamily="{x:Static local:FontStacks.Mono}"
+                                                               Foreground="{DynamicResource GitKayAddedAccentBrush}" VerticalAlignment="Center" />
+                                                    <TextBlock Text="{Binding RemovedText}" FontSize="11" Width="38" TextAlignment="Right"
+                                                               FontFamily="{x:Static local:FontStacks.Mono}"
+                                                               Foreground="{DynamicResource GitKayRemovedAccentBrush}" VerticalAlignment="Center" />
+                                                </local:FileRowLayout>
                                             </Grid>
                                         </DataTemplate>
                                         <DataTemplate x:DataType="local:CommitFolderRow">
@@ -225,10 +244,29 @@
                                 <ContentControl Content="{Binding}">
                                     <ContentControl.DataTemplates>
                                         <DataTemplate x:DataType="local:CommitFileRow">
-                                            <Grid ColumnDefinitions="18,*" Margin="{Binding ListIndent}" ToolTip.Tip="{Binding Path}" Background="Transparent">
-                                                <TextBlock Text="{Binding Marker}" FontSize="12" Classes="stagedMarker" VerticalAlignment="Center" />
-                                                <TextBlock Grid.Column="1" Text="{Binding ListLabel}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}"
-                                                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                            <!-- Laid out like the history window's changed-file list: state, change
+                                                 badge, name, then counts in columns that line up down the list. -->
+                                            <Grid ColumnDefinitions="14,Auto,*" ColumnSpacing="6" Margin="{Binding ListIndent}"
+                                                  ToolTip.Tip="{Binding ChangeToolTip}" Background="Transparent">
+                                                <TextBlock Text="{Binding Marker}" FontSize="11" Classes="stagedMarker" VerticalAlignment="Center" />
+                                                <Border Grid.Column="1" Classes="fileChange" Width="14" Height="14" CornerRadius="3"
+                                                        BorderThickness="0" VerticalAlignment="Center"
+                                                        Classes.added="{Binding IsAddedFile}"
+                                                        Classes.deleted="{Binding IsDeletedFile}"
+                                                        Classes.modified="{Binding IsModifiedFile}">
+                                                    <TextBlock Text="{Binding ChangeGlyph}" FontSize="12" FontWeight="SemiBold"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <local:FileRowLayout Grid.Column="2" Spacing="7">
+                                                    <TextBlock Text="{Binding ListLabel}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}"
+                                                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                                    <TextBlock Text="{Binding AddedText}" FontSize="11" Width="38" TextAlignment="Right"
+                                                               FontFamily="{x:Static local:FontStacks.Mono}"
+                                                               Foreground="{DynamicResource GitKayAddedAccentBrush}" VerticalAlignment="Center" />
+                                                    <TextBlock Text="{Binding RemovedText}" FontSize="11" Width="38" TextAlignment="Right"
+                                                               FontFamily="{x:Static local:FontStacks.Mono}"
+                                                               Foreground="{DynamicResource GitKayRemovedAccentBrush}" VerticalAlignment="Center" />
+                                                </local:FileRowLayout>
                                             </Grid>
                                         </DataTemplate>
                                         <DataTemplate x:DataType="local:CommitFolderRow">
@@ -269,7 +307,7 @@
                 <GridSplitter x:Name="ListsSplitterLine" Grid.Column="1" Width="1" Background="{DynamicResource GitKayBorderBrush}" ResizeDirection="Columns" />
 
                 <!-- The diff above the commit message, both beside the file lists. -->
-                <Grid Grid.Column="2">
+                <Grid x:Name="RightGrid" Grid.Column="2">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="3*" MinHeight="80" />
                         <RowDefinition Height="Auto" />
@@ -387,9 +425,29 @@
                     Background="{DynamicResource GitKaySurfaceBrush}" BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="1"
                     BoxShadow="0 12 32 0 #50000000">
                 <DockPanel>
-                    <TextBox DockPanel.Dock="Top" x:Name="PaletteBox" Text="{Binding PaletteQuery, Mode=TwoWay}" PlaceholderText="Go to changed file"
+                    <TextBox DockPanel.Dock="Top" x:Name="PaletteBox" Text="{Binding PaletteQuery, Mode=TwoWay}"
+                             Watermark="{Binding PaletteHint}"
                              FontSize="13" Margin="0,0,0,6" />
-                    <ListBox x:Name="PaletteList" ItemsSource="{Binding PaletteFiles}" SelectedIndex="{Binding PaletteIndex, Mode=TwoWay}"
+                    <ListBox x:Name="CommandPaletteList" IsVisible="{Binding IsCommandPalette}"
+                             ItemsSource="{Binding PaletteCommands}" SelectedIndex="{Binding PaletteIndex, Mode=TwoWay}"
+                             Background="Transparent" DoubleTapped="OnPaletteDoubleTapped">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="local:CommitWindowProjection+PaletteCommand">
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="{Binding Title}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding Detail}" FontSize="11" Foreground="{DynamicResource GitKayMutedTextBrush}"
+                                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding Keys}" FontSize="11"
+                                               FontFamily="{x:Static local:FontStacks.Mono}"
+                                               Foreground="{DynamicResource GitKaySecondaryTextBrush}" VerticalAlignment="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <ListBox x:Name="PaletteList" IsVisible="{Binding !IsCommandPalette}"
+                             ItemsSource="{Binding PaletteFiles}" SelectedIndex="{Binding PaletteIndex, Mode=TwoWay}"
                              Background="Transparent" DoubleTapped="OnPaletteDoubleTapped">
                         <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="local:CommitFileRow">

@@ -1984,3 +1984,46 @@ module FormattedPreviewExpansionTests =
             // Going back restores the source and how far it was opened.
             file.ClearFormatted()
             test <@ not file.IsFormattedPreview && file.HasRevealedContext @>)
+
+module CommitWindowParityTests =
+    let private row (staged: bool) path added removed : CommitFileRow =
+        let list = if staged then CommitWindow.ListKind.StagedList else CommitWindow.ListKind.UnstagedList
+        let lines =
+            [ for i in 1 .. added -> ({ Type = Models.Added; Content = $"+{i}"; OldLineNo = None; NewLineNo = Some i } : Models.DiffLine) ]
+            @ [ for i in 1 .. removed -> ({ Type = Models.Removed; Content = $"-{i}"; OldLineNo = Some i; NewLineNo = None } : Models.DiffLine) ]
+        let diff : Models.FileDiff =
+            { OldPath = path; NewPath = path; NewLineCount = None
+              Hunks = [ { Header = "@@ -1 +1 @@"; Lines = lines } ] }
+        CommitFileRow(list, diff, false)
+
+    [<Fact>]
+    let ``commit window file rows carry the same change vocabulary as the history window`` () =
+        let changed = row false "src/app.fs" 3 2
+        test <@ changed.ChangeGlyph = FileChange.glyph FileChange.Modified @>
+        test <@ changed.IsModifiedFile && not changed.IsAddedFile @>
+        // Counts in the same shape, and each keeps its column when the other is empty.
+        test <@ changed.AddedText = "+3" && changed.RemovedText = "−2" @>
+        let onlyAdded = row false "new.fs" 4 0
+        test <@ onlyAdded.AddedText = "+4" && onlyAdded.RemovedText = "" @>
+        test <@ changed.ChangeToolTip.Contains "Modified" && changed.ChangeToolTip.Contains "+3" @>
+
+    [<Fact>]
+    let ``the commit window offers its commands through a palette`` () =
+        Headless.run (fun () ->
+            let projection = CommitWindowProjection("test-repo")
+            projection.UnstagedFiles.Add(row false "a.txt" 1 0)
+
+            // Ctrl+Shift+P lists what the window can do, narrowing as you type.
+            projection.OpenCommandPalette()
+            test <@ projection.IsCommandPalette && projection.IsFilePaletteOpen @>
+            test <@ projection.PaletteCommands.Count > 5 @>
+            test <@ projection.PaletteHint = "Run a command" @>
+            test <@ projection.PaletteCommands |> Seq.exists (fun c -> c.Title = "Rescan") @>
+
+            projection.PaletteQuery <- "stage all"
+            test <@ (Seq.head projection.PaletteCommands).Title = "Stage all" @>
+
+            // Ctrl+P is still the files, and says so.
+            projection.OpenFilePalette()
+            test <@ not projection.IsCommandPalette && projection.PaletteHint = "Go to changed file" @>
+            test <@ projection.PaletteFiles.Count = 1 @>)
