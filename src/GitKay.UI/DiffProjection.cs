@@ -242,19 +242,26 @@ public partial class DiffFileProjection : ObservableObject {
     /// </summary>
     public void ApplyFormatted(GitKay.Core.Models.FileDiff formatted) {
         _sourceContent ??= _content;
+        _sourceExpansion = _expansion;
         IsFormattedPreview = true;
-        ApplyContent(formatted, _expansion);
+        // No expansion: it records how far the *source* was opened up, counted in the source's own lines. Carried
+        // onto a reformatted document those offsets fall somewhere else entirely, and the rows jump.
+        ApplyContent(formatted, null);
         IsFormattedPreview = true;
     }
 
     public void ClearFormatted() {
         if (_sourceContent is not { } source) { IsFormattedPreview = false; return; }
+        var expansion = _sourceExpansion;
         _sourceContent = null;
+        _sourceExpansion = null;
         IsFormattedPreview = false;
-        ApplyContent(source, _expansion);
+        // Back to the source as it was, opened up exactly as far as it was before the preview.
+        ApplyContent(source, expansion);
     }
 
     private GitKay.Core.Models.FileDiff? _sourceContent;
+    private GitKay.Core.App.FileExpansion? _sourceExpansion;
 
     public void ClearRendered() {
         IsRenderedMarkdown = false;

@@ -604,16 +604,16 @@ module App =
                 match WorkingTree.tryParseSection section with
                 | Some parsed ->
                     if isImage then GitService.loadWorkingTreePreviewImage model.GitEnv.RepoPath parsed key.OldPath key.NewPath |> Result.map PreviewImage
-                    else GitService.loadWorkingTreeFormattedFile model.GitEnv.RepoPath parsed key.OldPath key.NewPath |> Result.map FormattedText
+                    else GitService.loadWorkingTreeFormattedFile model.DiffContextLines model.GitEnv.RepoPath parsed key.OldPath key.NewPath |> Result.map FormattedText
                 | None -> Error(GitError.OperationFailed("Preview", $"Unknown working-tree section: {section}"))
             else
                 match model.RevisionComparison, model.SelectedDiffHash with
                 | Some comparison, _ ->
                     if isImage then GitService.loadRevisionPreviewImage model.GitEnv.RepoPath comparison key.OldPath key.NewPath |> Result.map PreviewImage
-                    else GitService.loadRevisionFormattedFile model.GitEnv.RepoPath comparison key.OldPath key.NewPath |> Result.map FormattedText
+                    else GitService.loadRevisionFormattedFile model.DiffContextLines model.GitEnv.RepoPath comparison key.OldPath key.NewPath |> Result.map FormattedText
                 | None, Some hash ->
                     if isImage then GitService.loadCommitPreviewImage model.GitEnv.RepoPath hash key.OldPath key.NewPath |> Result.map PreviewImage
-                    else GitService.loadCommitFormattedFile model.GitEnv.RepoPath hash key.OldPath key.NewPath |> Result.map FormattedText
+                    else GitService.loadCommitFormattedFile model.DiffContextLines model.GitEnv.RepoPath hash key.OldPath key.NewPath |> Result.map FormattedText
                 | _ -> Error(GitError.OperationFailed("Preview", "No revision is selected"))
         Cmd.OfFlow.ofFlowLatest
             $"format file {key.NewPath}"

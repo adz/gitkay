@@ -73,6 +73,10 @@ module Folder =
     let diffOf (pair: Pair) (oldText: string) (newText: string) =
         SourceDiff.between pair.OldPath pair.NewPath oldText newText
 
+    /// <summary>The same, hunked to a context: a comparison shows changes, not two whole documents.</summary>
+    let diffOfWithContext (contextLines: int) (pair: Pair) (oldText: string) (newText: string) =
+        diffOf pair oldText newText |> SourceDiff.withContext contextLines
+
     /// <summary>
     /// The side of a pair worth previewing: the new one, or the old one for a file that is only on the left. Every
     /// pair has at least one side, so this always answers.

@@ -39,6 +39,46 @@ module SourceDiff =
           Hunks = if lines.IsEmpty then [] else [ { Header = $"@@ -1,{oldLines.Length} +1,{newLines.Length} @@"; Lines = lines } ]
           NewLineCount = Some newLines.Length }
 
+    /// <summary>
+    /// The same diff, but hunked the way git writes one: each run of changes with <paramref name="contextLines"/>
+    /// unchanged lines either side, and everything further away left out. A whole-file diff of a large document is
+    /// thousands of rows the reader did not ask for, and inserting them moves whatever they were looking at.
+    /// </summary>
+    let withContext (contextLines: int) (file: FileDiff) : FileDiff =
+        let lines = file.Hunks |> List.collect _.Lines |> Array.ofList
+        if lines.Length = 0 then file
+        else
+
+        let context = max 0 contextLines
+        let changed = lines |> Array.map (fun line -> line.Type <> Context)
+        if not (Array.exists id changed) then { file with Hunks = [] }
+        else
+
+        // Every line close enough to a change to be worth showing.
+        let keep = Array.create lines.Length false
+        changed |> Array.iteri (fun index isChanged ->
+            if isChanged then
+                for near in max 0 (index - context) .. min (lines.Length - 1) (index + context) do keep.[near] <- true)
+
+        // Consecutive kept lines become one hunk, numbered from the lines themselves.
+        let hunks = ResizeArray<DiffHunk>()
+        let current = ResizeArray<DiffLine>()
+        let flush () =
+            if current.Count > 0 then
+                let first = current.[0]
+                let oldStart = first.OldLineNo |> Option.defaultValue 0
+                let newStart = first.NewLineNo |> Option.defaultValue 0
+                let oldCount = current |> Seq.filter (fun line -> line.Type <> Added) |> Seq.length
+                let newCount = current |> Seq.filter (fun line -> line.Type <> Removed) |> Seq.length
+                hunks.Add { Header = $"@@ -%d{oldStart},%d{oldCount} +%d{newStart},%d{newCount} @@"; Lines = List.ofSeq current }
+                current.Clear()
+
+        for index in 0 .. lines.Length - 1 do
+            if keep.[index] then current.Add lines.[index]
+            else flush ()
+        flush ()
+        { file with Hunks = List.ofSeq hunks }
+
     /// <summary>How many lines the diff added and removed, for a change summary.</summary>
     let counts (file: FileDiff) =
         let lines = file.Hunks |> List.collect _.Lines

@@ -171,6 +171,7 @@ public sealed partial class FolderProjection : ObservableObject {
         Layout = normalized.DiffLayout;
         LoadRemoteImages = normalized.LoadRemoteMarkdownImages;
         PreviewByDefault = normalized.PreviewByDefault;
+        ContextLines = normalized.DiffContextLines;
         // The file chosen before the settings arrived still follows them.
         if (SelectedFile is { } file) ApplyPreviewDefault(file);
     }
@@ -184,6 +185,9 @@ public sealed partial class FolderProjection : ObservableObject {
 
     /// <summary>Whether a previewable file opens in its preview, as it does in a repository window.</summary>
     public bool PreviewByDefault { get; private set; } = GitKay.Core.SettingsModule.defaults.PreviewByDefault;
+
+    /// <summary>How much unchanged text to keep around a change, as the diff settings ask for.</summary>
+    public int ContextLines { get; private set; } = GitKay.Core.SettingsModule.defaults.DiffContextLines;
 
     public bool IsEmpty => Files.Count == 0;
 
@@ -270,7 +274,7 @@ public sealed partial class FolderProjection : ObservableObject {
         var newFormatted = newText.Length == 0 ? "" : Formatted(format, newText);
         if (oldFormatted == null || newFormatted == null) return false;
 
-        file.ApplyFormatted(GitKay.Core.Folder.diffOf(pair, oldFormatted, newFormatted));
+        file.ApplyFormatted(GitKay.Core.Folder.diffOfWithContext(ContextLines, pair, oldFormatted, newFormatted));
         return true;
     }
 

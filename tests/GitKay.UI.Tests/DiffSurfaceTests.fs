@@ -1954,3 +1954,33 @@ module PreviewPillTests =
             finally
                 window.Close()
                 Headless.pump ())
+
+module FormattedPreviewExpansionTests =
+    let private sourceDiff () : Models.FileDiff =
+        { OldPath = "config.json"; NewPath = "config.json"; NewLineCount = Some 3
+          Hunks = [ { Header = "@@ -1,2 +1,2 @@"
+                      Lines = [ { Type = Models.Removed; Content = """{"a":1}"""; OldLineNo = Some 1; NewLineNo = None }
+                                { Type = Models.Added; Content = """{"a":2}"""; OldLineNo = None; NewLineNo = Some 1 } ] } ] }
+
+    [<Fact>]
+    let ``a preview does not inherit how far the source was opened up`` () =
+        Headless.run (fun () ->
+            let file = DiffFileProjection({ OldPath = "config.json"; NewPath = "config.json"; DisplayPath = "config.json" } : GitService.DiffFileSummary)
+            let expansion : App.FileExpansion =
+                { FullContext = None; Revealed = [ { Start = 1; End = 40 } ]; PendingRequestId = None }
+            file.ApplyContent(sourceDiff (), expansion)
+            test <@ file.HasRevealedContext @>
+
+            // The expansion counts source lines; a reformatted document numbers its lines differently, so carrying
+            // it across put rows where the reader was not looking.
+            let formatted : Models.FileDiff =
+                { sourceDiff () with
+                    Hunks = [ { Header = "@@ -1,3 +1,3 @@"
+                                Lines = [ for i, text in List.indexed [ "{"; "  \"a\": 2"; "}" ] ->
+                                            ({ Type = Models.Context; Content = text; OldLineNo = Some(i + 1); NewLineNo = Some(i + 1) } : Models.DiffLine) ] } ] }
+            file.ApplyFormatted formatted
+            test <@ file.IsFormattedPreview && not file.HasRevealedContext @>
+
+            // Going back restores the source and how far it was opened.
+            file.ClearFormatted()
+            test <@ not file.IsFormattedPreview && file.HasRevealedContext @>)

@@ -4537,3 +4537,48 @@ module PushPlanTests =
 
         // A file that is only a mark still has nothing to show.
         test <@ Markdown.formatForPreview XmlFormat bom |> Result.isError @>
+
+module SourceDiffContextTests =
+    open GitKay.Core
+
+    let private document prefix =
+        [ for i in 1 .. 30 -> if i = 15 then $"{prefix} changed line" else $"line {i}" ] |> String.concat "\n"
+
+    [<Fact>]
+    let ``a preview shows the change with its context, not the whole document`` () =
+        let whole = SourceDiff.between "a.txt" "a.txt" (document "old") (document "new")
+        let wholeLines = whole.Hunks |> List.collect _.Lines |> List.length
+        test <@ wholeLines >= 31 @>
+
+        // Three lines either side of the one change, on both sides of it.
+        let limited = SourceDiff.withContext 3 whole
+        let lines = limited.Hunks |> List.collect _.Lines
+        test <@ List.length limited.Hunks = 1 @>
+        test <@ List.length lines = 8 @>
+        test <@ lines |> List.filter (fun line -> line.Type <> Models.Context) |> List.length = 2 @>
+        // The hunk is numbered from the lines it actually holds.
+        test <@ (List.head limited.Hunks).Header.StartsWith "@@ -12," @>
+
+    [<Fact>]
+    let ``changes far apart become separate hunks`` () =
+        let before = [ for i in 1 .. 40 -> $"line {i}" ] |> String.concat "\n"
+        let after =
+            [ for i in 1 .. 40 -> if i = 5 || i = 35 then $"changed {i}" else $"line {i}" ] |> String.concat "\n"
+        let limited = SourceDiff.between "a.txt" "a.txt" before after |> SourceDiff.withContext 2
+        test <@ List.length limited.Hunks = 2 @>
+        // Nothing between them is carried along.
+        let lines = limited.Hunks |> List.collect _.Lines |> List.length
+        test <@ lines <= 14 @>
+
+    [<Fact>]
+    let ``a document with no changes has nothing to show`` () =
+        let same = document "same"
+        let limited = SourceDiff.between "a.txt" "a.txt" same same |> SourceDiff.withContext 3
+        test <@ limited.Hunks = [] @>
+
+    [<Fact>]
+    let ``no context at all shows only the changed lines`` () =
+        let limited = SourceDiff.between "a.txt" "a.txt" (document "old") (document "new") |> SourceDiff.withContext 0
+        let lines = limited.Hunks |> List.collect _.Lines
+        test <@ lines |> List.forall (fun line -> line.Type <> Models.Context) @>
+        test <@ List.length lines = 2 @>

@@ -1332,7 +1332,7 @@ module GitService =
     /// the preview diffs the indented text instead. Whole sides are needed, not the hunks around the changes, or
     /// neither side would parse.
     /// </summary>
-    let private formattedDiff (format: PreviewFormat) oldPath newPath (file: Models.FileDiff) =
+    let private formattedDiff (contextLines: int) (format: PreviewFormat) oldPath newPath (file: Models.FileDiff) =
         let lines oldSide =
             file.Hunks |> List.collect _.Lines
             |> List.filter (fun line -> if oldSide then line.Type <> Added else line.Type <> Removed)
@@ -1346,12 +1346,12 @@ module GitService =
         | Ok oldText, Ok newText -> Ok(SourceDiff.between oldPath newPath oldText newText)
         | Error message, _ | _, Error message -> Error(GitError.OperationFailed("Preview", message))
 
-    let loadCommitFormattedFile (repoPath: string) (hash: string) (oldPath: string) (newPath: string) : Result<Models.FileDiff, GitError> =
+    let loadCommitFormattedFile (contextLines: int) (repoPath: string) (hash: string) (oldPath: string) (newPath: string) : Result<Models.FileDiff, GitError> =
         result {
             let! file = loadWholeFile repoPath hash oldPath newPath
             let previewPath = FileChange.currentPath oldPath newPath
             match Markdown.previewKind previewPath with
-            | FormattedPreview format -> return! formattedDiff format oldPath newPath file
+            | FormattedPreview format -> return! formattedDiff contextLines format oldPath newPath file
             | _ -> return! Error(GitError.OperationFailed("Preview", "This file has no formatted view"))
         }
 
@@ -1371,16 +1371,16 @@ module GitService =
         let deleted = FileChange.isDeleted oldPath newPath
         revisionBlobBytes repoPath (if deleted then comparison.BaseHash else comparison.TargetHash) (if deleted then oldPath else newPath)
 
-    let loadWorkingTreeFormattedFile (repoPath: string) (section: WorkingTree.Section) (oldPath: string) (newPath: string) : Result<Models.FileDiff, GitError> =
+    let loadWorkingTreeFormattedFile (contextLines: int) (repoPath: string) (section: WorkingTree.Section) (oldPath: string) (newPath: string) : Result<Models.FileDiff, GitError> =
         result {
             let! file = loadWorkingTreeFile repoPath section oldPath newPath
             let previewPath = FileChange.currentPath oldPath newPath
             match Markdown.previewKind previewPath with
-            | FormattedPreview format -> return! formattedDiff format oldPath newPath file
+            | FormattedPreview format -> return! formattedDiff contextLines format oldPath newPath file
             | _ -> return! Error(GitError.OperationFailed("Preview", "This file has no formatted view"))
         }
 
-    let loadRevisionFormattedFile (repoPath: string) (comparison: RevisionComparison) (oldPath: string) (newPath: string) : Result<Models.FileDiff, GitError> =
+    let loadRevisionFormattedFile (contextLines: int) (repoPath: string) (comparison: RevisionComparison) (oldPath: string) (newPath: string) : Result<Models.FileDiff, GitError> =
         result {
             use repo = new Repository(repoPath)
             let! oldSource = revisionBlobText repo comparison.BaseHash oldPath
@@ -1388,7 +1388,7 @@ module GitService =
             let file = SourceDiff.between oldPath newPath oldSource newSource
             let previewPath = FileChange.currentPath oldPath newPath
             match Markdown.previewKind previewPath with
-            | FormattedPreview format -> return! formattedDiff format oldPath newPath file
+            | FormattedPreview format -> return! formattedDiff contextLines format oldPath newPath file
             | _ -> return! Error(GitError.OperationFailed("Preview", "This file has no formatted view"))
         }
 
