@@ -508,7 +508,10 @@ module Markdown =
     /// Reformats a document for reading. Minified JSON is one enormous line; indenting it is the whole point of
     /// previewing it. Anything that will not parse is left exactly as it was, so a preview never hides the file.
     /// </summary>
-    let formatForPreview (format: PreviewFormat) (text: string) =
+    let formatForPreview (format: PreviewFormat) (rawText: string) =
+        // A byte-order mark survives into the decoded string, where it is not whitespace and not markup: both
+        // parsers reject a document that starts with one, and .fsproj and .csproj files routinely have one.
+        let text = rawText.TrimStart('\uFEFF')
         if String.IsNullOrWhiteSpace text then Error "There is nothing to reformat"
         else
 

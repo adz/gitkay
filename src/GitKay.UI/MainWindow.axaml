@@ -848,12 +848,7 @@
                                     <Style Selector="ListBoxItem:pointerover">
                                         <Setter Property="Background" Value="{DynamicResource GitKayHoverBrush}" />
                                     </Style>
-                                        <Style Selector="local|DiffStatBar.rowStat">
-                                            <Setter Property="Opacity" Value="0.35" />
-                                        </Style>
-                                        <Style Selector="ListBoxItem:pointerover local|DiffStatBar.rowStat, ListBoxItem:selected local|DiffStatBar.rowStat">
-                                            <Setter Property="Opacity" Value="1" />
-                                        </Style>
+
                                         <Style Selector="TextBlock.pathMatch">
                                             <Setter Property="TextDecorations">
                                                 <TextDecorationCollection>
@@ -947,6 +942,8 @@
                                                                HorizontalAlignment="Center" VerticalAlignment="Center" />
                                                 </Border>
                                                 <!-- The name keeps its room: the graph drops out before the path is trimmed for it. -->
+                                                <!-- Counts in a fixed-width column so they line up down the list; the
+                                                     five-block graph said less than the numbers and broke that line. -->
                                                 <local:FileRowLayout Grid.Column="1" Spacing="7">
                                                     <TextBlock Text="{Binding ListLabel}"
                                                                Classes.pathMatch="{Binding IsPathSearchMatch}"
@@ -958,16 +955,14 @@
                                                     <TextBlock Text="{Binding ListMarker}" IsVisible="{Binding HasListMarker}"
                                                                FontSize="11" Foreground="{DynamicResource GitKaySecondaryTextBrush}" VerticalAlignment="Center"
                                                                ToolTip.Tip="● staged · ○ unstaged · ◐ both · + untracked" />
-                                                    <TextBlock Text="{Binding AddedText}" IsVisible="{Binding HasAddedText}"
-                                                               FontSize="11" Foreground="{DynamicResource GitKayAddedAccentBrush}" VerticalAlignment="Center" />
-                                                    <TextBlock Text="{Binding RemovedText}" IsVisible="{Binding HasRemovedText}"
-                                                               FontSize="11" Foreground="{DynamicResource GitKayRemovedAccentBrush}" VerticalAlignment="Center" />
-                                                    <local:DiffStatBar Classes="rowStat"
-                                                                       Added="{Binding AddedLines}"
-                                                                       Removed="{Binding RemovedLines}"
-                                                                       IsKnown="{Binding IsLoaded}"
-                                                                       BlockSize="5"
-                                                                       VerticalAlignment="Center" />
+                                                    <TextBlock Text="{Binding AddedText}" IsVisible="{Binding ShowsCounts}"
+                                                               FontSize="11" Width="38" TextAlignment="Right"
+                                                               FontFamily="{x:Static local:FontStacks.Mono}"
+                                                               Foreground="{DynamicResource GitKayAddedAccentBrush}" VerticalAlignment="Center" />
+                                                    <TextBlock Text="{Binding RemovedText}" IsVisible="{Binding ShowsCounts}"
+                                                               FontSize="11" Width="38" TextAlignment="Right"
+                                                               FontFamily="{x:Static local:FontStacks.Mono}"
+                                                               Foreground="{DynamicResource GitKayRemovedAccentBrush}" VerticalAlignment="Center" />
                                                 </local:FileRowLayout>
                                             </Grid>
                                         </Border>

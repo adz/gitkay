@@ -4522,3 +4522,18 @@ module PushPlanTests =
     let ``an upstream ref that is not a branch ref is compared as it is`` () =
         test <@ Push.upstreamBranchName "refs/heads/topic" = "topic" @>
         test <@ Push.upstreamBranchName "topic" = "topic" @>
+
+    [<Fact>]
+    let ``a byte-order mark does not make a file unpreviewable`` () =
+        // .fsproj and .csproj files are written with one, and it is neither whitespace nor markup.
+        let bom = "﻿"
+        match Markdown.formatForPreview XmlFormat (bom + """<Project Sdk="x"><PropertyGroup><A>1</A></PropertyGroup></Project>""") with
+        | Ok text -> test <@ text.Contains "<A>1</A>" @>
+        | Error message -> failwith message
+
+        match Markdown.formatForPreview JsonFormat (bom + """{"a":1}""") with
+        | Ok text -> test <@ text.Contains "\"a\": 1" @>
+        | Error message -> failwith message
+
+        // A file that is only a mark still has nothing to show.
+        test <@ Markdown.formatForPreview XmlFormat bom |> Result.isError @>

@@ -106,9 +106,15 @@ public partial class DiffFileProjection : ObservableObject {
     [ObservableProperty] private int _addedLines;
     [ObservableProperty] private int _removedLines;
 
-    /// <summary>The exact counts, which the five-block graph can only approximate: two files can fill it equally and differ fourfold.</summary>
-    public string AddedText => $"+{AddedLines}";
-    public string RemovedText => $"−{RemovedLines}";
+    /// <summary>
+    /// The exact counts. Each keeps its column whether or not it has a number in it, so the counts line up down the
+    /// list instead of sliding about with the width of the one beside them.
+    /// </summary>
+    public string AddedText => AddedLines > 0 ? $"+{AddedLines}" : "";
+    public string RemovedText => RemovedLines > 0 ? $"−{RemovedLines}" : "";
+
+    /// <summary>Whether this row shows counts at all: a loaded file being shown as a change.</summary>
+    public bool ShowsCounts => ShowsAsChange && IsLoaded;
     /// <summary>
     /// Whether this file is being shown as a change at all. Browsing a folder lists files rather than comparing
     /// them, and there every line counts as added, which says nothing true about the file.
@@ -131,6 +137,7 @@ public partial class DiffFileProjection : ObservableObject {
     partial void OnIsLoadedChanged(bool value) {
         OnPropertyChanged(nameof(HasAddedText));
         OnPropertyChanged(nameof(HasRemovedText));
+        OnPropertyChanged(nameof(ShowsCounts));
     }
     /// <summary>"added", "deleted", "renamed" or "modified", derived from the file identity.</summary>
     public string ChangeKind => GitKay.Core.FileChange.kindName(Change);

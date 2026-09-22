@@ -207,14 +207,14 @@
                                                        Foreground="{DynamicResource GitKayTextBrush}"
                                                        TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
                                                        VerticalAlignment="Center" />
-                                            <TextBlock Text="{Binding AddedText}" IsVisible="{Binding HasAddedText}"
-                                                       FontSize="11" Foreground="{DynamicResource GitKayAddedAccentBrush}" VerticalAlignment="Center" />
-                                            <TextBlock Text="{Binding RemovedText}" IsVisible="{Binding HasRemovedText}"
-                                                       FontSize="11" Foreground="{DynamicResource GitKayRemovedAccentBrush}" VerticalAlignment="Center" />
-                                            <local:DiffStatBar Classes="rowStat"
-                                                               Added="{Binding AddedLines}" Removed="{Binding RemovedLines}"
-                                                               IsKnown="{Binding IsLoaded}" BlockSize="5" VerticalAlignment="Center"
-                                                               IsVisible="{Binding ShowsAsChange}" />
+                                            <TextBlock Text="{Binding AddedText}" IsVisible="{Binding ShowsCounts}"
+                                                       FontSize="11" Width="38" TextAlignment="Right"
+                                                       FontFamily="{x:Static local:FontStacks.Mono}"
+                                                       Foreground="{DynamicResource GitKayAddedAccentBrush}" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding RemovedText}" IsVisible="{Binding ShowsCounts}"
+                                                       FontSize="11" Width="38" TextAlignment="Right"
+                                                       FontFamily="{x:Static local:FontStacks.Mono}"
+                                                       Foreground="{DynamicResource GitKayRemovedAccentBrush}" VerticalAlignment="Center" />
                                         </local:FileRowLayout>
                                     </Grid>
                                 </Border>
