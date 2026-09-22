@@ -43,6 +43,17 @@
   - Flow returns `Result`.
   - Elmish reducer applies the result only if it is still current.
 
+## Shared UI Vocabulary
+- One changed-file row: `ChangedFileRow` serves the history, commit and folder windows. Three copies is how they
+  came to describe the same file three different ways; add to the control, not to a window's template.
+- One key map: `Keys.fs` holds the bindings that mean the same thing everywhere (F1, F5, Ctrl+P, Ctrl+Shift+P,
+  Ctrl+F, Ctrl+Z, zoom, Escape). A window consults it before its own keys, and shortcut sheets are built from it so
+  they cannot drift from behaviour.
+- A toggle says its state in a word, not only a tint: the preview, changes-only and whitespace controls read
+  Preview/Source, Changes/All and Whitespace, filled while on. A glyph alone makes the reader click to find out.
+- Anything about how a surface *looks* is tested through `Render` in the UI tests, which renders headlessly and reads
+  the pixels back. Ordinary tests pass over a projection that is correct while the thing on screen is unreadable.
+
 ## Where Code Lives
 - **Anything that could be tested without a window belongs in F#.** The split is by purity, not by layer: C# is for
   drawing, input and binding; every decision those make is a pure function that belongs in `GitKay.Core`.

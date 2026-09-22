@@ -400,6 +400,25 @@ public partial class FolderWindow : Window {
             projection.ToggleFolder(folder.Path);
     }
 
+    /// <summary>F5 here means what it means elsewhere: read the folders again.</summary>
+    private void ReloadFolders() {
+        if (DataContext is not FolderProjection projection) return;
+        try {
+            if (projection.Mode == FolderMode.Compare) ExternalTools.StartGitKay(projection.ChosenLeft, "diff", projection.ChosenLeft, projection.ChosenRight ?? "");
+            else ExternalTools.StartGitKay(projection.ChosenLeft, "browse", projection.ChosenLeft);
+            projection.Status = "Re-read in a new window";
+        }
+        catch (Exception error) { projection.Status = $"Could not re-read: {error.Message}"; }
+    }
+
+    /// <summary>The shared keys, listed from the one map rather than from a copy that can drift out of date.</summary>
+    private void ShowShortcuts() {
+        if (DataContext is not FolderProjection projection) return;
+        projection.Status = string.Join("  ·  ",
+            Microsoft.FSharp.Collections.ListModule.ToArray(GitKay.Core.Keys.sheet)
+                .Select(entry => $"{entry.Item1} {entry.Item2}"));
+    }
+
     private void OnPreviewRequested(object? sender, DiffFileProjection file) {
         if (DataContext is FolderProjection projection) projection.TogglePreview(file);
     }
@@ -521,6 +540,19 @@ public partial class FolderWindow : Window {
         FilePaletteList.SelectedIndex = matches.Count > 0 ? 0 : -1;
     }
 
+    /// <summary>This window's key as the shared map names it.</summary>
+    private static GitKay.Core.Keys.Chord ChordFrom(KeyEventArgs e) =>
+        GitKay.Core.Keys.chord(
+            e.Key switch {
+                Key.OemPlus or Key.Add => "Plus",
+                Key.OemMinus or Key.Subtract => "Minus",
+                Key.NumPad0 => "D0",
+                _ => e.Key.ToString(),
+            },
+            e.KeyModifiers.HasFlag(KeyModifiers.Control),
+            e.KeyModifiers.HasFlag(KeyModifiers.Shift),
+            e.KeyModifiers.HasFlag(KeyModifiers.Alt));
+
     protected override void OnKeyDown(KeyEventArgs e) {
         if (DataContext is not FolderProjection projection) { base.OnKeyDown(e); return; }
 
@@ -548,17 +580,31 @@ public partial class FolderWindow : Window {
             }
         }
 
-        if (e.Key == Key.P && e.KeyModifiers == KeyModifiers.Control) { OpenFilePalette(); e.Handled = true; return; }
-        if (e.Key == Key.F && e.KeyModifiers == KeyModifiers.Control) { OpenFind(); e.Handled = true; return; }
-        if (e.Key == Key.Oem2 && e.KeyModifiers == KeyModifiers.None && !Surface.IsFocused) { OpenFind(); e.Handled = true; return; }
-        if (MainWindow.DiffZoomDirection(e) is { } zoom && DataContext is FolderProjection) {
-            projection.DiffFontSize = zoom == 0
-                ? DiffSurfaceControl.DefaultCodeFontSize
-                : Math.Clamp(projection.DiffFontSize + zoom, 7, 32);
-            e.Handled = true;
-            return;
+        // The shared map first, so a key means here what it means in the other windows.
+        var shared = GitKay.Core.Keys.command(ChordFrom(e));
+        if (shared != null) {
+            switch (shared.Value.Tag) {
+                case GitKay.Core.Keys.Command.Tags.GoToFile: OpenFilePalette(); e.Handled = true; return;
+                case GitKay.Core.Keys.Command.Tags.FindInView: OpenFind(); e.Handled = true; return;
+                case GitKay.Core.Keys.Command.Tags.Refresh: ReloadFolders(); e.Handled = true; return;
+                case GitKay.Core.Keys.Command.Tags.ShowShortcuts: ShowShortcuts(); e.Handled = true; return;
+                case GitKay.Core.Keys.Command.Tags.ZoomIn:
+                    projection.DiffFontSize = Math.Clamp(projection.DiffFontSize + 1, 7, 32);
+                    e.Handled = true;
+                    return;
+                case GitKay.Core.Keys.Command.Tags.ZoomOut:
+                    projection.DiffFontSize = Math.Clamp(projection.DiffFontSize - 1, 7, 32);
+                    e.Handled = true;
+                    return;
+                case GitKay.Core.Keys.Command.Tags.ZoomReset:
+                    projection.DiffFontSize = DiffSurfaceControl.DefaultCodeFontSize;
+                    e.Handled = true;
+                    return;
+                case GitKay.Core.Keys.Command.Tags.Dismiss: Close(); e.Handled = true; return;
+            }
         }
-        if (e.Key == Key.Escape) { Close(); e.Handled = true; return; }
+
+        if (e.Key == Key.Oem2 && e.KeyModifiers == KeyModifiers.None && !Surface.IsFocused) { OpenFind(); e.Handled = true; return; }
         base.OnKeyDown(e);
     }
 }

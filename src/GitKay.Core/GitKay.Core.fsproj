@@ -11,6 +11,7 @@
     <Compile Include="FileChange.fs" />
     <Compile Include="CommitFormat.fs" />
     <Compile Include="SourceDiff.fs" />
+    <Compile Include="Keys.fs" />
     <Compile Include="Presentation.fs" />
     <Compile Include="Markdown.fs" />
     <Compile Include="DiffFind.fs" />

@@ -4596,3 +4596,34 @@ module SourceDiffContextTests =
         let refused = Push.plan "feature" (Some "origin") (Some "refs/heads/main") [ "origin" ]
         test <@ (Push.describe "feature" refused).Contains "would write feature onto main" @>
         test <@ Push.describeDone "feature" refused = Push.describe "feature" refused @>
+
+module SharedKeysTests =
+    open GitKay.Core
+
+    [<Fact>]
+    let ``the shared keys are one list, so a key means the same in every window`` () =
+        let pressed key ctrl shift = Keys.command (Keys.chord key ctrl shift false)
+        test <@ pressed "F1" false false = Some Keys.ShowShortcuts @>
+        test <@ pressed "F5" false false = Some Keys.Refresh @>
+        test <@ pressed "P" true true = Some Keys.CommandPalette @>
+        test <@ pressed "P" true false = Some Keys.GoToFile @>
+        test <@ pressed "F" true false = Some Keys.FindInView @>
+        test <@ pressed "Z" true false = Some Keys.UndoLast @>
+
+        // Modifiers are part of the chord: Ctrl+Shift+P is not Ctrl+P.
+        test <@ pressed "P" true true <> pressed "P" true false @>
+        // A key the map says nothing about is left to the window.
+        test <@ pressed "Q" false false = None @>
+
+    [<Fact>]
+    let ``a chord is written the way a shortcut sheet writes it`` () =
+        test <@ Keys.describe (Keys.chord "F1" false false false) = "F1" @>
+        test <@ Keys.describe (Keys.chord "P" true true false) = "Ctrl+Shift+P" @>
+        test <@ Keys.describe (Keys.chord "D0" true false false) = "Ctrl+0" @>
+        test <@ Keys.describe (Keys.chord "Plus" true false false) = "Ctrl++" @>
+
+    [<Fact>]
+    let ``the sheet lists every shared binding, so documentation cannot drift from behaviour`` () =
+        test <@ List.length Keys.sheet = List.length Keys.bindings @>
+        test <@ Keys.sheet |> List.forall (fun (chord, description) -> chord <> "" && description <> "") @>
+        test <@ Keys.sheet |> List.map fst |> List.contains "Ctrl+Shift+P" @>
