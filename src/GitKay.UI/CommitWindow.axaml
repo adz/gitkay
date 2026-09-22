@@ -223,7 +223,7 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
                     <!-- Hold Ctrl: hints overlay their panes without moving anything. -->
-                    <Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Row="1" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,10,0"><TextBlock Text="Ctrl+1  unstaged · Ctrl+I  stage all" /></Border>
+                    <Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Row="1" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,10,0"><TextBlock Text="Ctrl+1  unstaged · Ctrl+I  stage all · Ctrl+W o  maximise" /></Border>
                     <!-- The boundary between the two lists is draggable, like every other edge in the window. -->
                     <GridSplitter Grid.Row="2" Height="6" VerticalAlignment="Top" Margin="0,-3,0,0" ZIndex="5"
                                   Background="Transparent" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext" />
@@ -348,7 +348,7 @@
                             </ScrollViewer>
                             <TextBlock Text="{Binding EmptyDiffText}" IsVisible="{Binding !HasSelectedFile}" FontSize="13"
                                        Foreground="{DynamicResource GitKayMutedTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                            <Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,16,0"><TextBlock Text="Ctrl+3  diff · Ctrl+S  stage · Ctrl+F  find · Ctrl+P  go to file" /></Border>
+                            <Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,16,0"><TextBlock Text="Ctrl+3  diff · Ctrl+S  stage · Ctrl+F  find · Ctrl+P  go to file · Ctrl+⇧P  commands" /></Border>
                             <!-- vim's / and ? overlaid on the diff's bottom edge, so opening it never moves the diff. -->
                             <Border VerticalAlignment="Bottom" ZIndex="10" IsVisible="{Binding IsSearchOpen}" Background="{DynamicResource GitKaySurfaceBrush}"
                                     BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="0,1,0,0" Padding="10,4">
