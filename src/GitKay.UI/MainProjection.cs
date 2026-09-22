@@ -545,6 +545,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         UpdateCommitRelations(model);
         UpdateCommitSearchStatus(model);
         CanUndoDiscard = model.LastDiscard != null;
+        // Named, so the offer says what would come back rather than only that something would.
+        LastDiscardDescription = model.LastDiscard?.Value.Description ?? "";
 
         var elapsed = Stopwatch.GetElapsedTime(startedAtTicks);
         LogTiming($"ui projection elapsed={elapsed.TotalMilliseconds:F1}ms commits={model.Commits.Length} searchResults={SearchResults.Count} diffFiles={SelectedDiffFiles.Count} diffRows={SelectedDiffRows.Count}");
@@ -758,6 +760,21 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     /// <summary>A discard that can still be put back.</summary>
     [ObservableProperty] private bool _canUndoDiscard;
 
+    /// <summary>What the last discard threw away, for the undo offer.</summary>
+    [ObservableProperty] private string _lastDiscardDescription = "";
+
+    /// <summary>
+    /// The undo offer's wording. It is always on screen, saying there is nothing to put back when there is not:
+    /// somewhere reliable to look matters more for an irreversible-feeling action than saving a line of chrome.
+    /// </summary>
+    public string UndoDiscardLabel =>
+        CanUndoDiscard && LastDiscardDescription.Length > 0 ? $"Undo discard of {LastDiscardDescription}"
+        : CanUndoDiscard ? "Undo discard"
+        : "Nothing to undo";
+
+    partial void OnCanUndoDiscardChanged(bool value) => OnPropertyChanged(nameof(UndoDiscardLabel));
+    partial void OnLastDiscardDescriptionChanged(string value) => OnPropertyChanged(nameof(UndoDiscardLabel));
+
     // ----- Staging from the history window's uncommitted view. -----
 
     private static GitKay.Core.WorkingTree.Section? SectionOf(DiffFileProjection file) =>
@@ -835,6 +852,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewApplyWorkingTreeLines(target, DiffFileTree.PathOf(file), ListModule.OfSeq(lines)));
     }
 
+    [RelayCommand]
     public void UndoDiscard() => _dispatch?.Invoke(GitKay.Core.App.Msg.UndoWorkingTreeDiscard);
 
     // A rename moves with both of its paths, so the index doesn't keep half of it.

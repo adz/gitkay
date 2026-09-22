@@ -1960,3 +1960,20 @@ module SurfaceAppearanceTests =
             finally
                 window.Close()
                 Headless.pump ())
+
+module UndoOfferTests =
+    [<Fact>]
+    let ``the undo offer is always on screen and says what it would put back`` () =
+        Headless.run (fun () ->
+            let projection = MainProjection()
+            // Nothing discarded yet: the offer is there, and says so, rather than vanishing.
+            test <@ not projection.CanUndoDiscard @>
+            test <@ projection.UndoDiscardLabel = "Nothing to undo" @>
+
+            projection.LastDiscardDescription <- "3 files"
+            projection.CanUndoDiscard <- true
+            test <@ projection.UndoDiscardLabel = "Undo discard of 3 files" @>
+
+            // A discard with nothing to say still offers the undo.
+            projection.LastDiscardDescription <- ""
+            test <@ projection.UndoDiscardLabel = "Undo discard" @>)

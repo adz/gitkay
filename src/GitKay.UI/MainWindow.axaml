@@ -564,6 +564,18 @@
                                       IsVisible="{Binding IgnoreWhitespace}" />
                             </Grid>
                         </ToggleButton>
+                        <!-- Always here, saying so when there is nothing to put back: a reliable place to look
+                             matters more for an irreversible-feeling action than the line of chrome it costs. -->
+                        <Button Grid.Column="2" Classes="inline" Padding="10,3" Margin="0,0,6,0"
+                                Command="{Binding UndoDiscardCommand}"
+                                IsEnabled="{Binding CanUndoDiscard}"
+                                ToolTip.Tip="{Binding UndoDiscardLabel}">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <PathIcon Width="12" Height="12" Data="M3,7 H10 C12.2,7 14,8.8 14,11 C14,13.2 12.2,15 10,15 H4 V13.4 H10 C11.3,13.4 12.4,12.3 12.4,11 C12.4,9.7 11.3,8.6 10,8.6 H3 L5.6,11.2 L4.5,12.3 L0,7.8 L4.5,3.3 L5.6,4.4 Z"
+                                          Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
+                                <TextBlock Text="Undo" FontSize="11" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
                         <Border x:Name="DiffModeButton"
                                 Grid.Column="4"
                                 Background="{DynamicResource GitKayRaisedBrush}"
