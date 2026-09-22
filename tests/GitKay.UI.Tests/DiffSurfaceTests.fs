@@ -1977,3 +1977,35 @@ module UndoOfferTests =
             // A discard with nothing to say still offers the undo.
             projection.LastDiscardDescription <- ""
             test <@ projection.UndoDiscardLabel = "Undo discard" @>)
+
+module SharedFileRowTests =
+    [<Fact>]
+    let ``one row control serves every list, and its counts keep their columns`` () =
+        Headless.run (fun () ->
+            let row =
+                ChangedFileRow(
+                    Marker = "●", Glyph = "•", Label = "src/app.fs",
+                    AddedText = "+3", RemovedText = "", ShowsCounts = true, IsModified = true)
+            let window, frame = Render.capture 360.0 30.0 row
+            try
+                // Marker, badge and name in that order, each in its own band.
+                test <@ Render.contrast frame (0, 4) (14, 26) > 10.0 @>
+                test <@ Render.contrast frame (16, 4) (34, 26) > 10.0 @>
+                test <@ Render.contrast frame (38, 4) (200, 26) > 10.0 @>
+                // Something is drawn where the counts are, even though only one of them has a number.
+                test <@ Render.contrast frame (270, 4) (356, 26) > 20.0 @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``a row that is not a change hides its badge and counts`` () =
+        Headless.run (fun () ->
+            let row = ChangedFileRow(Label = "notes.md", ShowsBadge = false, ShowsCounts = false, AddedText = "+9")
+            let window, frame = Render.capture 360.0 30.0 row
+            try
+                // Browsing a folder lists files, so nothing claims the file was added.
+                test <@ Render.isFlat frame (300, 4) (356, 24) @>
+            finally
+                window.Close()
+                Headless.pump ())

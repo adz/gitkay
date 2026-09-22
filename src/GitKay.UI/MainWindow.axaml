@@ -942,42 +942,18 @@
                                         <Border Padding="8,4"
                                                 Background="Transparent"
                                                 BorderThickness="0">
-                                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="7" ToolTip.Tip="{Binding ChangeToolTip}" Margin="{Binding ListIndent}">
-                                                <Border Classes="fileChange"
-                                                        Width="14" Height="14" CornerRadius="3"
-                                                        BorderThickness="0"
-                                                        VerticalAlignment="Center"
-                                                        Classes.added="{Binding IsAddedFile}"
-                                                        Classes.deleted="{Binding IsDeletedFile}"
-                                                        Classes.modified="{Binding IsModifiedFile}">
-                                                    <TextBlock Text="{Binding ChangeGlyph}"
-                                                               FontSize="12" FontWeight="SemiBold"
-                                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                                </Border>
-                                                <!-- The name keeps its room: the graph drops out before the path is trimmed for it. -->
-                                                <!-- Counts in a fixed-width column so they line up down the list; the
-                                                     five-block graph said less than the numbers and broke that line. -->
-                                                <local:FileRowLayout Grid.Column="1" Spacing="7">
-                                                    <TextBlock Text="{Binding ListLabel}"
-                                                               Classes.pathMatch="{Binding IsPathSearchMatch}"
-                                                               FontSize="12"
-                                                               Foreground="{DynamicResource GitKayTextBrush}"
-                                                               TextWrapping="NoWrap"
-                                                               TextTrimming="CharacterEllipsis"
-                                                               VerticalAlignment="Center" />
-                                                    <TextBlock Text="{Binding ListMarker}" IsVisible="{Binding HasListMarker}"
-                                                               FontSize="11" Foreground="{DynamicResource GitKaySecondaryTextBrush}" VerticalAlignment="Center"
-                                                               ToolTip.Tip="● staged · ○ unstaged · ◐ both · + untracked" />
-                                                    <TextBlock Text="{Binding AddedText}" IsVisible="{Binding ShowsCounts}"
-                                                               FontSize="11" Width="38" TextAlignment="Right"
-                                                               FontFamily="{x:Static local:FontStacks.Mono}"
-                                                               Foreground="{DynamicResource GitKayAddedAccentBrush}" VerticalAlignment="Center" />
-                                                    <TextBlock Text="{Binding RemovedText}" IsVisible="{Binding ShowsCounts}"
-                                                               FontSize="11" Width="38" TextAlignment="Right"
-                                                               FontFamily="{x:Static local:FontStacks.Mono}"
-                                                               Foreground="{DynamicResource GitKayRemovedAccentBrush}" VerticalAlignment="Center" />
-                                                </local:FileRowLayout>
-                                            </Grid>
+                                            <local:ChangedFileRow Indent="{Binding ListIndent}"
+                                                                  ToolTip.Tip="{Binding ChangeToolTip}"
+                                                                  Marker="{Binding ListMarker}"
+                                                                  Glyph="{Binding ChangeGlyph}"
+                                                                  Label="{Binding ListLabel}"
+                                                                  AddedText="{Binding AddedText}"
+                                                                  RemovedText="{Binding RemovedText}"
+                                                                  ShowsCounts="{Binding ShowsCounts}"
+                                                                  IsAdded="{Binding IsAddedFile}"
+                                                                  IsDeleted="{Binding IsDeletedFile}"
+                                                                  IsModified="{Binding IsModifiedFile}"
+                                                                  IsSearchMatch="{Binding IsPathSearchMatch}" />
                                         </Border>
                                     </DataTemplate>
                                 </ListBox.DataTemplates>

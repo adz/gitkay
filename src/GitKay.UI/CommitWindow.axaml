@@ -167,28 +167,16 @@
                                         <DataTemplate x:DataType="local:CommitFileRow">
                                             <!-- Laid out like the history window's changed-file list: state, change
                                                  badge, name, then counts in columns that line up down the list. -->
-                                            <Grid ColumnDefinitions="14,Auto,*" ColumnSpacing="6" Margin="{Binding ListIndent}"
-                                                  ToolTip.Tip="{Binding ChangeToolTip}" Background="Transparent">
-                                                <TextBlock Text="{Binding Marker}" FontSize="11" Classes="unstagedMarker" VerticalAlignment="Center" />
-                                                <Border Grid.Column="1" Classes="fileChange" Width="14" Height="14" CornerRadius="3"
-                                                        BorderThickness="0" VerticalAlignment="Center"
-                                                        Classes.added="{Binding IsAddedFile}"
-                                                        Classes.deleted="{Binding IsDeletedFile}"
-                                                        Classes.modified="{Binding IsModifiedFile}">
-                                                    <TextBlock Text="{Binding ChangeGlyph}" FontSize="12" FontWeight="SemiBold"
-                                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                                </Border>
-                                                <local:FileRowLayout Grid.Column="2" Spacing="7">
-                                                    <TextBlock Text="{Binding ListLabel}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}"
-                                                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                                                    <TextBlock Text="{Binding AddedText}" FontSize="11" Width="38" TextAlignment="Right"
-                                                               FontFamily="{x:Static local:FontStacks.Mono}"
-                                                               Foreground="{DynamicResource GitKayAddedAccentBrush}" VerticalAlignment="Center" />
-                                                    <TextBlock Text="{Binding RemovedText}" FontSize="11" Width="38" TextAlignment="Right"
-                                                               FontFamily="{x:Static local:FontStacks.Mono}"
-                                                               Foreground="{DynamicResource GitKayRemovedAccentBrush}" VerticalAlignment="Center" />
-                                                </local:FileRowLayout>
-                                            </Grid>
+                                            <local:ChangedFileRow Indent="{Binding ListIndent}"
+                                                                  ToolTip.Tip="{Binding ChangeToolTip}"
+                                                                  Marker="{Binding Marker}"
+                                                                  Glyph="{Binding ChangeGlyph}"
+                                                                  Label="{Binding ListLabel}"
+                                                                  AddedText="{Binding AddedText}"
+                                                                  RemovedText="{Binding RemovedText}"
+                                                                  IsAdded="{Binding IsAddedFile}"
+                                                                  IsDeleted="{Binding IsDeletedFile}"
+                                                                  IsModified="{Binding IsModifiedFile}" />
                                         </DataTemplate>
                                         <DataTemplate x:DataType="local:CommitFolderRow">
                                             <Grid ColumnDefinitions="*,Auto" Background="Transparent" Cursor="Hand"
@@ -246,28 +234,16 @@
                                         <DataTemplate x:DataType="local:CommitFileRow">
                                             <!-- Laid out like the history window's changed-file list: state, change
                                                  badge, name, then counts in columns that line up down the list. -->
-                                            <Grid ColumnDefinitions="14,Auto,*" ColumnSpacing="6" Margin="{Binding ListIndent}"
-                                                  ToolTip.Tip="{Binding ChangeToolTip}" Background="Transparent">
-                                                <TextBlock Text="{Binding Marker}" FontSize="11" Classes="stagedMarker" VerticalAlignment="Center" />
-                                                <Border Grid.Column="1" Classes="fileChange" Width="14" Height="14" CornerRadius="3"
-                                                        BorderThickness="0" VerticalAlignment="Center"
-                                                        Classes.added="{Binding IsAddedFile}"
-                                                        Classes.deleted="{Binding IsDeletedFile}"
-                                                        Classes.modified="{Binding IsModifiedFile}">
-                                                    <TextBlock Text="{Binding ChangeGlyph}" FontSize="12" FontWeight="SemiBold"
-                                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                                </Border>
-                                                <local:FileRowLayout Grid.Column="2" Spacing="7">
-                                                    <TextBlock Text="{Binding ListLabel}" FontSize="12" Foreground="{DynamicResource GitKayTextBrush}"
-                                                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                                                    <TextBlock Text="{Binding AddedText}" FontSize="11" Width="38" TextAlignment="Right"
-                                                               FontFamily="{x:Static local:FontStacks.Mono}"
-                                                               Foreground="{DynamicResource GitKayAddedAccentBrush}" VerticalAlignment="Center" />
-                                                    <TextBlock Text="{Binding RemovedText}" FontSize="11" Width="38" TextAlignment="Right"
-                                                               FontFamily="{x:Static local:FontStacks.Mono}"
-                                                               Foreground="{DynamicResource GitKayRemovedAccentBrush}" VerticalAlignment="Center" />
-                                                </local:FileRowLayout>
-                                            </Grid>
+                                            <local:ChangedFileRow Indent="{Binding ListIndent}"
+                                                                  ToolTip.Tip="{Binding ChangeToolTip}"
+                                                                  Marker="{Binding Marker}"
+                                                                  Glyph="{Binding ChangeGlyph}"
+                                                                  Label="{Binding ListLabel}"
+                                                                  AddedText="{Binding AddedText}"
+                                                                  RemovedText="{Binding RemovedText}"
+                                                                  IsAdded="{Binding IsAddedFile}"
+                                                                  IsDeleted="{Binding IsDeletedFile}"
+                                                                  IsModified="{Binding IsModifiedFile}" />
                                         </DataTemplate>
                                         <DataTemplate x:DataType="local:CommitFolderRow">
                                             <Grid ColumnDefinitions="*,Auto" Background="Transparent" Cursor="Hand"
