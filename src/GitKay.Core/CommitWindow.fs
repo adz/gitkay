@@ -185,14 +185,15 @@ module CommitWindow =
         | UnstagePaths paths -> operation model $"Unstaging {fileCount paths.Length}" false (GitService.unstageFilesFor model.Amend paths)
         | ApplyLines(_, _, []) -> model, Cmd.none
         | ApplyLines(GitService.DiscardFromWorkingTree, path, lines) ->
-            discarding model $"Discarding {lineCount lines.Length} of {path}" (GitService.discardLinesWithBackup path lines)
+            // The same context the diff was shown with, or the patch is built against hunks the reader never saw.
+            discarding model $"Discarding {lineCount lines.Length} of {path}" (GitService.discardLinesWithBackupAt model.ContextLines path lines)
         | ApplyLines(target, path, lines) ->
             let verb =
                 match target with
                 | GitService.StageInIndex -> "Staging"
                 | GitService.UnstageFromIndex -> "Unstaging"
                 | GitService.DiscardFromWorkingTree -> "Discarding"
-            operation model $"{verb} {lineCount lines.Length} of {path}" false (GitService.applyLines target path lines)
+            operation model $"{verb} {lineCount lines.Length} of {path}" false (GitService.applyLinesWithContext model.ContextLines target path lines)
         | DiscardPaths([], []) -> model, Cmd.none
         | DiscardPaths(tracked, untracked) ->
             discarding model $"Discarding {fileCount (tracked.Length + untracked.Length)}" (GitService.discardFilesWithBackup tracked untracked)

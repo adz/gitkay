@@ -6,6 +6,8 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.FSharp.Collections;
+using Microsoft.FSharp.Core;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
@@ -30,20 +32,27 @@ public static class GitOperations {
 
     private static GitOperation Push(BranchTarget branch) => new($"Push {branch.Name}", async runner => {
         var (remote, merge) = await UpstreamAsync(runner, branch.Name);
-        if (remote != null && merge != null) {
-            runner.Log($"Pushing {branch.Name} to {remote} ({merge})");
-            return await runner.RunAsync("push", "--progress", remote, $"refs/heads/{branch.Name}:{merge}");
-        }
-
         var remotes = (await runner.CaptureAsync("remote") ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var target = remotes.Contains("origin") ? "origin" : remotes.FirstOrDefault();
-        if (target == null) {
-            runner.Log("This repository has no remotes to push to.");
-            return false;
-        }
+        var plan = GitKay.Core.Push.plan(
+            branch.Name,
+            remote == null ? FSharpOption<string>.None : FSharpOption<string>.Some(remote),
+            merge == null ? FSharpOption<string>.None : FSharpOption<string>.Some(merge),
+            ListModule.OfSeq(remotes));
 
-        runner.Log($"{branch.Name} has no upstream; pushing to {target} and setting it as upstream");
-        return await runner.RunAsync("push", "--progress", "--set-upstream", target, branch.Name);
+        switch (plan) {
+            case GitKay.Core.Push.Plan.ToUpstream upstream:
+                runner.Log($"Pushing {branch.Name} to {upstream.remote} ({upstream.refspec})");
+                return await runner.RunAsync("push", "--progress", upstream.remote, upstream.refspec);
+            case GitKay.Core.Push.Plan.SetUpstream set:
+                runner.Log($"{branch.Name} has no upstream; pushing to {set.remote} and setting it as upstream");
+                return await runner.RunAsync("push", "--progress", "--set-upstream", set.remote, set.branch);
+            case GitKay.Core.Push.Plan.Refused refused:
+                runner.Log(refused.reason);
+                return false;
+            default:
+                runner.Log("This repository has no remotes to push to.");
+                return false;
+        }
     });
 
     private static GitOperation Pull(BranchTarget branch) => new($"Pull {branch.Name}", async runner => {

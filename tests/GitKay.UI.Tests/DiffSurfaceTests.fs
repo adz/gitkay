@@ -1887,3 +1887,70 @@ module CommitWindowSelectionTests =
             projection.SelectedUnstaged <- null
             test <@ isNull (box projection.SelectedUnstagedRow) @>
             test <@ Object.ReferenceEquals(projection.SelectedStagedRow, staged) @>)
+
+
+module PreviewPillTests =
+    /// Renders one file header and reads the pixels back, because the pill's legibility is the whole point of it.
+    let private renderHeader (previewing: bool) =
+        let file = DiffFileProjection({ OldPath = "docs/guide.md"; NewPath = "docs/guide.md"; DisplayPath = "docs/guide.md" } : GitService.DiffFileSummary)
+        file.ApplyContent({ OldPath = "docs/guide.md"; NewPath = "docs/guide.md"; NewLineCount = Some 1
+                            Hunks = [ { Header = "@@ -1 +1 @@"
+                                        Lines = [ { Type = Models.Added; Content = "# Guide"; OldLineNo = None; NewLineNo = Some 1 } ] } ] } : Models.FileDiff)
+        if previewing then
+            file.ApplyRenderedContent(
+                { File = { OldPath = "docs/guide.md"; NewPath = "docs/guide.md"; Hunks = []; NewLineCount = None }
+                  DiffRows = Markdown.renderDiff "# Guide" "# Guide"
+                  OldRows = Markdown.renderDocument "# Guide"
+                  NewRows = Markdown.renderDocument "# Guide"
+                  Images = [] } : RenderedMarkdownContent)
+
+        let rows = AvaloniaList<IDiffRowProjection>([ file.Header :> IDiffRowProjection ])
+        let surface = DiffSurfaceControl(ItemsSource = rows, Width = 560.0)
+        let window = Window(Width = 560.0, Height = 60.0, Content = surface)
+        // The app's palette, so what is measured here is what ships rather than the bare theme's fallbacks.
+        for key, hex in
+            [ "GitKayWindowBrush", "#0D1117"; "GitKaySurfaceBrush", "#1B222C"; "GitKayRaisedBrush", "#222A35"
+              "GitKayAccentBrush", "#58A6FF"; "GitKayBorderBrush", "#3C444D"; "GitKaySelectionBrush", "#27364A"
+              "GitKayTextBrush", "#E6EDF3"; "GitKaySecondaryTextBrush", "#9DA7B3"; "GitKayMutedTextBrush", "#6E7681"
+              "GitKayHoverBrush", "#21262D"; "GitKayAddedAccentBrush", "#3FB950"; "GitKayRemovedAccentBrush", "#F85149" ] do
+            window.Resources.Add(key, Media.SolidColorBrush(Media.Color.Parse hex))
+        window.Show()
+        window.UpdateLayout()
+        Headless.pump ()
+        window, window.CaptureRenderedFrame()
+
+    /// The darkest and lightest luminance across a band of the header.
+    let private luminanceRange (frame: Media.Imaging.WriteableBitmap) (x0: int) (x1: int) =
+        use buffer = frame.Lock()
+        let stride = buffer.RowBytes
+        let bytes = Array.zeroCreate<byte> (stride * frame.PixelSize.Height)
+        Runtime.InteropServices.Marshal.Copy(buffer.Address, bytes, 0, bytes.Length)
+        let luminance x y =
+            let at = y * stride + x * 4
+            0.114 * float bytes[at] + 0.587 * float bytes[at + 1] + 0.299 * float bytes[at + 2]
+        let values = [ for x in x0 .. x1 - 1 do for y in 24 .. 37 -> luminance x y ]
+        List.min values, List.max values
+
+    [<Fact>]
+    let ``the preview pill's label is drawn in its own colour, not the one the cache happened to hold`` () =
+        Headless.run (fun () ->
+            // Previewing fills the pill with the accent and writes the label in the window's dark tone. Layouts are
+            // cached by size and text alone, so a measurement taken in another brush used to decide this colour and
+            // the label came out light on light blue.
+            let window, frame = renderHeader true
+            try
+                let darkest, lightest = luminanceRange frame 178 220
+                test <@ darkest < 90.0 @>
+                test <@ lightest - darkest > 60.0 @>
+            finally
+                window.Close()
+                Headless.pump ()
+
+            // Showing source outlines the pill instead, and the label has to read against that.
+            let window, frame = renderHeader false
+            try
+                let darkest, lightest = luminanceRange frame 178 220
+                test <@ lightest - darkest > 40.0 @>
+            finally
+                window.Close()
+                Headless.pump ())

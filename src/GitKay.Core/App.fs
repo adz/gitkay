@@ -679,11 +679,11 @@ module App =
                 (GitService.discardFilesWithBackup tracked untracked |> Flow.map Some)
         | ApplyWorkingTreeLines(GitService.DiscardFromWorkingTree, path, lines) ->
             workingTreeOperation model $"Discarded {lineCount lines.Length} of {path}"
-                (GitService.discardLinesWithBackup path lines |> Flow.map Some)
+                (GitService.discardLinesWithBackupAt model.DiffContextLines path lines |> Flow.map Some)
         | ApplyWorkingTreeLines(target, path, lines) ->
             let verb = if target = GitService.StageInIndex then "Staged" else "Unstaged"
             workingTreeOperation model $"{verb} {lineCount lines.Length} of {path}"
-                (GitService.applyLines target path lines |> Flow.map (fun () -> None))
+                (GitService.applyLinesWithContext model.DiffContextLines target path lines |> Flow.map (fun () -> None))
         | UndoWorkingTreeDiscard ->
             match model.LastDiscard with
             | None -> { model with Status = "Nothing to undo" }, Cmd.none

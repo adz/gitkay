@@ -1026,7 +1026,7 @@ summary Another line
             // Lines: discard just the first change, then put it back.
             let raw = run gitDir (GitService.fetchRawFileDiff WorkingTree.Unstaged "a.txt")
             let firstChange = pick raw (fun _ _ line -> line.Content = "one" || line.Content = "ONE")
-            let lineBackup = run gitDir (GitService.discardLinesWithBackup "a.txt" firstChange)
+            let lineBackup = run gitDir (GitService.discardLinesWithBackupAt 3 "a.txt" firstChange)
             test <@ read "a.txt" = numbered [ "one"; "two"; "THREE" ] @>
             run gitDir (GitService.undoDiscard lineBackup)
             test <@ read "a.txt" = edited @>
@@ -4487,3 +4487,38 @@ module FolderSourceTests =
                 let diff = FolderSource.diff pair
                 test <@ diff.Hunks = [] @>
                 test <@ FileChange.currentPath diff.OldPath diff.NewPath = "logo.png" @>)
+
+module PushPlanTests =
+    open GitKay.Core
+
+    [<Fact>]
+    let ``a branch tracking a differently named upstream is not pushed onto it`` () =
+        // git checkout -b feature origin/main configures exactly this, and it is the accident that pushes a
+        // feature branch onto main. Git's own default refuses it; so does this.
+        match Push.plan "feature" (Some "origin") (Some "refs/heads/main") [ "origin" ] with
+        | Push.Refused reason ->
+            test <@ reason.Contains "feature" && reason.Contains "main" @>
+            test <@ reason.Contains "--set-upstream-to=origin/feature" @>
+        | other -> failwith $"expected a refusal, got {other}"
+
+    [<Fact>]
+    let ``a branch tracking its own name pushes to it`` () =
+        test <@ Push.plan "feature" (Some "origin") (Some "refs/heads/feature") [ "origin" ]
+                 = Push.ToUpstream("origin", "refs/heads/feature:refs/heads/feature") @>
+        // main is not special: it is only ever pushed because it is the branch you are on.
+        test <@ Push.plan "main" (Some "origin") (Some "refs/heads/main") [ "origin" ]
+                 = Push.ToUpstream("origin", "refs/heads/main:refs/heads/main") @>
+
+    [<Fact>]
+    let ``a branch with no upstream is pushed under its own name`` () =
+        test <@ Push.plan "feature" None None [ "upstream"; "origin" ] = Push.SetUpstream("origin", "feature") @>
+        // No origin: whatever remote there is.
+        test <@ Push.plan "feature" None None [ "backup" ] = Push.SetUpstream("backup", "feature") @>
+        test <@ Push.plan "feature" None None [] = Push.NoRemote @>
+        // Half-configured tracking is treated as none rather than guessed at.
+        test <@ Push.plan "feature" (Some "origin") None [ "origin" ] = Push.SetUpstream("origin", "feature") @>
+
+    [<Fact>]
+    let ``an upstream ref that is not a branch ref is compared as it is`` () =
+        test <@ Push.upstreamBranchName "refs/heads/topic" = "topic" @>
+        test <@ Push.upstreamBranchName "topic" = "topic" @>

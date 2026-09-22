@@ -843,11 +843,17 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private static string PreviewLabel(DiffFileProjection file) =>
         file.IsRenderedMarkdown || file.IsFormattedPreview || file.IsImagePreview ? "Preview" : "Source";
 
-    private double PreviewPillWidth(DiffFileProjection file) => 22 + Layout(PreviewLabel(file), 10, FileBrush, false).Width;
+    // The pill's parts, laid out left to right: padding, eye, gap, label, padding.
+    private const double PillPadding = 7;
+    private const double PillIconWidth = 13;
+    private const double PillGap = 6;
+
+    private double PreviewPillWidth(DiffFileProjection file) =>
+        PillPadding + PillIconWidth + PillGap + Layout(PreviewLabel(file), 10, FileBrush, false).Width + PillPadding;
 
     private Rect FilePreviewRect(DiffFileHeaderProjection file, double y) {
         var pathWidth = Layout(file.DisplayPath, 12, FileBrush, false).Width;
-        return new Rect(FileLabelX + pathWidth + 8, y + FileCardTop + 5, PreviewPillWidth(file.File), FileHeight - FileCardTop - 10);
+        return new Rect(FileLabelX + pathWidth + 8, y + FileCardTop + 6, PreviewPillWidth(file.File), FileHeight - FileCardTop - 12);
     }
 
     /// <summary>Only while the file is rendered: it says what to do with the parts of the document that did not change.</summary>
@@ -924,9 +930,10 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
                 : ThemeBrush("GitKayRaisedBrush", CodeBlockFallback);
             context.DrawRectangle(fill, new Pen(showingPreview ? accent : ThemeBrush("GitKayBorderBrush", secondary), 1), preview, 9, 9);
             var label = showingPreview ? ThemeBrush("GitKayWindowBrush", StickyWindowFallback) : secondary;
-            DrawPreviewIcon(context, new Rect(preview.X + 3, preview.Y, 16, preview.Height), label);
+            DrawPreviewIcon(context, new Rect(preview.X + PillPadding, preview.Y, PillIconWidth, preview.Height), label, PillIconWidth / 2);
             var pillText = Layout(PreviewLabel(file), 10, label, false);
-            context.DrawText(pillText, new Point(preview.X + 19, preview.Y + (preview.Height - pillText.Height) / 2));
+            context.DrawText(pillText, new Point(preview.X + PillPadding + PillIconWidth + PillGap,
+                preview.Y + (preview.Height - pillText.Height) / 2));
         }
 
         if (HasChangesOnlyToggle(file)) {
@@ -1203,12 +1210,16 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         context.FillRectangle(brush, new Rect(x, y + 7, 10, 1.5));
     }
 
-    private static void DrawPreviewIcon(DrawingContext context, Rect bounds, IBrush brush) {
+    /// <summary>An eye, drawn to a half-width so it can sit in a pill beside a label as well as alone.</summary>
+    private static void DrawPreviewIcon(DrawingContext context, Rect bounds, IBrush brush, double half = 8) {
         var pen = new Pen(brush, 1.2, lineCap: PenLineCap.Round);
         var center = bounds.Center;
-        var geometry = StreamGeometry.Parse($"M {center.X - 8},{center.Y} C {center.X - 4},{center.Y - 6} {center.X + 4},{center.Y - 6} {center.X + 8},{center.Y} C {center.X + 4},{center.Y + 6} {center.X - 4},{center.Y + 6} {center.X - 8},{center.Y} Z");
+        var lid = half * 0.75;
+        var geometry = StreamGeometry.Parse(
+            $"M {center.X - half},{center.Y} C {center.X - half / 2},{center.Y - lid} {center.X + half / 2},{center.Y - lid} {center.X + half},{center.Y} "
+            + $"C {center.X + half / 2},{center.Y + lid} {center.X - half / 2},{center.Y + lid} {center.X - half},{center.Y} Z");
         context.DrawGeometry(null, pen, geometry);
-        context.DrawEllipse(brush, null, center, 2.2, 2.2);
+        context.DrawEllipse(brush, null, center, half * 0.28, half * 0.28);
     }
 
     /// <summary>Arrows pointing away from (expand) or toward (collapse) a dotted centre line.</summary>
@@ -1576,6 +1587,13 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             }
             cache[key] = layout;
         }
+        else {
+            // The cache is keyed by size and text only, so the same words drawn in two colours share one layout.
+            // Whoever asked for it last decides its colour, or a label takes the colour of the measurement that
+            // happened to build it first.
+            layout.SetForegroundBrush(brush);
+        }
+
         return layout;
     }
 

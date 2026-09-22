@@ -847,9 +847,17 @@ module GitService =
     // ----- Staging and committing, for the commit window (see dev-docs/commit-window-plan.md) -----
 
     /// <summary>One file's raw diff in a section, with three lines of context, as patches are built from it.</summary>
-    let fetchRawFileDiff (section: WorkingTree.Section) (path: string) : Flow<GitEnv, GitError, string> =
+    /// <summary>
+    /// One file's diff as git writes it. The context must be the context the diff was *shown* with: a patch is
+    /// built from positions counted in the displayed hunks, and a different context draws different hunks, so the
+    /// positions would land on other lines and the build would report the file as changed.
+    /// </summary>
+    let fetchRawFileDiffWithContext (contextLines: int) (section: WorkingTree.Section) (path: string) : Flow<GitEnv, GitError, string> =
         let staged = if section = WorkingTree.Staged then [ "--cached" ] else []
-        plainGit ([ "diff" ] @ staged @ [ "--no-ext-diff"; "-U3"; "--"; path ])
+        plainGit ([ "diff" ] @ staged @ [ "--no-ext-diff"; $"-U{max 0 contextLines}"; "--"; path ])
+
+    let fetchRawFileDiff (section: WorkingTree.Section) (path: string) : Flow<GitEnv, GitError, string> =
+        fetchRawFileDiffWithContext 3 section path
 
     /// <summary>Stages whole files, including deletions and untracked files.</summary>
     let stageFiles (paths: string list) : Flow<GitEnv, GitError, unit> =
@@ -896,7 +904,7 @@ module GitService =
     /// Stages, unstages or discards the chosen lines of one file. An untracked file is added with
     /// <c>--intent-to-add</c> first, so that git has a file in the index to apply the patch to.
     /// </summary>
-    let applyLines (target: PatchTarget) (path: string) (lines: PatchBuilder.SelectedLine list) : Flow<GitEnv, GitError, unit> =
+    let applyLinesWithContext (contextLines: int) (target: PatchTarget) (path: string) (lines: PatchBuilder.SelectedLine list) : Flow<GitEnv, GitError, unit> =
         flow {
             let section, direction =
                 match target with
@@ -911,11 +919,14 @@ module GitService =
                 if status |> List.exists (fun entry -> entry.Untracked && entry.Path = path) then
                     do! plainGit [ "add"; "--intent-to-add"; "--"; path ] |> Flow.map ignore
 
-            let! raw = fetchRawFileDiff section path
+            let! raw = fetchRawFileDiffWithContext contextLines section path
             match PatchBuilder.build direction raw lines with
             | Ok patch -> do! applyPatch target patch
             | Error error -> return! Flow.fail (GitError.OperationFailed("Apply lines", PatchBuilder.describeError error))
         }
+
+    let applyLines (target: PatchTarget) (path: string) (lines: PatchBuilder.SelectedLine list) =
+        applyLinesWithContext 3 target path lines
 
     /// <summary>The working tree's root, for reading and restoring files.</summary>
     let private workingRoot : Flow<GitEnv, GitError, string> =
@@ -954,11 +965,11 @@ module GitService =
         }
 
     /// <summary>Discards the chosen lines of one file, after copying it so the discard can be undone.</summary>
-    let discardLinesWithBackup (path: string) (lines: PatchBuilder.SelectedLine list) : Flow<GitEnv, GitError, Trash.Backup> =
+    let discardLinesWithBackupAt (contextLines: int) (path: string) (lines: PatchBuilder.SelectedLine list) : Flow<GitEnv, GitError, Trash.Backup> =
         flow {
             let description = if lines.Length = 1 then $"1 line in {path}" else $"{lines.Length} lines in {path}"
             let! backup = backupBeforeDiscard description [ path ]
-            do! applyLines DiscardFromWorkingTree path lines
+            do! applyLinesWithContext contextLines DiscardFromWorkingTree path lines
             let! root = workingRoot
             return Trash.seal root backup
         }

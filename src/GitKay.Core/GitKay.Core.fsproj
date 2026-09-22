@@ -21,6 +21,7 @@
     <Compile Include="Vim.fs" />
     <Compile Include="Graph.fs" />
     <Compile Include="Git\Error.fs" />
+    <Compile Include="Git\Push.fs" />
     <Compile Include="Folder.fs" />
     <Compile Include="FolderSource.fs" />
     <Compile Include="Git\Internal\RepositoryDiscovery.fs" />
