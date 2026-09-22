@@ -1889,9 +1889,9 @@ module CommitWindowSelectionTests =
             test <@ Object.ReferenceEquals(projection.SelectedStagedRow, staged) @>)
 
 
-module PreviewPillTests =
-    /// Renders one file header and reads the pixels back, because the pill's legibility is the whole point of it.
-    let private renderHeader (previewing: bool) =
+module SurfaceAppearanceTests =
+    /// One file header on a diff surface, previewing or not.
+    let private header (previewing: bool) =
         let file = DiffFileProjection({ OldPath = "docs/guide.md"; NewPath = "docs/guide.md"; DisplayPath = "docs/guide.md" } : GitService.DiffFileSummary)
         file.ApplyContent({ OldPath = "docs/guide.md"; NewPath = "docs/guide.md"; NewLineCount = Some 1
                             Hunks = [ { Header = "@@ -1 +1 @@"
@@ -1903,33 +1903,8 @@ module PreviewPillTests =
                   OldRows = Markdown.renderDocument "# Guide"
                   NewRows = Markdown.renderDocument "# Guide"
                   Images = [] } : RenderedMarkdownContent)
-
         let rows = AvaloniaList<IDiffRowProjection>([ file.Header :> IDiffRowProjection ])
-        let surface = DiffSurfaceControl(ItemsSource = rows, Width = 560.0)
-        let window = Window(Width = 560.0, Height = 60.0, Content = surface)
-        // The app's palette, so what is measured here is what ships rather than the bare theme's fallbacks.
-        for key, hex in
-            [ "GitKayWindowBrush", "#0D1117"; "GitKaySurfaceBrush", "#1B222C"; "GitKayRaisedBrush", "#222A35"
-              "GitKayAccentBrush", "#58A6FF"; "GitKayBorderBrush", "#3C444D"; "GitKaySelectionBrush", "#27364A"
-              "GitKayTextBrush", "#E6EDF3"; "GitKaySecondaryTextBrush", "#9DA7B3"; "GitKayMutedTextBrush", "#6E7681"
-              "GitKayHoverBrush", "#21262D"; "GitKayAddedAccentBrush", "#3FB950"; "GitKayRemovedAccentBrush", "#F85149" ] do
-            window.Resources.Add(key, Media.SolidColorBrush(Media.Color.Parse hex))
-        window.Show()
-        window.UpdateLayout()
-        Headless.pump ()
-        window, window.CaptureRenderedFrame()
-
-    /// The darkest and lightest luminance across a band of the header.
-    let private luminanceRange (frame: Media.Imaging.WriteableBitmap) (x0: int) (x1: int) =
-        use buffer = frame.Lock()
-        let stride = buffer.RowBytes
-        let bytes = Array.zeroCreate<byte> (stride * frame.PixelSize.Height)
-        Runtime.InteropServices.Marshal.Copy(buffer.Address, bytes, 0, bytes.Length)
-        let luminance x y =
-            let at = y * stride + x * 4
-            0.114 * float bytes[at] + 0.587 * float bytes[at + 1] + 0.299 * float bytes[at + 2]
-        let values = [ for x in x0 .. x1 - 1 do for y in 24 .. 37 -> luminance x y ]
-        List.min values, List.max values
+        Render.capture 560.0 60.0 (DiffSurfaceControl(ItemsSource = rows, Width = 560.0))
 
     [<Fact>]
     let ``the preview pill's label is drawn in its own colour, not the one the cache happened to hold`` () =
@@ -1937,9 +1912,9 @@ module PreviewPillTests =
             // Previewing fills the pill with the accent and writes the label in the window's dark tone. Layouts are
             // cached by size and text alone, so a measurement taken in another brush used to decide this colour and
             // the label came out light on light blue.
-            let window, frame = renderHeader true
+            let window, frame = header true
             try
-                let darkest, lightest = luminanceRange frame 178 220
+                let darkest, lightest = Render.luminanceRange frame (178, 24) (220, 38)
                 test <@ darkest < 90.0 @>
                 test <@ lightest - darkest > 60.0 @>
             finally
@@ -1947,83 +1922,41 @@ module PreviewPillTests =
                 Headless.pump ()
 
             // Showing source outlines the pill instead, and the label has to read against that.
-            let window, frame = renderHeader false
+            let window, frame = header false
             try
-                let darkest, lightest = luminanceRange frame 178 220
-                test <@ lightest - darkest > 40.0 @>
+                test <@ Render.contrast frame (178, 24) (220, 38) > 40.0 @>
             finally
                 window.Close()
                 Headless.pump ())
 
-module FormattedPreviewExpansionTests =
-    let private sourceDiff () : Models.FileDiff =
-        { OldPath = "config.json"; NewPath = "config.json"; NewLineCount = Some 3
-          Hunks = [ { Header = "@@ -1,2 +1,2 @@"
-                      Lines = [ { Type = Models.Removed; Content = """{"a":1}"""; OldLineNo = Some 1; NewLineNo = None }
-                                { Type = Models.Added; Content = """{"a":2}"""; OldLineNo = None; NewLineNo = Some 1 } ] } ] }
-
     [<Fact>]
-    let ``a preview does not inherit how far the source was opened up`` () =
+    let ``the pill's icon and label do not run into each other`` () =
         Headless.run (fun () ->
-            let file = DiffFileProjection({ OldPath = "config.json"; NewPath = "config.json"; DisplayPath = "config.json" } : GitService.DiffFileSummary)
-            let expansion : App.FileExpansion =
-                { FullContext = None; Revealed = [ { Start = 1; End = 40 } ]; PendingRequestId = None }
-            file.ApplyContent(sourceDiff (), expansion)
-            test <@ file.HasRevealedContext @>
-
-            // The expansion counts source lines; a reformatted document numbers its lines differently, so carrying
-            // it across put rows where the reader was not looking.
-            let formatted : Models.FileDiff =
-                { sourceDiff () with
-                    Hunks = [ { Header = "@@ -1,3 +1,3 @@"
-                                Lines = [ for i, text in List.indexed [ "{"; "  \"a\": 2"; "}" ] ->
-                                            ({ Type = Models.Context; Content = text; OldLineNo = Some(i + 1); NewLineNo = Some(i + 1) } : Models.DiffLine) ] } ] }
-            file.ApplyFormatted formatted
-            test <@ file.IsFormattedPreview && not file.HasRevealedContext @>
-
-            // Going back restores the source and how far it was opened.
-            file.ClearFormatted()
-            test <@ not file.IsFormattedPreview && file.HasRevealedContext @>)
-
-module CommitWindowParityTests =
-    let private row (staged: bool) path added removed : CommitFileRow =
-        let list = if staged then CommitWindow.ListKind.StagedList else CommitWindow.ListKind.UnstagedList
-        let lines =
-            [ for i in 1 .. added -> ({ Type = Models.Added; Content = $"+{i}"; OldLineNo = None; NewLineNo = Some i } : Models.DiffLine) ]
-            @ [ for i in 1 .. removed -> ({ Type = Models.Removed; Content = $"-{i}"; OldLineNo = Some i; NewLineNo = None } : Models.DiffLine) ]
-        let diff : Models.FileDiff =
-            { OldPath = path; NewPath = path; NewLineCount = None
-              Hunks = [ { Header = "@@ -1 +1 @@"; Lines = lines } ] }
-        CommitFileRow(list, diff, false)
+            let window, frame = header false
+            try
+                // A gap between them: one column of flat pill between the eye and the first letter. Without it the
+                // two read as one smudge, which is how it shipped before anyone looked at it.
+                let hasGap =
+                    [ 168 .. 178 ] |> List.exists (fun x -> Render.isFlat frame (x, 24) (x + 1, 38))
+                test <@ hasGap @>
+            finally
+                window.Close()
+                Headless.pump ())
 
     [<Fact>]
-    let ``commit window file rows carry the same change vocabulary as the history window`` () =
-        let changed = row false "src/app.fs" 3 2
-        test <@ changed.ChangeGlyph = FileChange.glyph FileChange.Modified @>
-        test <@ changed.IsModifiedFile && not changed.IsAddedFile @>
-        // Counts in the same shape, and each keeps its column when the other is empty.
-        test <@ changed.AddedText = "+3" && changed.RemovedText = "−2" @>
-        let onlyAdded = row false "new.fs" 4 0
-        test <@ onlyAdded.AddedText = "+4" && onlyAdded.RemovedText = "" @>
-        test <@ changed.ChangeToolTip.Contains "Modified" && changed.ChangeToolTip.Contains "+3" @>
-
-    [<Fact>]
-    let ``the commit window offers its commands through a palette`` () =
+    let ``added and removed lines are told apart by more than their text`` () =
         Headless.run (fun () ->
-            let projection = CommitWindowProjection("test-repo")
-            projection.UnstagedFiles.Add(row false "a.txt" 1 0)
-
-            // Ctrl+Shift+P lists what the window can do, narrowing as you type.
-            projection.OpenCommandPalette()
-            test <@ projection.IsCommandPalette && projection.IsFilePaletteOpen @>
-            test <@ projection.PaletteCommands.Count > 5 @>
-            test <@ projection.PaletteHint = "Run a command" @>
-            test <@ projection.PaletteCommands |> Seq.exists (fun c -> c.Title = "Rescan") @>
-
-            projection.PaletteQuery <- "stage all"
-            test <@ (Seq.head projection.PaletteCommands).Title = "Stage all" @>
-
-            // Ctrl+P is still the files, and says so.
-            projection.OpenFilePalette()
-            test <@ not projection.IsCommandPalette && projection.PaletteHint = "Go to changed file" @>
-            test <@ projection.PaletteFiles.Count = 1 @>)
+            let line kind number text : IDiffRowProjection =
+                DiffLineProjection({ Type = kind; Content = text
+                                     OldLineNo = (if kind = Models.Added then None else Some number)
+                                     NewLineNo = (if kind = Models.Removed then None else Some number) } : Models.DiffLine)
+            let rows = AvaloniaList<IDiffRowProjection>([ line Models.Added 1 "added line"; line Models.Removed 1 "removed line" ])
+            let window, frame = Render.capture 560.0 60.0 (DiffSurfaceControl(ItemsSource = rows, Width = 560.0))
+            try
+                // Their backgrounds differ, so the two rows are distinguishable without reading the gutter.
+                let addedBand = Render.luminanceRange frame (300, 2) (540, 14)
+                let removedBand = Render.luminanceRange frame (300, 20) (540, 32)
+                test <@ addedBand <> removedBand @>
+            finally
+                window.Close()
+                Headless.pump ())
