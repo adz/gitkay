@@ -859,9 +859,14 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     /// <summary>Only while the file is rendered: it says what to do with the parts of the document that did not change.</summary>
     private static bool HasChangesOnlyToggle(DiffFileProjection file) => file.IsRenderedMarkdown;
 
+    private static string ChangesOnlyLabel(DiffFileProjection file) => file.RenderedChangesOnly ? "Changes" : "All";
+
+    private double ChangesOnlyPillWidth(DiffFileProjection file) =>
+        PillPadding + PillIconWidth + PillGap + Layout(ChangesOnlyLabel(file), 10, FileBrush, false).Width + PillPadding;
+
     private Rect FileChangesOnlyRect(DiffFileHeaderProjection file, double y) {
         var rect = FilePreviewRect(file, y);
-        return new Rect(rect.Right + (IsPreviewable(file.File) ? 6 : 0), rect.Y, 26, rect.Height);
+        return new Rect(rect.Right + (IsPreviewable(file.File) ? 6 : 0), rect.Y, ChangesOnlyPillWidth(file.File), rect.Height);
     }
 
     /// <summary>How far apart the header's action icons sit.</summary>
@@ -938,10 +943,19 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
 
         if (HasChangesOnlyToggle(file)) {
             var changesOnly = FileChangesOnlyRect(header, y);
-            if (IsHeaderPartActive(index, HeaderChangesOnlyAction, out var changesOnlyPressed))
-                context.DrawRectangle(changesOnlyPressed ? ThemeBrush("GitKaySelectionBrush", SelectionBrush) : hover, null, changesOnly, 4, 4);
-            DrawChangesOnlyIcon(context, changesOnly, file.RenderedChangesOnly,
-                file.RenderedChangesOnly ? ThemeBrush("GitKayAccentBrush", FileBrush) : secondary);
+            var filtering = file.RenderedChangesOnly;
+            IsHeaderPartActive(index, HeaderChangesOnlyAction, out var changesOnlyPressed);
+            // Same treatment as the preview pill: a word for the state, filled while it is on.
+            var accent = ThemeBrush("GitKayAccentBrush", FileBrush);
+            var fill = changesOnlyPressed ? ThemeBrush("GitKaySelectionBrush", SelectionBrush)
+                : filtering ? accent
+                : ThemeBrush("GitKayRaisedBrush", CodeBlockFallback);
+            context.DrawRectangle(fill, new Pen(filtering ? accent : ThemeBrush("GitKayBorderBrush", secondary), 1), changesOnly, 9, 9);
+            var label = filtering ? ThemeBrush("GitKayWindowBrush", StickyWindowFallback) : secondary;
+            DrawChangesOnlyIcon(context, new Rect(changesOnly.X + PillPadding, changesOnly.Y, PillIconWidth, changesOnly.Height), filtering, label);
+            var filterText = Layout(ChangesOnlyLabel(file), 10, label, false);
+            context.DrawText(filterText, new Point(changesOnly.X + PillPadding + PillIconWidth + PillGap,
+                changesOnly.Y + (changesOnly.Height - filterText.Height) / 2));
         }
 
         if (HasContextToggle(file)) {

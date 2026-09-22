@@ -555,11 +555,12 @@
                                       Margin="0,0,6,0"
                                       IsChecked="{Binding IgnoreWhitespace, Mode=TwoWay}"
                                       ToolTip.Tip="Ignore whitespace changes — hides lines that differ only in spacing">
-                            <Grid Width="22" Height="16">
-                                <TextBlock Text="WS" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="10" FontWeight="SemiBold"
+                            <!-- "WS" alone said nothing; the word says what the state is, struck through while on. -->
+                            <Grid MinWidth="74" Height="16">
+                                <TextBlock Text="Whitespace" FontSize="10" FontWeight="SemiBold"
                                            HorizontalAlignment="Center" VerticalAlignment="Center"
                                            Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
-                                <Path Data="M2,14 L20,2" Stroke="{DynamicResource GitKayAccentBrush}" StrokeThickness="1.8"
+                                <Path Data="M2,14 L72,2" Stroke="{DynamicResource GitKayAccentBrush}" StrokeThickness="1.6"
                                       IsVisible="{Binding IgnoreWhitespace}" />
                             </Grid>
                         </ToggleButton>

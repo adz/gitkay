@@ -18,6 +18,29 @@ module Push =
         | Refused of reason: string
         | NoRemote
 
+    /// <summary>
+    /// What a plan is about to do, in the words the reader would use. Shown before it runs, so a push that is
+    /// about to write somewhere unexpected is visible beforehand rather than afterwards.
+    /// </summary>
+    let describe (branch: string) (plan: Plan) =
+        match plan with
+        | ToUpstream(remote, refspec) ->
+            let target = refspec.Split(':') |> Array.last |> fun ref -> if ref.StartsWith "refs/heads/" then ref.Substring 11 else ref
+            $"Pushing {branch} to {remote}/{target}"
+        | SetUpstream(remote, branch) -> $"Pushing {branch} to {remote}/{branch} and setting it as its upstream"
+        | Refused reason -> reason
+        | NoRemote -> "This repository has no remotes to push to."
+
+    /// <summary>What to say once it has run, so the status line names what happened rather than that it happened.</summary>
+    let describeDone (branch: string) (plan: Plan) =
+        match plan with
+        | ToUpstream(remote, refspec) ->
+            let target = refspec.Split(':') |> Array.last |> fun ref -> if ref.StartsWith "refs/heads/" then ref.Substring 11 else ref
+            $"Pushed {branch} → {remote}/{target}"
+        | SetUpstream(remote, branch) -> $"Pushed {branch} → {remote}/{branch}"
+        | Refused reason -> reason
+        | NoRemote -> "Nothing was pushed: this repository has no remotes."
+
     /// <summary>The branch name a <c>refs/heads/…</c> merge ref names, or the ref itself when it is not one.</summary>
     let upstreamBranchName (merge: string) =
         let prefix = "refs/heads/"

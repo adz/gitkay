@@ -39,18 +39,16 @@ public static class GitOperations {
             merge == null ? FSharpOption<string>.None : FSharpOption<string>.Some(merge),
             ListModule.OfSeq(remotes));
 
+        // Said before it runs, and with the exact refspec, so a push about to write somewhere unexpected is
+        // visible beforehand rather than discovered afterwards.
+        runner.Log(GitKay.Core.Push.describe(branch.Name, plan));
         switch (plan) {
             case GitKay.Core.Push.Plan.ToUpstream upstream:
-                runner.Log($"Pushing {branch.Name} to {upstream.remote} ({upstream.refspec})");
+                runner.Log($"$ git push {upstream.remote} {upstream.refspec}");
                 return await runner.RunAsync("push", "--progress", upstream.remote, upstream.refspec);
             case GitKay.Core.Push.Plan.SetUpstream set:
-                runner.Log($"{branch.Name} has no upstream; pushing to {set.remote} and setting it as upstream");
                 return await runner.RunAsync("push", "--progress", "--set-upstream", set.remote, set.branch);
-            case GitKay.Core.Push.Plan.Refused refused:
-                runner.Log(refused.reason);
-                return false;
             default:
-                runner.Log("This repository has no remotes to push to.");
                 return false;
         }
     });

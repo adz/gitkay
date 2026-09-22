@@ -878,13 +878,22 @@ public partial class MainWindow : Window, IVimCommands {
         if (_projection is not { RepositoryPath: { } repository } projection) return;
         _pendingMarkdownAnchor = DiffRowsListBox.CaptureMarkdownViewAnchor();
         var kind = GitKay.Core.Markdown.previewKind(file.ContentPath);
+        var name = System.IO.Path.GetFileName(file.ContentPath);
         if (kind.IsMarkdownPreview) {
-            SaveMarkdownPreviewPreference(repository, file.ContentPath, !file.IsRenderedMarkdown);
+            var showing = !file.IsRenderedMarkdown;
+            SaveMarkdownPreviewPreference(repository, file.ContentPath, showing);
             projection.ToggleRenderedMarkdown(file);
+            projection.Status = showing ? $"Previewing {name} as rendered Markdown" : $"Showing {name} as source";
         }
         else {
-            SaveMarkdownPreviewPreference(repository, file.ContentPath, !file.IsFormattedPreview);
+            var showing = !file.IsFormattedPreview;
+            SaveMarkdownPreviewPreference(repository, file.ContentPath, showing);
             projection.ToggleFormattedPreview(file);
+            // Naming the format matters here: reformatted JSON is still text, so nothing else says which is showing.
+            var format = kind is GitKay.Core.PreviewKind.FormattedPreview formatted
+                ? (formatted.format.IsJsonFormat ? "JSON" : "XML")
+                : "the file";
+            projection.Status = showing ? $"Previewing {name} as reformatted {format}" : $"Showing {name} as source";
         }
     }
 
@@ -1056,6 +1065,7 @@ public partial class MainWindow : Window, IVimCommands {
             return;
         }
         RunGitOperation(GitOperations.ForBranch("push", new BranchTarget(branch, true)));
+        if (_projection != null) _projection.Status = $"Pushing {branch}…";
     }
 
     private void RunGitOperation(GitOperation operation) {

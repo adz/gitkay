@@ -4582,3 +4582,17 @@ module SourceDiffContextTests =
         let lines = limited.Hunks |> List.collect _.Lines
         test <@ lines |> List.forall (fun line -> line.Type <> Models.Context) @>
         test <@ List.length lines = 2 @>
+
+    [<Fact>]
+    let ``a push says what it is about to do, in branch names rather than refspecs`` () =
+        let toUpstream = Push.plan "feature" (Some "origin") (Some "refs/heads/feature") [ "origin" ]
+        test <@ Push.describe "feature" toUpstream = "Pushing feature to origin/feature" @>
+        test <@ Push.describeDone "feature" toUpstream = "Pushed feature → origin/feature" @>
+
+        let newBranch = Push.plan "feature" None None [ "origin" ]
+        test <@ (Push.describe "feature" newBranch).Contains "setting it as its upstream" @>
+
+        // A refusal explains itself in both places rather than going quiet.
+        let refused = Push.plan "feature" (Some "origin") (Some "refs/heads/main") [ "origin" ]
+        test <@ (Push.describe "feature" refused).Contains "would write feature onto main" @>
+        test <@ Push.describeDone "feature" refused = Push.describe "feature" refused @>
