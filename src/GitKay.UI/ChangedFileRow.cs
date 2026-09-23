@@ -46,6 +46,7 @@ public sealed class ChangedFileRow : TemplatedControl {
         var marker = new TextBlock { FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Width = 14 };
         marker.Bind(TextBlock.TextProperty, this.GetObservable(MarkerProperty));
         marker.Bind(ForegroundProperty, this.GetResourceObservable("GitKaySecondaryTextBrush").ToBinding());
+        this.GetObservable(MarkerProperty).Subscribe(new AnonymousObserver<string?>(value => marker.IsVisible = !string.IsNullOrEmpty(value)));
 
         var glyph = new TextBlock { FontSize = 12, FontWeight = FontWeight.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         glyph.Bind(TextBlock.TextProperty, this.GetObservable(GlyphProperty));
@@ -67,7 +68,10 @@ public sealed class ChangedFileRow : TemplatedControl {
         var added = Count(AddedTextProperty, "GitKayAddedAccentBrush");
         var removed = Count(RemovedTextProperty, "GitKayRemovedAccentBrush");
 
-        var trailing = new FileRowLayout { Spacing = 7 };
+        // The counts are facts, not a collapsible graph: a long name yields space to both fixed columns.
+        var trailing = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"), ColumnSpacing = 7 };
+        Grid.SetColumn(added, 1);
+        Grid.SetColumn(removed, 2);
         trailing.Children.Add(name);
         trailing.Children.Add(added);
         trailing.Children.Add(removed);
@@ -90,7 +94,9 @@ public sealed class ChangedFileRow : TemplatedControl {
         };
         block.Bind(TextBlock.TextProperty, this.GetObservable(text));
         block.Bind(ForegroundProperty, this.GetResourceObservable(brush).ToBinding());
-        block.Bind(IsVisibleProperty, this.GetObservable(ShowsCountsProperty));
+        block.Bind(IsVisibleProperty, this.GetObservable(ShowsBadgeProperty));
+        // Keep the count slot while the diff loads; only the number appears later.
+        this.GetObservable(ShowsCountsProperty).Subscribe(new AnonymousObserver<bool>(show => block.Opacity = show ? 1 : 0));
         return block;
     }
 

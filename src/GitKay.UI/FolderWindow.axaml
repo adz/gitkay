@@ -111,6 +111,7 @@
                                                   DiffLayout="{Binding Layout}"
                                                   CodeFontSize="{Binding DiffFontSize, Mode=TwoWay}"
                                                   PreviewRequested="OnPreviewRequested"
+                                                  ChangesOnlyRequested="OnChangesOnlyRequested"
                                                   FindQuery="{Binding FindQuery}"
                                                   OldRenderedImages="{Binding OldImages}"
                                                   RenderedImages="{Binding Images}"

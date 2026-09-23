@@ -9,6 +9,7 @@ open Avalonia.Headless
 open Avalonia.Input
 open Avalonia.Themes.Fluent
 open Avalonia.Threading
+open Avalonia.VisualTree
 open CommunityToolkit.Mvvm.Input
 open Xunit
 open Swensen.Unquote
@@ -979,6 +980,92 @@ printfn $"value = {answer}"
             test <@ anchoredFile = "c.txt" @>
             test <@ Math.Round(after, 1) = Math.Round(before, 1) @>)
 
+    [<Fact>]
+    let ``a preview reshape keeps the same line at the same viewport position`` () =
+        Headless.run (fun () ->
+            use fixture = new DiffFixture(DiffLayout.Unified)
+            let anchored = fixture.Line 2 12
+            fixture.Scroller.Offset <- Vector(0.0, fixture.ViewportTop anchored + fixture.Scroller.Offset.Y - 60.0)
+            Headless.pump ()
+            let before = fixture.Surface.CaptureMarkdownViewAnchor()
+            let beforeFrame = fixture.Window.CaptureRenderedFrame()
+            let reshaped =
+                fixture.Surface.ItemsSource
+                |> Seq.filter (function :? DiffLineProjection as line when line.Content = "value = 2" -> false | _ -> true)
+                |> AvaloniaList<IDiffRowProjection>
+            fixture.Surface.ItemsSource <- reshaped
+            fixture.Surface.RestoreMarkdownViewAnchor before
+            Headless.pump ()
+            let afterFrame = fixture.Window.CaptureRenderedFrame()
+            let after = fixture.Surface.CaptureMarkdownViewAnchor()
+            let bothPresent = before.HasValue && after.HasValue
+            let samePlace =
+                bothPresent && after.Value.File = before.Value.File && after.Value.Line = before.Value.Line &&
+                abs (after.Value.ViewportY - before.Value.ViewportY) < 1.0
+            test <@ beforeFrame.PixelSize = afterFrame.PixelSize @>
+            test <@ samePlace @>)
+
+    [<Fact>]
+    let ``source to markdown preview keeps visible text at the same height`` () =
+        Headless.run (fun () ->
+            let source = [ for i in 1 .. 40 -> $"Paragraph {i}" ] |> String.concat "\n\n"
+            let content = SourceDiff.between FileChange.missing "README.md" "" source
+            let file = DiffFileProjection({ OldPath = FileChange.missing; NewPath = "README.md"; DisplayPath = "README.md" } : GitService.DiffFileSummary)
+            file.ApplyContent content
+            let rows = AvaloniaList<IDiffRowProjection>()
+            let rebuild () =
+                let next = System.Collections.Generic.List<IDiffRowProjection>()
+                DiffRowBuilder.AppendFile(next, file, DiffLayout.Unified)
+                rows.Clear()
+                rows.AddRange next
+            rebuild ()
+            let surface = DiffSurfaceControl(ItemsSource = rows)
+            let scroller = ScrollViewer(Height = 260.0, Content = surface)
+            let window = Window(Width = 800.0, Height = 260.0, Content = scroller)
+            try
+                window.Show()
+                Headless.pump ()
+                let targetIndex =
+                    rows |> Seq.findIndex (function :? DiffLineProjection as line -> line.Content = "Paragraph 20" | _ -> false)
+                let rowTop = [ 0 .. targetIndex - 1 ] |> List.sumBy surface.RowHeightAt
+                scroller.Offset <- Vector(0.0, rowTop)
+                Headless.pump ()
+                let sourceTextY = rowTop - scroller.Offset.Y + 2.0
+                let before = surface.CaptureMarkdownViewAnchor()
+                let beforeFrame = window.CaptureRenderedFrame()
+                let rendered : RenderedMarkdownContent =
+                    { File = content; DiffRows = Markdown.renderDiff "" source
+                      OldRows = Markdown.renderDocument ""; NewRows = Markdown.renderDocument source; Images = [] }
+                file.ApplyRenderedContent rendered
+                rebuild ()
+                surface.RestoreMarkdownViewAnchor before
+                Headless.pump ()
+                let afterFrame = window.CaptureRenderedFrame()
+                let after = surface.CaptureMarkdownViewAnchor()
+                let renderedIndex =
+                    rows |> Seq.findIndex (function :? RenderedMarkdownRowProjection as row -> row.Text.Contains "Paragraph 20" | _ -> false)
+                let renderedTop = [ 0 .. renderedIndex - 1 ] |> List.sumBy surface.RowHeightAt
+                let renderedTextY = renderedTop - scroller.Offset.Y + 8.0
+                let shift = renderedTextY - sourceTextY
+                let bothPresent = before.HasValue && after.HasValue
+                test <@ beforeFrame.PixelSize = afterFrame.PixelSize @>
+                test <@ bothPresent @>
+                test <@ abs shift < 2.0 @>
+
+                let returnAnchor = surface.CaptureMarkdownViewAnchor()
+                file.ClearRendered()
+                rebuild ()
+                surface.RestoreMarkdownViewAnchor returnAnchor
+                Headless.pump ()
+                let sourceIndex =
+                    rows |> Seq.findIndex (function :? DiffLineProjection as line -> line.Content = "Paragraph 20" | _ -> false)
+                let sourceTop = [ 0 .. sourceIndex - 1 ] |> List.sumBy surface.RowHeightAt
+                let returnedTextY = sourceTop - scroller.Offset.Y + 2.0
+                test <@ abs (returnedTextY - renderedTextY) < 2.0 @>
+            finally
+                window.Close()
+                Headless.pump ())
+
 module FileRowLayoutTests =
     open Avalonia.Controls.Primitives
     open Avalonia.Layout
@@ -1279,7 +1366,7 @@ module ChangesOnlyToggleTests =
         file
 
     [<Fact>]
-    let ``the changes-only icon is offered only while the file is rendered`` () =
+    let ``the context arrow controls changes-only while the file is rendered`` () =
         Headless.run (fun () ->
             let file = renderedFile ()
             let rows = AvaloniaList<IDiffRowProjection>([ file.Header :> IDiffRowProjection ])
@@ -1300,6 +1387,16 @@ module ChangesOnlyToggleTests =
                     [ 100.0 .. 2.0 .. 300.0 ]
                     |> List.tryFind (fun x -> asked.Clear(); clickAt x; asked.Count > 0)
                 test <@ hit.IsSome @>
+
+                // Capture both rendered states and check that the same arrow location remains usable.
+                let before = window.CaptureRenderedFrame()
+                file.RenderedChangesOnly <- true
+                surface.InvalidateVisual()
+                Headless.pump ()
+                let after = window.CaptureRenderedFrame()
+                asked.Clear()
+                hit |> Option.iter clickAt
+                test <@ before.PixelSize = after.PixelSize && asked.Count = 1 @>
 
                 // Source mode has no unchanged sections to hide, so the icon is not there to click.
                 file.ClearRendered()
@@ -2009,3 +2106,66 @@ module SharedFileRowTests =
             finally
                 window.Close()
                 Headless.pump ())
+
+    [<Fact>]
+    let ``counts arriving later do not change the space given to the filename`` () =
+        Headless.run (fun () ->
+            let path = "src/very/long/path/to/a/file/that/must/be/trimmed.fs"
+            let row = ChangedFileRow(Label = path, ShowsCounts = false, AddedText = "+12", RemovedText = "−3")
+            let window, before = Render.capture 260.0 30.0 row
+            try
+                let name =
+                    row.GetVisualDescendants()
+                    |> Seq.choose (function :? TextBlock as block when block.Text = path -> Some block | _ -> None)
+                    |> Seq.head
+                let widthBefore = name.Bounds.Width
+                row.ShowsCounts <- true
+                window.UpdateLayout()
+                Headless.pump ()
+                let after = window.CaptureRenderedFrame()
+                test <@ before.PixelSize = after.PixelSize @>
+                test <@ Math.Round(name.Bounds.Width, 1) = Math.Round(widthBefore, 1) @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
+    let ``a long changed file shows one badge and both right-aligned counts`` () =
+        Headless.run (fun () ->
+            let row = ChangedFileRow(
+                Glyph = "•", Label = "src/very/long/path/to/a/file/that/must/be/trimmed.fs",
+                AddedText = "+12", RemovedText = "−3", ShowsCounts = true, IsModified = true)
+            let window, frame = Render.capture 260.0 30.0 row
+            try
+                let blocks = row.GetVisualDescendants() |> Seq.choose (function :? TextBlock as block -> Some block | _ -> None) |> Seq.toList
+                let marker = blocks.Head
+                let added = blocks |> List.find (fun block -> block.Text = "+12")
+                let removed = blocks |> List.find (fun block -> block.Text = "−3")
+                let countRight = removed.TranslatePoint(Point(removed.Bounds.Width, 0.0), row)
+                let rightAligned = countRight.HasValue && abs (countRight.Value.X - row.Bounds.Right) < 2.0
+                test <@ frame.PixelSize.Width = 260 @>
+                test <@ not marker.IsVisible @>
+                test <@ added.IsVisible && removed.IsVisible @>
+                test <@ rightAligned @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+module FolderRefreshTests =
+    let private pair path : Folder.Pair =
+        { OldPath = FileChange.missing; NewPath = path; Left = None; Right = None }
+
+    [<Fact>]
+    let ``folder reread keeps the projection and selected path`` () =
+        let initial = [ pair "a.txt"; pair "b.txt" ]
+        let projection = FolderProjection(FolderMode.Preview, "/tmp/left", null, initial, initial)
+        projection.SelectedFile <- projection.Files[1]
+        projection.FileListMode <- CommitFileListMode.Tree
+        let rows = projection.Rows
+
+        let updated = [ pair "a.txt"; pair "b.txt"; pair "c.txt" ]
+        projection.Refresh(updated, updated)
+        test <@ obj.ReferenceEquals(rows, projection.Rows) @>
+        test <@ projection.SelectedFile.ContentPath = "b.txt" @>
+        test <@ projection.FileListMode = CommitFileListMode.Tree @>
+        test <@ projection.Files.Count = 3 @>

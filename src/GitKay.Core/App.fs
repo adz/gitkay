@@ -127,6 +127,7 @@ module App =
             WorkingTreeStartedAtTicks: int64 option
             /// The last discard's backup, while it can still be undone.
             LastDiscard: Trash.Backup option
+            /// The last successfully staged line/hunk patch, for u in the working-tree diff.
         }
 
         member model.SelectedCommitHash =

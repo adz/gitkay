@@ -98,6 +98,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     /// <summary>Scales a gutter measurement laid out for the default 12px code font.</summary>
     private double Z(double value) => value * CodeFontSize / 12;
     private double CodeTextTop => Math.Floor((LineHeight - CodeFontSize * 4 / 3) / 2);
+    private const double RenderedTextTop = 8;
     public const double DefaultCodeFontSize = 12;
     private const double HunkHeight = 28;
     private const double GapHeight = 40;
@@ -107,10 +108,10 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private const double FileChevronWidth = 32;
     /// <summary>Breathing room down each side of a file card, so its title doesn't sit hard against the pane edge.</summary>
     private const double FileCardInset = 6;
+    private const double FileStatsReserve = 150;
     private const int HeaderChevronAction = 100;
     private const int HeaderContextAction = 101;
     private const int HeaderPreviewAction = 102;
-    private const int HeaderChangesOnlyAction = 103;
     private const int MaxHighlightedLineLength = 240;
     private const int MaxLayoutCacheEntries = 2048;
 
@@ -331,6 +332,10 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     /// <summary>Scroll to an offset once rows with content arrive (restoring a revisited commit's position).</summary>
     public void RestoreScrollOffsetWhenReady(double offset) => _pendingScrollOffset = offset;
 
+    /// <summary>Keep the current position when a local preview changes its measured height.</summary>
+    public void RestoreScrollOffsetAfterLayout(double offset) =>
+        Dispatcher.UIThread.Post(() => SetOffsetWithoutScrolling(offset), DispatcherPriority.Loaded);
+
     public double CurrentScrollOffset => _scrollViewer?.Offset.Y ?? 0;
 
     /// A semantic line anchor used while source rows are replaced by rendered blocks (or vice versa).
@@ -349,6 +354,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         RenderedMarkdownRowProjection rendered => line >= rendered.Located.FirstLine && line <= rendered.Located.LastLine,
         _ => false,
     };
+
+    private double AnchorTextTop(IDiffRowProjection row) =>
+        row is RenderedMarkdownRowProjection ? RenderedTextTop : CodeTextTop;
 
     /// <summary>The path of the file whose header most recently preceded this row.</summary>
     private string FileOfRow(int index) {
@@ -370,30 +378,46 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             selectedLine = LineOfRow((IDiffRowProjection)SelectedItem);
         }
         return new MarkdownViewAnchor(FileOfRow(index), LineOfRow(_rows[index]),
-            _tops[index] - _scrollViewer.Offset.Y, selectedFile, selectedLine);
+            _tops[index] + AnchorTextTop(_rows[index]) - _scrollViewer.Offset.Y, selectedFile, selectedLine);
     }
 
     /// <summary>Finds a line inside one file, so an identical line number in an earlier file can't steal the anchor.</summary>
     private int FindRowInFile(string file, int line) {
         var current = "";
+        var nearest = -1;
+        var distance = int.MaxValue;
         for (var i = 0; i < _rows.Length; i++) {
             if (_rows[i] is DiffFileHeaderProjection header) { current = header.File.ContentPath; continue; }
             if (current == file && RowContainsLine(_rows[i], line)) return i;
+            if (current != file || _rows[i] is not (DiffLineProjection or RenderedMarkdownRowProjection)) continue;
+            var delta = Math.Abs(LineOfRow(_rows[i]) - line);
+            if (delta < distance) { nearest = i; distance = delta; }
         }
-        return -1;
+        return nearest;
     }
 
     public void RestoreMarkdownViewAnchor(MarkdownViewAnchor? anchor) {
         if (anchor is not { } value || _scrollViewer == null) return;
         var index = FindRowInFile(value.File, value.Line);
-        if (index >= 0) SetOffsetWithoutScrolling(Math.Max(0, _tops[index] - value.ViewportY));
+        if (index >= 0) {
+            var row = _rows[index];
+            var rowOffset = value.ViewportY - AnchorTextTop(row);
+            SetOffsetWithoutScrolling(Math.Max(0, _tops[index] - rowOffset));
+            // The new preview extent is measured later; reapply the same anchor after that pass.
+            _anchorTarget = (row, rowOffset);
+            var scrolls = _userScrolls;
+            Dispatcher.UIThread.Post(() => {
+                if (_userScrolls == scrolls) ApplyAnchorTarget();
+                else _anchorTarget = null;
+            }, DispatcherPriority.Loaded);
+        }
         if (value.SelectedLine is { } selectedLine && value.SelectedFile is { } selectedFile
             && FindRowInFile(selectedFile, selectedLine) is var selectedIndex and >= 0)
             SelectedItem = _rows[selectedIndex];
     }
 
     private void ApplyPendingScrollOffset() {
-        if (_pendingScrollOffset is not { } offset || _scrollViewer == null || !_rows.Any(row => row is DiffLineProjection)) return;
+        if (_pendingScrollOffset is not { } offset || _scrollViewer == null || _rows.Length == 0) return;
         _pendingScrollOffset = null;
         // Background priority runs after the selection's scroll-into-view, so the restored position wins.
         Dispatcher.UIThread.Post(() => SetOffsetWithoutScrolling(offset), DispatcherPriority.Background);
@@ -849,33 +873,27 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private const double PillGap = 6;
 
     private double PreviewPillWidth(DiffFileProjection file) =>
-        PillPadding + PillIconWidth + PillGap + Layout(PreviewLabel(file), 10, FileBrush, false).Width + PillPadding;
+        PillPadding + PillIconWidth + PillGap +
+        Math.Max(Layout("Preview", 10, FileBrush, false).Width, Layout("Source", 10, FileBrush, false).Width) + PillPadding;
 
     private Rect FilePreviewRect(DiffFileHeaderProjection file, double y) {
-        var pathWidth = Layout(file.DisplayPath, 12, FileBrush, false).Width;
-        return new Rect(FileLabelX + pathWidth + 8, y + FileCardTop + 6, PreviewPillWidth(file.File), FileHeight - FileCardTop - 12);
+        var card = FileCardRect(y);
+        var pathEnd = FileLabelX + Layout(file.DisplayPath, 12, FileBrush, false).Width + 8;
+        var reserved = PreviewPillWidth(file.File) + 6 + 26 + FileStatsReserve;
+        return new Rect(Math.Min(pathEnd, Math.Max(FileLabelX, card.Right - reserved)),
+            y + FileCardTop + 6, PreviewPillWidth(file.File), FileHeight - FileCardTop - 12);
     }
 
     /// <summary>Only while the file is rendered: it says what to do with the parts of the document that did not change.</summary>
-    private static bool HasChangesOnlyToggle(DiffFileProjection file) => file.IsRenderedMarkdown;
-
-    private static string ChangesOnlyLabel(DiffFileProjection file) => file.RenderedChangesOnly ? "Changes" : "All";
-
-    private double ChangesOnlyPillWidth(DiffFileProjection file) =>
-        PillPadding + PillIconWidth + PillGap + Layout(ChangesOnlyLabel(file), 10, FileBrush, false).Width + PillPadding;
-
-    private Rect FileChangesOnlyRect(DiffFileHeaderProjection file, double y) {
-        var rect = FilePreviewRect(file, y);
-        return new Rect(rect.Right + (IsPreviewable(file.File) ? 6 : 0), rect.Y, ChangesOnlyPillWidth(file.File), rect.Height);
-    }
-
     /// <summary>How far apart the header's action icons sit.</summary>
     private const double ActionStep = 30;
 
     private Rect FileContextRect(DiffFileHeaderProjection file, double y) {
-        var after = HasChangesOnlyToggle(file.File) ? FileChangesOnlyRect(file, y).Right : FilePreviewRect(file, y).Right;
-        var rect = FilePreviewRect(file, y);
-        return new Rect(after + (IsPreviewable(file.File) || HasChangesOnlyToggle(file.File) ? 6 : 0), rect.Y, 26, rect.Height);
+        var preview = FilePreviewRect(file, y);
+        var x = IsPreviewable(file.File) ? preview.Right + 6
+            : Math.Min(FileLabelX + Layout(file.File.DisplayPath, 12, FileBrush, false).Width + 8,
+                FileCardRect(y).Right - FileStatsReserve - 26);
+        return new Rect(x, preview.Y, 26, preview.Height);
     }
 
     /// <summary>Anything the diff pane can show as something other than its source text.</summary>
@@ -883,7 +901,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         !GitKay.Core.Markdown.previewKind(file.ContentPath).IsSourceOnly;
 
     private static bool HasContextToggle(DiffFileProjection file) =>
-        file.IsLoaded && (file.HasHiddenContext || file.HasRevealedContext);
+        file.IsRenderedMarkdown || file.IsLoaded && (file.HasHiddenContext || file.HasRevealedContext);
 
     /// <summary>GitHub-style file card header: chevron, path, expand-all context toggle, and change stats.</summary>
     private void DrawFileHeader(DrawingContext context, DiffFileHeaderProjection header, double y, int index) {
@@ -919,10 +937,14 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         }
 
         var path = Layout(file.DisplayPath, 12, text, false);
-        context.DrawText(path, new Point(FileLabelX, centerY - path.Height / 2));
-        var pathUnderline = ThemeBrush("GitKayAccentBrush", SearchMatchFallback);
-        ForEachMatch(file.DisplayPath, SearchPathQuery, SearchHighlightUseRegex, (start, length) =>
-            DrawDottedUnderline(context, file.DisplayPath, start, length, FileLabelX, centerY + path.Height / 2 - 1, pathUnderline, 12));
+        var titleRight = IsPreviewable(file) ? FilePreviewRect(header, y).X - 8
+            : HasContextToggle(file) ? FileContextRect(header, y).X - 8 : card.Right - FileStatsReserve;
+        using (context.PushClip(new Rect(FileLabelX, card.Y, Math.Max(0, titleRight - FileLabelX), card.Height))) {
+            context.DrawText(path, new Point(FileLabelX, centerY - path.Height / 2));
+            var pathUnderline = ThemeBrush("GitKayAccentBrush", SearchMatchFallback);
+            ForEachMatch(file.DisplayPath, SearchPathQuery, SearchHighlightUseRegex, (start, length) =>
+                DrawDottedUnderline(context, file.DisplayPath, start, length, FileLabelX, centerY + path.Height / 2 - 1, pathUnderline, 12));
+        }
 
         if (IsPreviewable(file)) {
             var preview = FilePreviewRect(header, y);
@@ -934,35 +956,18 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
                 : showingPreview ? accent
                 : ThemeBrush("GitKayRaisedBrush", CodeBlockFallback);
             context.DrawRectangle(fill, new Pen(showingPreview ? accent : ThemeBrush("GitKayBorderBrush", secondary), 1), preview, 9, 9);
-            var label = showingPreview ? ThemeBrush("GitKayWindowBrush", StickyWindowFallback) : secondary;
+            var label = showingPreview ? ThemeBrush("GitKayWindowBrush", StickyWindowFallback) : text;
             DrawPreviewIcon(context, new Rect(preview.X + PillPadding, preview.Y, PillIconWidth, preview.Height), label, PillIconWidth / 2);
             var pillText = Layout(PreviewLabel(file), 10, label, false);
             context.DrawText(pillText, new Point(preview.X + PillPadding + PillIconWidth + PillGap,
                 preview.Y + (preview.Height - pillText.Height) / 2));
         }
 
-        if (HasChangesOnlyToggle(file)) {
-            var changesOnly = FileChangesOnlyRect(header, y);
-            var filtering = file.RenderedChangesOnly;
-            IsHeaderPartActive(index, HeaderChangesOnlyAction, out var changesOnlyPressed);
-            // Same treatment as the preview pill: a word for the state, filled while it is on.
-            var accent = ThemeBrush("GitKayAccentBrush", FileBrush);
-            var fill = changesOnlyPressed ? ThemeBrush("GitKaySelectionBrush", SelectionBrush)
-                : filtering ? accent
-                : ThemeBrush("GitKayRaisedBrush", CodeBlockFallback);
-            context.DrawRectangle(fill, new Pen(filtering ? accent : ThemeBrush("GitKayBorderBrush", secondary), 1), changesOnly, 9, 9);
-            var label = filtering ? ThemeBrush("GitKayWindowBrush", StickyWindowFallback) : secondary;
-            DrawChangesOnlyIcon(context, new Rect(changesOnly.X + PillPadding, changesOnly.Y, PillIconWidth, changesOnly.Height), filtering, label);
-            var filterText = Layout(ChangesOnlyLabel(file), 10, label, false);
-            context.DrawText(filterText, new Point(changesOnly.X + PillPadding + PillIconWidth + PillGap,
-                changesOnly.Y + (changesOnly.Height - filterText.Height) / 2));
-        }
-
         if (HasContextToggle(file)) {
             var toggle = FileContextRect(header, y);
             if (IsHeaderPartActive(index, HeaderContextAction, out var togglePressed))
                 context.DrawRectangle(togglePressed ? ThemeBrush("GitKaySelectionBrush", SelectionBrush) : hover, null, toggle, 4, 4);
-            DrawContextToggleIcon(context, toggle, file.HasHiddenContext, secondary);
+            DrawContextToggleIcon(context, toggle, file.IsRenderedMarkdown ? file.RenderedChangesOnly : file.HasHiddenContext, text);
             if (file.IsContextLoading)
                 DrawPlain(context, "Loading…", toggle.Right + 6, centerY - 7, 11, ThemeBrush("GitKayMutedTextBrush", HunkBrush));
         }
@@ -1026,17 +1031,17 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             var middle = Bounds.Width / 2;
             context.FillRectangle(ThemeBrush("GitKayBorderBrush", HunkBrush), new Rect(middle, y, 1, RowHeight(row)));
             if (row.Kind == GitKay.Core.MarkdownChangeKind.Modified && row.Words.Count > 0) {
-                DrawRenderedWords(context, row.Words.Where(span => span.Kind != GitKay.Core.MarkdownWordSpanKind.Inserted).ToArray(), 0, 22, y + 8, Math.Max(40, middle - 38));
-                DrawRenderedWords(context, row.Words.Where(span => span.Kind != GitKay.Core.MarkdownWordSpanKind.Deleted).ToArray(), 1, middle + 14, y + 8, Math.Max(40, middle - 30));
+                DrawRenderedWords(context, row.Words.Where(span => span.Kind != GitKay.Core.MarkdownWordSpanKind.Inserted).ToArray(), 0, 22, y + RenderedTextTop, Math.Max(40, middle - 38));
+                DrawRenderedWords(context, row.Words.Where(span => span.Kind != GitKay.Core.MarkdownWordSpanKind.Deleted).ToArray(), 1, middle + 14, y + RenderedTextTop, Math.Max(40, middle - 30));
             }
             else {
-                DrawRenderedSpans(context, row.OldSpans, 0, 22, y + 8, Math.Max(40, middle - 38), row.IsRemoved ? accent : ThemeBrush("GitKayTextBrush", FileBrush), renderedSize);
-                DrawRenderedSpans(context, row.NewSpans, 1, middle + 14, y + 8, Math.Max(40, middle - 30), row.IsAdded ? accent : ThemeBrush("GitKayTextBrush", FileBrush), renderedSize);
+                DrawRenderedSpans(context, row.OldSpans, 0, 22, y + RenderedTextTop, Math.Max(40, middle - 38), row.IsRemoved ? accent : ThemeBrush("GitKayTextBrush", FileBrush), renderedSize);
+                DrawRenderedSpans(context, row.NewSpans, 1, middle + 14, y + RenderedTextTop, Math.Max(40, middle - 30), row.IsAdded ? accent : ThemeBrush("GitKayTextBrush", FileBrush), renderedSize);
             }
         }
-        else if (row.Kind == GitKay.Core.MarkdownChangeKind.Modified && row.Words.Count > 0) DrawRenderedWords(context, row.Words, 0, 22, y + 8, Math.Max(40, Bounds.Width - 38));
-        else if (row.NewSpans.Count > 0) DrawRenderedSpans(context, row.NewSpans, 0, 22, y + 8, Math.Max(40, Bounds.Width - 38), ThemeBrush("GitKayTextBrush", FileBrush), renderedSize);
-        else DrawRenderedText(context, renderedText, 22, y + 8, Math.Max(40, Bounds.Width - 38), ThemeBrush("GitKayTextBrush", FileBrush), renderedSize);
+        else if (row.Kind == GitKay.Core.MarkdownChangeKind.Modified && row.Words.Count > 0) DrawRenderedWords(context, row.Words, 0, 22, y + RenderedTextTop, Math.Max(40, Bounds.Width - 38));
+        else if (row.NewSpans.Count > 0) DrawRenderedSpans(context, row.NewSpans, 0, 22, y + RenderedTextTop, Math.Max(40, Bounds.Width - 38), ThemeBrush("GitKayTextBrush", FileBrush), renderedSize);
+        else DrawRenderedText(context, renderedText, 22, y + RenderedTextTop, Math.Max(40, Bounds.Width - 38), ThemeBrush("GitKayTextBrush", FileBrush), renderedSize);
     }
 
     private void DrawRenderedCodeBlock(DrawingContext context, GitKay.Core.MarkdownBlock.CodeBlock block, double y, RenderedMarkdownRowProjection row, double x, double width, bool oldSide, bool unified) {
@@ -1211,19 +1216,6 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         return pressed || (_hoveredGapAction.Row == index && _hoveredGapAction.Action == action);
     }
 
-    /// <summary>Three stacked lines; filtering to changes leaves the middle one as a gap, like a collapsed section.</summary>
-    private static void DrawChangesOnlyIcon(DrawingContext context, Rect bounds, bool changesOnly, IBrush brush) {
-        var x = bounds.X + bounds.Width / 2 - 5;
-        var y = bounds.Y + bounds.Height / 2 - 4;
-        context.FillRectangle(brush, new Rect(x, y, 10, 1.5));
-        if (changesOnly) {
-            var pen = new Pen(brush, 1, dashStyle: new DashStyle(new double[] { 2, 2 }, 0));
-            context.DrawLine(pen, new Point(x, y + 4.25), new Point(x + 10, y + 4.25));
-        }
-        else context.FillRectangle(brush, new Rect(x, y + 3.5, 10, 1.5));
-        context.FillRectangle(brush, new Rect(x, y + 7, 10, 1.5));
-    }
-
     /// <summary>An eye, drawn to a half-width so it can sit in a pill beside a label as well as alone.</summary>
     private static void DrawPreviewIcon(DrawingContext context, Rect bounds, IBrush brush, double half = 8) {
         var pen = new Pen(brush, 1.2, lineCap: PenLineCap.Round);
@@ -1375,8 +1367,6 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             if (FileChevronRect(headerTop).Contains(position)) return new GapActionHit(index, HeaderChevronAction);
             if (IsPreviewable(header.File) && FilePreviewRect(header, headerTop).Contains(position))
                 return new GapActionHit(index, HeaderPreviewAction);
-            if (HasChangesOnlyToggle(header.File) && FileChangesOnlyRect(header, headerTop).Contains(position))
-                return new GapActionHit(index, HeaderChangesOnlyAction);
             if (HasContextToggle(header.File) && FileContextRect(header, headerTop).Contains(position))
                 return new GapActionHit(index, HeaderContextAction);
             return GapActionHit.None;
@@ -2811,7 +2801,8 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         if (GapActionAt(e.GetPosition(this)) != pressed) return;
         if (_rows[pressed.Row] is DiffFileHeaderProjection header) {
             if (pressed.Action == HeaderPreviewAction) PreviewRequested?.Invoke(this, header.File);
-            else if (pressed.Action == HeaderChangesOnlyAction) ChangesOnlyRequested?.Invoke(this, header.File);
+            else if (pressed.Action == HeaderContextAction && header.File.IsRenderedMarkdown)
+                ChangesOnlyRequested?.Invoke(this, header.File);
             else ToggleFileAnchored(header, pressed.Action == HeaderChevronAction ? ToggleFileCommand : ToggleFileContextCommand);
             e.Handled = true;
             return;

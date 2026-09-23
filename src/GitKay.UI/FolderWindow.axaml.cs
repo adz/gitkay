@@ -7,6 +7,7 @@ using Avalonia.Collections;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace GitKay.UI;
@@ -58,6 +59,37 @@ public sealed partial class FolderProjection : ObservableObject {
         // a file previewed here would stay previewed however they turn out.
         _selectedFile = Files.FirstOrDefault();
         if (_selectedFile != null) { Load(_selectedFile); Rebuild(); }
+    }
+
+    /// <summary>Replace disk results in this projection so bindings, pane positions and focus stay attached.</summary>
+    public void Refresh(IReadOnlyList<GitKay.Core.Folder.Pair> pairs,
+                        IReadOnlyList<GitKay.Core.Folder.Pair> changed) {
+        var selectedPath = SelectedFile?.ContentPath;
+        var wasPreview = SelectedFile is { } oldFile &&
+            (oldFile.IsRenderedMarkdown || oldFile.IsFormattedPreview || oldFile.IsImagePreview);
+        _pairs.Clear();
+        _pairs.AddRange(changed);
+        _allPaths.Clear();
+        _allPaths.AddRange(pairs.Select(pair => GitKay.Core.FileChange.currentPath(pair.OldPath, pair.NewPath)));
+        Files.Clear();
+        foreach (var pair in _pairs) {
+            var displayPath = Mode == FolderMode.Compare
+                ? GitKay.Core.Folder.displayPathOf(pair)
+                : GitKay.Core.FileChange.currentPath(pair.OldPath, pair.NewPath);
+            Files.Add(new DiffFileProjection(new GitKay.Core.GitService.DiffFileSummary(pair.OldPath, pair.NewPath, displayPath)) {
+                ShowsAsChange = Mode == FolderMode.Compare,
+            });
+        }
+        RebuildFileRows();
+        SelectedFile = Files.FirstOrDefault(file => file.ContentPath == selectedPath) ?? Files.FirstOrDefault();
+        if (SelectedFile is { } current && current.ContentPath == selectedPath &&
+            (current.IsRenderedMarkdown || current.IsFormattedPreview || current.IsImagePreview) != wasPreview)
+            TogglePreview(current);
+        OnPropertyChanged(nameof(IsEmpty));
+        OnPropertyChanged(nameof(FileCountLabel));
+        OnPropertyChanged(nameof(HasTotals));
+        OnPropertyChanged(nameof(TotalAddedText));
+        OnPropertyChanged(nameof(TotalRemovedText));
     }
 
     public FolderMode Mode { get; }
@@ -264,6 +296,12 @@ public sealed partial class FolderProjection : ObservableObject {
         Rebuild();
     }
 
+    public void ToggleRenderedChangesOnly(DiffFileProjection file) {
+        if (!file.IsRenderedMarkdown) return;
+        file.RenderedChangesOnly = !file.RenderedChangesOnly;
+        Rebuild();
+    }
+
     /// <summary>Both sides reformatted and re-diffed, so the preview compares documents rather than indentation.</summary>
     private bool ApplyFormatted(DiffFileProjection file, GitKay.Core.Folder.Pair pair, GitKay.Core.PreviewFormat format) {
         var texts = GitKay.Core.FolderSource.sideTexts(pair);
@@ -332,6 +370,7 @@ public sealed partial class FolderProjection : ObservableObject {
 }
 
 public partial class FolderWindow : Window {
+    private int _reloadGeneration;
     public FolderWindow() {
         InitializeComponent();
     }
@@ -400,13 +439,27 @@ public partial class FolderWindow : Window {
             projection.ToggleFolder(folder.Path);
     }
 
-    /// <summary>F5 here means what it means elsewhere: read the folders again.</summary>
-    private void ReloadFolders() {
+    /// <summary>Refresh this reading while keeping the current place in both panes.</summary>
+    private async void ReloadFolders() {
         if (DataContext is not FolderProjection projection) return;
+        var generation = ++_reloadGeneration;
         try {
-            if (projection.Mode == FolderMode.Compare) ExternalTools.StartGitKay(projection.ChosenLeft, "diff", projection.ChosenLeft, projection.ChosenRight ?? "");
-            else ExternalTools.StartGitKay(projection.ChosenLeft, "browse", projection.ChosenLeft);
-            projection.Status = "Re-read in a new window";
+            var fileScroll = FileListBox.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
+            var fileOffset = fileScroll?.Offset.Y ?? 0;
+            var diffOffset = Surface.CurrentScrollOffset;
+            var diffAnchor = Surface.CaptureMarkdownViewAnchor();
+            var focused = FocusManager?.GetFocusedElement();
+            var built = await System.Threading.Tasks.Task.Run(() => App.BuildFolderPairs(projection.Mode, projection.LeftRoot, projection.RightRoot));
+            if (generation != _reloadGeneration || DataContext != projection) return;
+            if (built.Error is { } problem) { projection.Status = problem; return; }
+            if (diffAnchor == null) Surface.RestoreScrollOffsetWhenReady(diffOffset);
+            projection.Refresh(built.Pairs, built.Changed);
+            Surface.RestoreMarkdownViewAnchor(diffAnchor);
+            projection.Status = "Re-read from disk";
+            Dispatcher.UIThread.Post(() => {
+                if (fileScroll != null) fileScroll.Offset = new Avalonia.Vector(fileScroll.Offset.X, fileOffset);
+                (focused as InputElement)?.Focus();
+            }, DispatcherPriority.Loaded);
         }
         catch (Exception error) { projection.Status = $"Could not re-read: {error.Message}"; }
     }
@@ -415,12 +468,29 @@ public partial class FolderWindow : Window {
     private void ShowShortcuts() {
         if (DataContext is not FolderProjection projection) return;
         projection.Status = string.Join("  ·  ",
-            Microsoft.FSharp.Collections.ListModule.ToArray(GitKay.Core.Keys.sheet)
-                .Select(entry => $"{entry.Item1} {entry.Item2}"));
+            Microsoft.FSharp.Collections.ListModule.ToArray(GitKay.Core.Keys.bindings)
+                .Where(entry => entry.Item2.Tag is
+                    GitKay.Core.Keys.Command.Tags.ShowShortcuts or GitKay.Core.Keys.Command.Tags.Refresh or
+                    GitKay.Core.Keys.Command.Tags.GoToFile or GitKay.Core.Keys.Command.Tags.FindInView or
+                    GitKay.Core.Keys.Command.Tags.ZoomIn or GitKay.Core.Keys.Command.Tags.ZoomOut or
+                    GitKay.Core.Keys.Command.Tags.ZoomReset or GitKay.Core.Keys.Command.Tags.Dismiss)
+                .Select(entry => $"{GitKay.Core.Keys.describe(entry.Item1)} {entry.Item3}"));
     }
 
     private void OnPreviewRequested(object? sender, DiffFileProjection file) {
-        if (DataContext is FolderProjection projection) projection.TogglePreview(file);
+        if (DataContext is not FolderProjection projection) return;
+        var anchor = Surface.CaptureMarkdownViewAnchor();
+        var offset = Surface.CurrentScrollOffset;
+        projection.TogglePreview(file);
+        if (anchor != null) Surface.RestoreMarkdownViewAnchor(anchor);
+        else Surface.RestoreScrollOffsetAfterLayout(offset);
+    }
+
+    private void OnChangesOnlyRequested(object? sender, DiffFileProjection file) {
+        if (DataContext is not FolderProjection projection) return;
+        var anchor = Surface.CaptureMarkdownViewAnchor();
+        projection.ToggleRenderedChangesOnly(file);
+        Surface.RestoreMarkdownViewAnchor(anchor);
     }
 
     // ----- Menu -----
@@ -540,19 +610,6 @@ public partial class FolderWindow : Window {
         FilePaletteList.SelectedIndex = matches.Count > 0 ? 0 : -1;
     }
 
-    /// <summary>This window's key as the shared map names it.</summary>
-    private static GitKay.Core.Keys.Chord ChordFrom(KeyEventArgs e) =>
-        GitKay.Core.Keys.chord(
-            e.Key switch {
-                Key.OemPlus or Key.Add => "Plus",
-                Key.OemMinus or Key.Subtract => "Minus",
-                Key.NumPad0 => "D0",
-                _ => e.Key.ToString(),
-            },
-            e.KeyModifiers.HasFlag(KeyModifiers.Control),
-            e.KeyModifiers.HasFlag(KeyModifiers.Shift),
-            e.KeyModifiers.HasFlag(KeyModifiers.Alt));
-
     protected override void OnKeyDown(KeyEventArgs e) {
         if (DataContext is not FolderProjection projection) { base.OnKeyDown(e); return; }
 
@@ -581,9 +638,9 @@ public partial class FolderWindow : Window {
         }
 
         // The shared map first, so a key means here what it means in the other windows.
-        var shared = GitKay.Core.Keys.command(ChordFrom(e));
+        var shared = SharedKeyMap.CommandFor(e);
         if (shared != null) {
-            switch (shared.Value.Tag) {
+            switch (shared.Tag) {
                 case GitKay.Core.Keys.Command.Tags.GoToFile: OpenFilePalette(); e.Handled = true; return;
                 case GitKay.Core.Keys.Command.Tags.FindInView: OpenFind(); e.Handled = true; return;
                 case GitKay.Core.Keys.Command.Tags.Refresh: ReloadFolders(); e.Handled = true; return;

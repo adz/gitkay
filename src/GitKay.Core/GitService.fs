@@ -1344,6 +1344,7 @@ module GitService =
             else Markdown.formatForPreview format source
         match reformat true, reformat false with
         | Ok oldText, Ok newText -> Ok(SourceDiff.between oldPath newPath oldText newText)
+        | Ok oldText, Ok newText -> Ok(SourceDiff.between oldPath newPath oldText newText |> SourceDiff.withContext contextLines)
         | Error message, _ | _, Error message -> Error(GitError.OperationFailed("Preview", message))
 
     let loadCommitFormattedFile (contextLines: int) (repoPath: string) (hash: string) (oldPath: string) (newPath: string) : Result<Models.FileDiff, GitError> =

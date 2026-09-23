@@ -449,7 +449,7 @@
                         BorderBrush="{DynamicResource GitKayHairlineBrush}"
                         BorderThickness="0,0,0,1"
                         Padding="6,4">
-                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto"
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto"
                           ColumnSpacing="6">
                         <StackPanel Grid.Column="0" Orientation="Horizontal">
                         <Button
@@ -525,7 +525,7 @@
 <Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Column="2" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="6,0,0,0"><TextBlock Text="Ctrl+F  find" /></Border>
                         <TextBox x:Name="CommitFindBox"
                                  Grid.Column="2"
-                                 Width="340"
+                                 Width="220"
                                  Height="28"
                                  Text="{Binding CommitFindQuery, Mode=TwoWay}"
                                  PlaceholderText="{Binding CommitFindPlaceholder}">
@@ -551,22 +551,21 @@
                         <!-- Whitespace: on, lines that differ only in spacing drop out of the diff (git's -w). -->
                         <ToggleButton x:Name="IgnoreWhitespaceButton"
                                       Grid.Column="3"
-                                      Classes="segment"
+                                      Classes="segment text"
+                                      Classes.selected="{Binding IgnoreWhitespace}"
                                       Margin="0,0,6,0"
                                       IsChecked="{Binding IgnoreWhitespace, Mode=TwoWay}"
                                       ToolTip.Tip="Ignore whitespace changes — hides lines that differ only in spacing">
-                            <!-- "WS" alone said nothing; the word says what the state is, struck through while on. -->
-                            <Grid MinWidth="74" Height="16">
+                            <!-- Keep a fixed width so toggling cannot move the neighbouring controls. -->
+                            <Grid Width="74" Height="16">
                                 <TextBlock Text="Whitespace" FontSize="10" FontWeight="SemiBold"
                                            HorizontalAlignment="Center" VerticalAlignment="Center"
-                                           Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
-                                <Path Data="M2,14 L72,2" Stroke="{DynamicResource GitKayAccentBrush}" StrokeThickness="1.6"
-                                      IsVisible="{Binding IgnoreWhitespace}" />
+                                           Foreground="{DynamicResource GitKayTextBrush}" />
                             </Grid>
                         </ToggleButton>
                         <!-- Always here, saying so when there is nothing to put back: a reliable place to look
                              matters more for an irreversible-feeling action than the line of chrome it costs. -->
-                        <Button Grid.Column="2" Classes="inline" Padding="10,3" Margin="0,0,6,0"
+                        <Button Grid.Column="4" Classes="inline" Padding="10,3" Margin="0,0,6,0"
                                 Command="{Binding UndoDiscardCommand}"
                                 IsEnabled="{Binding CanUndoDiscard}"
                                 ToolTip.Tip="{Binding UndoDiscardLabel}">
@@ -577,7 +576,7 @@
                             </StackPanel>
                         </Button>
                         <Border x:Name="DiffModeButton"
-                                Grid.Column="4"
+                                Grid.Column="5"
                                 Background="{DynamicResource GitKayRaisedBrush}"
                                 BorderBrush="{DynamicResource GitKayBorderBrush}"
                                 BorderThickness="1" CornerRadius="4" Padding="1"

@@ -160,16 +160,22 @@
                     <ListBox Grid.Row="1" x:Name="UnstagedList" ItemsSource="{Binding UnstagedRows}"
                              SelectedItem="{Binding SelectedUnstagedRow, Mode=TwoWay}"
                              Background="Transparent" DoubleTapped="OnFileDoubleTapped" ContextRequested="OnFileContextRequested">
+                        <ListBox.Styles>
+                            <Style Selector="ListBoxItem">
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="MinHeight" Value="0" />
+                                <Setter Property="BorderThickness" Value="0" />
+                            </Style>
+                        </ListBox.Styles>
                         <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="x:Object">
                                 <ContentControl Content="{Binding}">
                                     <ContentControl.DataTemplates>
                                         <DataTemplate x:DataType="local:CommitFileRow">
-                                            <!-- Laid out like the history window's changed-file list: state, change
-                                                 badge, name, then counts in columns that line up down the list. -->
+                                            <!-- Each list names its staging state; the row shows one change badge,
+                                                 then the name and right-aligned counts. -->
                                             <local:ChangedFileRow Indent="{Binding ListIndent}"
                                                                   ToolTip.Tip="{Binding ChangeToolTip}"
-                                                                  Marker="{Binding Marker}"
                                                                   Glyph="{Binding ChangeGlyph}"
                                                                   Label="{Binding ListLabel}"
                                                                   AddedText="{Binding AddedText}"
@@ -227,16 +233,19 @@
                     <ListBox Grid.Row="3" x:Name="StagedList" ItemsSource="{Binding StagedRows}"
                              SelectedItem="{Binding SelectedStagedRow, Mode=TwoWay}"
                              Background="Transparent" DoubleTapped="OnFileDoubleTapped" ContextRequested="OnFileContextRequested">
+                            <Style Selector="ListBoxItem">
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="MinHeight" Value="0" />
+                                <Setter Property="BorderThickness" Value="0" />
                         <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="x:Object">
                                 <ContentControl Content="{Binding}">
                                     <ContentControl.DataTemplates>
                                         <DataTemplate x:DataType="local:CommitFileRow">
-                                            <!-- Laid out like the history window's changed-file list: state, change
-                                                 badge, name, then counts in columns that line up down the list. -->
+                                            <!-- Each list names its staging state; the row shows one change badge,
+                                                 then the name and right-aligned counts. -->
                                             <local:ChangedFileRow Indent="{Binding ListIndent}"
                                                                   ToolTip.Tip="{Binding ChangeToolTip}"
-                                                                  Marker="{Binding Marker}"
                                                                   Glyph="{Binding ChangeGlyph}"
                                                                   Label="{Binding ListLabel}"
                                                                   AddedText="{Binding AddedText}"

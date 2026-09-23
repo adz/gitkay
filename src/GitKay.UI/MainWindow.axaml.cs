@@ -132,7 +132,7 @@ public partial class MainWindow : Window, IVimCommands {
     /// <summary>s / u / Delete act on the uncommitted diff or its files list; Ctrl+Z undoes a discard.</summary>
     private bool HandleWorkingTreeKey(KeyEventArgs e) {
         if (_projection is not { IsWorkingTreeDiffShown: true } projection) return false;
-        if (e.Key == Key.Z && e.KeyModifiers == KeyModifiers.Control) {
+        if (SharedKeyMap.CommandFor(e)?.Tag == GitKay.Core.Keys.Command.Tags.UndoLast) {
             projection.UndoDiscard();
             return true;
         }
@@ -335,6 +335,7 @@ public partial class MainWindow : Window, IVimCommands {
         HideCtrlHints();
 
         var typingInTextBox = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox;
+        var shared = SharedKeyMap.CommandFor(e);
 
         if (_projection?.IsPaletteOpen == true) return;
 
@@ -345,12 +346,12 @@ public partial class MainWindow : Window, IVimCommands {
             return;
         }
         var ctrlShift = KeyModifiers.Control | KeyModifiers.Shift;
-        if (e.Key == Key.P && e.KeyModifiers == ctrlShift) { OpenPalette(PaletteMode.Commands); e.Handled = true; return; }
+        if (shared?.Tag == GitKay.Core.Keys.Command.Tags.CommandPalette) { OpenPalette(PaletteMode.Commands); e.Handled = true; return; }
         if (e.Key == Key.V && e.KeyModifiers == ctrlShift && IsDiffPaneFocused && _projection?.SelectedDiffFile is { } markdownFile
             && GitKay.Core.Markdown.previewKind(markdownFile.ContentPath).IsMarkdownPreview) {
             OnDiffFilePreviewRequested(this, markdownFile); e.Handled = true; return;
         }
-        if (e.Key == Key.P && e.KeyModifiers == KeyModifiers.Control) { OpenPalette(PaletteMode.Files); e.Handled = true; return; }
+        if (shared?.Tag == GitKay.Core.Keys.Command.Tags.GoToFile) { OpenPalette(PaletteMode.Files); e.Handled = true; return; }
         if (e.Key == Key.D && e.KeyModifiers == ctrlShift) { ShowDiagnostics(); e.Handled = true; return; }
         if (e.Key == Key.C && e.KeyModifiers == ctrlShift) {
             // Opened after this key finishes, so the window that gets focus doesn't lose it back to this one.
@@ -397,7 +398,7 @@ public partial class MainWindow : Window, IVimCommands {
         }
 
         // F5 rereads refs from anywhere, as the menu says it does.
-        if (e.Key == Key.F5 && _projection is { } refresh) {
+        if (shared?.Tag == GitKay.Core.Keys.Command.Tags.Refresh && _projection is { } refresh) {
             refresh.RereadRefs();
             refresh.RefreshWorkingTree();
             e.Handled = true;
@@ -407,7 +408,7 @@ public partial class MainWindow : Window, IVimCommands {
         // F1 toggles the shortcut sheet; so does ? outside the panes, where vim's ? search doesn't apply. Esc closes it.
         if (_projection is { } help) {
             var questionMark = e.Key == Key.Oem2 && e.KeyModifiers == KeyModifiers.Shift && !typingInTextBox && (FocusedPane == Pane.None || help.IsShortcutHelpOpen);
-            if (e.Key == Key.F1 || questionMark) {
+            if (shared?.Tag == GitKay.Core.Keys.Command.Tags.ShowShortcuts || questionMark) {
                 help.IsShortcutHelpOpen = !help.IsShortcutHelpOpen;
                 e.Handled = true;
                 return;
@@ -421,7 +422,7 @@ public partial class MainWindow : Window, IVimCommands {
         }
 
         // In a pane, / and ? open vim's search prompt (Vim.step); elsewhere / focuses the search box like Ctrl+F.
-        var ctrlF = e.Key == Key.F && e.KeyModifiers == KeyModifiers.Control;
+        var ctrlF = shared?.Tag == GitKay.Core.Keys.Command.Tags.FindInView;
         var slash = e.Key == Key.Oem2 && e.KeyModifiers == KeyModifiers.None && !typingInTextBox && FocusedPane == Pane.None;
         if (!ctrlF && !slash) return;
 
@@ -556,11 +557,10 @@ public partial class MainWindow : Window, IVimCommands {
 
     /// <summary>Ctrl with =/+ zooms in, - zooms out, 0 resets; applies to diff text only.</summary>
     internal static int? DiffZoomDirection(KeyEventArgs e) {
-        if (!e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Alt)) return null;
-        return e.Key switch {
-            Key.OemPlus or Key.Add => 1,
-            Key.OemMinus or Key.Subtract => -1,
-            Key.D0 or Key.NumPad0 when !e.KeyModifiers.HasFlag(KeyModifiers.Shift) => 0,
+        return SharedKeyMap.CommandFor(e)?.Tag switch {
+            GitKay.Core.Keys.Command.Tags.ZoomIn => 1,
+            GitKay.Core.Keys.Command.Tags.ZoomOut => -1,
+            GitKay.Core.Keys.Command.Tags.ZoomReset => 0,
             _ => null,
         };
     }

@@ -1016,6 +1016,7 @@ public partial class CommitWindow : Window, IVimCommands {
         var none = e.KeyModifiers == KeyModifiers.None;
         var ctrl = e.KeyModifiers == KeyModifiers.Control;
         var ctrlShift = e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Shift);
+        var shared = SharedKeyMap.CommandFor(e);
 
         bool Handled() {
             e.Handled = true;
@@ -1042,15 +1043,15 @@ public partial class CommitWindow : Window, IVimCommands {
         }
 
         switch (e.Key) {
-            case Key.F1:
+            case var _ when shared?.Tag == GitKay.Core.Keys.Command.Tags.ShowShortcuts:
                 projection.IsKeysOpen = true;
                 Handled();
                 return;
-            case Key.F5:
+            case var _ when shared?.Tag == GitKay.Core.Keys.Command.Tags.Refresh:
                 projection.RescanCommand.Execute(null);
                 Handled();
                 return;
-            case Key.Z when ctrl && !inMessage:
+            case var _ when shared?.Tag == GitKay.Core.Keys.Command.Tags.UndoLast && !inMessage:
                 projection.UndoDiscard();
                 Handled();
                 return;
@@ -1085,17 +1086,17 @@ public partial class CommitWindow : Window, IVimCommands {
                 projection.ToggleSignOff();
                 Handled();
                 return;
-            case Key.P when ctrlShift:
+            case var _ when shared?.Tag == GitKay.Core.Keys.Command.Tags.CommandPalette:
                 projection.OpenCommandPalette();
                 Avalonia.Threading.Dispatcher.UIThread.Post(() => PaletteBox.Focus(), Avalonia.Threading.DispatcherPriority.Input);
                 Handled();
                 return;
-            case Key.P when ctrl:
+            case var _ when shared?.Tag == GitKay.Core.Keys.Command.Tags.GoToFile:
                 projection.OpenFilePalette();
                 Avalonia.Threading.Dispatcher.UIThread.Post(() => PaletteBox.Focus(), Avalonia.Threading.DispatcherPriority.Input);
                 Handled();
                 return;
-            case Key.F when ctrl:
+            case var _ when shared?.Tag == GitKay.Core.Keys.Command.Tags.FindInView:
                 ((IVimCommands)this).OpenSearch(GitKay.Core.Vim.VimPane.Diff, true);
                 Handled();
                 return;
