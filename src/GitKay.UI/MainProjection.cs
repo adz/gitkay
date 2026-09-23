@@ -545,6 +545,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         UpdateCommitRelations(model);
         UpdateCommitSearchStatus(model);
         CanUndoDiscard = model.LastDiscard != null;
+        CanUndoLastStage = !model.LastStagedPatches.IsEmpty && !model.StageUndoPending;
         // Named, so the offer says what would come back rather than only that something would.
         LastDiscardDescription = model.LastDiscard?.Value.Description ?? "";
 
@@ -760,6 +761,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     /// <summary>A discard that can still be put back.</summary>
     [ObservableProperty] private bool _canUndoDiscard;
 
+    public bool CanUndoLastStage { get; private set; }
+    public void UndoLastStage() => _dispatch?.Invoke(GitKay.Core.App.Msg.UndoLastWorkingTreeStage);
+
     /// <summary>What the last discard threw away, for the undo offer.</summary>
     [ObservableProperty] private string _lastDiscardDescription = "";
 
@@ -799,17 +803,40 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     /// The chosen rows as lines of the file's own diff, so context expansion doesn't shift them. Without a selection
     /// (<paramref name="wholeHunk"/>) the cursor's whole hunk is taken, as in the commit window.
     /// </summary>
+    public DiffFileProjection? FileForRow(IDiffRowProjection? row) {
+        if (row == null) return null;
+        for (var index = SelectedDiffRows.IndexOf(row); index >= 0; index--)
+            if (SelectedDiffRows[index] is DiffFileHeaderProjection header) return header.File;
+        return null;
+    }
+
+    private IEnumerable<IDiffRowProjection> RowsOf(DiffFileProjection file) {
+        var inFile = false;
+        foreach (var row in SelectedDiffRows) {
+            if (row is DiffFileHeaderProjection header) {
+                if (inFile) yield break;
+                inFile = ReferenceEquals(header.File, file);
+            }
+            else if (inFile) yield return row;
+        }
+    }
+
     public IReadOnlyList<GitKay.Core.PatchBuilder.SelectedLine> LinesOf(DiffFileProjection file, IEnumerable<IDiffRowProjection> rows, bool wholeHunk = false) {
         var positions = ChangePositions(file);
-        var changed = SelectedDiffRows.OfType<DiffLineProjection>().Where(line => line.IsAdded || line.IsRemoved).ToList();
-        var chosen = rows.OfType<DiffLineProjection>().Where(line => line.IsAdded || line.IsRemoved).ToHashSet();
+        var fileRows = RowsOf(file).ToList();
+        var changed = fileRows.OfType<DiffLineProjection>().SelectMany(line => line.ChangedParts()).ToList();
+        var chosen = rows.OfType<DiffLineProjection>().SelectMany(line => line.ChangedParts()).ToHashSet();
 
         if (wholeHunk) {
             // The row at the cursor may be a hunk header or context line: take the next change at or after it.
-            var start = rows.FirstOrDefault() is { } row ? SelectedDiffRows.IndexOf(row) : -1;
+            var start = rows.FirstOrDefault() is { } row ? fileRows.IndexOf(row) : -1;
+            var displayedPositions = new Dictionary<DiffLineProjection, int>();
+            for (var index = 0; index < fileRows.Count; index++)
+                if (fileRows[index] is DiffLineProjection displayed)
+                    foreach (var part in displayed.ChangedParts()) displayedPositions[part] = index;
             var focus = chosen.Count > 0
                 ? changed.FindIndex(line => chosen.Contains(line))
-                : changed.FindIndex(line => SelectedDiffRows.IndexOf(line) >= start);
+                : changed.FindIndex(line => displayedPositions.GetValueOrDefault(line, -1) >= start);
             if (focus < 0 || focus >= positions.Count) return [];
             var hunk = positions[focus].Hunk;
             chosen = changed.Where((_, index) => index < positions.Count && positions[index].Hunk == hunk).ToHashSet();
@@ -1557,7 +1584,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         var term = CommitSearchDiffTerm.Trim();
         CommitFindPlaceholder = term.Length > 0
             ? $"Enter steps through “{term}”"
-            : "Find in diff  (Ctrl+F)";
+            : "Find in diff";
         if (string.IsNullOrWhiteSpace(CommitFindQuery) && term.Length == 0) CommitFindStatusText = "";
     }
 

@@ -772,14 +772,10 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
 
     /// <summary>Text the user asked to copy (a branch or tag name).</summary>
     public event Action<string>? CopyRequested;
+    public event Action<string, CommitProjection>? CommitActionRequested;
 
     /// <summary>The commit row's right-click menu. Internal so tests can read what it offers for a given row.</summary>
     internal ContextMenu BuildContextMenu() {
-        MenuItem Item(string title, Func<CommitProjection, System.Windows.Input.ICommand> command) {
-            var item = new MenuItem { Header = title };
-            item.Click += (_, _) => { var selected = SelectedItem; if (selected != null) command(selected).Execute(null); };
-            return item;
-        }
         var menu = new ContextMenu();
         // The uncommitted changes row has no commit to act on; staging and committing belong to the commit window.
         if (SelectedItem is { IsWorkingTree: true }) {
@@ -824,25 +820,30 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
             }
             if (refNames.Length > 0) menu.Items.Add(new Separator());
 
-            var branches = selected.LocalBranches.ToArray();
-            foreach (var branch in branches) {
+            var clickedBranch = BadgeAt(_lastContextPoint) is { Kind: CommitRefKind.Branch } clickedBadge
+                ? selected.LocalBranches.FirstOrDefault(branch => branch.Name == clickedBadge.Text)
+                : null;
+            if (clickedBranch is { } branch) {
                 MenuItem Operation(string title, string operation) {
                     var item = new MenuItem { Header = title };
                     item.Click += (_, _) => BranchOperationRequested?.Invoke(operation, branch);
                     return item;
                 }
 
-                menu.Items.Add(Operation($"Push {branch.Name}", "push"));
-                menu.Items.Add(Operation(branch.IsCurrentHead ? $"Pull {branch.Name}" : $"Pull {branch.Name} (fast-forward)", "pull"));
+                var branchMenu = new MenuItem { Header = $"Branch: {branch.Name}" };
+                branchMenu.Items.Add(Operation($"Push {branch.Name}", "push"));
+                branchMenu.Items.Add(Operation(branch.IsCurrentHead ? $"Pull {branch.Name} from upstream" : $"Fast-forward {branch.Name} from upstream", "pull"));
                 var delete = Operation($"Delete {branch.Name}…", "delete");
                 // Git refuses to delete the checked-out branch; say why instead of offering it.
                 if (branch.IsCurrentHead) {
                     delete.IsEnabled = false;
                     ToolTip.SetTip(delete, "This branch is checked out");
                 }
-                menu.Items.Add(delete);
+                branchMenu.Items.Add(new Separator());
+                branchMenu.Items.Add(delete);
+                menu.Items.Add(branchMenu);
+                menu.Items.Add(new Separator());
             }
-            if (branches.Length > 0) menu.Items.Add(new Separator());
         }
         // Amending rewrites the last commit, so it's offered only on the commit HEAD is at.
         if (SelectedItem is { IsHead: true }) {
@@ -853,19 +854,23 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
             menu.Items.Add(new Separator());
         }
 
-        foreach (var item in new Control[]
-            {
-                Item("Create Tag here...", row => row.CreateTagCommand),
-                Item("Create Branch here...", row => row.CreateBranchCommand),
-                new Separator(),
-                Item("Cherry-pick this commit", row => row.CherryPickCommand),
-                Item("Revert this commit", row => row.RevertCommand),
-                new Separator(),
-                Item("Reset current branch here (soft)", row => row.ResetSoftCommand),
-                Item("Reset current branch here (hard)", row => row.ResetHardCommand)
-            })
-            menu.Items.Add(item);
+        menu.Items.Add(ActionItem("Create branch here…", "branch"));
+        menu.Items.Add(ActionItem("Create tag here…", "tag"));
+        menu.Items.Add(new Separator());
+        menu.Items.Add(ActionItem("Cherry-pick this commit", "cherry-pick"));
+        menu.Items.Add(ActionItem("Revert this commit", "revert"));
+        var advanced = new MenuItem { Header = "Advanced" };
+        advanced.Items.Add(ActionItem("Reset current branch here (soft)…", "reset-soft"));
+        advanced.Items.Add(ActionItem("Reset current branch here (hard)…", "reset-hard"));
+        menu.Items.Add(new Separator());
+        menu.Items.Add(advanced);
         return menu;
+
+        MenuItem ActionItem(string title, string action) {
+            var item = new MenuItem { Header = title };
+            item.Click += (_, _) => { if (SelectedItem is { } row) CommitActionRequested?.Invoke(action, row); };
+            return item;
+        }
     }
 
     private readonly record struct LayoutKey(string Text, double Size, IBrush Brush, Typeface Typeface);

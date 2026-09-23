@@ -57,6 +57,7 @@ public partial class MainWindow : Window, IVimCommands {
         CommitListBox.FilterRequested += OnCommitFilterRequested;
         CommitListBox.HistoryRequested += revision => _projection?.ShowHistoryOf(revision);
         CommitListBox.BranchOperationRequested += OnBranchOperationRequested;
+        CommitListBox.CommitActionRequested += OnCommitActionRequested;
         CommitListBox.RevisionComparisonRequested += OnRevisionComparisonRequested;
         CommitListBox.RevisionComparisonBaseRequested = () => _projection?.ComparisonBase ?? "";
         CommitListBox.CommitWindowRequested += OpenCommitWindow;
@@ -109,23 +110,27 @@ public partial class MainWindow : Window, IVimCommands {
     }
 
     /// <summary>Stage, unstage and discard on the uncommitted diff's right-click menu.</summary>
-    private void AddWorkingTreeLineItems(ContextMenu menu) {
-        if (_projection is not { IsWorkingTreeDiffShown: true, SelectedDiffFile: { } file } projection) return;
-        var rows = DiffRowsListBox.SelectedRows;
-        var what = DiffRowsListBox.HasTextSelection ? "lines" : "hunk";
-        void Add(string header, Action action, string gesture) {
-            var item = new MenuItem { Header = header, InputGesture = KeyGesture.Parse(gesture) };
+    private void AddWorkingTreeLineItems(ContextMenu menu, DiffLineProjection line) {
+        if (_projection is not { IsWorkingTreeDiffShown: true } projection || projection.FileForRow(line) is not { } file) return;
+        void Add(string header, Action action, string? gesture = null, bool enabled = true) {
+            var item = new MenuItem { Header = header, IsEnabled = enabled };
+            if (gesture != null) item.InputGesture = KeyGesture.Parse(gesture);
             item.Click += (_, _) => action();
             menu.Items.Add(item);
         }
 
         if (projection.IsStagedFile(file)) {
-            Add($"Unstage {what}", () => projection.ApplyWorkingTreeLines(GitKay.Core.GitService.PatchTarget.UnstageFromIndex, file, rows, !DiffRowsListBox.HasTextSelection), "U");
+            if (DiffRowsListBox.HasTextSelection) Add("Unstage selected lines", () => projection.ApplyWorkingTreeLines(GitKay.Core.GitService.PatchTarget.UnstageFromIndex, file, DiffRowsListBox.SelectedRows));
+            Add("Unstage line", () => projection.ApplyWorkingTreeLines(GitKay.Core.GitService.PatchTarget.UnstageFromIndex, file, [line]), enabled: line.HasChange);
+            Add("Unstage hunk", () => projection.ApplyWorkingTreeLines(GitKay.Core.GitService.PatchTarget.UnstageFromIndex, file, [line], true), projection.CanUndoLastStage ? null : "U");
         }
         else {
-            Add($"Stage {what}", () => projection.ApplyWorkingTreeLines(GitKay.Core.GitService.PatchTarget.StageInIndex, file, rows, !DiffRowsListBox.HasTextSelection), "S");
-            Add($"Discard {what}…", () => ConfirmDiscardLines(file, rows), "Delete");
+            if (DiffRowsListBox.HasTextSelection) Add("Stage selected lines", () => projection.ApplyWorkingTreeLines(GitKay.Core.GitService.PatchTarget.StageInIndex, file, DiffRowsListBox.SelectedRows));
+            Add("Stage line", () => projection.ApplyWorkingTreeLines(GitKay.Core.GitService.PatchTarget.StageInIndex, file, [line]), enabled: line.HasChange);
+            Add("Stage hunk", () => projection.ApplyWorkingTreeLines(GitKay.Core.GitService.PatchTarget.StageInIndex, file, [line], true), "S");
+            Add("Discard changes…", () => ConfirmDiscardLines(file, [line]), "Delete");
         }
+        if (projection.CanUndoLastStage) Add("Undo last stage", projection.UndoLastStage, "U");
         if (projection.CanUndoDiscard) Add("Undo last discard", projection.UndoDiscard, "Ctrl+Z");
     }
 
@@ -137,8 +142,13 @@ public partial class MainWindow : Window, IVimCommands {
             return true;
         }
         if (e.KeyModifiers != KeyModifiers.None || FocusedPane is not (Pane.Diff or Pane.Files)) return false;
-        if (projection.SelectedDiffFile is not { } file || file.Key.Section.Length == 0) return false;
+        if (FocusedPane == Pane.Diff && e.Key == Key.U && projection.CanUndoLastStage) {
+            projection.UndoLastStage();
+            return true;
+        }
         var inDiff = FocusedPane == Pane.Diff;
+        var file = inDiff ? projection.FileForRow(DiffRowsListBox.SelectedItem) : projection.SelectedDiffFile;
+        if (file == null || file.Key.Section.Length == 0) return false;
         var rows = DiffRowsListBox.SelectedRows;
 
         switch (e.Key) {
@@ -743,7 +753,7 @@ public partial class MainWindow : Window, IVimCommands {
             projection.ApplyWorkingTreeLines(GitKay.Core.GitService.PatchTarget.DiscardFromWorkingTree, file, rows, !DiffRowsListBox.HasTextSelection);
     }
 
-    private async System.Threading.Tasks.Task<bool> ConfirmAsync(string question, string action) {
+    private async System.Threading.Tasks.Task<bool> ConfirmAsync(string question, string action, bool undoable = true) {
         var confirmed = false;
         var dialog = new Window {
             Title = action,
@@ -754,7 +764,7 @@ public partial class MainWindow : Window, IVimCommands {
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
         };
         dialog[!BackgroundProperty] = dialog.GetResourceObservable("GitKaySurfaceBrush").ToBinding();
-        var text = new TextBlock { Text = question + "\nIt can be undone with Ctrl+Z.", TextWrapping = TextWrapping.Wrap, FontSize = 13 };
+        var text = new TextBlock { Text = question + (undoable ? "\nIt can be undone with Ctrl+Z." : ""), TextWrapping = TextWrapping.Wrap, FontSize = 13 };
         text[!TextBlock.ForegroundProperty] = dialog.GetResourceObservable("GitKayTextBrush").ToBinding();
         var cancel = new Button { Content = "Cancel", Padding = new Thickness(14, 4), IsCancel = true, IsDefault = true };
         cancel.Click += (_, _) => dialog.Close();
@@ -948,6 +958,7 @@ public partial class MainWindow : Window, IVimCommands {
     }
 
     private void OnFetchAllMenuItemClick(object? sender, RoutedEventArgs e) => OnWindowCommandRequested("fetch-all");
+    private void OnFetchAndPruneMenuItemClick(object? sender, RoutedEventArgs e) => OnWindowCommandRequested("fetch-and-prune");
 
     /// <summary>
     /// Open…: a repository, a folder to browse, or two folders to compare. Each opens its own window, so what is
@@ -1009,6 +1020,31 @@ public partial class MainWindow : Window, IVimCommands {
         if (_projection is not { WorkingDirectory: { } directory }) return;
         var choice = await DeleteBranchDialog.ShowAsync(this, directory, branch);
         if (choice != null) RunGitOperation(GitOperations.DeleteBranch(branch, force: choice == DeleteBranchDialog.Choice.ForceDelete));
+    }
+
+    private async void OnCommitActionRequested(string action, CommitProjection commit) {
+        var hash = commit.FullHash;
+        if (action is "tag" or "branch") {
+            var name = await RefNameDialog.ShowAsync(this, action == "tag" ? "Create tag" : "Create branch");
+            if (name == null || _projection == null) return;
+            if (action == "tag") commit.CreateTagNamed(name);
+            else commit.CreateBranchNamed(name);
+            return;
+        }
+
+        if (action is "reset-soft" or "reset-hard") {
+            var hard = action == "reset-hard";
+            var question = hard
+                ? $"Reset the current branch to {hash[..Math.Min(8, hash.Length)]}? This will discard staged and unstaged changes. GitKay's discard undo does not cover a hard reset."
+                : $"Move the current branch to {hash[..Math.Min(8, hash.Length)]}? The index and working files will be kept.";
+            if (!await ConfirmAsync(question, hard ? "Hard reset" : "Soft reset", undoable: false)) return;
+            if (hard) commit.ResetHardCommand.Execute(null);
+            else commit.ResetSoftCommand.Execute(null);
+            return;
+        }
+
+        if (action == "cherry-pick") commit.CherryPickCommand.Execute(null);
+        else if (action == "revert") commit.RevertCommand.Execute(null);
     }
 
     private CommitWindow? _commitWindow;
@@ -1272,6 +1308,9 @@ public partial class MainWindow : Window, IVimCommands {
                 break;
             case "fetch-all":
                 RunGitOperation(GitOperations.FetchAll());
+                break;
+            case "fetch-and-prune":
+                RunGitOperation(GitOperations.FetchAndPruneAll());
                 break;
             case "commit-window":
                 OpenCommitWindow();

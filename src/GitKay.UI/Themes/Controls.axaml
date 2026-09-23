@@ -1,6 +1,25 @@
 <Styles xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:GitKay.UI">
+    <!-- ChangedFileRow is shared by history, commit, and folder windows. Its badge colours must travel with it. -->
+    <Style Selector="Border.fileChange.added">
+        <Setter Property="BorderBrush" Value="{DynamicResource GitKayAddedAccentBrush}" />
+    </Style>
+    <Style Selector="Border.fileChange.added > TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource GitKayAddedAccentBrush}" />
+    </Style>
+    <Style Selector="Border.fileChange.deleted">
+        <Setter Property="BorderBrush" Value="{DynamicResource GitKayRemovedAccentBrush}" />
+    </Style>
+    <Style Selector="Border.fileChange.deleted > TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource GitKayRemovedAccentBrush}" />
+    </Style>
+    <Style Selector="Border.fileChange.modified">
+        <Setter Property="BorderBrush" Value="{DynamicResource GitKayMutedTextBrush}" />
+    </Style>
+    <Style Selector="Border.fileChange.modified > TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource GitKaySecondaryTextBrush}" />
+    </Style>
     <Style Selector="Window">
         <Setter Property="Background" Value="{DynamicResource GitKayWindowBrush}" />
         <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />

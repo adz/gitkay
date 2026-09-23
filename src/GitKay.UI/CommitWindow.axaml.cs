@@ -274,7 +274,7 @@ public sealed partial class CommitWindowProjection : ObservableObject {
     public IReadOnlyList<CommitKeyGroup> KeyGroups { get; } = [
         new("Staging and committing", [
             new("Enter · double-click", "In a file list: move the file to the other list"),
-            new("s / u · Ctrl+S / Ctrl+U", "Stage / unstage: the selected lines or the hunk at the cursor in the diff, the file in a list (Ctrl+U is half a page up in the diff)"),
+            new("s / u · Ctrl+S / Ctrl+U", "Stage / unstage in the diff or file list; after s stages lines or a hunk, u reverses that exact stage (Ctrl+U is half a page up in the diff)"),
             new("Ctrl+I", "Stage all unstaged and untracked files"),
             new("Delete", "Discard the selected lines, or the file's unstaged changes (asks first)"),
             new("Ctrl+Z", "Put back what the last discard threw away"),
@@ -338,9 +338,10 @@ public sealed partial class CommitWindowProjection : ObservableObject {
     public string SelectionActionLabel => IsStagedFileSelected
         ? Surface?.HasTextSelection == true ? "Unstage lines (u)" : "Unstage hunk (u)"
         : Surface?.HasTextSelection == true ? "Stage lines (s)" : "Stage hunk (s)";
-    public string SelectionActionTip => "s / u: stages or unstages the selected lines, or the hunk at the cursor";
+    public string SelectionActionTip => "s stages selected lines or the hunk at the cursor; u first reverses the last stage, then unstages the selection";
     public bool CanDiscard => HasSelectedFile && !IsStagedFileSelected;
     public bool CanApplyToLines => HasSelectedFile;
+    public bool CanUndoLastStage => _model?.LastStagedPatches.IsEmpty == false && _model?.Busy == null;
     public string DiscardLabel => Surface?.HasTextSelection == true ? "Discard lines…" : "Discard file…";
 
     public string SubjectLengthText => $"{GitKay.Core.CommitWindow.subject(Message).Length}/72";
@@ -368,6 +369,7 @@ public sealed partial class CommitWindowProjection : ObservableObject {
             if (SignOff != model.SignOff) SignOff = model.SignOff;
             Status = model.Status;
             CanUndoDiscard = model.LastDiscard != null;
+            OnPropertyChanged(nameof(CanUndoLastStage));
             Branch = string.IsNullOrEmpty(model.Branch) ? "…" : model.Branch;
             FailureOutput = model.FailureOutput?.Value;
             var blocker = CoreWindow.commitBlocker(model);
@@ -382,6 +384,8 @@ public sealed partial class CommitWindowProjection : ObservableObject {
                 _pushAfterCommit = false;
                 Committed?.Invoke(push);
             }
+            else if (previous?.Busy != null && model.Busy == null && _pushAfterCommit)
+                _pushAfterCommit = false;
         }
         finally {
             _syncing = false;
@@ -509,7 +513,7 @@ public sealed partial class CommitWindowProjection : ObservableObject {
         // The title bar already names the file.
         rows = rows.Where(item => item is not DiffFileHeaderProjection).ToList();
 
-        var changed = rows.OfType<DiffLineProjection>().Where(line => line.IsAdded || line.IsRemoved).ToList();
+        var changed = rows.OfType<DiffLineProjection>().SelectMany(line => line.ChangedParts()).ToList();
         // Expanding context adds context lines only, so the changed lines stay in the same order as the diff's.
         for (var i = 0; i < changed.Count && i < _changePositions.Count; i++) _linePositions[changed[i]] = _changePositions[i];
         Rows.AddRange(rows);
@@ -600,6 +604,10 @@ public sealed partial class CommitWindowProjection : ObservableObject {
 
     /// <summary>Stages (or unstages) whatever the key means where the focus is: lines or a hunk in the diff, the file in a list.</summary>
     public void Stage(bool inDiff, bool stage) {
+        if (inDiff && !stage && CanUndoLastStage) {
+            _dispatch?.Invoke(CoreWindow.Msg.UndoLastStage);
+            return;
+        }
         if (SelectedFile is not { } file || file.List.IsStagedList == stage) {
             Status = stage ? "Select an unstaged file to stage" : "Select a staged file to unstage";
             return;
@@ -648,11 +656,11 @@ public sealed partial class CommitWindowProjection : ObservableObject {
         var rows = Surface.SelectedRows;
         IEnumerable<DiffLineProjection> chosen;
         if (Surface.HasTextSelection) {
-            chosen = rows.OfType<DiffLineProjection>();
+            chosen = rows.OfType<DiffLineProjection>().SelectMany(line => line.ChangedParts());
         }
         else {
-            var focus = rows.OfType<DiffLineProjection>().FirstOrDefault()
-                        ?? NextLineAfter(rows.FirstOrDefault());
+            var focus = rows.OfType<DiffLineProjection>().SelectMany(line => line.ChangedParts()).FirstOrDefault()
+                        ?? NextLineAfter(rows.FirstOrDefault())?.ChangedParts().FirstOrDefault();
             if (focus == null || !_linePositions.TryGetValue(focus, out var at)) return lines;
             chosen = _linePositions.Where(entry => entry.Value.Hunk == at.Hunk).Select(entry => entry.Key);
         }
@@ -685,6 +693,32 @@ public sealed partial class CommitWindowProjection : ObservableObject {
         _dispatch?.Invoke(CoreWindow.Msg.NewApplyLines(target, file.Path, ListModule.OfSeq(lines)));
     }
 
+    public void ApplyClickedLine(DiffLineProjection line) => ApplyClickedLines([line]);
+
+    public void ApplyClickedHunk(DiffLineProjection line) {
+        var index = Rows.IndexOf(line);
+        if (index < 0) return;
+        while (index > 0 && Rows[index] is not DiffHunkHeaderProjection) index--;
+        if (Rows[index] is DiffHunkHeaderProjection) index++;
+        var hunk = Rows.Skip(index).TakeWhile(row => row is not DiffHunkHeaderProjection)
+            .OfType<DiffLineProjection>();
+        ApplyClickedLines(hunk);
+    }
+
+    private void ApplyClickedLines(IEnumerable<DiffLineProjection> chosen) {
+        if (SelectedFile is not { } file) return;
+        var lines = chosen.SelectMany(line => line.ChangedParts())
+            .Where(_linePositions.ContainsKey)
+            .Select(line => {
+                var position = _linePositions[line];
+                return new GitKay.Core.PatchBuilder.SelectedLine(position.Hunk, position.Line,
+                    line.IsAdded ? GitKay.Core.Models.LineType.Added : GitKay.Core.Models.LineType.Removed, line.Content);
+            }).OrderBy(line => line.Hunk).ThenBy(line => line.Line).ToList();
+        if (lines.Count == 0) return;
+        var target = file.List.IsStagedList ? GitKay.Core.GitService.PatchTarget.UnstageFromIndex : GitKay.Core.GitService.PatchTarget.StageInIndex;
+        _dispatch?.Invoke(CoreWindow.Msg.NewApplyLines(target, file.Path, ListModule.OfSeq(lines)));
+    }
+
     [RelayCommand]
     private async Task Discard() {
         if (SelectedFile is not { List.IsUnstagedList: true } file) return;
@@ -713,10 +747,7 @@ public sealed partial class CommitWindowProjection : ObservableObject {
             && !await ConfirmDiscard($"Discard all changes to {file.Label}, staged and unstaged? This can't be undone.")) return;
 
         var paths = ListModule.OfSeq(Paths(file));
-        // Unstaged first, or the discard would leave the staged copy behind.
-        _dispatch?.Invoke(CoreWindow.Msg.NewUnstagePaths(paths));
-        if (file.IsUntracked) _dispatch?.Invoke(CoreWindow.Msg.NewDiscardPaths(FSharpList<string>.Empty, paths));
-        else _dispatch?.Invoke(CoreWindow.Msg.NewDiscardPaths(paths, FSharpList<string>.Empty));
+        _dispatch?.Invoke(CoreWindow.Msg.NewDiscardStagedPaths(paths));
     }
 
     public void DiscardStagedFromMenu() => DiscardStagedCommand.Execute(null);
@@ -733,8 +764,8 @@ public sealed partial class CommitWindowProjection : ObservableObject {
 
     [RelayCommand]
     private void CommitAndPush() {
-        _dispatch?.Invoke(CoreWindow.Msg.Commit);
         _pushAfterCommit = true;
+        _dispatch?.Invoke(CoreWindow.Msg.Commit);
     }
 }
 
@@ -1215,23 +1246,28 @@ public partial class CommitWindow : Window, IVimCommands {
         e.Handled = true;
     }
 
-    private void AddLineMenuItems(ContextMenu menu) {
+    private void AddLineMenuItems(ContextMenu menu, DiffLineProjection line) {
         if (Projection is not { SelectedFile: { } file } projection) return;
-        var lines = Surface.HasTextSelection ? "lines" : "hunk";
-        void Add(string header, string gesture, Action action) {
-            var item = new MenuItem { Header = header, InputGesture = KeyGesture.Parse(gesture) };
+        void Add(string header, string? gesture, Action action, bool enabled = true) {
+            var item = new MenuItem { Header = header, IsEnabled = enabled };
+            if (gesture != null) item.InputGesture = KeyGesture.Parse(gesture);
             item.Click += (_, _) => action();
             menu.Items.Add(item);
         }
 
         if (file.List.IsUnstagedList) {
-            Add($"Stage {lines}", "S", () => projection.Stage(inDiff: true, stage: true));
+            if (Surface.HasTextSelection) Add("Stage selected lines", null, projection.ApplyToSelection);
+            Add("Stage line", null, () => projection.ApplyClickedLine(line), line.HasChange);
+            Add("Stage hunk", "S", () => projection.ApplyClickedHunk(line));
             Add(file.IsUntracked ? "Delete untracked file…" : Surface.HasTextSelection ? "Discard lines…" : "Discard file…", "Delete", projection.DiscardFromKeyboard);
         }
         else {
-            Add($"Unstage {lines}", "U", () => projection.Stage(inDiff: true, stage: false));
+            if (Surface.HasTextSelection) Add("Unstage selected lines", null, projection.ApplyToSelection);
+            Add("Unstage line", null, () => projection.ApplyClickedLine(line), line.HasChange);
+            Add("Unstage hunk", projection.CanUndoLastStage ? null : "U", () => projection.ApplyClickedHunk(line));
         }
-        if (OpenInVsCode != null && Surface.SelectedItem is DiffLineProjection line) {
+        if (projection.CanUndoLastStage) Add("Undo last stage", "U", () => projection.Stage(inDiff: true, stage: false));
+        if (OpenInVsCode != null) {
             var item = new MenuItem { Header = "Open in VS Code at this line" };
             item.Click += (_, _) => OpenInVsCode(file.Path, line.NewLineNo ?? line.OldLineNo);
             menu.Items.Add(item);

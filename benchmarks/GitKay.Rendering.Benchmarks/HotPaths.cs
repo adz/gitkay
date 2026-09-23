@@ -111,7 +111,7 @@ internal static class HotPaths {
             true, App.Selection.NewCommitSelected(hash), FSharpOption<GitService.RevisionComparison>.None, FSharpOption<string>.Some(hash),
             FSharpOption<FSharpList<GitService.DiffFileSummary>>.Some(files), FSharpOption<FSharpList<Models.FileDiff>>.Some(diff),
             FSharpOption<GitService.DiffFileKey>.None, MapModule.Empty<GitService.DiffFileKey, App.FileExpansion>(), FSharpOption<App.RenderedMarkdownState>.None, FSharpOption<App.FormattedFileState>.None, FSharpOption<App.WholeFileState>.None,
-            FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, model.WorkingTree, model.WorkingTreeChanges, model.WorkingTreeStartedAtTicks, model.LastDiscard);
+            FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, model.WorkingTree, model.WorkingTreeChanges, model.WorkingTreeStartedAtTicks, model.LastDiscard, model.LastStagedPatches, model.StageUndoPending);
 
     private static T Unwrap<T>(Exit<T, GitError> exit) =>
         exit.IsSuccess ? ((Exit<T, GitError>.Success)exit).Item : throw new InvalidOperationException(exit.ToString());
@@ -171,7 +171,7 @@ internal static class UiInteractions {
             FSharpOption<FSharpList<GitSearch.Result>>.None, graph, true, App.Selection.NewCommitSelected(full), FSharpOption<GitService.RevisionComparison>.None, FSharpOption<string>.Some(full),
             FSharpOption<FSharpList<GitService.DiffFileSummary>>.Some(files), FSharpOption<FSharpList<Models.FileDiff>>.Some(diff),
             FSharpOption<GitService.DiffFileKey>.None, MapModule.Empty<GitService.DiffFileKey, App.FileExpansion>(), FSharpOption<App.RenderedMarkdownState>.None, FSharpOption<App.FormattedFileState>.None, FSharpOption<App.WholeFileState>.None,
-            FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, baseModel.WorkingTree, baseModel.WorkingTreeChanges, baseModel.WorkingTreeStartedAtTicks, baseModel.LastDiscard);
+            FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, baseModel.WorkingTree, baseModel.WorkingTreeChanges, baseModel.WorkingTreeStartedAtTicks, baseModel.LastDiscard, baseModel.LastStagedPatches, baseModel.StageUndoPending);
 
         var projection = new MainProjection();
         var windowWidth = label.Contains("narrow") ? 1100 : 1600;
@@ -217,7 +217,7 @@ internal static class UiInteractions {
                 model.SearchResults, model.Commits, true, App.Selection.WorkingTreeSelected, FSharpOption<GitService.RevisionComparison>.None, FSharpOption<string>.None,
                 FSharpOption<FSharpList<GitService.DiffFileSummary>>.None, FSharpOption<FSharpList<Models.FileDiff>>.None, FSharpOption<GitService.DiffFileKey>.None,
                 model.DiffExpansions, FSharpOption<App.RenderedMarkdownState>.None, FSharpOption<App.FormattedFileState>.None, FSharpOption<App.WholeFileState>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None,
-                changes.Entries, FSharpOption<GitService.WorkingTreeChanges>.Some(changes), FSharpOption<long>.None, FSharpOption<GitKay.Core.Trash.Backup>.None));
+                changes.Entries, FSharpOption<GitService.WorkingTreeChanges>.Some(changes), FSharpOption<long>.None, FSharpOption<GitKay.Core.Trash.Backup>.None, model.LastStagedPatches, model.StageUndoPending));
             Pump(window);
             if (label.Contains("expand")) {
                 projection.ToggleDiffFileContextCommand.Execute(projection.SelectedDiffFiles[0]);
@@ -276,7 +276,7 @@ internal static class UiInteractions {
             var results = Unwrap(System.Threading.Tasks.Task.Run(() => Flow.run(env, GitService.searchCommits(3, commits, searchMode, false, searchText))).Result);
             var searched = new App.Model(App.StartupSelection.NoStartupSelection, false, model.GitEnv, model.Status, model.StartupTargets, false, false, 3, false, DiffLayout.Unified, searchText, GitSearch.modeKey(searchMode), false,
                 FSharpOption<FSharpList<GitSearch.Result>>.Some(results), model.Commits, true, model.Selection, model.RevisionComparison, model.SelectedDiffHash,
-                model.SelectedDiffFiles, model.SelectedDiff, model.SelectedDiffFileKey, model.DiffExpansions, FSharpOption<App.RenderedMarkdownState>.None, FSharpOption<App.FormattedFileState>.None, FSharpOption<App.WholeFileState>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, model.WorkingTree, model.WorkingTreeChanges, model.WorkingTreeStartedAtTicks, model.LastDiscard);
+                model.SelectedDiffFiles, model.SelectedDiff, model.SelectedDiffFileKey, model.DiffExpansions, FSharpOption<App.RenderedMarkdownState>.None, FSharpOption<App.FormattedFileState>.None, FSharpOption<App.WholeFileState>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, model.WorkingTree, model.WorkingTreeChanges, model.WorkingTreeStartedAtTicks, model.LastDiscard, model.LastStagedPatches, model.StageUndoPending);
             projection.Update(searched);
             projection.IsAdvancedSearchExpanded = label.Contains("advanced");
             projection.CommitFindQuery = pathDiff ? "" : "Font";

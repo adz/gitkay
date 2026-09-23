@@ -40,6 +40,8 @@ module CommitWindow =
           FailureOutput: string option
           /// <summary>Increments on each successful commit, so the main window knows to reread refs.</summary>
           Commits: int
+          /// <summary>Exact staged line/hunk patches, newest first; repeated u reverses them after rescans.</summary>
+          LastStagedPatches: string list
           /// <summary>The last discard's backup, while it can still be undone.</summary>
           LastDiscard: Trash.Backup option }
 
@@ -51,7 +53,11 @@ module CommitWindow =
         | StagePaths of string list
         | UnstagePaths of string list
         | ApplyLines of GitService.PatchTarget * path: string * PatchBuilder.SelectedLine list
+        | StagedLinesSucceeded of patch: string
+        | UndoLastStage
+        | UndoLastStageSucceeded
         | DiscardPaths of tracked: string list * untracked: string list
+        | DiscardStagedPaths of paths: string list
         | SetMessage of string
         | SetAmend of bool
         | AmendMessageLoaded of string
@@ -140,6 +146,7 @@ module CommitWindow =
           Status = "Scanning for changes…"
           FailureOutput = None
           Commits = 0
+          LastStagedPatches = []
           LastDiscard = None },
         Cmd.ofMsg Rescan
 
@@ -181,22 +188,44 @@ module CommitWindow =
         | BranchLoaded branch -> { model with Branch = branch }, Cmd.none
         | Select(list, path) -> { model with Selected = Some(list, path) }, Cmd.none
         | StagePaths [] | UnstagePaths [] -> model, Cmd.none
-        | StagePaths paths -> operation model $"Staging {fileCount paths.Length}" false (GitService.stageFiles paths)
-        | UnstagePaths paths -> operation model $"Unstaging {fileCount paths.Length}" false (GitService.unstageFilesFor model.Amend paths)
+        | StagePaths paths -> operation { model with LastStagedPatches = [] } $"Staging {fileCount paths.Length}" false (GitService.stageFiles paths)
+        | UnstagePaths paths -> operation { model with LastStagedPatches = [] } $"Unstaging {fileCount paths.Length}" false (GitService.unstageFilesFor model.Amend paths)
         | ApplyLines(_, _, []) -> model, Cmd.none
+        | ApplyLines(GitService.StageInIndex, path, lines) ->
+            let description = $"Staging {lineCount lines.Length} of {path}"
+            { model with Busy = Some description; Status = description + "…"; FailureOutput = None },
+            Cmd.OfFlow.ofFlowLatest description operationJob model.GitEnv
+                (GitService.stageLinesWithUndoAt model.ContextLines path lines)
+                StagedLinesSucceeded (fun error -> OperationFailed(description, error))
         | ApplyLines(GitService.DiscardFromWorkingTree, path, lines) ->
             // The same context the diff was shown with, or the patch is built against hunks the reader never saw.
-            discarding model $"Discarding {lineCount lines.Length} of {path}" (GitService.discardLinesWithBackupAt model.ContextLines path lines)
+            discarding { model with LastStagedPatches = [] } $"Discarding {lineCount lines.Length} of {path}" (GitService.discardLinesWithBackupAt model.ContextLines path lines)
         | ApplyLines(target, path, lines) ->
             let verb =
                 match target with
                 | GitService.StageInIndex -> "Staging"
                 | GitService.UnstageFromIndex -> "Unstaging"
                 | GitService.DiscardFromWorkingTree -> "Discarding"
-            operation model $"{verb} {lineCount lines.Length} of {path}" false (GitService.applyLinesWithContext model.ContextLines target path lines)
+            operation { model with LastStagedPatches = [] } $"{verb} {lineCount lines.Length} of {path}" false (GitService.applyLinesWithContext model.ContextLines target path lines)
+        | StagedLinesSucceeded patch ->
+            { model with Busy = None; LastStagedPatches = patch :: model.LastStagedPatches; Status = "Staged · u to undo" }, scan model
+        | UndoLastStage ->
+            match model.Busy, model.LastStagedPatches with
+            | Some _, _ -> model, Cmd.none
+            | None, [] -> { model with Status = "Nothing to unstage" }, Cmd.none
+            | None, patch :: _ ->
+                { model with Busy = Some "Undoing stage"; Status = "Unstaging the last selection…" },
+                Cmd.OfFlow.ofFlowLatest "undo last stage" operationJob model.GitEnv (GitService.undoStagedPatch patch)
+                    (fun () -> UndoLastStageSucceeded) (fun error -> OperationFailed("Undo stage", error))
+        | UndoLastStageSucceeded ->
+            let remaining = match model.LastStagedPatches with _ :: rest -> rest | [] -> []
+            { model with Busy = None; LastStagedPatches = remaining; Status = "Last stage undone" }, scan model
         | DiscardPaths([], []) -> model, Cmd.none
         | DiscardPaths(tracked, untracked) ->
-            discarding model $"Discarding {fileCount (tracked.Length + untracked.Length)}" (GitService.discardFilesWithBackup tracked untracked)
+            discarding { model with LastStagedPatches = [] } $"Discarding {fileCount (tracked.Length + untracked.Length)}" (GitService.discardFilesWithBackup tracked untracked)
+        | DiscardStagedPaths [] -> model, Cmd.none
+        | DiscardStagedPaths paths ->
+            discarding { model with LastStagedPatches = [] } $"Discarding {fileCount paths.Length}" (GitService.discardStagedFilesWithBackup model.Amend paths)
         | SetMessage message -> { model with Message = message }, Cmd.none
         | SetAmend true when not model.Amend ->
             // Amending shows what the commit will contain, so the staged section is rescanned against its parent.
@@ -230,6 +259,7 @@ module CommitWindow =
                     Message = ""
                     Amend = false
                     AmendMessage = None
+                    LastStagedPatches = []
                     Status = $"{description}: done"
                     Commits = model.Commits + 1 },
                 scan model

@@ -904,7 +904,7 @@ module GitService =
     /// Stages, unstages or discards the chosen lines of one file. An untracked file is added with
     /// <c>--intent-to-add</c> first, so that git has a file in the index to apply the patch to.
     /// </summary>
-    let applyLinesWithContext (contextLines: int) (target: PatchTarget) (path: string) (lines: PatchBuilder.SelectedLine list) : Flow<GitEnv, GitError, unit> =
+    let private applyLinesAndReturnPatchWithContext (contextLines: int) (target: PatchTarget) (path: string) (lines: PatchBuilder.SelectedLine list) : Flow<GitEnv, GitError, string> =
         flow {
             let section, direction =
                 match target with
@@ -921,9 +921,20 @@ module GitService =
 
             let! raw = fetchRawFileDiffWithContext contextLines section path
             match PatchBuilder.build direction raw lines with
-            | Ok patch -> do! applyPatch target patch
+            | Ok patch ->
+                do! applyPatch target patch
+                return patch
             | Error error -> return! Flow.fail (GitError.OperationFailed("Apply lines", PatchBuilder.describeError error))
         }
+
+    let applyLinesWithContext (contextLines: int) (target: PatchTarget) (path: string) (lines: PatchBuilder.SelectedLine list) : Flow<GitEnv, GitError, unit> =
+        applyLinesAndReturnPatchWithContext contextLines target path lines |> Flow.map ignore
+
+    /// <summary>The exact patch successfully staged, for a subsequent single-key reversal.</summary>
+    let stageLinesWithUndoAt contextLines path lines =
+        applyLinesAndReturnPatchWithContext contextLines StageInIndex path lines
+
+    let undoStagedPatch patch = applyPatch UnstageFromIndex patch
 
     let applyLines (target: PatchTarget) (path: string) (lines: PatchBuilder.SelectedLine list) =
         applyLinesWithContext 3 target path lines
@@ -990,6 +1001,16 @@ module GitService =
 
     let discardFiles (tracked: string list) (untracked: string list) : Flow<GitEnv, GitError, unit> =
         discardFilesWithBackup tracked untracked |> Flow.map ignore
+
+    /// <summary>Unstage and discard a staged selection in one ordered flow. Newly added files become untracked after unstaging.</summary>
+    let discardStagedFilesWithBackup (amending: bool) (paths: string list) : Flow<GitEnv, GitError, Trash.Backup> =
+        flow {
+            do! unstageFilesFor amending paths
+            let! status = fetchWorkingTreeStatus
+            let untracked = status |> List.filter (fun entry -> entry.Untracked && List.contains entry.Path paths) |> List.map _.Path
+            let tracked = paths |> List.filter (fun path -> not (List.contains path untracked))
+            return! discardFilesWithBackup tracked untracked
+        }
 
     /// <summary>What HEAD is: the branch name, "detached at abc1234", or "no commits yet" on an unborn branch's name.</summary>
     let fetchCurrentBranch : Flow<GitEnv, GitError, string> =
@@ -1343,7 +1364,6 @@ module GitService =
             if String.IsNullOrWhiteSpace source then Ok ""
             else Markdown.formatForPreview format source
         match reformat true, reformat false with
-        | Ok oldText, Ok newText -> Ok(SourceDiff.between oldPath newPath oldText newText)
         | Ok oldText, Ok newText -> Ok(SourceDiff.between oldPath newPath oldText newText |> SourceDiff.withContext contextLines)
         | Error message, _ | _, Error message -> Error(GitError.OperationFailed("Preview", message))
 

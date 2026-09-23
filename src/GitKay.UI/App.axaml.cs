@@ -81,7 +81,7 @@ public partial class App : Application {
     }
 
     /// <summary>Reads the folders and pairs their files, off the UI thread. A folder that cannot be read says so.</summary>
-    private static (IReadOnlyList<GitKay.Core.Folder.Pair> Pairs, IReadOnlyList<GitKay.Core.Folder.Pair> Changed, string? Error) BuildFolderPairs(FolderMode mode, string left, string? right) {
+    internal static (IReadOnlyList<GitKay.Core.Folder.Pair> Pairs, IReadOnlyList<GitKay.Core.Folder.Pair> Changed, string? Error) BuildFolderPairs(FolderMode mode, string left, string? right) {
         var empty = Array.Empty<GitKay.Core.Folder.Pair>();
         var leftEntries = GitKay.Core.FolderSource.read(left);
         if (leftEntries.IsError) return (empty, empty, GitKay.Core.GitErrorModule.describe(leftEntries.ErrorValue));

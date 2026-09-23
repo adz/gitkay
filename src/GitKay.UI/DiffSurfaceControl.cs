@@ -191,7 +191,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     /// <summary>Raised after text is copied, with the number of lines copied (0 for part of a line).</summary>
     public event EventHandler<int>? TextCopied;
     /// <summary>Lets the host put its own actions at the top of a line's right-click menu.</summary>
-    public event Action<ContextMenu>? LineMenuOpening;
+    public event Action<ContextMenu, DiffLineProjection>? LineMenuOpening;
 
     public IEnumerable<IDiffRowProjection>? ItemsSource { get => GetValue(ItemsSourceProperty); set => SetValue(ItemsSourceProperty, value); }
     public IDiffRowProjection? SelectedItem { get => GetValue(SelectedItemProperty); set => SetValue(SelectedItemProperty, value); }
@@ -2744,7 +2744,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         }
 
         if (LineMenuOpening != null) {
-            LineMenuOpening.Invoke(menu);
+            LineMenuOpening.Invoke(menu, line);
             if (menu.Items.Count > 0) menu.Items.Add(new Separator());
         }
         Add("Copy", HasTextSelection, CopySelection);

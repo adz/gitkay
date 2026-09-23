@@ -22,7 +22,10 @@ public sealed record GitOperation(string Title, Func<GitRunner, Task<bool>> Run)
 /// <summary>Push, pull and fetch, run through the git CLI so its progress, credentials and hooks behave as in a terminal.</summary>
 public static class GitOperations {
     public static GitOperation FetchAll() =>
-        new("Fetch all remotes", runner => runner.RunAsync("fetch", "--all", "--prune", "--progress"));
+        new("Fetch all remotes", runner => runner.RunAsync("fetch", "--all", "--progress"));
+
+    public static GitOperation FetchAndPruneAll() =>
+        new("Fetch and prune stale remote refs", runner => runner.RunAsync("fetch", "--all", "--prune", "--progress"));
 
     public static GitOperation ForBranch(string operation, BranchTarget branch) => operation switch {
         "push" => Push(branch),
@@ -53,9 +56,15 @@ public static class GitOperations {
         }
     });
 
-    private static GitOperation Pull(BranchTarget branch) => new($"Pull {branch.Name}", async runner => {
-        if (branch.IsCurrentHead)
+    private static GitOperation Pull(BranchTarget branch) => new(branch.IsCurrentHead ? $"Pull {branch.Name} from upstream" : $"Fast-forward {branch.Name} from upstream", async runner => {
+        if (branch.IsCurrentHead) {
+            var branchRebase = (await runner.CaptureAsync("config", "--get", $"branch.{branch.Name}.rebase"))?.Trim();
+            var pullRebase = (await runner.CaptureAsync("config", "--get", "pull.rebase"))?.Trim();
+            var pullFf = (await runner.CaptureAsync("config", "--get", "pull.ff"))?.Trim();
+            var pullSquash = (await runner.CaptureAsync("config", "--get", "pull.squash"))?.Trim();
+            runner.Log(GitKay.Core.Pull.describe(Option(branchRebase), Option(pullRebase), Option(pullFf), Option(pullSquash)));
             return await runner.RunAsync("pull", "--progress", "--no-edit");
+        }
 
         // A branch that isn't checked out can only move by fast-forward: fetch its upstream straight into it.
         var (remote, merge) = await UpstreamAsync(runner, branch.Name);
@@ -83,6 +92,9 @@ public static class GitOperations {
         var merge = (await runner.CaptureAsync("config", "--get", $"branch.{branch}.merge"))?.Trim();
         return (string.IsNullOrEmpty(remote) ? null : remote, string.IsNullOrEmpty(merge) ? null : merge);
     }
+
+    private static FSharpOption<string> Option(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? FSharpOption<string>.None : FSharpOption<string>.Some(value);
 }
 
 /// <summary>Runs git in a working directory, streaming output to a log; carriage-return progress rewrites the last line.</summary>

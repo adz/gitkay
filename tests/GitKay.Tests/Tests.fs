@@ -29,6 +29,13 @@ module private RefHelpers =
 
 module GitServiceTests =
 
+    [<Fact>]
+    let ``pull description gives branch-specific rebase precedence and exposes fast-forward policy`` () =
+        let description = Pull.describe (Some "true") (Some "false") (Some "only") None
+        test <@ description.Contains("rebase local commits") && description.Contains("fast-forward only") @>
+        let defaultDescription = Pull.describe None None None None
+        test <@ defaultDescription.Contains("Git default") && defaultDescription.Contains("divergent branches") @>
+
     let private runFlow root flow =
         Flow.run (GitService.environment root) flow
         |> Exit.toResult
@@ -594,6 +601,25 @@ summary Another line
                     test <@ commits |> List.exists (fun commit -> commit.Refs |> List.exists (fun ref -> ref.Name = "stash@{0}") ) @>)
 
     [<Fact>]
+    let ``discarding staged tracked and added files completes both operations in order`` () =
+        withTempRepository (fun root repo ->
+            commitFile repo root "tracked.txt" "original" "initial" |> ignore
+            File.WriteAllText(Path.Combine(root, "tracked.txt"), "changed")
+            File.WriteAllText(Path.Combine(root, "added.txt"), "new")
+            Commands.Stage(repo, "tracked.txt")
+            Commands.Stage(repo, "added.txt")
+
+            match runFlow root (GitService.discardStagedFilesWithBackup false [ "tracked.txt"; "added.txt" ]) with
+            | Error err -> failwith (GitError.describe err)
+            | Ok _ -> ()
+
+            test <@ File.ReadAllText(Path.Combine(root, "tracked.txt")) = "original" @>
+            test <@ not (File.Exists(Path.Combine(root, "added.txt")) ) @>
+            match runFlow root GitService.fetchWorkingTreeStatus with
+            | Error err -> failwith (GitError.describe err)
+            | Ok status -> test <@ status = [] @>)
+
+    [<Fact>]
     let ``resetTo should move HEAD and working tree to the target commit`` () =
         withTempRepository (fun root repo ->
             let baseCommit = commitFile repo root "app.txt" "base" "base commit"
@@ -927,6 +953,41 @@ summary Another line
             test <@ changes staged = [ Models.Removed, "11"; Models.Added, "ELEVEN" ] @>
             test <@ changes unstaged = [ Models.Removed, "2"; Models.Added, "TWO"; Models.Added, "13" ] @>
             test <@ File.ReadAllText(Path.Combine(root, "a.txt")) = numbered [ "1"; "TWO"; "3"; "4"; "5"; "6"; "7"; "8"; "9"; "10"; "ELEVEN"; "12"; "13" ] @>)
+
+    [<Fact>]
+    let ``u reverses exactly the last staged selection after a rescan`` () =
+        withTempRepository (fun root repo ->
+            let gitDir = Path.Combine(root, ".git")
+            commitFile repo root "a.txt" (numbered [ "one"; "two"; "three"; "four" ]) "init" |> ignore
+            writeFile root "a.txt" (numbered [ "one"; "TWO"; "three"; "FOUR" ])
+            let before = run gitDir (GitService.fetchRawFileDiff WorkingTree.Unstaged "a.txt")
+            let chosen = pick before (fun _ _ line -> line.Content = "four" || line.Content = "FOUR")
+            let patch = run gitDir (GitService.stageLinesWithUndoAt 3 "a.txt" chosen)
+            let staged = run gitDir (GitService.fetchRawFileDiff WorkingTree.Staged "a.txt")
+            test <@ staged.Contains("FOUR") @>
+            // The UI's rescan does not change the patch whose inverse u will apply.
+            run gitDir (GitService.fetchWorkingTreeChanges 3) |> ignore
+            run gitDir (GitService.undoStagedPatch patch)
+            test <@ run gitDir (GitService.fetchRawFileDiff WorkingTree.Staged "a.txt") = "" @>
+            test <@ run gitDir (GitService.fetchRawFileDiff WorkingTree.Unstaged "a.txt") = before @>)
+
+    [<Fact>]
+    let ``two staged selections reverse in last-in-first-out order`` () =
+        withTempRepository (fun root repo ->
+            let gitDir = Path.Combine(root, ".git")
+            commitFile repo root "a.txt" (numbered [ "one"; "two"; "three"; "four" ]) "init" |> ignore
+            writeFile root "a.txt" (numbered [ "one"; "TWO"; "three"; "FOUR" ])
+            let before = run gitDir (GitService.fetchRawFileDiff WorkingTree.Unstaged "a.txt")
+            let first = pick before (fun _ _ line -> line.Content = "two" || line.Content = "TWO")
+            let firstPatch = run gitDir (GitService.stageLinesWithUndoAt 3 "a.txt" first)
+            let afterFirst = run gitDir (GitService.fetchRawFileDiff WorkingTree.Unstaged "a.txt")
+            let second = pick afterFirst (fun _ _ line -> line.Content = "four" || line.Content = "FOUR")
+            let secondPatch = run gitDir (GitService.stageLinesWithUndoAt 3 "a.txt" second)
+            run gitDir (GitService.undoStagedPatch secondPatch)
+            test <@ run gitDir (GitService.fetchRawFileDiff WorkingTree.Unstaged "a.txt") = afterFirst @>
+            run gitDir (GitService.undoStagedPatch firstPatch)
+            test <@ run gitDir (GitService.fetchRawFileDiff WorkingTree.Staged "a.txt") = "" @>
+            test <@ run gitDir (GitService.fetchRawFileDiff WorkingTree.Unstaged "a.txt") = before @>)
 
     [<Fact>]
     let ``unstaging and discarding chosen lines touch only those lines`` () =
@@ -1432,6 +1493,8 @@ module AppTests =
             WorkingTreeChanges = None
             WorkingTreeStartedAtTicks = None
             LastDiscard = None
+            LastStagedPatches = []
+            StageUndoPending = false
         }
 
     [<Fact>]
@@ -1725,6 +1788,19 @@ module AppTests =
 
         let failed, _ = App.update (App.Msg.WorkingTreeOperationDone("Staging", Error(GitError.OperationFailed("add", "locked")))) emptyModel
         test <@ failed.Status.StartsWith "Staging failed" @>
+
+    [<Fact>]
+    let ``two staged patches can be undone in reverse order in the main diff`` () =
+        let once, _ = App.update (App.Msg.WorkingTreeLinesStaged("a.txt", "first")) emptyModel
+        let refreshed, _ = App.update App.Msg.RereadRefs once
+        let twice, _ = App.update (App.Msg.WorkingTreeLinesStaged("b.txt", "second")) refreshed
+        test <@ twice.LastStagedPatches = [ "b.txt", "second"; "a.txt", "first" ] @>
+        let undoing, _ = App.update App.Msg.UndoLastWorkingTreeStage twice
+        let repeated, _ = App.update App.Msg.UndoLastWorkingTreeStage undoing
+        test <@ undoing.StageUndoPending && repeated.StageUndoPending && repeated.LastStagedPatches = undoing.LastStagedPatches @>
+        let undone, _ = App.update App.Msg.LastWorkingTreeStageUndone repeated
+        test <@ undone.LastStagedPatches = [ "a.txt", "first" ] @>
+        test <@ not undone.StageUndoPending @>
 
     [<Fact>]
     let ``a clean working tree moves the selection off the uncommitted changes row`` () =
@@ -3600,6 +3676,24 @@ module CommitWindowTests =
         test <@ undoing.LastDiscard = None && undoing.Busy = Some "Undoing" @>
         let nothing, _ = CommitWindow.update CommitWindow.UndoDiscard undoing
         test <@ nothing.Status = "Nothing to undo" @>
+
+    [<Fact>]
+    let ``last staged patch survives a rescan and is cleared by u`` () =
+        let staged, _ = CommitWindow.update (CommitWindow.StagedLinesSucceeded "patch") (model0 ())
+        let rescanned, _ = CommitWindow.update (CommitWindow.ChangesLoaded(Ok(changes [ "a" ] [ "a" ] []))) staged
+        test <@ rescanned.LastStagedPatches = [ "patch" ] @>
+        let undoing, _ = CommitWindow.update CommitWindow.UndoLastStage rescanned
+        test <@ undoing.LastStagedPatches = [ "patch" ] && undoing.Busy = Some "Undoing stage" @>
+        let undone, _ = CommitWindow.update CommitWindow.UndoLastStageSucceeded undoing
+        test <@ undone.LastStagedPatches = [] && undone.Status = "Last stage undone" @>
+
+    [<Fact>]
+    let ``two staged patches can be undone in reverse order in the commit diff`` () =
+        let once, _ = CommitWindow.update (CommitWindow.StagedLinesSucceeded "first") (model0 ())
+        let twice, _ = CommitWindow.update (CommitWindow.StagedLinesSucceeded "second") once
+        test <@ twice.LastStagedPatches = [ "second"; "first" ] @>
+        let undone, _ = CommitWindow.update CommitWindow.UndoLastStageSucceeded twice
+        test <@ undone.LastStagedPatches = [ "first" ] @>
 
     [<Fact>]
     let ``a successful commit clears the message and counts it; a failure keeps the output`` () =

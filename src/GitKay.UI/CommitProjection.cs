@@ -15,8 +15,8 @@ public partial class CommitProjection : ObservableObject, IProjection<Graph.Comm
 
     public void SetDispatch(System.Action<GitKay.Core.App.Msg> dispatch) => _dispatch = dispatch;
 
-    [RelayCommand] private void CreateTag() => _dispatch?.Invoke(GitKay.Core.App.Msg.NewCreateTag(FullHash, "new-tag"));
-    [RelayCommand] private void CreateBranch() => _dispatch?.Invoke(GitKay.Core.App.Msg.NewCreateBranch(FullHash, "new-branch"));
+    public void CreateTagNamed(string name) => _dispatch?.Invoke(GitKay.Core.App.Msg.NewCreateTag(FullHash, name));
+    public void CreateBranchNamed(string name) => _dispatch?.Invoke(GitKay.Core.App.Msg.NewCreateBranch(FullHash, name));
     [RelayCommand] private void CherryPick() => _dispatch?.Invoke(GitKay.Core.App.Msg.NewCherryPick(FullHash));
     [RelayCommand] private void ResetSoft() => _dispatch?.Invoke(GitKay.Core.App.Msg.NewResetTo(FullHash, false));
     [RelayCommand] private void ResetHard() => _dispatch?.Invoke(GitKay.Core.App.Msg.NewResetTo(FullHash, true));

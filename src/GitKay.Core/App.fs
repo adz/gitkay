@@ -127,7 +127,9 @@ module App =
             WorkingTreeStartedAtTicks: int64 option
             /// The last discard's backup, while it can still be undone.
             LastDiscard: Trash.Backup option
-            /// The last successfully staged line/hunk patch, for u in the working-tree diff.
+            /// Successfully staged line/hunk patches, newest first, for repeated u in the working-tree diff.
+            LastStagedPatches: (string * string) list
+            StageUndoPending: bool
         }
 
         member model.SelectedCommitHash =
@@ -160,6 +162,9 @@ module App =
         | DiscardWorkingTree of tracked:string list * untracked:string list
         /// Stages, unstages or discards the chosen lines of one uncommitted file.
         | ApplyWorkingTreeLines of target:GitService.PatchTarget * path:string * lines:PatchBuilder.SelectedLine list
+        | WorkingTreeLinesStaged of path:string * patch:string
+        | UndoLastWorkingTreeStage
+        | LastWorkingTreeStageUndone
         | UndoWorkingTreeDiscard
         | WorkingTreeOperationDone of description:string * Result<Trash.Backup option, GitError>
         | DiffFilesLoaded of hash:string * startedAtTicks:int64 * Result<GitService.DiffFileSummary list, GitError>
@@ -508,6 +513,8 @@ module App =
                 WorkingTreeChanges = None
                 WorkingTreeStartedAtTicks = None
                 LastDiscard = None
+                LastStagedPatches = []
+                StageUndoPending = false
             },
             Cmd.none
         | Ok startupOptions ->
@@ -557,6 +564,8 @@ module App =
                     WorkingTreeChanges = None
                     WorkingTreeStartedAtTicks = None
                     LastDiscard = None
+                    LastStagedPatches = []
+                    StageUndoPending = false
                 }
 
             if String.IsNullOrEmpty gitEnv.RepoPath then
@@ -672,19 +681,39 @@ module App =
         | StageWorkingTree [] | UnstageWorkingTree [] | DiscardWorkingTree([], []) | ApplyWorkingTreeLines(_, _, []) ->
             model, Cmd.none
         | StageWorkingTree paths ->
-            workingTreeOperation model $"Staged {fileCount paths.Length}" (GitService.stageFiles paths |> Flow.map (fun () -> None))
+            workingTreeOperation { model with LastStagedPatches = [] } $"Staged {fileCount paths.Length}" (GitService.stageFiles paths |> Flow.map (fun () -> None))
         | UnstageWorkingTree paths ->
-            workingTreeOperation model $"Unstaged {fileCount paths.Length}" (GitService.unstageFiles paths |> Flow.map (fun () -> None))
+            workingTreeOperation { model with LastStagedPatches = [] } $"Unstaged {fileCount paths.Length}" (GitService.unstageFiles paths |> Flow.map (fun () -> None))
         | DiscardWorkingTree(tracked, untracked) ->
-            workingTreeOperation model $"Discarded {fileCount (tracked.Length + untracked.Length)}"
+            workingTreeOperation { model with LastStagedPatches = [] } $"Discarded {fileCount (tracked.Length + untracked.Length)}"
                 (GitService.discardFilesWithBackup tracked untracked |> Flow.map Some)
         | ApplyWorkingTreeLines(GitService.DiscardFromWorkingTree, path, lines) ->
-            workingTreeOperation model $"Discarded {lineCount lines.Length} of {path}"
+            workingTreeOperation { model with LastStagedPatches = [] } $"Discarded {lineCount lines.Length} of {path}"
                 (GitService.discardLinesWithBackupAt model.DiffContextLines path lines |> Flow.map Some)
+        | ApplyWorkingTreeLines(GitService.StageInIndex, path, lines) ->
+            let description = $"Staging {lineCount lines.Length} of {path}"
+            { model with Status = description + "…" },
+            Cmd.OfFlow.ofFlow description runtime model.GitEnv (GitService.stageLinesWithUndoAt model.DiffContextLines path lines)
+                (fun patch -> WorkingTreeLinesStaged(path, patch))
+                (fun error -> WorkingTreeOperationDone(description, Error error))
         | ApplyWorkingTreeLines(target, path, lines) ->
             let verb = if target = GitService.StageInIndex then "Staged" else "Unstaged"
-            workingTreeOperation model $"{verb} {lineCount lines.Length} of {path}"
+            workingTreeOperation { model with LastStagedPatches = [] } $"{verb} {lineCount lines.Length} of {path}"
                 (GitService.applyLinesWithContext model.DiffContextLines target path lines |> Flow.map (fun () -> None))
+        | WorkingTreeLinesStaged(path, patch) ->
+            { model with LastStagedPatches = (path, patch) :: model.LastStagedPatches; Status = "Staged · u to undo" }, Cmd.ofMsg RefreshWorkingTree
+        | UndoLastWorkingTreeStage ->
+            match model.StageUndoPending, model.LastStagedPatches with
+            | true, _ -> model, Cmd.none
+            | false, [] -> { model with Status = "Nothing to unstage" }, Cmd.none
+            | false, (_, patch) :: _ ->
+                { model with StageUndoPending = true; Status = "Unstaging the last selection…" },
+                Cmd.OfFlow.ofFlow "undo last stage" runtime model.GitEnv (GitService.undoStagedPatch patch)
+                    (fun () -> LastWorkingTreeStageUndone)
+                    (fun error -> WorkingTreeOperationDone("Undo stage", Error error))
+        | LastWorkingTreeStageUndone ->
+            let remaining = match model.LastStagedPatches with _ :: rest -> rest | [] -> []
+            { model with LastStagedPatches = remaining; StageUndoPending = false; Status = "Last stage undone" }, Cmd.ofMsg RefreshWorkingTree
         | UndoWorkingTreeDiscard ->
             match model.LastDiscard with
             | None -> { model with Status = "Nothing to undo" }, Cmd.none
@@ -701,7 +730,7 @@ module App =
             { model with Status = status; LastDiscard = backup |> Option.orElse (if description.StartsWith "Restored" then None else model.LastDiscard) },
             Cmd.ofMsg RefreshWorkingTree
         | WorkingTreeOperationDone(description, Error error) ->
-            { model with Status = $"{description} failed: " + GitError.describe error }, Cmd.ofMsg RefreshWorkingTree
+            { model with StageUndoPending = false; Status = $"{description} failed: " + GitError.describe error }, Cmd.ofMsg RefreshWorkingTree
         | WorkingTreeStatusLoaded (Ok entries) ->
             let changed = entries <> model.WorkingTree
 

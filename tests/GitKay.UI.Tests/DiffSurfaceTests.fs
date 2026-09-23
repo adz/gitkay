@@ -609,6 +609,145 @@ module CommitColumnTests =
                 window.Close()
                 Headless.pump ())
 
+module DiffHeaderBudgetTests =
+    [<Fact>]
+    let ``find hint and diff controls fit a narrow header without the dormant undo button`` () =
+        Headless.run (fun () ->
+            let projection = MainProjection()
+            let window = MainWindow(Width = 900.0, Height = 700.0, DataContext = projection)
+            try
+                window.Show()
+                window.UpdateLayout()
+                Headless.pump ()
+                let before = window.CaptureRenderedFrame()
+                let header = window.FindControl<Border>("DiffHeaderPart")
+                let find = window.FindControl<TextBox>("CommitFindBox")
+                let whitespace = window.FindControl<Primitives.ToggleButton>("IgnoreWhitespaceButton")
+                let mode = window.FindControl<Border>("DiffModeButton")
+                let modeRight = mode.TranslatePoint(Point(mode.Bounds.Width, 0.0), header)
+                let modeFits = modeRight.HasValue && modeRight.Value.X <= header.Bounds.Width + 1.0
+                let findBefore = find.TranslatePoint(Point(0.0, 0.0), header)
+                let modeBefore = mode.TranslatePoint(Point(0.0, 0.0), header)
+                let labels =
+                    header.GetVisualDescendants()
+                    |> Seq.choose (function :? TextBlock as block -> Some block.Text | _ -> None)
+                    |> Seq.toList
+                test <@ before.PixelSize.Width = 900 @>
+                test <@ find.Bounds.Width >= 260.0 @>
+                test <@ labels |> List.contains "WS" @>
+                test <@ not (labels |> List.contains "Undo") @>
+                test <@ modeFits @>
+                test <@ whitespace.IsVisible @>
+                whitespace.IsChecked <- true
+                window.UpdateLayout()
+                Headless.pump ()
+                let after = window.CaptureRenderedFrame()
+                let findAfter = find.TranslatePoint(Point(0.0, 0.0), header)
+                let modeAfter = mode.TranslatePoint(Point(0.0, 0.0), header)
+                test <@ before.PixelSize = after.PixelSize @>
+                test <@ findBefore = findAfter && modeBefore = modeAfter @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+module WorkingTreeLineActionTests =
+    [<Fact>]
+    let ``side by side replacement stages both halves of its displayed row`` () =
+        Headless.run (fun () ->
+            let diff : Models.FileDiff =
+                { OldPath = "pair.txt"; NewPath = "pair.txt"; NewLineCount = Some 1
+                  Hunks = [ { Header = "@@ -1 +1 @@"
+                              Lines = [ { Type = Models.Removed; Content = "before"; OldLineNo = Some 1; NewLineNo = None }
+                                        { Type = Models.Added; Content = "after"; OldLineNo = None; NewLineNo = Some 1 } ] } ] }
+            let changes : GitService.WorkingTreeChanges = { Entries = []; Staged = []; Unstaged = [ diff ]; Untracked = [] }
+            let model, _ = App.init [||]
+            let projection = MainProjection()
+            projection.Update { model with Selection = App.WorkingTreeSelected; WorkingTreeChanges = Some changes; DiffLayout = DiffLayout.SideBySide }
+            let file = projection.SelectedDiffFiles[0]
+            let pair =
+                projection.SelectedDiffRows
+                |> Seq.pick (function :? DiffLineProjection as line when line.PairedRemoved <> null -> Some line | _ -> None)
+            let selected = projection.LinesOf(file, [ pair ])
+            test <@ selected.Count = 2 @>
+            test <@ [ for line in selected -> line.Content ] = [ "before"; "after" ] @>)
+
+    [<Fact>]
+    let ``stage line in the second diff file uses that file's own hunk positions`` () =
+        Headless.run (fun () ->
+            let change path oldText newText : Models.FileDiff =
+                { OldPath = path; NewPath = path; NewLineCount = Some 1
+                  Hunks = [ { Header = "@@ -1 +1 @@"
+                              Lines = [ { Type = Models.Removed; Content = oldText; OldLineNo = Some 1; NewLineNo = None }
+                                        { Type = Models.Added; Content = newText; OldLineNo = None; NewLineNo = Some 1 } ] } ] }
+            let changes : GitService.WorkingTreeChanges =
+                { Entries = []; Staged = [ change "staged.txt" "old" "new" ]
+                  Unstaged = [ change "a.txt" "a" "A"; change "b.txt" "b" "B" ]; Untracked = [] }
+            let model, _ = App.init [||]
+            let projection = MainProjection()
+            let sent = ResizeArray<App.Msg>()
+            projection.SetDispatch(fun msg -> sent.Add msg)
+            projection.Update { model with Selection = App.WorkingTreeSelected; WorkingTreeChanges = Some changes }
+            let file = projection.SelectedDiffFiles |> Seq.find (fun item -> item.Key.NewPath = "b.txt")
+            let row =
+                projection.SelectedDiffRows
+                |> Seq.pick (function :? DiffLineProjection as line when line.Content = "B" -> Some line | _ -> None)
+            let lines = projection.LinesOf(file, [ row ])
+            projection.ApplyWorkingTreeLines(GitService.StageInIndex, file, [ row ])
+            let stagedFile = projection.SelectedDiffFiles |> Seq.find (fun item -> item.Key.NewPath = "staged.txt")
+            let stagedRow =
+                projection.SelectedDiffRows
+                |> Seq.pick (function :? DiffLineProjection as line when line.Content = "new" -> Some line | _ -> None)
+            projection.ApplyWorkingTreeLines(GitService.UnstageFromIndex, stagedFile, [ stagedRow ])
+            let actions =
+                sent
+                |> Seq.choose (function App.ApplyWorkingTreeLines(target, path, chosen) -> Some(target, path, List.ofSeq chosen) | _ -> None)
+                |> Seq.toList
+            let actionSummary = actions |> List.map (fun (target, path, chosen) -> target, path, chosen.Head.Content)
+            test <@ lines.Count = 1 @>
+            test <@ lines[0].Hunk = 0 && lines[0].Line = 1 && lines[0].Content = "B" @>
+            test <@ actionSummary = [ GitService.StageInIndex, "b.txt", "B"; GitService.UnstageFromIndex, "staged.txt", "new" ] @>)
+
+    [<Fact>]
+    let ``s and u from the main diff dispatch stage and undo even after selection changes`` () =
+        Headless.run (fun () ->
+            let diff : Models.FileDiff =
+                { OldPath = "b.txt"; NewPath = "b.txt"; NewLineCount = Some 1
+                  Hunks = [ { Header = "@@ -1 +1 @@"
+                              Lines = [ { Type = Models.Removed; Content = "old"; OldLineNo = Some 1; NewLineNo = None }
+                                        { Type = Models.Added; Content = "new"; OldLineNo = None; NewLineNo = Some 1 } ] } ] }
+            let changes : GitService.WorkingTreeChanges = { Entries = []; Staged = []; Unstaged = [ diff ]; Untracked = [] }
+            let model, _ = App.init [||]
+            let projection = MainProjection()
+            let sent = ResizeArray<App.Msg>()
+            projection.SetDispatch(fun msg -> sent.Add msg)
+            let window = MainWindow(Width = 1000.0, Height = 700.0, DataContext = projection)
+            try
+                window.Show()
+                projection.Update { model with Selection = App.WorkingTreeSelected; WorkingTreeChanges = Some changes }
+                window.UpdateLayout()
+                Headless.pump ()
+                let surface = window.FindControl<DiffSurfaceControl>("DiffRowsListBox")
+                let line = projection.SelectedDiffRows |> Seq.pick (function :? DiffLineProjection as row when row.Content = "new" -> Some row | _ -> None)
+                surface.SelectedItem <- line
+                let focused = surface.Focus()
+                Headless.pump ()
+                test <@ focused && surface.IsKeyboardFocusWithin @>
+                window.KeyPress(Key.S, RawInputModifiers.None, PhysicalKey.None, "s")
+                Headless.pump ()
+                let staged = sent |> Seq.exists (function App.ApplyWorkingTreeLines(GitService.StageInIndex, "b.txt", lines) -> lines.Length > 0 | _ -> false)
+                test <@ staged @>
+                projection.Update { model with Selection = App.WorkingTreeSelected; WorkingTreeChanges = Some changes
+                                               LastStagedPatches = [ "b.txt", "patch" ] }
+                surface.SelectedItem <- null
+                surface.Focus() |> ignore
+                window.KeyPress(Key.U, RawInputModifiers.None, PhysicalKey.None, "u")
+                Headless.pump ()
+                let undone = sent |> Seq.exists (function App.UndoLastWorkingTreeStage -> true | _ -> false)
+                test <@ undone @>
+            finally
+                window.Close()
+                Headless.pump ())
+
 module SyntaxHighlightingTests =
     let private kinds (flavour: SyntaxFlavour) (text: string) =
         SyntaxHighlighting.Tokenize(text, flavour) |> Seq.map (fun token -> token.Text, token.Kind) |> List.ofSeq
@@ -1283,6 +1422,20 @@ module CommitContextMenuTests =
                 let menu = surface.BuildContextMenu()
                 test <@ headers menu |> List.contains "Copy commit hash" @>
                 test <@ headers menu |> List.contains "Copy commit subject" @>
+                test <@ not (headers menu |> List.exists (fun title -> title.StartsWith("Push ") || title.StartsWith("Reset "))) @>
+                let advanced = menu.Items |> Seq.pick (function
+                    | :? MenuItem as item when string item.Header = "Advanced" -> Some item
+                    | _ -> None)
+                let advancedHeaders = advanced.Items |> Seq.choose (function :? MenuItem as item -> Some (string item.Header) | _ -> None) |> List.ofSeq
+                test <@ advancedHeaders = [ "Reset current branch here (soft)…"; "Reset current branch here (hard)…" ] @>
+
+                let beforeBounds = surface.Bounds
+                use beforeFrame = window.CaptureRenderedFrame()
+                menu.Open(surface)
+                Headless.pump ()
+                use afterFrame = window.CaptureRenderedFrame()
+                test <@ surface.Bounds = beforeBounds && beforeFrame.PixelSize = afterFrame.PixelSize @>
+                menu.Close()
 
                 // The whole hash goes to the clipboard, not the shortened one the row shows.
                 let item = menu.Items |> Seq.pick (function
@@ -2077,7 +2230,7 @@ module UndoOfferTests =
 
 module SharedFileRowTests =
     [<Fact>]
-    let ``one row control serves every list, and its counts keep their columns`` () =
+    let ``one row control serves every list with counts at the right edge`` () =
         Headless.run (fun () ->
             let row =
                 ChangedFileRow(
@@ -2089,8 +2242,13 @@ module SharedFileRowTests =
                 test <@ Render.contrast frame (0, 4) (14, 26) > 10.0 @>
                 test <@ Render.contrast frame (16, 4) (34, 26) > 10.0 @>
                 test <@ Render.contrast frame (38, 4) (200, 26) > 10.0 @>
-                // Something is drawn where the counts are, even though only one of them has a number.
-                test <@ Render.contrast frame (270, 4) (356, 26) > 20.0 @>
+                let added =
+                    row.GetVisualDescendants()
+                    |> Seq.choose (function :? TextBlock as block when block.Text = "+3" -> Some block | _ -> None)
+                    |> Seq.head
+                let countRight = added.TranslatePoint(Point(added.Bounds.Width, 0.0), row)
+                let rightAligned = countRight.HasValue && abs (countRight.Value.X - row.Bounds.Right) < 2.0
+                test <@ rightAligned @>
             finally
                 window.Close()
                 Headless.pump ())
@@ -2141,12 +2299,16 @@ module SharedFileRowTests =
                 let marker = blocks.Head
                 let added = blocks |> List.find (fun block -> block.Text = "+12")
                 let removed = blocks |> List.find (fun block -> block.Text = "−3")
+                let addedRight = added.TranslatePoint(Point(added.Bounds.Width, 0.0), row)
+                let removedLeft = removed.TranslatePoint(Point(0.0, 0.0), row)
                 let countRight = removed.TranslatePoint(Point(removed.Bounds.Width, 0.0), row)
                 let rightAligned = countRight.HasValue && abs (countRight.Value.X - row.Bounds.Right) < 2.0
+                let packed = addedRight.HasValue && removedLeft.HasValue && removedLeft.Value.X - addedRight.Value.X < 12.0
                 test <@ frame.PixelSize.Width = 260 @>
                 test <@ not marker.IsVisible @>
                 test <@ added.IsVisible && removed.IsVisible @>
                 test <@ rightAligned @>
+                test <@ packed @>
             finally
                 window.Close()
                 Headless.pump ())

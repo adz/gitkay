@@ -614,6 +614,8 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection {
     }
 
     private DiffLineProjection(DiffLineProjection removedLine, DiffLineProjection addedLine) {
+        PairedRemoved = removedLine;
+        PairedAdded = addedLine;
         OldLineNo = removedLine.OldLineNo;
         NewLineNo = addedLine.NewLineNo;
         OldLineNoText = removedLine.OldLineNoText;
@@ -648,6 +650,14 @@ public partial class DiffLineProjection : ObservableObject, IDiffRowProjection {
     public IBrush NewCellBackground { get; }
     public bool IsAdded => Prefix == "+";
     public bool IsRemoved => Prefix == "-";
+    public DiffLineProjection? PairedRemoved { get; }
+    public DiffLineProjection? PairedAdded { get; }
+    public bool HasChange => IsAdded || IsRemoved || PairedRemoved != null;
+    public IEnumerable<DiffLineProjection> ChangedParts() {
+        if (PairedRemoved != null) yield return PairedRemoved;
+        if (PairedAdded != null) yield return PairedAdded;
+        if (IsAdded || IsRemoved) yield return this;
+    }
     [ObservableProperty] private IBrush _rowBackground = Brushes.Transparent;
 
     private static string FormatLineNumber(FSharpOption<int>? lineNumber) =>

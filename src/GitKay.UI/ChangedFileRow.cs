@@ -8,8 +8,8 @@ using Avalonia.Media;
 namespace GitKay.UI;
 
 /// <summary>
-/// One changed file as every list shows it: a state marker, a coloured change badge, the name, and the counts in
-/// columns that line up down the list. The history, commit and folder windows had grown three copies of this, which
+/// One changed file as every list shows it: a state marker, a coloured change badge, the name, and a compact pair
+/// of counts against the right edge. The history, commit and folder windows had grown three copies of this, which
 /// is how they came to describe the same file three different ways; there is one now.
 /// </summary>
 public sealed class ChangedFileRow : TemplatedControl {
@@ -39,9 +39,6 @@ public sealed class ChangedFileRow : TemplatedControl {
     public bool IsSearchMatch { get => GetValue(IsSearchMatchProperty); set => SetValue(IsSearchMatchProperty, value); }
     public Thickness Indent { get => GetValue(IndentProperty); set => SetValue(IndentProperty, value); }
 
-    /// <summary>The width each count column keeps whether or not it has a number in it.</summary>
-    private const double CountWidth = 38;
-
     public ChangedFileRow() {
         var marker = new TextBlock { FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Width = 14 };
         marker.Bind(TextBlock.TextProperty, this.GetObservable(MarkerProperty));
@@ -68,13 +65,14 @@ public sealed class ChangedFileRow : TemplatedControl {
         var added = Count(AddedTextProperty, "GitKayAddedAccentBrush");
         var removed = Count(RemovedTextProperty, "GitKayRemovedAccentBrush");
 
-        // The counts are facts, not a collapsible graph: a long name yields space to both fixed columns.
-        var trailing = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"), ColumnSpacing = 7 };
-        Grid.SetColumn(added, 1);
-        Grid.SetColumn(removed, 2);
+        // The filename yields to the content-sized count pair; an absent count takes no room.
+        var counts = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7, VerticalAlignment = VerticalAlignment.Center };
+        counts.Children.Add(added);
+        counts.Children.Add(removed);
+        var trailing = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 7 };
+        Grid.SetColumn(counts, 1);
         trailing.Children.Add(name);
-        trailing.Children.Add(added);
-        trailing.Children.Add(removed);
+        trailing.Children.Add(counts);
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*"), ColumnSpacing = 6 };
         Grid.SetColumn(badge, 1);
@@ -89,12 +87,21 @@ public sealed class ChangedFileRow : TemplatedControl {
 
     private TextBlock Count(StyledProperty<string?> text, string brush) {
         var block = new TextBlock {
-            FontSize = 11, Width = CountWidth, TextAlignment = TextAlignment.Right,
+            FontSize = 11,
             FontFamily = FontStacks.Mono, VerticalAlignment = VerticalAlignment.Center,
         };
         block.Bind(TextBlock.TextProperty, this.GetObservable(text));
         block.Bind(ForegroundProperty, this.GetResourceObservable(brush).ToBinding());
-        block.Bind(IsVisibleProperty, this.GetObservable(ShowsBadgeProperty));
+        var hasText = false;
+        var showsBadge = ShowsBadge;
+        this.GetObservable(text).Subscribe(new AnonymousObserver<string?>(value => {
+            hasText = !string.IsNullOrEmpty(value);
+            block.IsVisible = hasText && showsBadge;
+        }));
+        this.GetObservable(ShowsBadgeProperty).Subscribe(new AnonymousObserver<bool>(show => {
+            showsBadge = show;
+            block.IsVisible = hasText && showsBadge;
+        }));
         // Keep the count slot while the diff loads; only the number appears later.
         this.GetObservable(ShowsCountsProperty).Subscribe(new AnonymousObserver<bool>(show => block.Opacity = show ? 1 : 0));
         return block;

@@ -108,6 +108,7 @@
                                     <MenuFlyout Placement="BottomEdgeAlignedLeft">
                                         <MenuItem Header="_Reread refs" Command="{Binding RereadRefs}" InputGesture="F5" />
                                         <MenuItem Header="_Fetch all remotes" Click="OnFetchAllMenuItemClick" />
+                                        <MenuItem Header="Fetch and _prune stale remote refs" Click="OnFetchAndPruneMenuItemClick" />
                                         <Separator />
                                         <MenuItem Header="_Keyboard shortcuts" Command="{Binding ToggleShortcutHelpCommand}" InputGesture="F1" />
                                         <MenuItem Header="_Settings…" Click="OnSettingsMenuItemClick" />
@@ -449,7 +450,7 @@
                         BorderBrush="{DynamicResource GitKayHairlineBrush}"
                         BorderThickness="0,0,0,1"
                         Padding="6,4">
-                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto"
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto"
                           ColumnSpacing="6">
                         <StackPanel Grid.Column="0" Orientation="Horizontal">
                         <Button
@@ -525,10 +526,11 @@
 <Border Classes="keyHint" IsVisible="{Binding IsCtrlHintsVisible}" Grid.Column="2" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="6,0,0,0"><TextBlock Text="Ctrl+F  find" /></Border>
                         <TextBox x:Name="CommitFindBox"
                                  Grid.Column="2"
-                                 Width="220"
+                                 Width="260"
                                  Height="28"
                                  Text="{Binding CommitFindQuery, Mode=TwoWay}"
-                                 PlaceholderText="{Binding CommitFindPlaceholder}">
+                                 PlaceholderText="{Binding CommitFindPlaceholder}"
+                                 ToolTip.Tip="Find in diff (Ctrl+F)">
 <TextBox.InnerRightContent>
     <StackPanel Orientation="Horizontal" Spacing="2" Margin="0,0,4,0">
         <TextBlock Text="{Binding CommitFindStatusText}" Foreground="{DynamicResource GitKayMutedTextBrush}" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0" />
@@ -553,30 +555,19 @@
                                       Grid.Column="3"
                                       Classes="segment text"
                                       Classes.selected="{Binding IgnoreWhitespace}"
-                                      Margin="0,0,6,0"
+                                      Margin="0,0,2,0"
                                       IsChecked="{Binding IgnoreWhitespace, Mode=TwoWay}"
                                       ToolTip.Tip="Ignore whitespace changes — hides lines that differ only in spacing">
                             <!-- Keep a fixed width so toggling cannot move the neighbouring controls. -->
-                            <Grid Width="74" Height="16">
-                                <TextBlock Text="Whitespace" FontSize="10" FontWeight="SemiBold"
+                            <Grid Width="26" Height="16">
+                                <TextBlock Text="WS" FontSize="10" FontWeight="SemiBold"
                                            HorizontalAlignment="Center" VerticalAlignment="Center"
                                            Foreground="{DynamicResource GitKayTextBrush}" />
                             </Grid>
                         </ToggleButton>
-                        <!-- Always here, saying so when there is nothing to put back: a reliable place to look
-                             matters more for an irreversible-feeling action than the line of chrome it costs. -->
-                        <Button Grid.Column="4" Classes="inline" Padding="10,3" Margin="0,0,6,0"
-                                Command="{Binding UndoDiscardCommand}"
-                                IsEnabled="{Binding CanUndoDiscard}"
-                                ToolTip.Tip="{Binding UndoDiscardLabel}">
-                            <StackPanel Orientation="Horizontal" Spacing="5">
-                                <PathIcon Width="12" Height="12" Data="M3,7 H10 C12.2,7 14,8.8 14,11 C14,13.2 12.2,15 10,15 H4 V13.4 H10 C11.3,13.4 12.4,12.3 12.4,11 C12.4,9.7 11.3,8.6 10,8.6 H3 L5.6,11.2 L4.5,12.3 L0,7.8 L4.5,3.3 L5.6,4.4 Z"
-                                          Foreground="{DynamicResource GitKaySecondaryTextBrush}" />
-                                <TextBlock Text="Undo" FontSize="11" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
+                        <!-- Undo discard stays on Ctrl+Z and the diff context menu; a disabled button here hid Find. -->
                         <Border x:Name="DiffModeButton"
-                                Grid.Column="5"
+                                Grid.Column="4"
                                 Background="{DynamicResource GitKayRaisedBrush}"
                                 BorderBrush="{DynamicResource GitKayBorderBrush}"
                                 BorderThickness="1" CornerRadius="4" Padding="1"
@@ -868,24 +859,6 @@
                                                                     Stroke="{DynamicResource GitKayAccentBrush}" />
                                                 </TextDecorationCollection>
                                             </Setter>
-                                        </Style>
-                                        <Style Selector="Border.fileChange.added">
-                                            <Setter Property="BorderBrush" Value="{DynamicResource GitKayAddedAccentBrush}" />
-                                        </Style>
-                                        <Style Selector="Border.fileChange.added > TextBlock">
-                                            <Setter Property="Foreground" Value="{DynamicResource GitKayAddedAccentBrush}" />
-                                        </Style>
-                                        <Style Selector="Border.fileChange.deleted">
-                                            <Setter Property="BorderBrush" Value="{DynamicResource GitKayRemovedAccentBrush}" />
-                                        </Style>
-                                        <Style Selector="Border.fileChange.deleted > TextBlock">
-                                            <Setter Property="Foreground" Value="{DynamicResource GitKayRemovedAccentBrush}" />
-                                        </Style>
-                                        <Style Selector="Border.fileChange.modified">
-                                            <Setter Property="BorderBrush" Value="{DynamicResource GitKayMutedTextBrush}" />
-                                        </Style>
-                                        <Style Selector="Border.fileChange.modified > TextBlock">
-                                            <Setter Property="Foreground" Value="{DynamicResource GitKaySecondaryTextBrush}" />
                                         </Style>
                                 </ListBox.Styles>
                                 <ListBox.DataTemplates>
