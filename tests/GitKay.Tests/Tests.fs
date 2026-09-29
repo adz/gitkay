@@ -4721,3 +4721,23 @@ module SharedKeysTests =
         test <@ List.length Keys.sheet = List.length Keys.bindings @>
         test <@ Keys.sheet |> List.forall (fun (chord, description) -> chord <> "" && description <> "") @>
         test <@ Keys.sheet |> List.map fst |> List.contains "Ctrl+Shift+P" @>
+
+    [<Fact>]
+    let ``the window title names the repository and branch, with the home folder as a tilde`` () =
+        test <@ Presentation.WindowTitle.format "/home/adam" "/home/adam/projects/foo" "feature/bar" = "GitKay — ~/projects/foo — feature/bar" @>
+        test <@ Presentation.WindowTitle.format "/home/adam" "/srv/repos/foo/" "main" = "GitKay — /srv/repos/foo — main" @>
+        // A sibling folder that merely shares the home prefix is not inside it.
+        test <@ Presentation.WindowTitle.abbreviatePath "/home/adam" "/home/adamant/x" = "/home/adamant/x" @>
+        test <@ Presentation.WindowTitle.abbreviatePath "/home/adam" "/home/adam" = "~" @>
+
+    [<Fact>]
+    let ``the window title is just GitKay with no repository, and says so when HEAD is detached`` () =
+        test <@ Presentation.WindowTitle.format "/home/adam" "" "" = "GitKay" @>
+        test <@ Presentation.WindowTitle.format "/home/adam" "/tmp/r" "" = "GitKay — /tmp/r" @>
+        test <@ Presentation.WindowTitle.format "" "/tmp/r" "detached at abc1234" = "GitKay — /tmp/r — detached at abc1234" @>
+
+    [<Fact>]
+    let ``a long path in the window title keeps its trailing folders`` () =
+        let path = "/home/adam/" + String.replicate 8 "some-long-folder/" + "repo"
+        let shown = Presentation.WindowTitle.abbreviatePath "/home/adam" path
+        test <@ shown.StartsWith "…/" && shown.EndsWith "/repo" && shown.Length <= 60 @>

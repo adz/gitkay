@@ -115,3 +115,42 @@ module Presentation =
             let ur, ug, ub = under
             let orr, og, ob = over
             mix ur orr, mix ug og, mix ub ob
+
+    /// The main window's title: which repository and branch the window is showing.
+    module WindowTitle =
+        let private separator = " \u2014 "
+        let private maxPathLength = 60
+
+        /// <summary>
+        /// Shortens a directory for a title: the home folder becomes "~", and a path longer than the room there is
+        /// keeps its trailing folders behind a leading ellipsis, because the end of a path is what tells repositories apart.
+        /// </summary>
+        let abbreviatePath (home: string) (path: string) =
+            let trimmedEnd (value: string) = if value.Length > 1 then value.TrimEnd('/', '\\') else value
+            let path = trimmedEnd path
+            let home = if String.IsNullOrEmpty home then "" else trimmedEnd home
+            let shown =
+                if home <> "" && path = home then "~"
+                elif home <> "" && path.Length > home.Length && path.StartsWith(home, StringComparison.Ordinal)
+                     && (path[home.Length] = '/' || path[home.Length] = '\\') then
+                    "~" + path.Substring home.Length
+                else path
+            if shown.Length <= maxPathLength then shown
+            else
+                let parts = shown.Split([| '/'; '\\' |], StringSplitOptions.RemoveEmptyEntries)
+                let mutable tail = ""
+                let mutable index = parts.Length - 1
+                while index >= 0 && (tail = "" || ("\u2026/" + parts[index] + "/" + tail).Length <= maxPathLength) do
+                    tail <- if tail = "" then parts[index] else parts[index] + "/" + tail
+                    index <- index - 1
+                "\u2026/" + tail
+
+        /// <summary>
+        /// "GitKay", then the repository path and branch when there are any. The branch is whatever HEAD is
+        /// ("main", "detached at abc1234"); an empty path (no repository open) or empty branch is left out.
+        /// </summary>
+        let format (home: string) (repoPath: string) (branch: string) =
+            [ "GitKay"
+              if not (String.IsNullOrWhiteSpace repoPath) then abbreviatePath home repoPath
+              if not (String.IsNullOrWhiteSpace branch) then branch.Trim() ]
+            |> String.concat separator

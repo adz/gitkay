@@ -119,6 +119,16 @@ module GitService =
             |> Option.toObj
         with _ -> null
 
+    /// <summary>What HEAD is, read in-process: the branch name, "detached at abc1234", or empty when it cannot be read.</summary>
+    let headLabel (repoPath: string) =
+        try
+            use repo = new Repository(repoPath)
+            if repo.Info.IsHeadDetached then
+                let tip = repo.Head.Tip
+                if isNull tip then "" else "detached at " + tip.Sha.Substring(0, 7)
+            else repo.Head.FriendlyName
+        with _ -> ""
+
     /// Local and remote branch names for the comparison picker, independent of which refs the history currently shows.
     let comparisonRevisions (repoPath: string) =
         try
