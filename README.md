@@ -11,7 +11,7 @@ Navigate as quickly as you navigate an editor:
 - search everywhere,
 - and stage individual hunks or lines. 
 
-Use the mouse and familiar GUI controls, or stay entirely on the keyboard with deep Vim navigation, visual selection and command palettes (ctrl-p).
+Use the mouse and familiar GUI controls, including expanders like GitHub shows diffs, or stay entirely on the keyboard with deep Vim navigation, visual selection and command palettes (ctrl-p).
 
 ![GitKay history, commit graph, changed files and diff in dark theme](docs/images/history-dark.png)
 
