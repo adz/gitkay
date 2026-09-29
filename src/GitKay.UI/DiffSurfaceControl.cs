@@ -629,6 +629,15 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         _pendingAnchor = null;
         var row = _rows[index];
         var target = Math.Max(0, _tops[index] - anchor.ViewportOffset);
+        // Collapsing a file can leave less content than the anchored position needs: the scroll viewer would clamp
+        // the offset and the header would jump. Lend the extent the missing space until the reader scrolls.
+        if (anchor.Row is DiffFileHeaderProjection && _scrollViewer.Viewport.Height > 0) {
+            var missing = Math.Max(0, target + _scrollViewer.Viewport.Height - _tops[^1]);
+            if (Math.Abs(missing - _tailPad) > 0.5) {
+                _tailPad = missing;
+                InvalidateMeasure();
+            }
+        }
         // Apply it now so the next frame is already in the right place: posting it paints one frame at the old
         // offset first, which reads as a flash when a pinned file header is collapsed.
         SetOffsetWithoutScrolling(target);
@@ -677,8 +686,14 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             ComputeTops();
             InvalidateOverview();
         }
-        return new Size(width, _tops[^1]);
+        return new Size(width, _tops[^1] + _tailPad);
     }
+
+    /// <summary>
+    /// Empty space after the last row, kept only while a collapsed file's header is held in place; the next user
+    /// scroll gives back whatever the view no longer needs.
+    /// </summary>
+    private double _tailPad;
 
     protected override Size ArrangeOverride(Size finalSize) {
         var size = base.ArrangeOverride(finalSize);
@@ -702,7 +717,16 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     /// hand paused — which is exactly when a slow scroll pauses. Lines are coloured as they are drawn instead.
     /// </summary>
     private void OnScrollChanged(object? sender, ScrollChangedEventArgs e) {
-        if (!_programmaticScroll) _userScrolls++;
+        if (!_programmaticScroll) {
+            _userScrolls++;
+            if (_tailPad > 0 && _scrollViewer != null) {
+                var kept = Math.Max(0, _scrollViewer.Offset.Y + _scrollViewer.Viewport.Height - _tops[^1]);
+                if (kept < _tailPad - 0.5) {
+                    _tailPad = kept;
+                    InvalidateMeasure();
+                }
+            }
+        }
         InvalidateVisual();
     }
 
@@ -2448,9 +2472,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         var top = _tops[index];
         var height = _tops[index + 1] - top;
         var offset = position switch {
-            GitKay.Core.Vim.VimScroll.Top => top,
+            GitKay.Core.Vim.VimScroll.Top => top - StickyInset(index),
             GitKay.Core.Vim.VimScroll.Bottom => top + height - viewport,
-            _ => top - (viewport - height) / 2,
+            _ => top - (viewport - height) / 2 - StickyInset(index) / 2,
         };
         _scrollViewer.Offset = _scrollViewer.Offset.WithY(Math.Clamp(offset, 0, Math.Max(0, _tops[^1] - viewport)));
     }
@@ -2548,7 +2572,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         if (_scrollViewer == null || _rows.Length == 0) return;
         var top = Math.Clamp(FindRow(_scrollViewer.Offset.Y) + delta, 0, _rows.Length - 1);
         var maximum = Math.Max(0, _tops[^1] - _scrollViewer.Viewport.Height);
-        _scrollViewer.Offset = _scrollViewer.Offset.WithY(Math.Min(_tops[top], maximum));
+        _scrollViewer.Offset = _scrollViewer.Offset.WithY(Math.Max(0, Math.Min(_tops[top] - StickyInset(top), maximum)));
         // Like vim, the focus stays put until scrolling would take it off screen.
         var (first, last) = FullyVisibleRows(_scrollViewer.Offset.Y);
         if (SelectedItem != null && Array.IndexOf(_rows, SelectedItem) is var focused && focused >= 0 && (focused < first || focused > last))
@@ -2560,7 +2584,12 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         var top = offset ?? _scrollViewer!.Offset.Y;
         var bottom = top + _scrollViewer!.Viewport.Height;
         var first = FindRow(top);
-        if (_tops[first] < top - 0.5 && first + 1 < _rows.Length) first++;
+        // A pinned file header covers the top of the viewport; rows under it are not visible.
+        if (_rows.Length > 0 && StickyInset(first) > 0 && _tops[first] < top + StickyInset(first) - 0.5) {
+            first = FindRow(top + StickyInset(first));
+            if (_tops[first] < top + StickyInset(first) - 0.5 && first + 1 < _rows.Length) first++;
+        }
+        else if (_tops[first] < top - 0.5 && first + 1 < _rows.Length) first++;
         var last = FindRow(Math.Max(top, bottom - 1));
         if (_tops[last + 1] > bottom + 0.5 && last > first) last--;
         return (first, Math.Max(first, last));
@@ -2866,6 +2895,20 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         _scrollViewer.Offset = _scrollViewer.Offset.WithY(Math.Max(0, Math.Min(_tops[index], _tops[^1] - _scrollViewer.Viewport.Height)));
     }
 
+    /// <summary>
+    /// How much of the viewport top the pinned file header covers when this row sits at the top: rows inside a file
+    /// (below its header, within the same section) scroll underneath it; headers and section rows never do.
+    /// </summary>
+    private double StickyInset(int index) {
+        if ((uint)index >= (uint)_rows.Length || _rows[index] is DiffFileHeaderProjection or DiffSectionHeaderProjection) return 0;
+        for (var i = index - 1; i >= 0; i--) {
+            if (_rows[i] is DiffFileHeaderProjection) return FileHeight - FileCardTop + 1;
+            if (_rows[i] is DiffSectionHeaderProjection) return 0;
+        }
+
+        return 0;
+    }
+
     public void ScrollIntoView(IDiffRowProjection item) {
         if (_scrollViewer == null) return;
         var index = Array.IndexOf(_rows, item);
@@ -2873,7 +2916,9 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         var top = _tops[index];
         var bottom = _tops[index + 1];
         var offset = _scrollViewer.Offset;
-        if (top < offset.Y) _scrollViewer.Offset = offset.WithY(top);
+        // The pinned file header covers the first rows of the viewport, so a row is visible only below it.
+        var inset = StickyInset(index);
+        if (top < offset.Y + inset) _scrollViewer.Offset = offset.WithY(Math.Max(0, top - inset));
         else if (bottom > offset.Y + _scrollViewer.Viewport.Height) _scrollViewer.Offset = offset.WithY(Math.Max(0, bottom - _scrollViewer.Viewport.Height));
     }
 }

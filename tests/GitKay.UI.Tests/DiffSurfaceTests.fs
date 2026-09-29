@@ -143,6 +143,20 @@ module DiffSurfaceTests =
             test <@ stuck && collapsedTop = -12.0 @>)
 
     [<Fact>]
+    let ``scrolling a row into view never leaves it under the pinned file header`` () =
+        Headless.run (fun () ->
+            use fixture = new DiffFixture(DiffLayout.Unified)
+            let header = fixture.Header 1
+            fixture.Scroller.Offset <- Vector(0.0, fixture.ViewportTop header + 300.0)
+            Headless.pump ()
+            let line = fixture.Line 1 3
+            fixture.Surface.ScrollIntoView line
+            Headless.pump ()
+            // The pinned card covers the top 38px of the viewport.
+            let top = fixture.ViewportTop line
+            test <@ top >= 38.0 @>)
+
+    [<Fact>]
     let ``a stuck header lands in place without a frame at the old offset`` () =
         Headless.run (fun () ->
             use fixture = new DiffFixture(DiffLayout.Unified)
@@ -158,6 +172,27 @@ module DiffSurfaceTests =
             Headless.pump ()
             let settled = fixture.Scroller.Offset.Y
             test <@ offsetAfterCollapse <> offsetBefore && Math.Round(offsetAfterCollapse, 1) = Math.Round(settled, 1) @>)
+
+    [<Fact>]
+    let ``collapsing a tall file scrolled deep keeps its header in place even when little content is left`` () =
+        Headless.run (fun () ->
+            use fixture = new DiffFixture(DiffLayout.Unified)
+            let header = fixture.Header 2
+            // Deep into the last file (40 rows): collapsing it leaves nothing below, less than the view needs.
+            fixture.Scroller.Offset <- Vector(0.0, fixture.ViewportTop header + 900.0)
+            Headless.pump ()
+            fixture.Surface.Focus() |> ignore
+            fixture.Surface.SelectedItem <- header
+            fixture.Press Key.Enter
+            let collapsedTop = Math.Round(fixture.ViewportTop header, 1)
+            // Flush with the top as before, not clamped to a different offset.
+            test <@ collapsedTop = -12.0 @>
+
+            // Scrolling gives back the borrowed space: at the top the extent is just the rows again.
+            let borrowed = fixture.Scroller.Extent.Height
+            fixture.Scroller.Offset <- Vector(0.0, 0.0)
+            Headless.pump ()
+            test <@ fixture.Scroller.Extent.Height < borrowed @>)
 
     [<Fact>]
     let ``expanding a file again returns to where its content was`` () =
