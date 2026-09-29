@@ -143,6 +143,20 @@ module DiffSurfaceTests =
             test <@ stuck && collapsedTop = -12.0 @>)
 
     [<Fact>]
+    let ``scrolling a row into view never leaves it under the pinned file header`` () =
+        Headless.run (fun () ->
+            use fixture = new DiffFixture(DiffLayout.Unified)
+            let header = fixture.Header 1
+            fixture.Scroller.Offset <- Vector(0.0, fixture.ViewportTop header + 300.0)
+            Headless.pump ()
+            let line = fixture.Line 1 3
+            fixture.Surface.ScrollIntoView line
+            Headless.pump ()
+            // The pinned card covers the top 38px of the viewport.
+            let top = fixture.ViewportTop line
+            test <@ top >= 38.0 @>)
+
+    [<Fact>]
     let ``a stuck header lands in place without a frame at the old offset`` () =
         Headless.run (fun () ->
             use fixture = new DiffFixture(DiffLayout.Unified)
