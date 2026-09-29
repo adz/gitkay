@@ -116,9 +116,8 @@ module Presentation =
             let orr, og, ob = over
             mix ur orr, mix ug og, mix ub ob
 
-    /// The main window's title: which repository and branch the window is showing.
+    /// The main window's title: which repository the window is showing.
     module WindowTitle =
-        let private separator = " \u2014 "
         let private maxPathLength = 60
 
         /// <summary>
@@ -145,12 +144,6 @@ module Presentation =
                     index <- index - 1
                 "\u2026/" + tail
 
-        /// <summary>
-        /// "GitKay", then the repository path and branch when there are any. The branch is whatever HEAD is
-        /// ("main", "detached at abc1234"); an empty path (no repository open) or empty branch is left out.
-        /// </summary>
-        let format (home: string) (repoPath: string) (branch: string) =
-            [ "GitKay"
-              if not (String.IsNullOrWhiteSpace repoPath) then abbreviatePath home repoPath
-              if not (String.IsNullOrWhiteSpace branch) then branch.Trim() ]
-            |> String.concat separator
+        /// <summary>The abbreviated repository path, or "GitKay" when no repository is open.</summary>
+        let format (home: string) (repoPath: string) =
+            if String.IsNullOrWhiteSpace repoPath then "GitKay" else abbreviatePath home repoPath

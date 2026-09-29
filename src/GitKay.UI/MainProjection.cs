@@ -496,19 +496,9 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     [ObservableProperty] private string _windowTitle = "GitKay";
 
-    private object? _titleCommitsSource;
-    private string _titleBranch = "";
-
-    /// <summary>Keeps the window title on the repository and branch. HEAD is re-read only when history reloads, which is what a checkout triggers.</summary>
-    private void UpdateWindowTitle(GitKay.Core.App.Model model) {
-        var repoPath = model.GitEnv.RepoPath;
-        if (!ReferenceEquals(_titleCommitsSource, model.Commits)) {
-            _titleCommitsSource = model.Commits;
-            _titleBranch = string.IsNullOrEmpty(repoPath) ? "" : GitKay.Core.GitService.headLabel(repoPath);
-        }
+    private void UpdateWindowTitle(GitKay.Core.App.Model model) =>
         WindowTitle = GitKay.Core.Presentation.WindowTitle.format(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), repoPath, _titleBranch);
-    }
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), model.GitEnv.RepoPath);
 
     public void Update(GitKay.Core.App.Model model) {
         var startedAtTicks = Stopwatch.GetTimestamp();
