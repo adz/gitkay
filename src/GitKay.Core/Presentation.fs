@@ -123,6 +123,14 @@ module Presentation =
         /// <summary>Marks folders dropped from the start of a long path: "\u2026/" is an ellipsis (…) followed by a separator.</summary>
         let private ellipsis = "\u2026/"
 
+        /// <summary>Matches a value beginning with the prefix (ordinal), yielding what follows it.</summary>
+        let private (|StartsWith|_|) (prefix: string) (value: string) =
+            if value.StartsWith(prefix, StringComparison.Ordinal) then Some(value.Substring prefix.Length) else None
+
+        /// <summary>Matches a remainder that starts at a folder boundary, so "/home/ann" does not match "/home/annabel".</summary>
+        let private (|Separator|_|) (remainder: string) =
+            if remainder.StartsWith('/') || remainder.StartsWith('\\') then Some remainder else None
+
         /// <summary>
         /// Shortens a directory for a title: the home folder becomes "~", and a path longer than the room there is
         /// keeps its trailing folders behind a leading ellipsis, because the end of a path is what tells repositories apart.
@@ -132,11 +140,11 @@ module Presentation =
             let path = trimmedEnd path
             let home = if String.IsNullOrEmpty home then "" else trimmedEnd home
             let shown =
-                if home <> "" && path = home then "~"
-                elif home <> "" && path.Length > home.Length && path.StartsWith(home, StringComparison.Ordinal)
-                     && (path[home.Length] = '/' || path[home.Length] = '\\') then
-                    "~" + path.Substring home.Length
-                else path
+                match path with
+                | _ when home = "" -> path
+                | StartsWith home "" -> "~"
+                | StartsWith home (Separator rest) -> "~" + rest
+                | _ -> path
             if shown.Length <= maxPathLength then shown
             else
                 let folders = shown.Split([| '/'; '\\' |], StringSplitOptions.RemoveEmptyEntries)
