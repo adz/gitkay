@@ -165,7 +165,7 @@ public sealed class GitRunner(string workingDirectory, Action<string, bool> onLi
 public sealed class GitOperationWindow : Window {
     private static readonly Regex Percent = new(@"(\d{1,3})%", RegexOptions.Compiled);
     private readonly List<string> _lines = new();
-    private readonly SelectableTextBlock _log;
+    private readonly LinkTextBlock _log;
     private readonly ScrollViewer _logScroll;
     private readonly ProgressBar _progress;
     private readonly TextBlock _status;
@@ -187,7 +187,7 @@ public sealed class GitOperationWindow : Window {
         _status = new TextBlock { Text = $"{operation.Title}…", FontSize = 14, FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis };
         _status[!TextBlock.ForegroundProperty] = this.GetResourceObservable("GitKayTextBrush").ToBinding();
         _progress = new ProgressBar { IsIndeterminate = true, Minimum = 0, Maximum = 100, Height = 4, MinHeight = 4, Margin = new Thickness(0, 10, 0, 10) };
-        _log = new SelectableTextBlock { FontFamily = FontStacks.Mono, FontSize = 12, TextWrapping = TextWrapping.Wrap };
+        _log = new LinkTextBlock { FontFamily = FontStacks.Mono, FontSize = 12, TextWrapping = TextWrapping.Wrap };
         _log[!TextBlock.ForegroundProperty] = this.GetResourceObservable("GitKaySecondaryTextBrush").ToBinding();
         _logScroll = new ScrollViewer { Content = _log, Padding = new Thickness(8), HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
         var logBorder = new Border { Child = _logScroll, CornerRadius = new CornerRadius(4), BorderThickness = new Thickness(1) };
