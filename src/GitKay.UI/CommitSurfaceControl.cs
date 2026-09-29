@@ -221,6 +221,7 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
     }
 
     protected override Size MeasureOverride(Size availableSize) {
+        using var _ = DiagnosticsLog.Enter("CommitSurface.Measure");
         EnsureRows();
         return MeasureRows(availableSize);
     }
@@ -239,6 +240,7 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
     }
 
     public override void Render(DrawingContext context) {
+        using var _ = DiagnosticsLog.Enter("CommitSurface.Render");
         EnsureRows();
         var offset = _scrollViewer?.Offset.Y ?? 0;
         var viewport = _scrollViewer?.Viewport.Height ?? Bounds.Height;
@@ -519,8 +521,11 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
 
     protected override void OnPointerPressed(PointerPressedEventArgs e) {
         base.OnPointerPressed(e);
+        using var _ = DiagnosticsLog.Enter("CommitSurface.PointerPressed");
         Focus();
         _lastContextPoint = e.GetPosition(this);
+        DiagnosticsLog.Breadcrumb($"commit list press {e.GetCurrentPoint(this).Properties.PointerUpdateKind} x{e.ClickCount} at {_lastContextPoint.X:F0},{_lastContextPoint.Y:F0}"
+                                  + (BadgeAt(_lastContextPoint) is { } pressed ? $" on badge {pressed.Kind} {pressed.Text}" : ""));
         SelectAt(_lastContextPoint.Y);
         // After the click finishes, so the pointer release doesn't give focus back to this window.
         if (e.ClickCount == 2 && BadgeAt(_lastContextPoint) is { Kind: CommitRefKind.Branch or CommitRefKind.Remote or CommitRefKind.Tag } badge)
@@ -532,11 +537,16 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
     private void OnCommitContextRequested(object? sender, ContextRequestedEventArgs e) {
         // Built and opened here for the clicked commit and column. Assigning the ContextMenu property instead let
         // Avalonia's handler (registered first) open the menu built for the previous selection, hiding branch items.
+        using var _ = DiagnosticsLog.Enter("CommitSurface.ContextRequested");
         if (e.TryGetPosition(this, out var point)) {
             _lastContextPoint = point;
             SelectAt(point.Y);
         }
-        BuildContextMenu().Open(this);
+        DiagnosticsLog.Breadcrumb("commit list context menu: building");
+        var menu = BuildContextMenu();
+        DiagnosticsLog.Breadcrumb($"commit list context menu: built {menu.Items.Count} items, opening");
+        menu.Open(this);
+        DiagnosticsLog.Breadcrumb("commit list context menu: opened");
         e.Handled = true;
     }
 

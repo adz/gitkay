@@ -77,14 +77,17 @@ public partial class MainWindow : Window, IVimCommands {
         AddHandler(InputElement.LostFocusEvent, (_, _) => Dispatcher.UIThread.Post(UpdatePaneFocus), RoutingStrategies.Bubble);
     }
 
-    private IEnumerable<string> ComparisonRevisions() =>
-        _projection?.RepositoryPath is { } repository ? GitService.comparisonRevisions(repository) : [];
+    /// <summary>Read off the UI thread: opening the repository and listing every branch and remote branch is disk work.</summary>
+    private async System.Threading.Tasks.Task<IReadOnlyList<string>> ComparisonRevisionsAsync() {
+        if (_projection?.RepositoryPath is not { } repository) return [];
+        return await System.Threading.Tasks.Task.Run(() => GitService.comparisonRevisions(repository));
+    }
 
     private async void OnRevisionComparisonRequested(string target, bool chooseBase) {
         if (_projection is not { } projection) return;
         var baseRevision = projection.ComparisonBase;
         if (chooseBase || string.IsNullOrWhiteSpace(baseRevision)) {
-            var choice = await RevisionComparisonDialog.ShowAsync(this, ComparisonRevisions(), baseRevision, target, targetEditable: false);
+            var choice = await RevisionComparisonDialog.ShowAsync(this, await ComparisonRevisionsAsync(), baseRevision, target, targetEditable: false);
             if (choice == null) return;
             baseRevision = choice.Value.Base;
         }
@@ -95,7 +98,7 @@ public partial class MainWindow : Window, IVimCommands {
 
     private async void OnChangeRevisionComparison(object? sender, RoutedEventArgs e) {
         if (_projection is not { } projection) return;
-        var choice = await RevisionComparisonDialog.ShowAsync(this, ComparisonRevisions(), projection.ComparisonBaseRevision, projection.ComparisonTargetRevision);
+        var choice = await RevisionComparisonDialog.ShowAsync(this, await ComparisonRevisionsAsync(), projection.ComparisonBaseRevision, projection.ComparisonTargetRevision);
         if (choice != null) {
             projection.ComparisonBase = choice.Value.Base;
             projection.OpenRevisionComparison(choice.Value.Base, choice.Value.Target);

@@ -69,6 +69,69 @@ public static class DiagnosticsLog {
             RecentLags.Enqueue(ms);
         }
     }
+
+    // ----- What the UI thread is doing, for hang reports. -----
+    // A hang report is written from the watchdog thread, and a managed stack of another thread is not available (least of
+    // all under NativeAOT). Named scopes around the entry points that can run long stand in for it: whatever scope
+    // was entered and never left is where the UI thread is stuck. Only the UI thread writes them.
+
+    private const int BreadcrumbCapacity = 40;
+    private static readonly string?[] BreadcrumbText = new string?[BreadcrumbCapacity];
+    private static readonly long[] BreadcrumbTicks = new long[BreadcrumbCapacity];
+    private static int _breadcrumbNext;
+    private static string? _uiScope;
+    private static long _uiScopeSince;
+
+    /// <summary>Notes a UI event (a click, a menu opening) so a hang report can say what happened just before it.</summary>
+    public static void Breadcrumb(string what) {
+        var slot = (Interlocked.Increment(ref _breadcrumbNext) - 1) % BreadcrumbCapacity;
+        BreadcrumbTicks[slot] = Stopwatch.GetTimestamp();
+        BreadcrumbText[slot] = what;
+    }
+
+    private static readonly TimeSpan SlowScope = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
+    /// Marks the UI thread as inside <paramref name="name"/> until the returned scope is disposed. A scope that took
+    /// long enough for the user to notice is logged, so a slow pass shows up in the log before it becomes a hang.
+    /// </summary>
+    public static UiScope Enter(string name) {
+        var scope = new UiScope(name, _uiScope, _uiScopeSince);
+        _uiScope = name;
+        _uiScopeSince = Stopwatch.GetTimestamp();
+        return scope;
+    }
+
+    public readonly struct UiScope(string name, string? previous, long previousSince) : IDisposable {
+        private readonly long _started = Stopwatch.GetTimestamp();
+
+        public void Dispose() {
+            _uiScope = previous;
+            _uiScopeSince = previousSince;
+            var elapsed = Stopwatch.GetElapsedTime(_started);
+            if (elapsed > SlowScope) Trace.WriteLine($"[slow] {name} held the UI thread for {elapsed.TotalMilliseconds:F0}ms");
+        }
+    }
+
+    /// <summary>The scope the UI thread is in, how long it has been there, and the last UI events, newest last.</summary>
+    public static string DescribeUiActivity() {
+        var now = Stopwatch.GetTimestamp();
+        var builder = new StringBuilder();
+        var scope = _uiScope;
+        builder.AppendLine(scope == null
+            ? "UI thread is not inside a tracked scope."
+            : $"UI thread has been inside \"{scope}\" for {Stopwatch.GetElapsedTime(_uiScopeSince, now).TotalSeconds:F1}s.");
+        builder.AppendLine("Recent UI events (oldest first):");
+        var total = Volatile.Read(ref _breadcrumbNext);
+        var first = Math.Max(0, total - BreadcrumbCapacity);
+        for (var index = first; index < total; index++) {
+            var slot = index % BreadcrumbCapacity;
+            if (BreadcrumbText[slot] is { } text)
+                builder.AppendLine($"  {Stopwatch.GetElapsedTime(BreadcrumbTicks[slot], now).TotalSeconds,6:F2}s ago  {text}");
+        }
+        return builder.ToString();
+    }
+
     public static string? CurrentLogFile { get; private set; }
 
     public static void Initialize(string[] args) {
@@ -106,6 +169,7 @@ public static class DiagnosticsLog {
         builder.AppendLine("Recent messages (oldest first):");
         builder.AppendLine(GitKay.Core.Diagnostics.describeRecent(40));
         builder.AppendLine();
+        builder.AppendLine(DescribeUiActivity());
         builder.AppendLine("Running flows (Axial fibers):");
         try {
             var dump = CmdDiagnostics.Registry.DumpAt(DateTimeOffset.Now);
@@ -165,6 +229,8 @@ public static class DiagnosticsLog {
                     HangCount++;
                     var path = WriteReport("hang", $"The UI thread has not responded for {silence.TotalSeconds:F1}s.");
                     Trace.WriteLine($"[hang] report written to {path}");
+                    if (path != null && HangDump.TryWrite(Path.ChangeExtension(path, ".dmp")) is { } dump)
+                        Trace.WriteLine($"[hang] thread stacks written to {dump}");
                 }
                 else if (silence < TimeSpan.FromSeconds(1.5) && reported) {
                     reported = false;

@@ -501,6 +501,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), model.GitEnv.RepoPath);
 
     public void Update(GitKay.Core.App.Model model) {
+        using var _ = DiagnosticsLog.Enter("MainProjection.Update");
         var startedAtTicks = Stopwatch.GetTimestamp();
         UpdateWindowTitle(model);
         Status = model.Status;
