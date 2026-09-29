@@ -1,8 +1,14 @@
 # GitKay
 
-GitKay is a fast, cross-platform Git history viewer based on the layout simplicity of gitk + git gui but with the repository-browsing experience of GitHub and the keyboard ergonomics of an editor.
+GitKay is a fast, cross-platform Git history viewer...
 
-Navigate as quickly as you navigate an editor: browse the commit graph, jump between files and revisions, review branches like a pull request, open complete files and rendered Markdown, search everywhere, and stage individual hunks or lines. Use the mouse and familiar GUI controls, or stay entirely on the keyboard with deep Vim navigation, visual selection and command palettes (ctrl-p).
+...based on the layout simplicity of gitk + git gui but with the repository-browsing experience of GitHub and the keyboard ergonomics of an editor.
+
+Navigate as quickly as you navigate an editor: 
+
+browse the commit graph, jump between files and revisions, review branches like a pull request, open complete files and rendered Markdown, search everywhere, and stage individual hunks or lines. 
+
+Use the mouse and familiar GUI controls, or stay entirely on the keyboard with deep Vim navigation, visual selection and command palettes (ctrl-p).
 
 ![GitKay history, commit graph, changed files and diff in dark theme](docs/images/history-dark.png)
 
