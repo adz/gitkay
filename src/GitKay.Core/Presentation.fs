@@ -115,3 +115,45 @@ module Presentation =
             let ur, ug, ub = under
             let orr, og, ob = over
             mix ur orr, mix ug og, mix ub ob
+
+    /// The main window's title: which repository the window is showing.
+    module WindowTitle =
+        let private maxPathLength = 60
+
+        /// <summary>Marks folders dropped from the start of a long path: "\u2026/" is an ellipsis (…) followed by a separator.</summary>
+        let private ellipsis = "\u2026/"
+
+        /// <summary>Matches a value beginning with the prefix (ordinal), yielding what follows it.</summary>
+        let private (|StartsWith|_|) (prefix: string) (value: string) =
+            if value.StartsWith(prefix, StringComparison.Ordinal) then Some(value.Substring prefix.Length) else None
+
+        /// <summary>Matches a remainder that starts at a folder boundary, so "/home/ann" does not match "/home/annabel".</summary>
+        let private (|Separator|_|) (remainder: string) =
+            if remainder.StartsWith('/') || remainder.StartsWith('\\') then Some remainder else None
+
+        /// <summary>
+        /// Shortens a directory for a title: the home folder becomes "~", and a path longer than the room there is
+        /// keeps its trailing folders behind a leading ellipsis, because the end of a path is what tells repositories apart.
+        /// </summary>
+        let abbreviatePath (home: string) (path: string) =
+            let trimmedEnd (value: string) = if value.Length > 1 then value.TrimEnd('/', '\\') else value
+            let path = trimmedEnd path
+            let home = if String.IsNullOrEmpty home then "" else trimmedEnd home
+            let shown =
+                match path with
+                | _ when home = "" -> path
+                | StartsWith home "" -> "~"
+                | StartsWith home (Separator rest) -> "~" + rest
+                | _ -> path
+            if shown.Length <= maxPathLength then shown
+            else
+                let folders = shown.Split([| '/'; '\\' |], StringSplitOptions.RemoveEmptyEntries)
+                let fits (candidate: string list) = (ellipsis + String.Join("/", candidate)).Length <= maxPathLength
+                // Each suffix of the path, growing from the last folder; keep the longest that fits, and always at least the last folder.
+                let suffixes = folders |> Array.rev |> Seq.scan (fun suffix folder -> folder :: suffix) [] |> Seq.skip 1
+                let kept = suffixes |> Seq.takeWhile fits |> Seq.tryLast |> Option.defaultValue [ Array.last folders ]
+                ellipsis + String.Join("/", kept)
+
+        /// <summary>The abbreviated repository path, or "GitKay" when no repository is open.</summary>
+        let format (home: string) (repoPath: string) =
+            if String.IsNullOrWhiteSpace repoPath then "GitKay" else abbreviatePath home repoPath

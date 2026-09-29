@@ -143,6 +143,20 @@ module DiffSurfaceTests =
             test <@ stuck && collapsedTop = -12.0 @>)
 
     [<Fact>]
+    let ``scrolling a row into view never leaves it under the pinned file header`` () =
+        Headless.run (fun () ->
+            use fixture = new DiffFixture(DiffLayout.Unified)
+            let header = fixture.Header 1
+            fixture.Scroller.Offset <- Vector(0.0, fixture.ViewportTop header + 300.0)
+            Headless.pump ()
+            let line = fixture.Line 1 3
+            fixture.Surface.ScrollIntoView line
+            Headless.pump ()
+            // The pinned card covers the top 38px of the viewport.
+            let top = fixture.ViewportTop line
+            test <@ top >= 38.0 @>)
+
+    [<Fact>]
     let ``a stuck header lands in place without a frame at the old offset`` () =
         Headless.run (fun () ->
             use fixture = new DiffFixture(DiffLayout.Unified)
@@ -158,6 +172,27 @@ module DiffSurfaceTests =
             Headless.pump ()
             let settled = fixture.Scroller.Offset.Y
             test <@ offsetAfterCollapse <> offsetBefore && Math.Round(offsetAfterCollapse, 1) = Math.Round(settled, 1) @>)
+
+    [<Fact>]
+    let ``collapsing a tall file scrolled deep keeps its header in place even when little content is left`` () =
+        Headless.run (fun () ->
+            use fixture = new DiffFixture(DiffLayout.Unified)
+            let header = fixture.Header 2
+            // Deep into the last file (40 rows): collapsing it leaves nothing below, less than the view needs.
+            fixture.Scroller.Offset <- Vector(0.0, fixture.ViewportTop header + 900.0)
+            Headless.pump ()
+            fixture.Surface.Focus() |> ignore
+            fixture.Surface.SelectedItem <- header
+            fixture.Press Key.Enter
+            let collapsedTop = Math.Round(fixture.ViewportTop header, 1)
+            // Flush with the top as before, not clamped to a different offset.
+            test <@ collapsedTop = -12.0 @>
+
+            // Scrolling gives back the borrowed space: at the top the extent is just the rows again.
+            let borrowed = fixture.Scroller.Extent.Height
+            fixture.Scroller.Offset <- Vector(0.0, 0.0)
+            Headless.pump ()
+            test <@ fixture.Scroller.Extent.Height < borrowed @>)
 
     [<Fact>]
     let ``expanding a file again returns to where its content was`` () =
@@ -2463,3 +2498,36 @@ module UiStateSaveTests =
             test <@ saved.Contains "bbbb" && not (saved.Contains "aaaa") @>
         finally
             IO.File.Delete path
+
+type LinkTextBlockTests() =
+    [<Fact>]
+    member _.``a url in the text is a link that can be hit-tested, and the text is unchanged`` () =
+        Headless.run (fun () ->
+            let text = "remote: View pull request:\nremote:   https://bitbucket.org/a/b/pull-requests/7?t=1\nremote:"
+            let block = LinkTextBlock(Text = text, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top, TextWrapping = Avalonia.Media.TextWrapping.Wrap)
+            let window = Window(Width = 600.0, Height = 200.0, Content = block)
+            window.Show()
+            Headless.pump ()
+            test <@ block.Text = text @>
+            test <@ block.Inlines.Count = 3 @>
+            // Aim at the URL's actual glyphs, wherever this machine's font puts them.
+            let url = "https://bitbucket.org/a/b/pull-requests/7?t=1"
+            let centreOf index =
+                block.TextLayout.HitTestTextRange(index, 1) |> Seq.map (fun r -> r.Center) |> Seq.head
+            let inUrl = centreOf (text.IndexOf url + 10)
+            let onUrl = block.LinkAt inUrl
+            test <@ onUrl = url @>
+            let onProse = block.LinkAt(centreOf 2)
+            test <@ isNull onProse @>
+            // Blank space to the right of a short line is not the link.
+            let firstLine = centreOf 2
+            let beside = block.LinkAt(Point(block.Bounds.Width - 2.0, firstLine.Y))
+            test <@ isNull beside @>
+            // Later output replaces the text: links follow it, and a URL-free text is plain again.
+            block.Text <- text + "\nsee http://x.io/y."
+            Headless.pump ()
+            test <@ block.Text.EndsWith "http://x.io/y." && block.Inlines.Count = 5 @>
+            block.Text <- "nothing here"
+            Headless.pump ()
+            test <@ block.Text = "nothing here" && block.Inlines.Count = 0 @>
+            window.Close())

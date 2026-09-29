@@ -13,6 +13,7 @@
     <Compile Include="SourceDiff.fs" />
     <Compile Include="Keys.fs" />
     <Compile Include="Presentation.fs" />
+    <Compile Include="Links.fs" />
     <Compile Include="Markdown.fs" />
     <Compile Include="DiffFind.fs" />
     <Compile Include="Settings.fs" />

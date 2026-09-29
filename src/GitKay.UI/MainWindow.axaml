@@ -7,7 +7,7 @@
         x:Class="GitKay.UI.MainWindow"
         x:Name="RootWindow"
         x:DataType="local:MainProjection"
-        Title="GitKay"
+        Title="{Binding WindowTitle}"
         Background="{DynamicResource GitKayWindowBrush}">
 
     <DockPanel>
