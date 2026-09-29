@@ -2343,11 +2343,19 @@ type LinkTextBlockTests() =
             Headless.pump ()
             test <@ block.Text = text @>
             test <@ block.Inlines.Count = 3 @>
-            // Second line, over the URL, versus the first line's prose.
-            let lineHeight = block.Bounds.Height / 3.0
-            test <@ block.LinkAt(Point(200.0, lineHeight * 1.5)) = "https://bitbucket.org/a/b/pull-requests/7?t=1" @>
-            test <@ block.LinkAt(Point(590.0, lineHeight * 1.5)) |> isNull @>
-            test <@ block.LinkAt(Point(5.0, lineHeight * 0.5)) |> isNull @>
+            // Aim at the URL's actual glyphs, wherever this machine's font puts them.
+            let url = "https://bitbucket.org/a/b/pull-requests/7?t=1"
+            let centreOf index =
+                block.TextLayout.HitTestTextRange(index, 1) |> Seq.map (fun r -> r.Center) |> Seq.head
+            let inUrl = centreOf (text.IndexOf url + 10)
+            let onUrl = block.LinkAt inUrl
+            test <@ onUrl = url @>
+            let onProse = block.LinkAt(centreOf 2)
+            test <@ isNull onProse @>
+            // Blank space to the right of a short line is not the link.
+            let firstLine = centreOf 2
+            let beside = block.LinkAt(Point(block.Bounds.Width - 2.0, firstLine.Y))
+            test <@ isNull beside @>
             // Later output replaces the text: links follow it, and a URL-free text is plain again.
             block.Text <- text + "\nsee http://x.io/y."
             Headless.pump ()
