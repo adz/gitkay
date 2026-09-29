@@ -2349,6 +2349,11 @@ type LinkTextBlockTests() =
                 block.TextLayout.HitTestTextRange(index, 1) |> Seq.map (fun r -> r.Center) |> Seq.head
             let inUrl = centreOf (text.IndexOf url + 10)
             let onUrl = block.LinkAt inUrl
+            if isNull onUrl then
+                let mutable pt = inUrl
+                let hit = block.TextLayout.HitTestPoint(&pt)
+                let rects = block.TextLayout.HitTestTextRange(hit.TextPosition, 1) |> Seq.map string |> String.concat ";"
+                failwith $"DIAG point={inUrl} pos={hit.TextPosition} inside={hit.IsInside} rects=[{rects}] urlIdx={text.IndexOf url} bounds={block.Bounds} lines={block.TextLayout.TextLines.Count} font={block.FontFamily} size={block.FontSize}"
             test <@ onUrl = url @>
             let onProse = block.LinkAt(centreOf 2)
             test <@ isNull onProse @>
