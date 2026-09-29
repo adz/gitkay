@@ -360,7 +360,7 @@
                     <Border x:Name="FailureOutputPart" Grid.Row="0" IsVisible="{Binding HasFailureOutput}" MaxHeight="160"
                             Background="{DynamicResource GitKayRemovedBrush}" BorderBrush="{DynamicResource GitKayBorderBrush}" BorderThickness="0,0,0,1" Padding="10,6">
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
-                            <SelectableTextBlock Text="{Binding FailureOutput}" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="11"
+                            <local:LinkTextBlock Text="{Binding FailureOutput}" FontFamily="{x:Static local:FontStacks.Mono}" FontSize="11"
                                                  Foreground="{DynamicResource GitKayTextBrush}" TextWrapping="Wrap" />
                         </ScrollViewer>
                     </Border>

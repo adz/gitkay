@@ -2331,3 +2331,28 @@ module FolderRefreshTests =
         test <@ projection.SelectedFile.ContentPath = "b.txt" @>
         test <@ projection.FileListMode = CommitFileListMode.Tree @>
         test <@ projection.Files.Count = 3 @>
+
+type LinkTextBlockTests() =
+    [<Fact>]
+    member _.``a url in the text is a link that can be hit-tested, and the text is unchanged`` () =
+        Headless.run (fun () ->
+            let text = "remote: View pull request:\nremote:   https://bitbucket.org/a/b/pull-requests/7?t=1\nremote:"
+            let block = LinkTextBlock(Text = text, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top, TextWrapping = Avalonia.Media.TextWrapping.Wrap)
+            let window = Window(Width = 600.0, Height = 200.0, Content = block)
+            window.Show()
+            Headless.pump ()
+            test <@ block.Text = text @>
+            test <@ block.Inlines.Count = 3 @>
+            // Second line, over the URL, versus the first line's prose.
+            let lineHeight = block.Bounds.Height / 3.0
+            test <@ block.LinkAt(Point(200.0, lineHeight * 1.5)) = "https://bitbucket.org/a/b/pull-requests/7?t=1" @>
+            test <@ block.LinkAt(Point(590.0, lineHeight * 1.5)) |> isNull @>
+            test <@ block.LinkAt(Point(5.0, lineHeight * 0.5)) |> isNull @>
+            // Later output replaces the text: links follow it, and a URL-free text is plain again.
+            block.Text <- text + "\nsee http://x.io/y."
+            Headless.pump ()
+            test <@ block.Text.EndsWith "http://x.io/y." && block.Inlines.Count = 5 @>
+            block.Text <- "nothing here"
+            Headless.pump ()
+            test <@ block.Text = "nothing here" && block.Inlines.Count = 0 @>
+            window.Close())
