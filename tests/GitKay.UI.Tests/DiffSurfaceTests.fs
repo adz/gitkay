@@ -174,6 +174,27 @@ module DiffSurfaceTests =
             test <@ offsetAfterCollapse <> offsetBefore && Math.Round(offsetAfterCollapse, 1) = Math.Round(settled, 1) @>)
 
     [<Fact>]
+    let ``collapsing a tall file scrolled deep keeps its header in place even when little content is left`` () =
+        Headless.run (fun () ->
+            use fixture = new DiffFixture(DiffLayout.Unified)
+            let header = fixture.Header 2
+            // Deep into the last file (40 rows): collapsing it leaves nothing below, less than the view needs.
+            fixture.Scroller.Offset <- Vector(0.0, fixture.ViewportTop header + 900.0)
+            Headless.pump ()
+            fixture.Surface.Focus() |> ignore
+            fixture.Surface.SelectedItem <- header
+            fixture.Press Key.Enter
+            let collapsedTop = Math.Round(fixture.ViewportTop header, 1)
+            // Flush with the top as before, not clamped to a different offset.
+            test <@ collapsedTop = -12.0 @>
+
+            // Scrolling gives back the borrowed space: at the top the extent is just the rows again.
+            let borrowed = fixture.Scroller.Extent.Height
+            fixture.Scroller.Offset <- Vector(0.0, 0.0)
+            Headless.pump ()
+            test <@ fixture.Scroller.Extent.Height < borrowed @>)
+
+    [<Fact>]
     let ``expanding a file again returns to where its content was`` () =
         Headless.run (fun () ->
             use fixture = new DiffFixture(DiffLayout.Unified)

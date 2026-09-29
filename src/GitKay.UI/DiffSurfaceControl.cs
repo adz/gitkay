@@ -629,6 +629,15 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         _pendingAnchor = null;
         var row = _rows[index];
         var target = Math.Max(0, _tops[index] - anchor.ViewportOffset);
+        // Collapsing a file can leave less content than the anchored position needs: the scroll viewer would clamp
+        // the offset and the header would jump. Lend the extent the missing space until the reader scrolls.
+        if (anchor.Row is DiffFileHeaderProjection && _scrollViewer.Viewport.Height > 0) {
+            var missing = Math.Max(0, target + _scrollViewer.Viewport.Height - _tops[^1]);
+            if (Math.Abs(missing - _tailPad) > 0.5) {
+                _tailPad = missing;
+                InvalidateMeasure();
+            }
+        }
         // Apply it now so the next frame is already in the right place: posting it paints one frame at the old
         // offset first, which reads as a flash when a pinned file header is collapsed.
         SetOffsetWithoutScrolling(target);
@@ -677,8 +686,14 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             ComputeTops();
             InvalidateOverview();
         }
-        return new Size(width, _tops[^1]);
+        return new Size(width, _tops[^1] + _tailPad);
     }
+
+    /// <summary>
+    /// Empty space after the last row, kept only while a collapsed file's header is held in place; the next user
+    /// scroll gives back whatever the view no longer needs.
+    /// </summary>
+    private double _tailPad;
 
     protected override Size ArrangeOverride(Size finalSize) {
         var size = base.ArrangeOverride(finalSize);
@@ -702,7 +717,16 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     /// hand paused — which is exactly when a slow scroll pauses. Lines are coloured as they are drawn instead.
     /// </summary>
     private void OnScrollChanged(object? sender, ScrollChangedEventArgs e) {
-        if (!_programmaticScroll) _userScrolls++;
+        if (!_programmaticScroll) {
+            _userScrolls++;
+            if (_tailPad > 0 && _scrollViewer != null) {
+                var kept = Math.Max(0, _scrollViewer.Offset.Y + _scrollViewer.Viewport.Height - _tops[^1]);
+                if (kept < _tailPad - 0.5) {
+                    _tailPad = kept;
+                    InvalidateMeasure();
+                }
+            }
+        }
         InvalidateVisual();
     }
 
