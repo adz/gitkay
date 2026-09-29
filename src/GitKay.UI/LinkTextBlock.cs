@@ -52,14 +52,19 @@ public class LinkTextBlock : SelectableTextBlock {
         if (string.IsNullOrEmpty(text)) return null;
         var local = new Point(point.X - Padding.Left, point.Y - Padding.Top);
         var hit = TextLayout.HitTestPoint(local);
-        var index = hit.TextPosition;
-        // A point past the end of a short line still resolves to that line's last character; only a point on the
-        // characters themselves counts, so blank space beside a link is not a click on it.
-        var onCharacter = false;
-        foreach (var rect in TextLayout.HitTestTextRange(index, 1)) onCharacter |= rect.Contains(local);
-        if (!onCharacter) return null;
-        var found = GitKay.Core.Links.linkAt(text, index);
-        return found == null ? null : found.Value;
+        // The hit is a caret position, the nearest edge, so the character under the point is this one or the one
+        // before it. A point past the end of a short line still resolves to that line's last edge; only a point on
+        // the characters themselves counts, so blank space beside a link is not a click on it.
+        for (var index = hit.TextPosition; index >= Math.Max(0, hit.TextPosition - 1); index--) {
+            if (index >= text.Length) continue;
+            foreach (var rect in TextLayout.HitTestTextRange(index, 1)) {
+                if (!rect.Contains(local)) continue;
+                var found = GitKay.Core.Links.linkAt(text, index);
+                return found == null ? null : found.Value;
+            }
+        }
+
+        return null;
     }
 
     protected override void OnPointerMoved(PointerEventArgs e) {
