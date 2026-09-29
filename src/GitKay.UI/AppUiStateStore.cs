@@ -28,14 +28,60 @@ public sealed class AppUiStateStore {
         return UiStateModule.empty;
     }
 
+    private readonly object _writeGate = new();
+
     public void Save(UiState state) {
         try {
             var directory = Path.GetDirectoryName(_statePath);
             if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
-            File.WriteAllText(_statePath, UiStateJson.encode(state));
+            var json = UiStateJson.encode(state);
+            // One writer at a time: the exit save and a background save must not interleave on the same file.
+            lock (_writeGate) File.WriteAllText(_statePath, json);
         }
         catch (Exception exception) {
             System.Diagnostics.Trace.WriteLine($"[ui-state] {_statePath} not saved: {exception.Message}");
+        }
+    }
+
+    private readonly object _pendingGate = new();
+    private UiState? _pending;
+    private bool _writerRunning;
+
+    /// <summary>
+    /// Saves without making the caller wait for the disk. Selecting a commit saves the selection, and a click must not
+    /// stall on a slow or contended file (a synced AppData folder, a virus scan, a second GitKay writing the same file).
+    /// Saves made while one is being written collapse into the newest; the returned task completes once the file holds it.
+    /// </summary>
+    public System.Threading.Tasks.Task SaveInBackground(UiState state) {
+        var completion = new System.Threading.Tasks.TaskCompletionSource();
+        lock (_pendingGate) {
+            _pending = state;
+            _waiting.Add(completion);
+            if (_writerRunning) return completion.Task;
+            _writerRunning = true;
+        }
+        System.Threading.Tasks.Task.Run(WriteWhilePending);
+        return completion.Task;
+    }
+
+    private readonly System.Collections.Generic.List<System.Threading.Tasks.TaskCompletionSource> _waiting = new();
+
+    private void WriteWhilePending() {
+        while (true) {
+            UiState next;
+            System.Threading.Tasks.TaskCompletionSource[] waiting;
+            lock (_pendingGate) {
+                if (_pending is not { } pending) {
+                    _writerRunning = false;
+                    return;
+                }
+                next = pending;
+                _pending = null;
+                waiting = _waiting.ToArray();
+                _waiting.Clear();
+            }
+            Save(next);
+            foreach (var completion in waiting) completion.TrySetResult();
         }
     }
 

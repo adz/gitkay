@@ -2331,3 +2331,135 @@ module FolderRefreshTests =
         test <@ projection.SelectedFile.ContentPath = "b.txt" @>
         test <@ projection.FileListMode = CommitFileListMode.Tree @>
         test <@ projection.Files.Count = 3 @>
+
+module BranchRightClickTests =
+    let private git (dir: string) (args: string) =
+        let info = Diagnostics.ProcessStartInfo("git", args, WorkingDirectory = dir, RedirectStandardOutput = true, RedirectStandardError = true)
+        use p = Diagnostics.Process.Start info
+        p.WaitForExit()
+        if p.ExitCode <> 0 then failwithf "git %s failed: %s" args (p.StandardError.ReadToEnd())
+
+    /// A repository whose newest commit rewrites a long Markdown file and carries a second local branch.
+    let private makeRepo () =
+        let dir = IO.Path.Combine(IO.Path.GetTempPath(), "gitkay-rightclick-" + Guid.NewGuid().ToString("N"))
+        IO.Directory.CreateDirectory dir |> ignore
+        git dir "init -q -b master"
+        git dir "config user.email t@t"
+        git dir "config user.name t"
+        IO.File.WriteAllText(IO.Path.Combine(dir, "README.md"), "# Title\n\nHello world.\n")
+        git dir "add -A"
+        git dir "commit -q -m first"
+        let text = Text.StringBuilder("# Title\n\n")
+        for i in 1..60 do
+            let sentence = "Paragraph with **bold**, `code` and [a link](http://a.b). "
+            text.Append($"## Section {i}\n\n").Append(String.replicate 4 sentence).Append("\n\n") |> ignore
+            text.Append("| a | b |\n|---|---|\n| one | two |\n\n") |> ignore
+        IO.File.WriteAllText(IO.Path.Combine(dir, "README.md"), text.ToString())
+        git dir "add -A"
+        git dir "commit -q -m second"
+        git dir "branch feature/x"
+        dir
+
+    let private spin (milliseconds: int) =
+        let clock = Diagnostics.Stopwatch.StartNew()
+        while clock.ElapsedMilliseconds < int64 milliseconds do
+            Dispatcher.UIThread.RunJobs()
+            Thread.Sleep 10
+
+    [<Fact>]
+    let ``right-clicking a branch badge just after its commit renders Markdown opens the branch menu promptly`` () =
+        let dir = makeRepo ()
+        let previous = IO.Directory.GetCurrentDirectory()
+        IO.Directory.SetCurrentDirectory dir
+        try
+            Headless.run (fun () ->
+                let projection = MainProjection(RepositoryPath = dir)
+                let window = MainWindow(Width = 1400.0, Height = 900.0, DataContext = projection)
+                window.Show()
+                let host =
+                    Elmish.Avalonia.Glue.ElmishHost.startAndBind
+                        (App.program [||])
+                        (Action<App.Model>(fun model -> projection.Update model))
+                        (Action<Action<App.Msg>>(fun dispatch -> projection.SetDispatch dispatch))
+                try
+                    spin 3000
+                    let surface = window.FindControl<CommitSurfaceControl>("CommitListBox")
+                    let at row = surface.TranslatePoint(Point(58.0, 10.0 + 26.0 * float row), window).Value
+                    let branchMenuOffered () =
+                        surface.BuildContextMenu().Items
+                        |> Seq.exists (function
+                            | :? MenuItem as item -> (string item.Header).StartsWith "Branch:"
+                            | _ -> false)
+                    // Select the older commit, then right-click the newest commit's badge while its diff is still arriving.
+                    for delay in [ 0; 150; 600 ] do
+                        window.MouseDown(at 1, MouseButton.Left)
+                        window.MouseUp(at 1, MouseButton.Left)
+                        spin delay
+                        let clock = Diagnostics.Stopwatch.StartNew()
+                        window.MouseDown(at 0, MouseButton.Right)
+                        window.MouseUp(at 0, MouseButton.Right)
+                        let handled = clock.Elapsed
+                        test <@ branchMenuOffered () @>
+                        test <@ handled < TimeSpan.FromSeconds 5.0 @>
+                        spin 1500
+                        window.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.Escape, null)
+                        spin 100
+                    test <@ (DiagnosticsLog.DescribeUiActivity()).Contains "commit list context menu: opened" @>
+                finally
+                    // The Elmish runtime is process-wide; stopping it would break every later test that dispatches.
+                    (host :> IDisposable).Dispose()
+                    window.Close())
+        finally
+            IO.Directory.SetCurrentDirectory previous
+            try IO.Directory.Delete(dir, true) with _ -> ()
+
+module HangDiagnosticsTests =
+    [<Fact>]
+    let ``a hang report names the scope the UI thread is stuck in and what happened just before`` () =
+        DiagnosticsLog.Breadcrumb "right-click on a badge"
+        use _scope = DiagnosticsLog.Enter "Some.Long.Operation"
+        let report = DiagnosticsLog.DescribeUiActivity()
+        test <@ report.Contains "inside \"Some.Long.Operation\"" @>
+        test <@ report.Contains "right-click on a badge" @>
+
+    [<Fact>]
+    let ``leaving a scope restores the one around it`` () =
+        use _outer = DiagnosticsLog.Enter "Outer"
+        (use _inner = DiagnosticsLog.Enter "Inner"
+         test <@ DiagnosticsLog.DescribeUiActivity().Contains "inside \"Inner\"" @>)
+        test <@ DiagnosticsLog.DescribeUiActivity().Contains "inside \"Outer\"" @>
+
+module UiStateSaveTests =
+    [<Fact>]
+    let ``saving the selection does not wait for the disk`` () =
+        // A named pipe with no reader blocks any write to it, standing in for a file the disk cannot take yet.
+        if OperatingSystem.IsWindows() then ()
+        else
+            let path = IO.Path.Combine(IO.Path.GetTempPath(), "gitkay-ui-state-" + Guid.NewGuid().ToString("N"))
+            let make = Diagnostics.Process.Start("mkfifo", path)
+            make.WaitForExit()
+            try
+                let store = AppUiStateStore(path)
+                let clock = Diagnostics.Stopwatch.StartNew()
+                let pending = store.SaveInBackground UiState.empty
+                test <@ clock.Elapsed < TimeSpan.FromSeconds 1.0 @>
+                test <@ not pending.IsCompleted @>
+                // Release the blocked write so the test does not leave a thread parked on the pipe.
+                use reader = new IO.FileStream(path, IO.FileMode.Open, IO.FileAccess.Read)
+                test <@ pending.Wait(TimeSpan.FromSeconds 10.0) @>
+            finally
+                IO.File.Delete path
+
+    [<Fact>]
+    let ``saves made while one is being written collapse into the newest`` () =
+        let path = IO.Path.Combine(IO.Path.GetTempPath(), "gitkay-ui-state-" + Guid.NewGuid().ToString("N") + ".json")
+        try
+            let store = AppUiStateStore(path)
+            let first = UiState.withSelectedCommit "repo" "aaaa" UiState.empty
+            let last = UiState.withSelectedCommit "repo" "bbbb" UiState.empty
+            let tasks = [ store.SaveInBackground first; store.SaveInBackground last ]
+            test <@ Threading.Tasks.Task.WaitAll(tasks |> Array.ofList, TimeSpan.FromSeconds 10.0) @>
+            let saved = IO.File.ReadAllText path
+            test <@ saved.Contains "bbbb" && not (saved.Contains "aaaa") @>
+        finally
+            IO.File.Delete path

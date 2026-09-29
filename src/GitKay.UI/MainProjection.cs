@@ -495,6 +495,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     }
 
     public void Update(GitKay.Core.App.Model model) {
+        using var _ = DiagnosticsLog.Enter("MainProjection.Update");
         var startedAtTicks = Stopwatch.GetTimestamp();
         Status = model.Status;
         IsInitialLoading = model.Commits.IsEmpty && !model.Status.StartsWith("Error", StringComparison.OrdinalIgnoreCase);

@@ -671,6 +671,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     private void OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) => RebuildRows();
 
     protected override Size MeasureOverride(Size availableSize) {
+        using var _ = DiagnosticsLog.Enter("DiffSurface.Measure");
         var width = double.IsInfinity(availableSize.Width) ? 1000 : availableSize.Width;
         if (Math.Abs(width - _measurementWidth) > .5) {
             _measurementWidth = width;
@@ -681,6 +682,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     }
 
     protected override Size ArrangeOverride(Size finalSize) {
+        using var _ = DiagnosticsLog.Enter("DiffSurface.Arrange");
         var size = base.ArrangeOverride(finalSize);
         // The extent is known by now, so an anchor that the earlier attempt clamped lands correctly, before painting.
         if (_expandRestore != null) ApplyExpandRestore();
@@ -707,6 +709,7 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
     }
 
     public override void Render(DrawingContext context) {
+        using var _ = DiagnosticsLog.Enter("DiffSurface.Render");
         var diagStart = System.Diagnostics.Stopwatch.GetTimestamp();
         try { RenderCore(context); }
         finally {
@@ -1795,7 +1798,27 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         DrawPlain(context, detail, x + 10, y + 28, 11, ThemeBrush("GitKayMutedTextBrush", HunkBrush));
     }
 
+    /// <summary>
+    /// What one rendered row measured to, and at which width and size. Measuring wraps every word of the row through text
+    /// layout, and a document has thousands of rows: doing that again for a pass that changed nothing (the same width
+    /// arriving from another layout pass) froze the window for seconds on a long document.
+    /// </summary>
+    private sealed record HeightMemo(double Width, bool SideBySide, double FontSize, double Height);
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<RenderedMarkdownRowProjection, HeightMemo> HeightMemos = new();
+
     private double RenderedHeight(RenderedMarkdownRowProjection row) {
+        // Pictures depend on which bitmaps have loaded, which is not part of the memo's key; they are cheap to measure.
+        if (TryImageInline(row, out _, out _)) return MeasureRenderedHeight(row);
+        if (HeightMemos.TryGetValue(row, out var memo)
+            && memo.Width == _measurementWidth && memo.SideBySide == DiffLayout.IsSideBySide && memo.FontSize == CodeFontSize)
+            return memo.Height;
+        var height = MeasureRenderedHeight(row);
+        HeightMemos.AddOrUpdate(row, new HeightMemo(_measurementWidth, DiffLayout.IsSideBySide, CodeFontSize, height));
+        return height;
+    }
+
+    private double MeasureRenderedHeight(RenderedMarkdownRowProjection row) {
         if (row.Located.Block is GitKay.Core.MarkdownBlock.CodeBlock code) {
             var codeLineCount = row.CodeLines.Count > 0
                 ? DiffLayout.IsSideBySide ? row.CodeLines.Count : row.CodeLines.Sum(line => line.Change == GitKay.Core.MarkdownChangeKind.Modified ? 2 : 1)
@@ -1852,28 +1875,41 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
         return total;
     }
 
+    /// <summary>How wide a run of text is, remembered: prose repeats the same words, and laying each out afresh is the cost.</summary>
+    private static readonly Dictionary<(string Text, Typeface Face, double Size), double> WordWidths = new();
+
+    private static double WordWidth(string text, Typeface face, double size) {
+        var key = (text, face, size);
+        if (WordWidths.TryGetValue(key, out var width)) return width;
+        width = new FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, face, size, Brushes.Transparent).WidthIncludingTrailingWhitespace;
+        if (WordWidths.Count >= 50_000) WordWidths.Clear();
+        WordWidths[key] = width;
+        return width;
+    }
+
     private static int RenderedWordLineCount(IReadOnlyList<GitKay.Core.MarkdownWordSpan> words, double width, double size) {
         var lines = 1;
         var x = 0.0;
         foreach (var word in words) {
-            var layout = new FormattedText(word.Text + " ", CultureInfo.CurrentCulture, FlowDirection.LeftToRight, ProseTypeface, size, Brushes.Transparent);
-            var itemWidth = layout.WidthIncludingTrailingWhitespace;
+            var itemWidth = WordWidth(word.Text + " ", ProseTypeface, size);
             if (x > 0 && x + itemWidth > width) { lines++; x = 0; }
             x += itemWidth;
         }
         return lines;
     }
 
+    private static readonly System.Text.RegularExpressions.Regex WrapTokens = new(@"[^\s]+[ \t]*|\r?\n|[ \t]+");
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<GitKay.Core.RenderedMarkdownSpan, string[]> SpanTokens = new();
+
     private static int RenderedSpanLineCount(IReadOnlyList<GitKay.Core.RenderedMarkdownSpan> spans, double width, double size) {
         var lines = 1;
         var x = 0.0;
         foreach (var span in spans) {
-            foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(span.Text, @"[^\s]+[ \t]*|\r?\n|[ \t]+")) {
-                var value = match.Value;
+            var tokens = SpanTokens.GetValue(span, static candidate => WrapTokens.Matches(candidate.Text).Select(match => match.Value).ToArray());
+            var face = RenderedTypeface(span.Style);
+            foreach (var value in tokens) {
                 if (value.Contains('\n')) { lines++; x = 0; continue; }
-                var layout = new FormattedText(value, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
-                    RenderedTypeface(span.Style), size, Brushes.Transparent);
-                var itemWidth = layout.WidthIncludingTrailingWhitespace;
+                var itemWidth = WordWidth(value, face, size);
                 if (x > 0 && x + itemWidth > width) { lines++; x = 0; }
                 x += itemWidth;
             }

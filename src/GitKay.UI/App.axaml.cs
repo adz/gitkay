@@ -209,7 +209,8 @@ public partial class App : Application {
                     }
 
                     currentUiState = UiStateModule.withSelectedCommit(repoKey, projection.SelectedCommit.FullHash, currentUiState);
-                    uiStateStore.Save(currentUiState);
+                    // Not on the click: the write can wait on the disk, and the window must not wait with it.
+                    _ = uiStateStore.SaveInBackground(currentUiState);
                     return;
                 }
 
