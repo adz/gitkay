@@ -494,8 +494,15 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         OnPropertyChanged(nameof(CommitRowMonoFont));
     }
 
+    [ObservableProperty] private string _windowTitle = "GitKay";
+
+    private void UpdateWindowTitle(GitKay.Core.App.Model model) =>
+        WindowTitle = GitKay.Core.Presentation.WindowTitle.format(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), model.GitEnv.RepoPath);
+
     public void Update(GitKay.Core.App.Model model) {
         var startedAtTicks = Stopwatch.GetTimestamp();
+        UpdateWindowTitle(model);
         Status = model.Status;
         IsInitialLoading = model.Commits.IsEmpty && !model.Status.StartsWith("Error", StringComparison.OrdinalIgnoreCase);
         UpdateHistoryTargets(model.StartupTargets);

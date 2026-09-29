@@ -4721,3 +4721,21 @@ module SharedKeysTests =
         test <@ List.length Keys.sheet = List.length Keys.bindings @>
         test <@ Keys.sheet |> List.forall (fun (chord, description) -> chord <> "" && description <> "") @>
         test <@ Keys.sheet |> List.map fst |> List.contains "Ctrl+Shift+P" @>
+
+    [<Fact>]
+    let ``the window title is the repository path, with the home folder as a tilde`` () =
+        test <@ Presentation.WindowTitle.format "/home/adam" "/home/adam/projects/foo" = "~/projects/foo" @>
+        test <@ Presentation.WindowTitle.format "/home/adam" "/srv/repos/foo/" = "/srv/repos/foo" @>
+        // A sibling folder that merely shares the home prefix is not inside it.
+        test <@ Presentation.WindowTitle.abbreviatePath "/home/adam" "/home/adamant/x" = "/home/adamant/x" @>
+        test <@ Presentation.WindowTitle.abbreviatePath "/home/adam" "/home/adam" = "~" @>
+
+    [<Fact>]
+    let ``the window title is just GitKay with no repository`` () =
+        test <@ Presentation.WindowTitle.format "/home/adam" "" = "GitKay" @>
+
+    [<Fact>]
+    let ``a long path in the window title keeps its trailing folders`` () =
+        let path = "/home/adam/" + String.replicate 8 "some-long-folder/" + "repo"
+        let shown = Presentation.WindowTitle.abbreviatePath "/home/adam" path
+        test <@ shown.StartsWith "\u2026/" && shown.EndsWith "/repo" && shown.Length <= 60 @>
