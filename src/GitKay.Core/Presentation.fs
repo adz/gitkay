@@ -120,6 +120,9 @@ module Presentation =
     module WindowTitle =
         let private maxPathLength = 60
 
+        /// <summary>Marks folders dropped from the start of a long path: "\u2026/" is an ellipsis (…) followed by a separator.</summary>
+        let private ellipsis = "\u2026/"
+
         /// <summary>
         /// Shortens a directory for a title: the home folder becomes "~", and a path longer than the room there is
         /// keeps its trailing folders behind a leading ellipsis, because the end of a path is what tells repositories apart.
@@ -136,13 +139,12 @@ module Presentation =
                 else path
             if shown.Length <= maxPathLength then shown
             else
-                let parts = shown.Split([| '/'; '\\' |], StringSplitOptions.RemoveEmptyEntries)
-                let mutable tail = ""
-                let mutable index = parts.Length - 1
-                while index >= 0 && (tail = "" || ("\u2026/" + parts[index] + "/" + tail).Length <= maxPathLength) do
-                    tail <- if tail = "" then parts[index] else parts[index] + "/" + tail
-                    index <- index - 1
-                "\u2026/" + tail
+                let folders = shown.Split([| '/'; '\\' |], StringSplitOptions.RemoveEmptyEntries)
+                let fits (candidate: string list) = (ellipsis + String.Join("/", candidate)).Length <= maxPathLength
+                // Each suffix of the path, growing from the last folder; keep the longest that fits, and always at least the last folder.
+                let suffixes = folders |> Array.rev |> Seq.scan (fun suffix folder -> folder :: suffix) [] |> Seq.skip 1
+                let kept = suffixes |> Seq.takeWhile fits |> Seq.tryLast |> Option.defaultValue [ Array.last folders ]
+                ellipsis + String.Join("/", kept)
 
         /// <summary>The abbreviated repository path, or "GitKay" when no repository is open.</summary>
         let format (home: string) (repoPath: string) =
