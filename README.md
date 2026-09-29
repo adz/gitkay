@@ -1,29 +1,30 @@
 # GitKay
 
-GitKay is a fast Git history viewer built with Avalonia and F#.
+GitKay is a fast, cross-platform Git history viewer based on the layout simplicity of gitk + git gui but with the repository-browsing experience of GitHub and the keyboard ergonomics of an editor.
 
-Its design goal is to be as close as possible to gitk/git-gui in layout
-and interactions with a more modern style.
+Navigate as quickly as you navigate an editor: browse the commit graph, jump between files and revisions, review branches like a pull request, open complete files and rendered Markdown, search everywhere, and stage individual hunks or lines. Use the mouse and familiar GUI controls, or stay entirely on the keyboard with deep Vim navigation, visual selection and command palettes (ctrl-p).
 
 ![GitKay history, commit graph, changed files and diff in dark theme](docs/images/history-dark.png)
 
 In addition it adds:
 
 - Syntax colouring
-- Commit search: more capable, improved UX & moved to top
-- More right-click contextual help (open in vscode, filter)
-- Open file in full (double click, or right-click)
+- Diff markdown in rendered preview
+- Diff Json/XML in pretty printed preview form
+- Diff compare images side by side
+- Counts of addition/removals per folder and file 
+- More capable commit and diff search with improved UX
+- More right-click contextual actions (open in vscode, filter)
 - Vim movement keys
-- Ctrl-P for go to file
 - Ctrl-G for go to commit/tag/branch
-- Uncommitted changes in the history, as staged, unstaged and untracked sections
-- Stage or discard from the uncommitted diff, with undo for recent line staging and backed-up discards
-- Branch actions on branch badges; fetch all remotes or explicitly fetch and prune stale refs
-- Light and dark themes, with the pane gap, outline and hover effect you prefer
 
-## Commit window
+Visually much more modern, with light and dark themes, configurable pane gap, outline and hover effects.
+
+## State and Commit window
 
 Staging and committing have their own window, like git gui beside gitk. The history window also lets you stage and discard from its uncommitted changes row.
+
+Staging or discarding from the uncommitted diff, comes with undo for recent line staging and backed-up discards.
 
 ![GitKay commit window with unstaged and staged files and a diff in light theme](docs/images/commit-light.png)
 
@@ -34,7 +35,11 @@ Staging and committing have their own window, like git gui beside gitk. The hist
 - **Discard** unwanted changes, **amend**, **sign off**, then **Commit** (`Ctrl+Enter`) or **Commit and push**.
 - `/` searches the diff, `Ctrl+P` jumps to any changed file, and **F1** lists every key.
 
-## Publish
+## Build from source
+
+See releases for downloadable binaries built when releases are tagged.
+
+To build it yourself:
 
 - `bash scripts/publish-gitkay.sh` builds a self-contained single-file app.
 - `bash scripts/publish-gitkay.sh` builds both `win-x64` and `linux-x64` outputs under `artifacts/publish/gitkay/`.
