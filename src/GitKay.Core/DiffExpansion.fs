@@ -113,26 +113,32 @@ module DiffExpansion =
     let contains (line: int) (ranges: LineRange list) =
         ranges |> List.exists (fun range -> line >= range.Start && line <= range.End)
 
-    /// The new-file range an expansion request reveals.
-    let revealRange (direction: ExpandDirection) (gap: DiffGap) : LineRange option =
+    /// The new-file range an expansion request reveals, advancing one block rather than a fixed number of lines.
+    let revealRangeWithStep (step: int) (direction: ExpandDirection) (gap: DiffGap) : LineRange option =
         let lastHidden = gap.HiddenCount |> Option.map (fun count -> gap.NewStart + count - 1)
 
         match direction, lastHidden with
         | _, Some last when last < gap.NewStart -> None
-        | Down, Some last -> Some { Start = gap.NewStart; End = min last (gap.NewStart + StepLines - 1) }
-        | Down, None -> Some { Start = gap.NewStart; End = gap.NewStart + StepLines - 1 }
-        | Up, Some last -> Some { Start = max gap.NewStart (last - StepLines + 1); End = last }
+        | Down, Some last -> Some { Start = gap.NewStart; End = min last (gap.NewStart + step - 1) }
+        | Down, None -> Some { Start = gap.NewStart; End = gap.NewStart + step - 1 }
+        | Up, Some last -> Some { Start = max gap.NewStart (last - step + 1); End = last }
         | Up, None -> None
         | All, Some last -> Some { Start = gap.NewStart; End = last }
         | All, None -> Some { Start = gap.NewStart; End = Int32.MaxValue }
 
+    /// The new-file range an expansion request reveals.
+    let revealRange direction gap = revealRangeWithStep StepLines direction gap
+
     /// Directions a gap offers as explicit controls.
-    let availableDirections (gap: DiffGap) =
+    let availableDirectionsWithStep (step: int) (gap: DiffGap) =
         match gap.Kind, gap.HiddenCount with
-        | _, Some count when count <= StepLines -> [ All ]
+        | _, Some count when count <= step -> [ All ]
         | Leading, _ -> [ Up; All ]
         | Internal, _ -> [ Down; Up; All ]
         | Trailing, _ -> [ Down; All ]
+
+    /// Directions a gap offers as explicit controls.
+    let availableDirections gap = availableDirectionsWithStep StepLines gap
 
     let private gap (file: FileDiff) kind oldStart newStart hiddenCount =
         {

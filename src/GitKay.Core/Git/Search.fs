@@ -444,7 +444,7 @@ module GitSearch =
                 let pathTerms, lineTerms = diffTerms |> List.partition (fun (term, _) -> term.Field = ChangedPath)
                 let total = commits.Length
                 loaders.Progress 0 total
-                do! Flow.Runtime.ensureNotCanceled (GitError.OperationCanceled "Search")
+                do! Flow.ensureNotCanceled
 
                 // Phase 1: metadata, pure and fast.
                 let candidates =
@@ -532,7 +532,7 @@ module GitSearch =
                                 while chunks.TryDequeue(&next) do
                                     let last = min (next + chunkSize) candidates.Length - 1
                                     for index in next .. last do
-                                        do! Flow.Runtime.ensureNotCanceled (GitError.OperationCanceled "Search")
+                                        do! Flow.ensureNotCanceled
                                         do! evaluate reader index
                             finally
                                 reader.Release ()
@@ -543,7 +543,7 @@ module GitSearch =
                     else
                         let! fibers = List.init workers id |> Flow.traverse (fun slot -> Flow.forkNamed $"search worker {slot + 1}" (worker slot))
                         for fiber in fibers do
-                            do! Flow.join fiber
+                            do! Fiber.join fiber
 
                     loaders.Progress total total
                     return outcomes |> Array.choose id |> List.ofArray

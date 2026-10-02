@@ -6,128 +6,83 @@ open System.Threading.Tasks
 open Axial
 open global.Elmish
 
-/// A fiber that settled: a command's root fiber or one it forked.
-type SettledFiber =
-    { Id: int64
-      Name: string
-      ParentId: int64 option
-      Annotations: Map<string, string>
-      StartedAt: DateTimeOffset
-      SettledAt: DateTimeOffset
-      Status: FiberStatus
-      /// A defect (exception) the fiber died with, if any.
-      Defect: string option }
-
-    member this.Duration = this.SettledAt - this.StartedAt
-
-/// Per-name totals across every settled fiber since start.
-type FlowStats =
-    { Name: string
-      Count: int
-      Failed: int
-      Interrupted: int
-      TotalMs: float
-      MaxMs: float }
-
 /// A command whose flow ended in a typed failure or defect, with its rendered cause.
 type FlowFailure = { At: DateTimeOffset; Name: string; Cause: string }
 
-/// Diagnostics for every Axial-backed Cmd: each runs as a named fiber in one registry, so a hang report can dump
-/// what is still running, and failures are rendered with Cause.prettyPrint. A fiber observer keeps a bounded history
-/// of settled fibers and per-name totals for the diagnostics window.
+/// Diagnostics for every Axial-backed Cmd: each runs as a named fiber in one registry. The registry owns the live
+/// fiber tree, the bounded history of settled fibers with their rendered failure causes, per-name totals,
+/// unobserved defects and the started count, so nothing is bookkept twice here. A hang report dumps what is still
+/// running, and the diagnostics window reads the registry directly.
 [<Sealed; AbstractClass>]
 type CmdDiagnostics private () =
-    static let registry = FiberRegistry()
-    static let gate = obj ()
-    static let settled = System.Collections.Generic.Queue<SettledFiber>()
-    static let failures = System.Collections.Generic.Queue<FlowFailure>()
-    static let stats = System.Collections.Generic.Dictionary<string, FlowStats>()
-    static let mutable started = 0L
-    static let active = System.Collections.Concurrent.ConcurrentDictionary<int64, string * CancellationTokenSource>()
-    static let mutable nextActive = 0L
+    static let registry = FiberRegistry(500)
     static let mutable onFailure: string -> string -> unit = fun _ _ -> ()
-    static let capacity = 500
 
-    static let record (metadata: FiberMetadata) (defect: exn option) =
-        let settledAt = metadata.SettledAt |> Option.defaultValue DateTimeOffset.UtcNow // axial-allow-effect: clock
-        let name = metadata.Name |> Option.defaultValue $"fiber #{metadata.Id.Value}"
-        let fiber =
-            { Id = metadata.Id.Value
-              Name = name
-              ParentId = metadata.ParentId |> Option.map _.Value
-              Annotations = metadata.Annotations
-              StartedAt = metadata.StartedAt
-              SettledAt = settledAt
-              Status = metadata.Status
-              Defect = defect |> Option.map string }
-
-        lock gate (fun () ->
-            if settled.Count >= capacity then settled.Dequeue() |> ignore
-            settled.Enqueue fiber
-            let ms = fiber.Duration.TotalMilliseconds
-            let previous =
-                match stats.TryGetValue name with
-                | true, value -> value
-                | _ -> { Name = name; Count = 0; Failed = 0; Interrupted = 0; TotalMs = 0.0; MaxMs = 0.0 }
-            stats[name] <-
-                { previous with
-                    Count = previous.Count + 1
-                    Failed = previous.Failed + (if fiber.Status = FiberStatus.Failed then 1 else 0)
-                    Interrupted = previous.Interrupted + (if fiber.Status = FiberStatus.Interrupted then 1 else 0)
-                    TotalMs = previous.TotalMs + ms
-                    MaxMs = max previous.MaxMs ms })
-
-    static let observer =
-        { FiberObserver.none with
-            OnStart = fun _ -> System.Threading.Interlocked.Increment(&started) |> ignore
-            OnEnd = fun metadata defect -> record metadata defect
-            OnUnobservedDefect =
-                fun metadata defect ->
-                    lock gate (fun () ->
-                        if failures.Count >= capacity then failures.Dequeue() |> ignore
-                        let name = metadata |> Option.bind _.Name |> Option.defaultValue "unobserved"
-                        failures.Enqueue { At = DateTimeOffset.UtcNow; Name = name; Cause = "Unobserved defect: " + string defect }) } // axial-allow-effect: clock
-
-    /// Live fibers of every running Cmd, including fibers they fork.
+    /// Live fibers of every running Cmd, including fibers they fork, over the settled history and totals.
     static member Registry = registry
 
-    /// Observes every Cmd fiber's lifecycle for the settled history and totals.
-    static member Observer = observer
+    /// How many fibers have started since the registry was installed.
+    static member StartedCount = registry.StartedCount
 
-    static member StartedCount = System.Threading.Interlocked.Read(&started)
+    /// Settled fibers, oldest first, up to the registry's history capacity.
+    static member Settled() = registry.Settled() |> List.toArray
 
-    /// Settled fibers, oldest first (bounded).
-    static member Settled() = lock gate (fun () -> Array.ofSeq settled)
+    /// Failed fibers with rendered causes, oldest first. Includes unobserved defects the registry recorded unless the
+    /// same fiber already appears in the settled history.
+    static member Failures() =
+        let settled = registry.Settled()
 
-    /// Command failures with rendered causes, oldest first (bounded).
-    static member Failures() = lock gate (fun () -> Array.ofSeq failures)
+        let recordedFailures =
+            settled
+            |> List.choose (fun fiber ->
+                fiber.Failure
+                |> Option.map (fun cause ->
+                    { At = fiber.Fiber.SettledAt |> Option.defaultValue fiber.Fiber.StartedAt
+                      Name = fiber.Fiber.Name |> Option.defaultValue "(unnamed)"
+                      Cause = cause }))
 
-    /// Totals per fiber name.
-    static member Stats() = lock gate (fun () -> Array.ofSeq stats.Values)
+        let recordedIds =
+            settled
+            |> List.filter (fun fiber -> fiber.Failure.IsSome)
+            |> List.map (fun fiber -> fiber.Fiber.Id)
+            |> Set.ofList
+
+        let unobserved =
+            registry.UnobservedDefects()
+            |> List.collect (fun defect ->
+                match defect.Fiber with
+                | Some fiber when Set.contains fiber.Id recordedIds -> []
+                | Some fiber ->
+                    [ { At = fiber.SettledAt |> Option.defaultValue fiber.StartedAt
+                        Name = fiber.Name |> Option.defaultValue "(unobserved)"
+                        Cause = defect.Defect } ]
+                | None ->
+                    [ { At = DateTimeOffset.UtcNow // axial-allow-effect: clock
+                        Name = "(unobserved)"
+                        Cause = defect.Defect } ])
+
+        List.toArray (recordedFailures @ unobserved)
+
+    /// The most recent defects nobody observed, oldest first.
+    static member UnobservedDefects() = registry.UnobservedDefects() |> List.toArray
+
+    /// Totals per fiber name, ordered by name.
+    static member Stats() = registry.Stats() |> List.toArray
 
     static member internal ReportFailure(name: string, cause: string) =
-        lock gate (fun () ->
-            if failures.Count >= capacity then failures.Dequeue() |> ignore
-            failures.Enqueue { At = DateTimeOffset.UtcNow; Name = name; Cause = cause }) // axial-allow-effect: clock
+        // The registry already records the fiber's rendered cause; this only taps the log handler.
         try onFailure name cause with _ -> ()
 
     static member OnFailure = onFailure
 
-    /// Registers a running command so it can be cancelled from diagnostics; dispose the result when it settles.
-    static member internal Track(name: string, source: CancellationTokenSource) : IDisposable =
-        let id = Interlocked.Increment(&nextActive)
-        active[id] <- (name, source)
-        { new IDisposable with member _.Dispose() = active.TryRemove id |> ignore }
-
     /// Names of commands that are running now.
-    static member RunningCommands() = active.Values |> Seq.map fst |> Array.ofSeq
+    static member RunningCommands() =
+        registry.Snapshot()
+        |> List.choose (fun dump -> dump.Annotations |> Map.tryFind "gitkay.cmd")
+        |> List.toArray
 
-    /// Cancels every running command with this name; returns how many were cancelled.
-    static member Cancel(name: string) : int =
-        let matching = active.Values |> Seq.filter (fun (candidate, _) -> candidate = name) |> Array.ofSeq
-        for (_, source) in matching do
-            try source.Cancel() with _ -> ()
-        matching.Length
+    /// Interrupts every live command fiber with this name; returns how many were signalled.
+    static member Cancel(name: string) : int = registry.InterruptByName name
 
     /// Sets the failure handler from C#.
     static member SetFailureHandler(handler: System.Action<string, string>) =
@@ -158,18 +113,16 @@ module Cmd =
         let private instrument (name: string) (workflow: Flow<'env, 'error, 'value>) : Flow<'env, 'error, 'value> =
             flow {
                 let! fiber = Flow.forkNamed name workflow
-                return! Flow.join fiber
+                return! Fiber.join fiber
             }
             |> Flow.annotate "gitkay.cmd" name
-            |> Flow.addFiberObserver CmdDiagnostics.Observer
             |> Flow.withFiberRegistry CmdDiagnostics.Registry
 
         let private run (name: string) (token: CancellationToken) (env: 'env) (workflow: Flow<'env, 'error, 'value>) onSuccess onError : Cmd<'msg> =
             [ fun dispatch ->
                 task {
-                    // A linked source per command lets the diagnostics window cancel it without touching its slot.
+                    // A linked source per command lets the runtime shut it down without touching its slot.
                     use cancellation = CancellationTokenSource.CreateLinkedTokenSource(token)
-                    use _tracked = CmdDiagnostics.Track(name, cancellation)
                     let token = cancellation.Token
                     // Start on the thread pool: commands are dispatched on the UI thread, and a flow's synchronous
                     // prefix (LibGit2Sharp walks, diffs) would otherwise run there and freeze the window.

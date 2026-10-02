@@ -44,7 +44,7 @@ class Program {
                 try {
                     var writer = new System.IO.StreamWriter(logPath, true) { AutoFlush = true };
                     System.Diagnostics.Trace.Listeners.Add(new System.Diagnostics.TextWriterTraceListener(writer));
-                    System.Diagnostics.Trace.WriteLine($"--- Log started at {DateTime.Now} ---");
+                    System.Diagnostics.Trace.WriteLine($"--- Log started at {GitKay.Core.Timing.now().ToLocalTime()} ---");
                 }
                 catch (Exception ex) {
                     Console.Error.WriteLine($"Failed to open log file: {ex.Message}");

@@ -8,6 +8,8 @@ using System.Threading;
 using Avalonia.Threading;
 using Axial.Elmish;
 
+using Timing = GitKay.Core.Timing;
+
 namespace GitKay.UI;
 
 /// <summary>
@@ -22,10 +24,10 @@ public static class DiagnosticsLog {
     private const int RetentionDays = 14;
     private static readonly TimeSpan HangThreshold = TimeSpan.FromSeconds(4);
     private static int _initialized;
-    private static long _lastUiHeartbeat = Stopwatch.GetTimestamp();
+    private static long _lastUiHeartbeat = Timing.mark();
 
     public static string LogDirectory { get; } = ResolveLogDirectory();
-    public static DateTimeOffset StartedAt { get; } = DateTimeOffset.Now;
+    public static DateTimeOffset StartedAt { get; } = Timing.now();
 
     // ----- Live metrics for the diagnostics window. -----
 
@@ -140,7 +142,7 @@ public static class DiagnosticsLog {
         try {
             Directory.CreateDirectory(LogDirectory);
             DeleteOldFiles();
-            CurrentLogFile = Path.Combine(LogDirectory, $"gitkay-{DateTime.Now:yyyyMMdd}.log");
+            CurrentLogFile = Path.Combine(LogDirectory, $"gitkay-{Timing.now().ToLocalTime():yyyyMMdd}.log");
             var writer = new StreamWriter(new FileStream(CurrentLogFile, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = true };
             Trace.Listeners.Add(new TimestampedListener(writer));
             Trace.AutoFlush = true;
@@ -172,7 +174,7 @@ public static class DiagnosticsLog {
         builder.AppendLine(DescribeUiActivity());
         builder.AppendLine("Running flows (Axial fibers):");
         try {
-            var dump = CmdDiagnostics.Registry.DumpAt(DateTimeOffset.Now);
+            var dump = CmdDiagnostics.Registry.DumpAt(Axial.PlatformService.Clock.live);
             builder.AppendLine(string.IsNullOrWhiteSpace(dump) ? "  (none)" : dump);
         }
         catch (Exception exception) {
@@ -185,7 +187,7 @@ public static class DiagnosticsLog {
     /// <summary>Writes a crash report next to the logs and returns its path.</summary>
     public static string? WriteReport(string kind, string details) {
         var report = new StringBuilder()
-            .AppendLine($"GitKay {kind} report, {DateTimeOffset.Now:O}")
+            .AppendLine($"GitKay {kind} report, {Timing.now():O}")
             .AppendLine($"Version {typeof(DiagnosticsLog).Assembly.GetName().Version}, {System.Runtime.InteropServices.RuntimeInformation.OSDescription}, "
                         + $"{(RuntimeFeature.IsDynamicCodeSupported ? "JIT" : "NativeAOT")}")
             .AppendLine($"Log: {CurrentLogFile}")
@@ -199,7 +201,7 @@ public static class DiagnosticsLog {
         Trace.WriteLine(DescribeState());
         try {
             Directory.CreateDirectory(LogDirectory);
-            var path = Path.Combine(LogDirectory, $"{kind}-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+            var path = Path.Combine(LogDirectory, $"{kind}-{Timing.now().ToLocalTime():yyyyMMdd-HHmmss}.txt");
             File.WriteAllText(path, report);
             return path;
         }
@@ -217,13 +219,13 @@ public static class DiagnosticsLog {
             var reported = false;
             while (true) {
                 Thread.Sleep(1000);
-                var postedAt = Stopwatch.GetTimestamp();
+                var postedAt = Timing.mark();
                 Dispatcher.UIThread.Post(() => {
-                    Interlocked.Exchange(ref _lastUiHeartbeat, Stopwatch.GetTimestamp());
-                    RecordLag(Stopwatch.GetElapsedTime(postedAt).TotalMilliseconds);
+                    Interlocked.Exchange(ref _lastUiHeartbeat, Timing.mark());
+                    RecordLag(Timing.elapsedFrom(postedAt).TotalMilliseconds);
                 }, DispatcherPriority.Send);
                 NativeMemory.TrimIfGrown();
-                var silence = Stopwatch.GetElapsedTime(Interlocked.Read(ref _lastUiHeartbeat));
+                var silence = Timing.elapsedFrom(Interlocked.Read(ref _lastUiHeartbeat));
                 if (silence > HangThreshold && !reported) {
                     reported = true;
                     HangCount++;
@@ -254,7 +256,7 @@ public static class DiagnosticsLog {
     private static void DeleteOldFiles() {
         foreach (var file in Directory.EnumerateFiles(LogDirectory)) {
             try {
-                if (File.GetLastWriteTime(file) < DateTime.Now.AddDays(-RetentionDays)) File.Delete(file);
+                if (File.GetLastWriteTime(file) < Timing.now().ToLocalTime().AddDays(-RetentionDays)) File.Delete(file);
             }
             catch {
             }
@@ -299,6 +301,6 @@ public static class DiagnosticsLog {
             }
         }
 
-        private static string Prefix() => $"{DateTime.Now:HH:mm:ss.fff} [{Environment.CurrentManagedThreadId,3}] ";
+        private static string Prefix() => $"{Timing.now().ToLocalTime():HH:mm:ss.fff} [{Environment.CurrentManagedThreadId,3}] ";
     }
 }

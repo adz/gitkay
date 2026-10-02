@@ -81,19 +81,16 @@ module GitService =
         }
 
     type GitCache() =
-        // Bound once: a `member _.X = ConcurrentDictionary()` body is re-evaluated on every access, which
-        // silently discarded every cached entry.
-        let diff = ConcurrentDictionary<string, DiffCacheEntry>()
-        let fileContent = ConcurrentDictionary<DiffFileContentCacheKey, FileDiff>()
-        // Single-flight in-flight diff loads, keyed by commit hash. The lock only guards the dictionary
-        // decision (join the existing fiber or register a new one); the load itself runs as a forked
-        // fiber, so a joiner waits without blocking a thread and can observe cancellation.
-        let diffLoadsGate = obj ()
-        let diffLoads = Dictionary<string, Fiber<GitError, DiffCacheEntry>>()
-        member internal _.DiffLoadsGate = diffLoadsGate
-        member internal _.DiffLoads = diffLoads
-        member internal _.Diff = diff
-        member internal _.FileContent = fileContent
+        // Axial's single-flight caches, bound when the repository environment is built. Cache owns the in-flight
+        // sharing and the retained successes, so there is no dictionary here to keep in step with them.
+        let mutable diffCache : Cache<string, GitError, DiffCacheEntry> option = None
+        let mutable fileContentCache : Cache<DiffFileContentCacheKey, GitError, FileDiff> option = None
+        member internal _.DiffCache
+            with get () = diffCache.Value
+            and set value = diffCache <- Some value
+        member internal _.FileContentCache
+            with get () = fileContentCache.Value
+            and set value = fileContentCache <- Some value
 
     type GitEnv =
         { RepoPath: string
@@ -102,13 +99,6 @@ module GitService =
           Cache: GitCache }
         interface IHasClock with member this.Clock = this.Runtime.Clock
         interface IHasProcess with member this.Process = this.Processes
-
-    let environment repoPath =
-        let runtime = BaseRuntime.liveValue
-        { RepoPath = repoPath
-          Runtime = runtime
-          Processes = Process.live runtime.Clock FileSystem.live Console.live
-          Cache = GitCache() }
 
     /// Repository comparison base used on first open: main, then master, including their origin counterparts.
     let defaultComparisonBase (repoPath: string) =
@@ -242,55 +232,10 @@ module GitService =
         // the load itself still runs to completion in the background. axial-allow-discarded-cancellation
         Flow.fromTaskResult (fun _ -> Task.Run(fun () -> loadDiffCacheEntry repoPath hash))
 
-    /// Registers `candidate` as the in-flight load for `hash`, or hands back a load already in flight.
-    /// Atomic: exactly one caller's fiber is ever registered for a given hash at a time.
-    let private claimDiffLoad (cache: GitCache) (hash: string) (candidate: Fiber<GitError, DiffCacheEntry>) =
-        lock cache.DiffLoadsGate (fun () ->
-            match cache.DiffLoads.TryGetValue hash with
-            | true, existing -> existing, false
-            | false, _ ->
-                cache.DiffLoads.[hash] <- candidate
-                candidate, true)
-
-    let private releaseDiffLoad (cache: GitCache) (hash: string) (fiber: Fiber<GitError, DiffCacheEntry>) =
-        lock cache.DiffLoadsGate (fun () ->
-            match cache.DiffLoads.TryGetValue hash with
-            | true, current when obj.ReferenceEquals(current, fiber) -> cache.DiffLoads.Remove hash |> ignore
-            | _ -> ())
-
-    let private getDiffCacheEntry (hash: string) : Flow<GitEnv, GitError, DiffCacheEntry * bool> =
+    let private getDiffCacheEntry (hash: string) : Flow<GitEnv, GitError, DiffCacheEntry> =
         flow {
             let! env = Flow.env
-
-            match env.Cache.Diff.TryGetValue hash |> Result.fromTry with
-            | Ok entry -> return entry, true
-            | Error () ->
-                // Single-flight per commit: selection loads the file list and diff concurrently, and both
-                // would otherwise run rename detection for the same commit at once. The load itself runs
-                // as a forked fiber rather than under a lock, so a joiner waits without blocking a thread.
-                let! candidate = Flow.forkNamed $"load changed files {hash}" (loadDiffCacheEntryFlow env.RepoPath hash)
-                let fiber, started = claimDiffLoad env.Cache hash candidate
-
-                if not started then
-                    let! _ = Flow.interrupt candidate
-                    ()
-
-                // Observed manually (mirroring Flow.join) rather than joined, so a failure still runs the
-                // cleanup below before the original outcome is re-raised - joining directly would
-                // short-circuit past it and leave a permanently-failed fiber cached for this hash.
-                fiber.Metadata.Observed <- true
-                // Deliberate: a joiner's own cancellation must not interrupt a fiber other, still-waiting
-                // joiners depend on. This only observes the shared fiber's own outcome. axial-allow-discarded-cancellation
-                let! exit = Flow.fromTask (fun _ -> fiber.ExitTask)
-
-                if started then
-                    releaseDiffLoad env.Cache hash fiber
-
-                match exit with
-                | Exit.Success entry ->
-                    env.Cache.Diff.TryAdd(hash, entry) |> ignore
-                    return entry, not started
-                | Exit.Failure cause -> return! Flow.ofExit (Exit.Failure cause)
+            return! Cache.get hash env.Cache.DiffCache
         }
 
     let private tryBlob (commit: LibGit2Sharp.Commit) (path: string) =
@@ -375,6 +320,37 @@ module GitService =
 
     let private loadDiffFileContent (contextLines: int) (hash: string) (oldPath: string) (newPath: string) : Flow<GitEnv, GitError, FileDiff> =
         loadDiffFileContents contextLines hash [ oldPath, newPath ] |> Flow.map List.head
+
+    // The repository's environment owns Axial single-flight caches. The file list and the diff for a commit are
+    // requested concurrently by two separate commands, and both would otherwise run rename detection on the same
+    // commit; one cache runs the load once and hands the same result to every caller. A second cache serves per-file
+    // content, keyed by commit, path and context. Successes are kept for later commands, failures are not, so a
+    // transient failure retries. Built here, at the repository boundary, so every command that touches this
+    // repository shares them.
+    let environment repoPath =
+        let runtime = BaseRuntime.liveValue
+        let cache = GitCache()
+
+        let env =
+            { RepoPath = repoPath
+              Runtime = runtime
+              Processes = Process.live runtime.Clock FileSystem.live Console.live
+              Cache = cache }
+
+        cache.DiffCache <-
+            match Flow.run env (Cache.make (loadDiffCacheEntryFlow repoPath)) |> Exit.toResult with
+            | Ok diffCache -> diffCache
+            | Error never -> Never.absurd never
+
+        cache.FileContentCache <-
+            match
+                Flow.run env (Cache.make (fun key -> loadDiffFileContent key.ContextLines key.Hash key.OldPath key.NewPath))
+                |> Exit.toResult
+            with
+            | Ok fileContentCache -> fileContentCache
+            | Error never -> Never.absurd never
+
+        env
 
     let private loadCommit (repo: Repository) (hash: string) =
         repo.Lookup<LibGit2Sharp.Commit>(hash) |> requireNotNull (GitError.CommitNotFound hash)
@@ -621,7 +597,7 @@ module GitService =
 
     let fetchDiff (contextLines: int) (hash: string) : Flow<GitEnv, GitError, FileDiff list> =
         flow {
-            let! entry, _ = getDiffCacheEntry hash
+            let! entry = getDiffCacheEntry hash
             // One repository handle for every file; not cached, since search loads many commits' diffs.
             return! loadDiffFileContents contextLines hash (entry.FileList |> List.map (fun file -> file.OldPath, file.NewPath))
         }
@@ -631,7 +607,7 @@ module GitService =
     /// Line totals need a full patch pass, so they are computed on request rather than with the file list.
     let fetchDiffSummary (hash: string) : Flow<GitEnv, GitError, DiffSummary> =
         flow {
-            let! entry, _ = getDiffCacheEntry hash
+            let! entry = getDiffCacheEntry hash
             let! env = Flow.env
             use repo = new Repository(env.RepoPath)
             let! (commit: LibGit2Sharp.Commit) =
@@ -643,7 +619,7 @@ module GitService =
 
     let fetchDiffFileList (hash: string) : Flow<GitEnv, GitError, DiffFileSummary list> =
         flow {
-            let! entry, _ = getDiffCacheEntry hash
+            let! entry = getDiffCacheEntry hash
             return entry.FileList
         }
 
@@ -658,12 +634,7 @@ module GitService =
                     ContextLines = normalizeContextLines contextLines
                 }
 
-            match env.Cache.FileContent.TryGetValue key with
-            | true, file -> return file
-            | false, _ ->
-                let! file = loadDiffFileContent contextLines hash oldPath newPath
-                env.Cache.FileContent.TryAdd(key, file) |> ignore
-                return file
+            return! Cache.get key env.Cache.FileContentCache
         }
 
     /// Context large enough to make a file diff include every unchanged line. LibGit2Sharp marshals
@@ -798,11 +769,16 @@ module GitService =
     let fetchWorkingTreeChangesFor (amending: bool) (contextLines: int) : Flow<GitEnv, GitError, WorkingTreeChanges> =
         flow {
             let context = $"-U{normalizeContextLines contextLines}"
-            let! entries = fetchWorkingTreeStatus
+            // Resolving the amend base is cheap and the staged diff depends on it. The three reads that follow are
+            // independent git processes, so status, staged diff and unstaged diff run at the same time and the whole
+            // load costs one round trip instead of three; zipPar interrupts the others if one fails.
             let! amendBase = if amending then tryAmendBase else Flow.ok None
             let stagedAgainst = match amendBase with Some hash -> [ hash ] | None -> []
-            let! staged = plainGit ([ "diff"; "--cached"; "--no-ext-diff"; "--find-renames"; context ] @ stagedAgainst) |> Flow.map WorkingTree.parsePatch
-            let! unstaged = plainGit [ "diff"; "--no-ext-diff"; context ] |> Flow.map WorkingTree.parsePatch
+            let staged =
+                plainGit ([ "diff"; "--cached"; "--no-ext-diff"; "--find-renames"; context ] @ stagedAgainst)
+                |> Flow.map WorkingTree.parsePatch
+            let unstaged = plainGit [ "diff"; "--no-ext-diff"; context ] |> Flow.map WorkingTree.parsePatch
+            let! (entries, (staged, unstaged)) = Flow.zipPar fetchWorkingTreeStatus (Flow.zipPar staged unstaged)
             let! repoPath = Flow.envWith _.RepoPath
             let untracked =
                 entries |> List.filter _.Untracked |> List.map (fun entry -> readUntracked repoPath entry.Path)

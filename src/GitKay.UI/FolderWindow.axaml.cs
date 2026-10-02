@@ -296,9 +296,9 @@ public sealed partial class FolderProjection : ObservableObject {
         Rebuild();
     }
 
-    public void ToggleRenderedChangesOnly(DiffFileProjection file) {
+    public void ToggleRenderedContext(DiffFileProjection file) {
         if (!file.IsRenderedMarkdown) return;
-        file.RenderedChangesOnly = !file.RenderedChangesOnly;
+        file.ToggleRenderedContext();
         Rebuild();
     }
 
@@ -334,10 +334,7 @@ public sealed partial class FolderProjection : ObservableObject {
         if (SelectedFile is { IsRenderedMarkdown: true } file) { TogglePreview(file); TogglePreview(file); }
     }
 
-    [ObservableProperty] private IReadOnlyDictionary<string, Avalonia.Media.Imaging.Bitmap> _oldImages =
-        new Dictionary<string, Avalonia.Media.Imaging.Bitmap>();
-    [ObservableProperty] private IReadOnlyDictionary<string, Avalonia.Media.Imaging.Bitmap> _images =
-        new Dictionary<string, Avalonia.Media.Imaging.Bitmap>();
+    [ObservableProperty] private RenderedImagesState _renderedImages = RenderedImagesState.Empty;
 
     /// <summary>Decodes the images the rendering asked for, so the surface can draw them beside their text.</summary>
     private void ApplyRendered(DiffFileProjection file, GitKay.Core.RenderedMarkdownContent content) {
@@ -352,10 +349,10 @@ public sealed partial class FolderProjection : ObservableObject {
             }
             catch { /* An image that will not decode is simply not drawn; its text stays. */ }
         }
-        foreach (var bitmap in OldImages.Values) bitmap.Dispose();
-        foreach (var bitmap in Images.Values) bitmap.Dispose();
-        OldImages = oldImages;
-        Images = newImages;
+        var previous = RenderedImages;
+        RenderedImages = new RenderedImagesState(oldImages, newImages);
+        foreach (var bitmap in previous.Old.Values) bitmap.Dispose();
+        foreach (var bitmap in previous.New.Values) bitmap.Dispose();
     }
 
     private void Rebuild() {
@@ -382,7 +379,7 @@ public partial class FolderWindow : Window {
         _paneChrome.Add("files", FilesPaneEffect, FilesPaneContent);
         // Only the chrome is the window's to apply; what the projection shows is the caller's decision.
         var chrome = new MainProjection();
-        chrome.ApplySettings(new AppSettingsStore().Load());
+        chrome.ApplySettings(GitKay.Serialization.SettingsStore.loadDefault());
         ApplyChrome(chrome);
         Opened += (_, _) => Surface.Focus();
     }
@@ -489,7 +486,7 @@ public partial class FolderWindow : Window {
     private void OnChangesOnlyRequested(object? sender, DiffFileProjection file) {
         if (DataContext is not FolderProjection projection) return;
         var anchor = Surface.CaptureMarkdownViewAnchor();
-        projection.ToggleRenderedChangesOnly(file);
+        projection.ToggleRenderedContext(file);
         Surface.RestoreMarkdownViewAnchor(anchor);
     }
 
@@ -506,14 +503,13 @@ public partial class FolderWindow : Window {
     private async void OnSettingsMenuItemClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) {
         if (DataContext is not FolderProjection projection) return;
 
-        var store = new AppSettingsStore();
         var settings = new MainProjection();
-        settings.ApplySettings(store.Load());
+        settings.ApplySettings(GitKay.Serialization.SettingsStore.loadDefault());
         var window = new SettingsWindow { DataContext = settings };
         await window.ShowDialog(this);
 
         var chosen = settings.CaptureSettings();
-        store.Save(chosen);
+        GitKay.Serialization.SettingsStore.saveDefault(chosen);
         projection.ApplySettings(chosen);
         ApplyChrome(settings);
     }

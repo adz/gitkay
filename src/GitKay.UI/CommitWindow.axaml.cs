@@ -785,13 +785,12 @@ public partial class CommitWindow : Window, IVimCommands {
         Icon = AppIcon.Window;
     }
 
-    private readonly AppUiStateStore _uiState = new();
     private string _repositoryPath = "";
 
     public CommitWindow(string repositoryPath, string repositoryName) : this() {
         _repositoryPath = repositoryPath;
         // The diff here follows the same settings as the history window's: layout, context and the pane chrome.
-        var appSettings = GitKay.Core.SettingsModule.normalize(new AppSettingsStore().Load());
+        var appSettings = GitKay.Core.SettingsModule.normalize(GitKay.Serialization.SettingsStore.loadDefault());
         Surface.DiffLayout = appSettings.DiffLayout;
         Surface.SharedVim = _vim;
         Surface.VimCommands = this;
@@ -819,7 +818,7 @@ public partial class CommitWindow : Window, IVimCommands {
         AddHandler(GotFocusEvent, (_, _) => TrackPane(), RoutingStrategies.Bubble);
 
         // The message being written survives closing the window, until it is committed.
-        var draft = GitKay.Core.UiStateModule.commitDraft(repositoryPath, _uiState.Load());
+        var draft = GitKay.Core.UiStateModule.commitDraft(repositoryPath, GitKay.Serialization.UiStateStore.loadDefault());
         var env = GitKay.Core.GitService.environment(repositoryPath);
         _host = ElmishHost.startAndBind(
             GitKay.Core.CommitWindow.program(env, draft == null ? "" : draft.Value, appSettings.DiffContextLines),
@@ -852,7 +851,7 @@ public partial class CommitWindow : Window, IVimCommands {
 
     /// <summary>Panes and the diff follow the same settings as the main window's; re-read when the window is activated.</summary>
     private void ApplyPaneSettings() {
-        var settings = GitKay.Core.SettingsModule.normalize(new AppSettingsStore().Load());
+        var settings = GitKay.Core.SettingsModule.normalize(GitKay.Serialization.SettingsStore.loadDefault());
         Surface.DiffLayout = settings.DiffLayout;
         _paneChrome.Update(new PaneChrome.Settings(settings.PaneGap, settings.PaneDimUnfocused, settings.PaneFocusHighlight,
             settings.PaneFocusEffect, settings.PaneEffectColor, settings.PaneEffectIntensity, settings.PaneBorder,
@@ -870,7 +869,8 @@ public partial class CommitWindow : Window, IVimCommands {
     private void SaveDraft(string draft) {
         if (string.IsNullOrEmpty(_repositoryPath)) return;
         try {
-            _uiState.Save(GitKay.Core.UiStateModule.withCommitDraft(_repositoryPath, draft, _uiState.Load()));
+            GitKay.Serialization.UiStateStore.saveDefault(
+                GitKay.Core.UiStateModule.withCommitDraft(_repositoryPath, draft, GitKay.Serialization.UiStateStore.loadDefault()));
         }
         catch (Exception exception) {
             System.Diagnostics.Trace.WriteLine($"[commit-window] draft not saved: {exception.Message}");

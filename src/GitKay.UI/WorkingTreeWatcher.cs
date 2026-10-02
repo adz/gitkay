@@ -9,16 +9,13 @@ namespace GitKay.UI;
 /// for a moment, so a build or checkout touching many files refreshes once.
 /// </summary>
 public sealed class WorkingTreeWatcher : IDisposable {
-    private static readonly TimeSpan Quiet = TimeSpan.FromMilliseconds(300);
     private readonly string _gitDirectory;
-    private readonly Action _changed;
-    private readonly Timer _debounce;
     private readonly FileSystemWatcher[] _watchers;
 
     private WorkingTreeWatcher(string workingDirectory, string gitDirectory, Action changed) {
         _gitDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(gitDirectory));
-        _changed = changed;
-        _debounce = new Timer(_ => _changed(), null, Timeout.Infinite, Timeout.Infinite);
+        // The quiet period lives in the Axial stream host; this class only reports raw events to it.
+        GitKay.Core.Debounces.setWatchSink(changed);
         var tree = Watch(workingDirectory, recursive: true);
         // A linked worktree or separate git directory lives outside the working tree.
         _watchers = IsUnder(_gitDirectory, workingDirectory) ? [tree] : [tree, Watch(_gitDirectory, recursive: false)];
@@ -69,10 +66,11 @@ public sealed class WorkingTreeWatcher : IDisposable {
                || full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal);
     }
 
-    private void Schedule() => _debounce.Change(Quiet, Timeout.InfiniteTimeSpan);
+    private void Schedule() => GitKay.Core.Debounces.watchChanged();
 
     public void Dispose() {
         foreach (var watcher in _watchers) watcher.Dispose();
-        _debounce.Dispose();
+        // A disposed watcher must not fire a pending quiet-period refresh.
+        GitKay.Core.Debounces.setWatchSink(() => { });
     }
 }

@@ -6,6 +6,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="Timing.fs" />
+    <Compile Include="Debounce.fs" />
     <Compile Include="Diagnostics.fs" />
     <Compile Include="Models.fs" />
     <Compile Include="FileChange.fs" />
@@ -14,12 +16,12 @@
     <Compile Include="Keys.fs" />
     <Compile Include="Presentation.fs" />
     <Compile Include="Links.fs" />
+    <Compile Include="DiffExpansion.fs" />
     <Compile Include="Markdown.fs" />
     <Compile Include="DiffFind.fs" />
     <Compile Include="Settings.fs" />
     <Compile Include="DiffRows.fs" />
     <Compile Include="DiffNavigation.fs" />
-    <Compile Include="DiffExpansion.fs" />
     <Compile Include="Vim.fs" />
     <Compile Include="Graph.fs" />
     <Compile Include="Git\Error.fs" />
@@ -47,13 +49,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Axial" Version="0.9.3" />
-    <PackageReference Include="Axial.Console" Version="0.9.3" />
-    <PackageReference Include="Axial.FileSystem" Version="0.9.3" />
-    <PackageReference Include="Axial.PlatformService" Version="0.9.3" />
-    <PackageReference Include="Axial.Process" Version="0.9.3" />
-    <PackageReference Include="Reified" Version="0.8.2" />
-    <PackageReference Include="Axial.Guardrails" Version="0.9.3" PrivateAssets="all" />
+    <PackageReference Include="Axial" Version="0.10.0" />
+    <PackageReference Include="Axial.Console" Version="0.10.0" />
+    <PackageReference Include="Axial.FileSystem" Version="0.10.0" />
+    <PackageReference Include="Axial.PlatformService" Version="0.10.0" />
+    <PackageReference Include="Axial.Process" Version="0.10.0" />
+    <PackageReference Include="Reified" Version="0.10.0" />
+    <PackageReference Include="Axial.Guardrails" Version="0.10.0" PrivateAssets="all" />
     <PackageReference Include="LibGit2Sharp" Version="0.32.0" />
     <PackageReference Include="Markdig" Version="1.3.2" />
   </ItemGroup>

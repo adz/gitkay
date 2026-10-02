@@ -9,6 +9,8 @@ using Axial.Elmish;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Microsoft.FSharp.Core;
 
+using Timing = GitKay.Core.Timing;
+
 namespace GitKay.UI;
 
 public sealed record RunningFiberRow(string Name, string Id, string Age, string Annotations, Avalonia.Thickness Indent, bool IsSlow) {
@@ -81,7 +83,7 @@ public sealed partial class DiagnosticsProjection : ObservableObject {
 
     private void RefreshProcess() {
         using var process = Process.GetCurrentProcess();
-        var up = DateTimeOffset.Now - DiagnosticsLog.StartedAt;
+        var up = Timing.now() - DiagnosticsLog.StartedAt;
         Uptime = up.TotalHours >= 1 ? $"{(int)up.TotalHours}h {up.Minutes}m" : $"{up.Minutes}m {up.Seconds}s";
         var anonymous = NativeMemory.AnonymousResidentBytes();
         Memory = $"{process.WorkingSet64 / 1048576.0:F0} MB working set · {GC.GetTotalMemory(false) / 1048576.0:F0} MB managed"
@@ -140,36 +142,36 @@ public sealed partial class DiagnosticsProjection : ObservableObject {
 
     private void RefreshSettled(bool force) {
         var settled = CmdDiagnostics.Settled();
-        var signature = settled.Length == 0 ? 0 : settled[^1].Id * 1000 + settled.Length;
+        var signature = settled.Length == 0 ? 0 : settled[^1].Fiber.Id.Value * 1000 + settled.Length;
         if (!force && signature == _settledSignature && _appliedFlowFilter == FlowFilter) return;
         _settledSignature = signature;
         _appliedFlowFilter = FlowFilter;
         var filter = FlowFilter.Trim();
 
         var rows = settled.Reverse()
-            .Where(fiber => filter.Length == 0 || fiber.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
+            .Where(fiber => filter.Length == 0 || OptionModule.DefaultValue("(unnamed)", fiber.Fiber.Name).Contains(filter, StringComparison.OrdinalIgnoreCase))
             .Select(fiber => new SettledFiberRow(
-                fiber.SettledAt.ToLocalTime().ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture),
-                fiber.Name,
+                OptionModule.DefaultValue(fiber.Fiber.StartedAt, fiber.Fiber.SettledAt).ToLocalTime().ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture),
+                OptionModule.DefaultValue("(unnamed)", fiber.Fiber.Name),
                 FormatDuration(fiber.Duration.TotalMilliseconds),
-                StatusName(fiber.Status),
-                fiber.Status.IsFailed,
-                fiber.Status.IsInterrupted,
+                StatusName(fiber.Fiber.Status),
+                fiber.Fiber.Status.IsFailed,
+                fiber.Fiber.Status.IsInterrupted,
                 fiber.Duration.TotalMilliseconds > SlowFlowMs,
-                fiber.Defect == null ? "" : OptionModule.DefaultValue("", fiber.Defect)) { Fiber = fiber })
+                fiber.Failure == null ? "" : fiber.Failure.Value) { Fiber = fiber })
             .ToList();
         Replace(Settled, rows);
 
         var stats = CmdDiagnostics.Stats()
             .Where(stat => filter.Length == 0 || stat.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(stat => stat.TotalMs)
+            .OrderByDescending(stat => stat.TotalDuration)
             .Select(stat => new FlowStatsRow(
                 stat.Name,
                 stat.Count.ToString(CultureInfo.InvariantCulture),
                 stat.Failed.ToString(CultureInfo.InvariantCulture),
                 stat.Interrupted.ToString(CultureInfo.InvariantCulture),
-                FormatDuration(stat.TotalMs / Math.Max(1, stat.Count)),
-                FormatDuration(stat.MaxMs),
+                FormatDuration(stat.TotalDuration.TotalMilliseconds / Math.Max(1, stat.Count)),
+                FormatDuration(stat.MaxDuration.TotalMilliseconds),
                 stat.Failed > 0))
             .ToList();
         Replace(Stats, stats);
@@ -213,29 +215,23 @@ public sealed partial class DiagnosticsProjection : ObservableObject {
         LogText = string.Join('\n', filter.Length == 0 ? lines : lines.Where(line => line.Contains(filter, StringComparison.OrdinalIgnoreCase)));
     }
 
-    /// <summary>Full details of a settled fiber: timings, lineage, annotations, defect and any rendered failure cause.</summary>
+    /// <summary>Full details of a settled fiber: timings, lineage, annotations and its rendered failure cause.</summary>
     public static string DescribeSettled(SettledFiber fiber) {
+        var dump = fiber.Fiber;
+        var settledAt = OptionModule.DefaultValue(dump.StartedAt, dump.SettledAt);
         var builder = new StringBuilder();
-        builder.AppendLine(fiber.Name);
+        builder.AppendLine(OptionModule.DefaultValue($"fiber #{dump.Id.Value}", dump.Name));
         builder.AppendLine();
-        builder.AppendLine($"Status      {StatusName(fiber.Status)}");
-        builder.AppendLine($"Fiber       #{fiber.Id}{(fiber.ParentId == null ? "" : $"  (parent #{fiber.ParentId.Value})")}");
-        builder.AppendLine($"Started     {fiber.StartedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss.fff}");
-        builder.AppendLine($"Settled     {fiber.SettledAt.ToLocalTime():yyyy-MM-dd HH:mm:ss.fff}");
+        builder.AppendLine($"Status      {StatusName(dump.Status)}");
+        builder.AppendLine($"Fiber       #{dump.Id.Value}{(dump.ParentId == null ? "" : $"  (parent #{dump.ParentId.Value.Value})")}");
+        builder.AppendLine($"Started     {dump.StartedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss.fff}");
+        builder.AppendLine($"Settled     {settledAt.ToLocalTime():yyyy-MM-dd HH:mm:ss.fff}");
         builder.AppendLine($"Took        {FormatDuration(fiber.Duration.TotalMilliseconds)}");
-        foreach (var pair in fiber.Annotations) builder.AppendLine($"Annotation  {pair.Key} = {pair.Value}");
-        var failures = CmdDiagnostics.Failures()
-            .Where(failure => failure.Name == fiber.Name && failure.At >= fiber.StartedAt.AddSeconds(-1) && failure.At <= fiber.SettledAt.AddSeconds(5))
-            .ToArray();
-        foreach (var failure in failures) {
+        foreach (var pair in dump.Annotations) builder.AppendLine($"Annotation  {pair.Key} = {pair.Value}");
+        if (fiber.Failure != null) {
             builder.AppendLine();
-            builder.AppendLine($"Failure cause ({failure.At.ToLocalTime():HH:mm:ss.fff}):");
-            builder.AppendLine(failure.Cause);
-        }
-        if (fiber.Defect != null) {
-            builder.AppendLine();
-            builder.AppendLine("Defect:");
-            builder.AppendLine(fiber.Defect.Value);
+            builder.AppendLine("Failure cause:");
+            builder.AppendLine(fiber.Failure.Value);
         }
         return builder.ToString();
     }
@@ -256,7 +252,7 @@ public sealed partial class DiagnosticsProjection : ObservableObject {
     /// <summary>Everything on screen as text, for pasting into an issue.</summary>
     public string BuildSnapshot() {
         var builder = new StringBuilder();
-        builder.AppendLine($"GitKay diagnostics snapshot {DateTimeOffset.Now:O}");
+        builder.AppendLine($"GitKay diagnostics snapshot {Timing.now():O}");
         builder.AppendLine($"Uptime {Uptime} · {Memory} · {Collections} · {Threads}");
         builder.AppendLine(UiLag);
         builder.AppendLine();

@@ -113,8 +113,7 @@
                                                   PreviewRequested="OnPreviewRequested"
                                                   ChangesOnlyRequested="OnChangesOnlyRequested"
                                                   FindQuery="{Binding FindQuery}"
-                                                  OldRenderedImages="{Binding OldImages}"
-                                                  RenderedImages="{Binding Images}"
+                                                  RenderedImages="{Binding RenderedImages}"
                                                   HorizontalAlignment="Stretch" />
                     </ScrollViewer>
                     <local:OverviewRuler Width="4" HorizontalAlignment="Left" ZIndex="5" Source="{Binding #Surface}" />

@@ -52,7 +52,8 @@ public partial class App : Application {
     /// </summary>
     private async Task InitializeFolderWindowAsync(IClassicDesktopStyleApplicationLifetime desktop, FolderMode mode, string left, string? right) {
         try {
-            var settings = await Task.Run(() => new AppSettingsStore().Load());
+            var settingsResult = await Task.Run(() => GitKay.Serialization.SettingsStore.loadDefaultReporting());
+            var settings = settingsResult.Value;
             RequestedThemeVariant =
                 settings.Theme.IsLightTheme ? Avalonia.Styling.ThemeVariant.Light
                 : settings.Theme.IsDarkTheme ? Avalonia.Styling.ThemeVariant.Dark
@@ -74,6 +75,11 @@ public partial class App : Application {
             desktop.MainWindow = window;
             desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnMainWindowClose;
             window.Show();
+
+            if (settingsResult.Failure?.Value is { } settingsFailure) {
+                await SettingsLoadFailureDialog.ShowAsync(window,
+                    [new SettingsLoadFailureDialog.Failure("settings", settingsFailure.Path, settingsFailure.Reason)]);
+            }
         }
         catch (Exception ex) {
             FatalErrorPresenter.ShowStartupFailure(desktop, ex);
@@ -102,7 +108,8 @@ public partial class App : Application {
     /// <summary>gitkay gui: only the commit window, with the saved theme; closing it exits.</summary>
     private async Task InitializeCommitWindowAsync(IClassicDesktopStyleApplicationLifetime desktop) {
         try {
-            var (settings, repository) = await Task.Run(() => (new AppSettingsStore().Load(), GitService.tryDiscoverRepositoryPath()));
+            var (settingsResult, repository) = await Task.Run(() => (GitKay.Serialization.SettingsStore.loadDefaultReporting(), GitService.tryDiscoverRepositoryPath()));
+            var settings = settingsResult.Value;
             RequestedThemeVariant =
                 settings.Theme.IsLightTheme ? Avalonia.Styling.ThemeVariant.Light
                 : settings.Theme.IsDarkTheme ? Avalonia.Styling.ThemeVariant.Dark
@@ -127,6 +134,11 @@ public partial class App : Application {
             desktop.MainWindow = window;
             desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnMainWindowClose;
             window.Show();
+
+            if (settingsResult.Failure?.Value is { } settingsFailure) {
+                await SettingsLoadFailureDialog.ShowAsync(window,
+                    [new SettingsLoadFailureDialog.Failure("settings", settingsFailure.Path, settingsFailure.Reason)]);
+            }
         }
         catch (Exception ex) {
             FatalErrorPresenter.ShowStartupFailure(desktop, ex);
@@ -147,11 +159,11 @@ public partial class App : Application {
             return;
         }
         try {
-            var (persistedSettings, persistedUiState, repoKey) = await Task.Run(() => {
-                var settingsStore = new AppSettingsStore();
-                var uiStateStore = new AppUiStateStore();
-                return (settingsStore.Load(), uiStateStore.Load(), GitService.tryDiscoverRepositoryPath());
+            var (settingsResult, uiStateResult, repoKey) = await Task.Run(() => {
+                return (GitKay.Serialization.SettingsStore.loadDefaultReporting(), GitKay.Serialization.UiStateStore.loadDefaultReporting(), GitService.tryDiscoverRepositoryPath());
             });
+            var persistedSettings = settingsResult.Value;
+            var persistedUiState = uiStateResult.Value;
 
             // Started somewhere that is not a repository and given nothing to show: browse the folder instead of
             // opening a history window with no history in it.
@@ -160,8 +172,6 @@ public partial class App : Application {
                 return;
             }
 
-            var settingsStore = new AppSettingsStore();
-            var uiStateStore = new AppUiStateStore();
             var currentUiState = persistedUiState;
             var startupArgs = Microsoft.FSharp.Collections.ListModule.ToArray(GitKay.Core.GitStartup.settingsArguments(persistedSettings));
 
@@ -210,11 +220,11 @@ public partial class App : Application {
 
                     currentUiState = UiStateModule.withSelectedCommit(repoKey, projection.SelectedCommit.FullHash, currentUiState);
                     // Not on the click: the write can wait on the disk, and the window must not wait with it.
-                    _ = uiStateStore.SaveInBackground(currentUiState);
+                    GitKay.Serialization.UiStateStore.saveInBackgroundDefault(currentUiState);
                     return;
                 }
 
-                settingsStore.Save(projection.CaptureSettings());
+                GitKay.Serialization.SettingsStore.saveDefault(projection.CaptureSettings());
             };
 
             // Present and compose the opaque shell before repository initialization can
@@ -224,11 +234,20 @@ public partial class App : Application {
             await Dispatcher.UIThread.InvokeAsync(mainWindow.InvalidateVisual, DispatcherPriority.Render);
             await Task.Delay(1);
 
+            var failures = new List<SettingsLoadFailureDialog.Failure>();
+            if (settingsResult.Failure?.Value is { } settingsFailure)
+                failures.Add(new SettingsLoadFailureDialog.Failure("settings", settingsFailure.Path, settingsFailure.Reason));
+            if (uiStateResult.Failure?.Value is { } uiStateFailure)
+                failures.Add(new SettingsLoadFailureDialog.Failure("UI state", uiStateFailure.Path, uiStateFailure.Reason));
+            if (failures.Count > 0)
+                await SettingsLoadFailureDialog.ShowAsync(mainWindow, failures);
+
             var host = ElmishHost.startAndBind(
                 GitKay.Core.App.program(startupArgs),
                 model => projection.Update(model),
                 dispatch => projection.SetDispatch(dispatch)
             );
+            GitKay.Core.App.startHosts();
 
             var watcher = WorkingTreeWatcher.TryStart(projection.WorkingDirectory, repoKey,
                 () => Dispatcher.UIThread.Post(projection.RefreshWorkingTree));
@@ -244,7 +263,7 @@ public partial class App : Application {
                 currentUiState = UiStateModule.withViewPreferences(
                     projection.CaptureViewPreferences().Select(entry => Tuple.Create(entry.Key, entry.Value)),
                     UiStateModule.withRecentSearches(projection.RecentSearches, currentUiState));
-                uiStateStore.Save(currentUiState);
+                GitKay.Serialization.UiStateStore.saveDefault(currentUiState);
                 watcher?.Dispose();
                 ((IDisposable)host).Dispose();
                 GitKay.Core.App.stopRuntime();

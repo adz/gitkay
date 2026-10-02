@@ -84,8 +84,7 @@
                                           SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
                                           DiffLayout="{Binding Layout}"
                                           CodeFontSize="{Binding Main.DiffFontSize, Mode=TwoWay}"
-                                          OldRenderedImages="{Binding OldImages}"
-                                          RenderedImages="{Binding Images}"
+                                          RenderedImages="{Binding RenderedImages}"
                                           ToggleFileCommand="{Binding ToggleCollapsedCommand}"
                                           HorizontalAlignment="Stretch" />
             </ScrollViewer>

@@ -7,10 +7,11 @@
 
   <ItemGroup>
     <Compile Include="JsonSerialization.fs" />
+    <Compile Include="Persistence.fs" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Reified" Version="0.8.2" />
+    <PackageReference Include="Reified" Version="0.10.0" />
   </ItemGroup>
 
   <ItemGroup>

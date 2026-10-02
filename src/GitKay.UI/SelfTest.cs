@@ -150,7 +150,7 @@ public static class SelfTest {
             var settled = Axial.Elmish.CmdDiagnostics.Settled();
             if (settled.Length == 0) return "no settled fibers";
             var text = DiagnosticsProjection.DescribeSettled(settled[^1]);
-            var failed = settled.FirstOrDefault(fiber => fiber.Name == "self-test failure");
+            var failed = settled.FirstOrDefault(fiber => fiber.Fiber.Name?.Value == "self-test failure");
             var failedText = failed == null ? "" : DiagnosticsProjection.DescribeSettled(failed);
             if (!text.Contains("Status")) return "details missing status";
             return failed != null && !failedText.Contains("Revision not found") ? "failure cause missing from details" : null;

@@ -1,6 +1,5 @@
 // The self-test runs at a process entry point and waits on real commands and time.
 // axial-allow-effect-file: sleep
-// axial-allow-effect-file: clock
 namespace GitKay.Core
 
 open System
@@ -77,22 +76,22 @@ module SelfTest =
               let dying: Flow<GitService.GitEnv, GitError, int> = Flow.delay (fun () -> raise (InvalidOperationException "self-test defect")) // axial-allow-raise
               runCommand (Cmd.OfFlow.ofFlowLatest "self-test defect" (AxialLatestSlot runtime) env dying (fun _ -> "ok") (fun _ -> "error")) |> ignore
               Thread.Sleep 200
-              if CmdDiagnostics.Settled() |> Array.exists (fun fiber -> fiber.Name = "self-test defect") then None
+              if CmdDiagnostics.Settled() |> Array.exists (fun fiber -> fiber.Fiber.Name = Some "self-test defect") then None
               else Some "defect fiber not recorded")
 
           check "command cancellation settles" (fun () ->
               let slot = AxialLatestSlot runtime
-              let slow: Flow<GitService.GitEnv, GitError, int> = Flow.Runtime.sleep (TimeSpan.FromSeconds 30.0) |> Flow.map (fun () -> 1)
+              let slow: Flow<GitService.GitEnv, GitError, int> = Flow.sleep (TimeSpan.FromSeconds 30.0) |> Flow.map (fun () -> 1)
               for subscription in Cmd.OfFlow.ofFlowLatest "self-test cancelled" slot env slow (fun _ -> "ok") (fun _ -> "error") do
                   subscription ignore
               Thread.Sleep 200
               slot.Cancel()
               Thread.Sleep 500
-              let dump = CmdDiagnostics.Registry.DumpAt(DateTimeOffset.UtcNow)
+              let dump = CmdDiagnostics.Registry.DumpAt(env.Runtime.Clock)
               if dump.Contains "self-test cancelled" then Some("still running: " + dump) else None)
 
           check "command cancel from diagnostics" (fun () ->
-              let slow: Flow<GitService.GitEnv, GitError, int> = Flow.Runtime.sleep (TimeSpan.FromSeconds 30.0) |> Flow.map (fun () -> 1)
+              let slow: Flow<GitService.GitEnv, GitError, int> = Flow.sleep (TimeSpan.FromSeconds 30.0) |> Flow.map (fun () -> 1)
               for subscription in Cmd.OfFlow.ofFlow "self-test diagnostics cancel" runtime env slow (fun _ -> "ok") (fun _ -> "error") do
                   subscription ignore
               Thread.Sleep 300

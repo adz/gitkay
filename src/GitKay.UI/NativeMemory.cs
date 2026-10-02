@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 
+using Timing = GitKay.Core.Timing;
+
 namespace GitKay.UI;
 
 /// <summary>
@@ -28,7 +30,7 @@ public static partial class NativeMemory {
     /// <summary>Trims when anonymous resident memory has grown past the threshold since the last trim.</summary>
     public static void TrimIfGrown() {
         if (_unsupported) return;
-        if (Stopwatch.GetElapsedTime(_lastTrimTicks) < MinimumInterval && _lastTrimTicks != 0) return;
+        if (Timing.elapsedFrom(_lastTrimTicks) < MinimumInterval && _lastTrimTicks != 0) return;
         var before = AnonymousResidentBytes();
         if (before < 0 || (_baseline != long.MaxValue && before - _baseline < GrowthThresholdBytes)) return;
         Trim(before);
@@ -50,7 +52,7 @@ public static partial class NativeMemory {
             return;
         }
 
-        _lastTrimTicks = Stopwatch.GetTimestamp();
+        _lastTrimTicks = Timing.mark();
         var after = AnonymousResidentBytes();
         if (after > 0) _baseline = Math.Min(_baseline, after);
         if (before > 0 && after > 0 && before > after) {

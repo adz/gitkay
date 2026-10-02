@@ -2,20 +2,40 @@ namespace Axial.Elmish
 
 open System
 open System.Collections.Concurrent
+open System.Collections.Generic
 open System.Threading
+open Axial
 
 /// One root cancellation lifetime shared by every Axial-backed Cmd in a running Elmish
 /// program. Disposing it cancels every outstanding flow, including ones held by a
-/// `AxialLatestSlot`.
+/// `AxialLatestSlot` and any long-lived hosts.
 [<Sealed>]
 type AxialElmishRuntime() =
     let cts = new CancellationTokenSource()
+    let hosts = ResizeArray<IDisposable>()
 
     /// The token every Axial-backed Cmd should observe. Cancelled when the runtime is disposed.
     member _.Token = cts.Token
 
+    /// Starts a flow that runs for the lifetime of this runtime and is interrupted when it is disposed. Use it for
+    /// long-lived stream consumers — a debounce, a watcher — whose lifetime is the application's, not one command's.
+    /// The flow runs on the thread pool; its failures are not surfaced here.
+    member _.Host(environment: 'env, flow: Flow<'env, 'error, unit>) : IDisposable =
+        let handle = App.startWithCancellation cts.Token environment flow
+        let host = handle :> IDisposable
+        lock hosts (fun () -> hosts.Add host)
+
+        { new IDisposable with
+            member _.Dispose() =
+                lock hosts (fun () -> hosts.Remove host |> ignore)
+                host.Dispose() }
+
     interface IDisposable with
         member _.Dispose() =
+            let outstanding = lock hosts (fun () -> let copy = hosts |> Seq.toArray in hosts.Clear(); copy)
+            for host in outstanding do
+                host.Dispose()
+
             if not cts.IsCancellationRequested then
                 cts.Cancel()
 

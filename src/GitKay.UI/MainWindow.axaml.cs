@@ -843,7 +843,7 @@ public partial class MainWindow : Window, IVimCommands {
         $"markdown-preview|{System.IO.Path.GetFullPath(repository)}|{path}";
 
     private static bool? MarkdownPreviewPreference(string repository, string path) {
-        var value = GitKay.Core.UiStateModule.viewPreference(MarkdownPreviewKey(repository, path), new AppUiStateStore().Load());
+        var value = GitKay.Core.UiStateModule.viewPreference(MarkdownPreviewKey(repository, path), GitKay.Serialization.UiStateStore.loadDefault());
         return value == null ? null : string.Equals(value.Value, "rendered", StringComparison.Ordinal);
     }
 
@@ -855,15 +855,14 @@ public partial class MainWindow : Window, IVimCommands {
     /// Without this a toggle made once silently outranks that setting forever, with nothing on screen to say why.
     /// </summary>
     private void ForgetMarkdownPreviewPreferences() {
-        var store = new AppUiStateStore();
-        var state = store.Load();
+        var state = GitKay.Serialization.UiStateStore.loadDefault();
         var forgotten = GitKay.Core.UiStateModule.countViewPreferences(MarkdownPreviewPrefix, state);
         if (forgotten == 0) {
             if (_projection != null) _projection.Status = "No per-file preview choices to forget";
             return;
         }
 
-        store.Save(GitKay.Core.UiStateModule.withoutViewPreferences(MarkdownPreviewPrefix, state));
+        GitKay.Serialization.UiStateStore.saveDefault(GitKay.Core.UiStateModule.withoutViewPreferences(MarkdownPreviewPrefix, state));
         if (_projection != null)
             _projection.Status = forgotten == 1
                 ? "Forgot 1 per-file preview choice"
@@ -871,16 +870,15 @@ public partial class MainWindow : Window, IVimCommands {
     }
 
     private static void SaveMarkdownPreviewPreference(string repository, string path, bool rendered) {
-        var store = new AppUiStateStore();
-        var state = GitKay.Core.UiStateModule.withViewPreference(MarkdownPreviewKey(repository, path), rendered ? "rendered" : "source", store.Load());
-        store.Save(state);
+        var state = GitKay.Core.UiStateModule.withViewPreference(MarkdownPreviewKey(repository, path), rendered ? "rendered" : "source", GitKay.Serialization.UiStateStore.loadDefault());
+        GitKay.Serialization.UiStateStore.saveDefault(state);
     }
 
     private void OnDiffFileChangesOnlyRequested(object? sender, DiffFileProjection file) {
         if (_projection is not { } projection) return;
         // Rows come and go beneath the click, so the row being read is pinned across the change.
         _pendingMarkdownAnchor = DiffRowsListBox.CaptureMarkdownViewAnchor();
-        projection.ToggleRenderedChangesOnly(file);
+        projection.ToggleRenderedContext(file);
     }
 
     /// <summary>

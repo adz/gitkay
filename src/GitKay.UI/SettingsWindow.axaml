@@ -312,12 +312,8 @@
                                               IsChecked="{Binding LoadRemoteMarkdownImages, Mode=TwoWay}"
                                               ToolTip.Tip="Contacts external hosts and may reveal that you opened the document" />
 
-                                    <TextBlock Grid.Row="4" Text="Rendered diffs" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
-                                    <CheckBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Content="Collapse long unchanged runs"
-                                              IsChecked="{Binding RenderedMarkdownChangesOnly, Mode=TwoWay}" />
-
-                                    <TextBlock Grid.Row="5" Text="Search debounce" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
-                                    <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Grid.Row="4" Text="Search debounce" Foreground="{DynamicResource GitKayTextBrush}" VerticalAlignment="Center" />
+                                    <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Spacing="8">
                                         <NumericUpDown Width="120" Minimum="0" Maximum="5" Increment="0.25" FormatString="0.##"
                                                        Value="{Binding SearchDebounceSeconds, Mode=TwoWay}" />
                                         <TextBlock Text="seconds" Foreground="{DynamicResource GitKaySecondaryTextBrush}" VerticalAlignment="Center" />

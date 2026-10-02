@@ -5,6 +5,7 @@ using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Avalonia.Controls.Documents;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Microsoft.FSharp.Collections;
 using Microsoft.FSharp.Core;
 using DiffLineType = GitKay.Core.Models.LineType;
@@ -17,9 +18,19 @@ public readonly record struct DiffFileKey(string OldPath, string NewPath, string
 public interface IDiffRowProjection {
 }
 
-public sealed class RenderedMarkdownGapProjection(int count) : IDiffRowProjection {
-    public int Count { get; } = count;
-    public string Label => $"⋯ {Count} unchanged sections";
+/// <summary>
+/// The bitmaps behind a rendered preview, old and new side together. Swapped as one value so the diff surface can
+/// never observe one side replaced while the other still points at disposed bitmaps.
+/// </summary>
+public sealed class RenderedImagesState {
+    public IReadOnlyDictionary<string, Bitmap> Old { get; }
+    public IReadOnlyDictionary<string, Bitmap> New { get; }
+    public RenderedImagesState(IReadOnlyDictionary<string, Bitmap> old, IReadOnlyDictionary<string, Bitmap> @new) {
+        Old = old;
+        New = @new;
+    }
+    public static RenderedImagesState Empty { get; } =
+        new(new Dictionary<string, Bitmap>(), new Dictionary<string, Bitmap>());
 }
 
 public sealed class RenderedMarkdownRowProjection(GitKay.Core.RenderedMarkdownRow row) : IDiffRowProjection {
@@ -92,7 +103,25 @@ public partial class DiffFileProjection : ObservableObject {
     /// <summary>The single row an image preview is: the picture and what can be read off it.</summary>
     public ImagePreviewRowProjection? ImageRow =>
         PreviewImage is { } image ? new ImagePreviewRowProjection(image, ContentPath, _previewImageBytes, GitKay.Core.FileChange.isDeleted(Key.OldPath, Key.NewPath), this) : null;
-    [ObservableProperty] private bool _renderedChangesOnly;
+
+    /// <summary>Revealed block ranges for the rendered Markdown view, in the same 1-based space as the source diff's line ranges.</summary>
+    private Microsoft.FSharp.Collections.FSharpList<GitKay.Core.DiffExpansion.LineRange> _renderedRevealed =
+        Microsoft.FSharp.Collections.FSharpList<GitKay.Core.DiffExpansion.LineRange>.Empty;
+    /// <summary>True while the rendered view is collapsed to its default context; false once any block range is revealed.</summary>
+    public bool IsRenderedCollapsed => _renderedRevealed.IsEmpty;
+
+    /// <summary>Reveals one rendered-Markdown block range, the way a source-diff gap expander reveals lines.</summary>
+    public void RevealRenderedRange(GitKay.Core.DiffExpansion.LineRange range) =>
+        _renderedRevealed = GitKay.Core.DiffExpansion.addRange(range, _renderedRevealed);
+
+    /// <summary>Expands to the whole document, or collapses back to the default context.</summary>
+    public void ToggleRenderedContext() =>
+        _renderedRevealed = _renderedRevealed.IsEmpty
+            ? Microsoft.FSharp.Collections.FSharpList<GitKay.Core.DiffExpansion.LineRange>.Cons(
+                new GitKay.Core.DiffExpansion.LineRange(1, int.MaxValue),
+                Microsoft.FSharp.Collections.FSharpList<GitKay.Core.DiffExpansion.LineRange>.Empty)
+            : Microsoft.FSharp.Collections.FSharpList<GitKay.Core.DiffExpansion.LineRange>.Empty;
+
     /// <summary>Label and indent for the changed-files list: full path in patch mode, file name in tree mode.</summary>
     [ObservableProperty] private string _listLabel = "";
     /// <summary>The commit search's path term matches this file; shown as a dotted underline.</summary>
@@ -161,15 +190,28 @@ public partial class DiffFileProjection : ObservableObject {
     public IReadOnlyList<RenderedMarkdownRowProjection> RenderedRows { get; private set; } = Array.Empty<RenderedMarkdownRowProjection>();
     private IReadOnlyList<RenderedMarkdownRowProjection> RenderedOldRows { get; set; } = Array.Empty<RenderedMarkdownRowProjection>();
     private IReadOnlyList<RenderedMarkdownRowProjection> RenderedNewRows { get; set; } = Array.Empty<RenderedMarkdownRowProjection>();
-    public IEnumerable<IDiffRowProjection> RenderedDisplayRows(bool changesOnly, GitKay.Core.DiffLayout layout) {
+    public IEnumerable<IDiffRowProjection> RenderedDisplayRows(GitKay.Core.DiffLayout layout) {
         var rows = layout.IsOldFile ? RenderedOldRows : layout.IsNewFile ? RenderedNewRows : RenderedRows;
-        if (!changesOnly || layout.IsOldFile || layout.IsNewFile) return rows;
-        return GitKay.Core.Markdown.changesOnly(2, Microsoft.FSharp.Collections.ListModule.OfSeq(rows.Select(row => row.Row)))
+        if (layout.IsOldFile || layout.IsNewFile) return rows;
+        var blockCount = rows.Count;
+        // Collapse unchanged runs into the same gap rows the source diff uses, so the arrows and per-gap reveal match.
+        return GitKay.Core.Markdown.projectRendered(3, _renderedRevealed, Microsoft.FSharp.Collections.ListModule.OfSeq(rows.Select(row => row.Row)))
             .Select(row => row switch {
                 GitKay.Core.RenderedMarkdownDisplayRow.RenderedBlock block => (IDiffRowProjection)new RenderedMarkdownRowProjection(block.Item),
-                GitKay.Core.RenderedMarkdownDisplayRow.UnchangedSections gap => new RenderedMarkdownGapProjection(gap.Item),
+                GitKay.Core.RenderedMarkdownDisplayRow.UnchangedSections gap => RenderedGap(gap.Item, blockCount),
                 _ => throw new InvalidOperationException(),
             });
+    }
+
+    private DiffGapProjection RenderedGap(GitKay.Core.RenderedMarkdownGap gap, int blockCount) {
+        var first = gap.FirstBlock;
+        var count = gap.BlockCount;
+        var kind = first == 1 ? GitKay.Core.DiffExpansion.GapKind.Leading
+            : first + count - 1 >= blockCount ? GitKay.Core.DiffExpansion.GapKind.Trailing
+            : GitKay.Core.DiffExpansion.GapKind.Internal;
+        var diffGap = new GitKay.Core.DiffExpansion.DiffGap(Key.OldPath, Key.NewPath, kind, first, first,
+            Microsoft.FSharp.Core.FSharpOption<int>.Some(count));
+        return new DiffGapProjection(diffGap, false, this, step: 1);
     }
 
     private readonly List<object> _blocks = new();
@@ -470,7 +512,7 @@ public static class DiffRowBuilder {
         rows.Add(file.Header);
         if (!file.IsLoaded || file.IsCollapsed) return;
         if (file.ImageRow is { } imageRow) { rows.Add(imageRow); return; }
-        if (file.IsRenderedMarkdown) { rows.AddRange(file.RenderedDisplayRows(file.RenderedChangesOnly, layout)); return; }
+        if (file.IsRenderedMarkdown) { rows.AddRange(file.RenderedDisplayRows(layout)); return; }
 
         var blocks = Microsoft.FSharp.Collections.ListModule.OfSeq(file.Blocks.Select(block => block switch {
             DiffGapProjection gap => GitKay.Core.DiffRows.Block<DiffGapProjection, DiffHunkProjection, DiffLineProjection>.NewGap(gap),
@@ -505,11 +547,14 @@ public readonly record struct DiffGapExpansionRequest(
     DiffFileProjection? File = null);
 
 public sealed class DiffGapProjection : IDiffRowProjection {
-    public DiffGapProjection(GitKay.Core.DiffExpansion.DiffGap gap, bool isLoading = false, DiffFileProjection? file = null) {
+    private const int DefaultStep = 10;
+
+    public DiffGapProjection(GitKay.Core.DiffExpansion.DiffGap gap, bool isLoading = false, DiffFileProjection? file = null, int step = DefaultStep) {
         Gap = gap;
         File = file;
         IsLoading = isLoading;
-        Directions = GitKay.Core.DiffExpansion.availableDirections(gap).ToArray();
+        Step = step;
+        Directions = GitKay.Core.DiffExpansion.availableDirectionsWithStep(step, gap).ToArray();
     }
 
     public GitKay.Core.DiffExpansion.DiffGap Gap { get; }
@@ -518,14 +563,18 @@ public sealed class DiffGapProjection : IDiffRowProjection {
     public bool IsLoading { get; }
     /// <summary>Header of the hunk that follows this gap; the gap row stands in for that header row.</summary>
     public string? HeaderText { get; set; }
+    /// <summary>How many units one arrow reveal advances: lines in a source diff, blocks in a rendered preview.</summary>
+    public int Step { get; }
     public int? HiddenLineCount => Gap.HiddenCount is null ? null : Gap.HiddenCount.Value;
     public IReadOnlyList<GitKay.Core.DiffExpansion.ExpandDirection> Directions { get; }
 
-    public string Label => HiddenLineCount is { } count ? $"⋯  {count} hidden lines" : "⋯  more lines";
+    private string Unit => File?.IsRenderedMarkdown == true ? "sections" : "lines";
+
+    public string Label => HiddenLineCount is { } count ? $"⋯  {count} hidden {Unit}" : $"⋯  more {Unit}";
 
     public string ActionLabel(GitKay.Core.DiffExpansion.ExpandDirection direction) {
-        if (direction.IsDown) return $"↓  Show {GitKay.Core.DiffExpansion.StepLines} lines";
-        if (direction.IsUp) return $"↑  Show {GitKay.Core.DiffExpansion.StepLines} lines";
+        if (direction.IsDown) return $"↓  Show {Step} {Unit}";
+        if (direction.IsUp) return $"↑  Show {Step} {Unit}";
         return HiddenLineCount is { } count ? $"↕  Show all {count}" : "↕  Show all";
     }
 }

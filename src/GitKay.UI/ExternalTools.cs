@@ -42,6 +42,12 @@ public static class ExternalTools {
         Process.Start(info);
     }
 
+    /// <summary>Opens a file or folder with the OS default handler: the editor for a file, the file manager for a folder.</summary>
+    public static void OpenInDefaultApp(string path) {
+        var opener = OperatingSystem.IsWindows() ? "explorer.exe" : OperatingSystem.IsMacOS() ? "open" : "xdg-open";
+        Process.Start(new ProcessStartInfo(opener) { ArgumentList = { path }, UseShellExecute = false });
+    }
+
     private static string? FindOnPath(string name) {
         foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)) {
             if (string.IsNullOrWhiteSpace(directory)) continue;

@@ -1,4 +1,3 @@
-// axial-allow-effect-file: clock
 namespace GitKay.Core
 
 open System
@@ -27,22 +26,22 @@ module Diagnostics =
         | value -> value.GetType().Name
 
     let beginMessage (name: string) =
-        lock gate (fun () -> inFlight <- Some(name, Stopwatch.GetTimestamp()))
+        lock gate (fun () -> inFlight <- Some(name, Timing.mark ()))
 
     let endMessage (name: string) (startedAt: int64) =
-        let elapsed = Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds
+        let elapsed = (Timing.elapsedFrom startedAt).TotalMilliseconds
 
         lock gate (fun () ->
             inFlight <- None
             if recent.Count >= capacity then recent.Dequeue() |> ignore
-            recent.Enqueue { At = DateTimeOffset.Now; Message = name; ElapsedMs = elapsed })
+            recent.Enqueue { At = Timing.now().ToLocalTime(); Message = name; ElapsedMs = elapsed })
 
         if elapsed >= slowUpdateThresholdMs then
             Trace.WriteLine $"[slow] update {name} took {elapsed:F0}ms"
 
     /// A message whose update is still running, with how long it has been running.
     let inFlightMessage () =
-        lock gate (fun () -> inFlight |> Option.map (fun (name, started) -> name, Stopwatch.GetElapsedTime(started).TotalMilliseconds))
+        lock gate (fun () -> inFlight |> Option.map (fun (name, started) -> name, (Timing.elapsedFrom started).TotalMilliseconds))
 
     let recentMessages () = lock gate (fun () -> List.ofSeq recent)
 

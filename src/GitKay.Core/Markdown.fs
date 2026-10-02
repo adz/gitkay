@@ -90,9 +90,15 @@ type RenderedMarkdownRow =
       CodeLines: MarkdownCodeLine list
       MoveCounterpartLine: int option }
 
+type RenderedMarkdownGap =
+    { /// 1-based index of the first hidden block.
+      FirstBlock: int
+      /// How many blocks are hidden.
+      BlockCount: int }
+
 type RenderedMarkdownDisplayRow =
     | RenderedBlock of RenderedMarkdownRow
-    | UnchangedSections of int
+    | UnchangedSections of RenderedMarkdownGap
 
 type MarkdownTarget =
     | RepositoryPath of string
@@ -476,23 +482,31 @@ module Markdown =
                   PreviousSpans = []; CurrentSpans = blockSpans current.Block; Words = []; CodeLines = []
                   MoveCounterpartLine = Some source.FirstLine })
 
-    /// Collapse only long unchanged runs, retaining context on both sides of changes.
-    let changesOnly context (rows: RenderedMarkdownRow list) =
+    /// Collapses long runs of unchanged blocks, keeping a little context around each change. Revealed block ranges
+    /// (1-based, in the same space as the source diff's line ranges) stay visible, so the same directional gap
+    /// expanders as the source diff can reveal them one step at a time.
+    let projectRendered (context: int) (revealed: DiffExpansion.LineRange list) (rows: RenderedMarkdownRow list) =
         let context = max 0 context
-        let output = ResizeArray<RenderedMarkdownDisplayRow>()
-        let unchanged = ResizeArray<RenderedMarkdownRow>()
-        let flush () =
-            if unchanged.Count <= context * 2 + 1 then
-                unchanged |> Seq.iter (RenderedBlock >> output.Add)
+        let rows = List.toArray rows
+        let n = rows.Length
+        let changed = Array.init n (fun i -> rows[i].Change <> MarkdownChangeKind.Unchanged)
+
+        let isVisible i =
+            if changed[i] then true
             else
-                unchanged |> Seq.take context |> Seq.iter (RenderedBlock >> output.Add)
-                output.Add(UnchangedSections(unchanged.Count - context * 2))
-                unchanged |> Seq.skip (unchanged.Count - context) |> Seq.iter (RenderedBlock >> output.Add)
-            unchanged.Clear()
-        for row in rows do
-            if row.Change = MarkdownChangeKind.Unchanged then unchanged.Add row
-            else flush (); output.Add(RenderedBlock row)
-        flush ()
+                let nearChange = [ max 0 (i - context) .. min (n - 1) (i + context) ] |> List.exists (fun j -> changed[j])
+                nearChange || DiffExpansion.contains (i + 1) revealed
+
+        let output = ResizeArray<RenderedMarkdownDisplayRow>()
+        let mutable i = 0
+        while i < n do
+            if isVisible i then
+                output.Add(RenderedBlock rows[i])
+                i <- i + 1
+            else
+                let first = i
+                while i < n && not (isVisible i) do i <- i + 1
+                output.Add(UnchangedSections { FirstBlock = first + 1; BlockCount = i - first })
         List.ofSeq output
 
     let previewKind (path: string) =

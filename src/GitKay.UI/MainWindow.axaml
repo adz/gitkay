@@ -508,7 +508,13 @@
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center"
                                     IsVisible="{Binding IsRevisionComparison}">
                             <TextBlock Text="Revision diff:" Foreground="{DynamicResource GitKayMutedTextBrush}" VerticalAlignment="Center" />
-                            <Button Classes="inline" Click="OnChangeRevisionComparison" ToolTip.Tip="Change the from and to revisions">
+                            <Button Padding="8,4"
+                                    Background="{DynamicResource GitKayRaisedBrush}"
+                                    BorderBrush="{DynamicResource GitKayBorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Click="OnChangeRevisionComparison"
+                                    ToolTip.Tip="Change the from and to revisions">
                                 <StackPanel Orientation="Horizontal" Spacing="5">
                                     <TextBlock Text="From" Foreground="{DynamicResource GitKayMutedTextBrush}" />
                                     <TextBlock Text="{Binding ComparisonBaseRevision}" FontFamily="{x:Static local:FontStacks.Mono}" />
@@ -735,8 +741,7 @@
                                                           SearchHighlightUseRegex="{Binding CommitSearchDiffTermUseRegex}"
                                                           DiffLayout="{Binding DiffLayout}"
                                                           CodeFontSize="{Binding DiffFontSize, Mode=TwoWay}"
-                                                          OldRenderedImages="{Binding RenderedOldImages}"
-                                                          RenderedImages="{Binding RenderedNewImages}"
+                                                          RenderedImages="{Binding RenderedImages}"
                                                           RenderedImagesLoading="{Binding RenderedImagesLoading}"
                                                           FileContextRequested="OnDiffFileHeaderContextRequested"
                                                           ChangesOnlyRequested="OnDiffFileChangesOnlyRequested"

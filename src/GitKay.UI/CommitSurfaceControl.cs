@@ -175,6 +175,9 @@ public sealed class CommitSurfaceControl : Control, IOverviewSource, GitKay.Core
         MeasureVisibleBadges();
         InvalidateMeasure();
         InvalidateVisual();
+        // The scroll viewer caches whether its content can scroll; rows appearing after the first layout would
+        // otherwise leave the mouse wheel inert until a click forced another pass.
+        _scrollViewer?.InvalidateMeasure();
     }
 
     private bool _filterPending;

@@ -16,12 +16,24 @@ module App =
     /// outlives the window.
     let stopRuntime () = (runtime :> IDisposable).Dispose()
 
+    let private hostGate = obj ()
+    let mutable private hostsStarted = false
+
+    /// Starts the shared working-tree watcher debounce on the app runtime. Safe to call more than once, so a test or
+    /// a second window shares the one host; stopRuntime interrupts it. Each window starts its own search host.
+    let startHosts () =
+        lock hostGate (fun () ->
+            if not hostsStarted then
+                hostsStarted <- true
+                Debounces.startWatchHost runtime |> ignore)
+
     let private selectionJob = AxialLatestSlot(runtime)
     let private diffJob = AxialLatestSlot(runtime)
     let private workingTreeStatusJob = AxialLatestSlot(runtime)
     let private workingTreeChangesJob = AxialLatestSlot(runtime)
     let private searchJob = AxialLatestSlot(runtime)
     let private contextJobs = AxialLatestSlotRegistry<GitService.DiffFileKey>(runtime)
+    let private workingTreeContextJob = AxialLatestSlot(runtime)
     let private renderedMarkdownJob = AxialLatestSlot(runtime)
     let private formattedFileJob = AxialLatestSlot(runtime)
     let private wholeFileJob = AxialLatestSlot(runtime)
@@ -37,6 +49,12 @@ module App =
             /// The in-flight full-context request, if any.
             PendingRequestId: int64 option
         }
+
+    /// A working-tree file's identity in the expansion map: its section (staged/unstaged/untracked) and paths.
+    type WorkingTreeFileKey =
+        { Section: WorkingTree.Section
+          OldPath: string
+          NewPath: string }
 
     /// A commit requested on the command line (gitkay <sha>, --select): resolved through git, then selected
     /// once history containing it has loaded.
@@ -110,6 +128,8 @@ module App =
             SelectedDiff: Models.FileDiff list option
             SelectedDiffFileKey: GitService.DiffFileKey option
             DiffExpansions: Map<GitService.DiffFileKey, FileExpansion>
+            /// Revealed context and full-context loads for uncommitted files, keyed by section and path.
+            WorkingTreeExpansions: Map<WorkingTreeFileKey, FileExpansion>
             /// The selected file's rendered payload. Bytes remain managed data until the Avalonia view decodes them.
             RenderedMarkdown: RenderedMarkdownState option
             FormattedFile: FormattedFileState option
@@ -189,6 +209,9 @@ module App =
         | ExpandDiffFile of hash:string * key:GitService.DiffFileKey * requestedAtTicks:int64
         | CollapseDiffFileContext of hash:string * key:GitService.DiffFileKey
         | DiffFileContextLoaded of hash:string * key:GitService.DiffFileKey * requestId:int64 * Result<Models.FileDiff, GitError>
+        | ExpandWorkingTreeFile of key:WorkingTreeFileKey * range:DiffExpansion.LineRange * requestedAtTicks:int64
+        | CollapseWorkingTreeFileContext of key:WorkingTreeFileKey
+        | WorkingTreeFileContextLoaded of key:WorkingTreeFileKey * requestId:int64 * Result<Models.FileDiff, GitError>
         | SetSearchQuery of string
         | SetSearchScope of string
         | SetSearchRegex of bool
@@ -231,19 +254,19 @@ module App =
 
     let private loadDiffFilesFlow (hash: string) =
         flow {
-            do! Flow.Runtime.ensureNotCanceled (GitError.OperationCanceled "Selection")
+            do! Flow.ensureNotCanceled
             return! GitService.fetchDiffFileList hash
         }
 
     let private loadDiffFlow (ignoreWhitespace: bool) (contextLines: int) (hash: string) =
         flow {
-            do! Flow.Runtime.ensureNotCanceled (GitError.OperationCanceled "Selection")
+            do! Flow.ensureNotCanceled
             return! GitService.fetchDiffWith ignoreWhitespace contextLines hash
         }
 
     let private loadSearchResultsFlow (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (useRegex: bool) progress found =
         flow {
-            do! Flow.Runtime.ensureNotCanceled (GitError.OperationCanceled "Search")
+            do! Flow.ensureNotCanceled
             let commitList = commits |> List.map (fun info -> info.Commit)
             return! GitService.searchCommitsStreaming contextLines commitList (GitSearch.parseMode scopeKey) useRegex query progress found
         }
@@ -309,9 +332,9 @@ module App =
 
             // Matches stream in with progress reports: sorted into history order, at most every 200ms.
             let report checkedCount total force =
-                let now = Stopwatch.GetTimestamp()
+                let now = Timing.mark()
                 lock gate (fun () ->
-                    if force || checkedCount = total || Stopwatch.GetElapsedTime(lastReport, now).TotalMilliseconds >= 200.0 then
+                    if force || checkedCount = total || (Timing.elapsedBetween lastReport now).TotalMilliseconds >= 200.0 then
                         lastReport <- now
                         if foundSinceReport then
                             foundSinceReport <- false
@@ -340,7 +363,7 @@ module App =
     let private startDiffFileContextLoad (env: GitService.GitEnv) (comparison: GitService.RevisionComparison option) (hash: string) (key: GitService.DiffFileKey) (requestId: int64) =
         let workflow =
             flow {
-                do! Flow.Runtime.ensureNotCanceled (GitError.OperationCanceled "Context expansion")
+                do! Flow.ensureNotCanceled
                 match comparison with
                 | Some comparison -> return! GitService.fetchRevisionDiffFileFullContext comparison key.OldPath key.NewPath
                 | None -> return! GitService.fetchDiffFileFullContext hash key.OldPath key.NewPath
@@ -353,6 +376,21 @@ module App =
             workflow
             (fun result -> DiffFileContextLoaded(hash, key, requestId, Ok result))
             (fun err -> DiffFileContextLoaded(hash, key, requestId, Error err))
+
+    let private startWorkingTreeContextLoad (env: GitService.GitEnv) (key: WorkingTreeFileKey) (requestId: int64) =
+        let workflow =
+            flow {
+                do! Flow.ensureNotCanceled
+                return! GitService.fetchWorkingTreeFile key.Section key.OldPath key.NewPath
+            }
+
+        Cmd.OfFlow.ofFlowLatest
+            $"working tree context {key.NewPath}"
+            workingTreeContextJob
+            env
+            workflow
+            (fun result -> WorkingTreeFileContextLoaded(key, requestId, Ok result))
+            (fun err -> WorkingTreeFileContextLoaded(key, requestId, Error err))
 
     let private diffFileKeyOfSummary (summary: GitService.DiffFileSummary) : GitService.DiffFileKey =
         {
@@ -392,7 +430,7 @@ module App =
 
         let nextSelectionStartedAtTicks =
             if selectedHash.IsSome && not diffReadyForSelection then
-                Some(Stopwatch.GetTimestamp())
+                Some(Timing.mark())
             else
                 None
 
@@ -502,6 +540,7 @@ module App =
                 SelectedDiff = None
                 SelectedDiffFileKey = None
                 DiffExpansions = Map.empty
+                WorkingTreeExpansions = Map.empty
                 RenderedMarkdown = None
                 FormattedFile = None
                 WholeFile = None
@@ -553,6 +592,7 @@ module App =
                     SelectedDiff = None
                     SelectedDiffFileKey = None
                     DiffExpansions = Map.empty
+                    WorkingTreeExpansions = Map.empty
                     RenderedMarkdown = None
                     FormattedFile = None
                     WholeFile = None
@@ -738,10 +778,10 @@ module App =
                 // Everything was committed or discarded: the row goes, so select the newest commit instead.
                 let nextModel = { model with WorkingTree = []; WorkingTreeChanges = None; WorkingTreeStartedAtTicks = None; Selection = NoSelection }
                 match model.Commits with
-                | first :: _ -> nextModel, Cmd.ofMsg (SelectCommit(first.Commit.Hash, Stopwatch.GetTimestamp()))
+                | first :: _ -> nextModel, Cmd.ofMsg (SelectCommit(first.Commit.Hash, Timing.mark()))
                 | [] -> nextModel, Cmd.none
             elif model.IsWorkingTreeSelected && changed then
-                let startedAtTicks = Stopwatch.GetTimestamp()
+                let startedAtTicks = Timing.mark()
                 { model with WorkingTree = entries; WorkingTreeStartedAtTicks = Some startedAtTicks },
                 startWorkingTreeChangesLoad model.GitEnv model.DiffContextLines startedAtTicks
             elif changed then
@@ -775,7 +815,30 @@ module App =
         | WorkingTreeChangesLoaded (startedAtTicks, result) when model.IsWorkingTreeSelected && model.WorkingTreeStartedAtTicks = Some startedAtTicks ->
             match result with
             | Ok changes ->
-                { model with WorkingTree = changes.Entries; WorkingTreeChanges = Some changes; WorkingTreeStartedAtTicks = None }, Cmd.none
+                // A refresh drops revealed context for files whose change is different, so a stale expansion never
+                // re-projects old hunks over new content.
+                let fileDiffMap (c: GitService.WorkingTreeChanges) =
+                    GitService.workingTreeSections c
+                    |> List.collect (fun (section, files) ->
+                        files |> List.map (fun f -> { Section = section; OldPath = f.OldPath; NewPath = f.NewPath }, f))
+                    |> Map.ofList
+                let prunedExpansions =
+                    match model.WorkingTreeChanges with
+                    | None -> model.WorkingTreeExpansions
+                    | Some oldChanges ->
+                        let oldFiles = fileDiffMap oldChanges
+                        let newFiles = fileDiffMap changes
+                        model.WorkingTreeExpansions
+                        |> Map.filter (fun key _ ->
+                            match Map.tryFind key oldFiles, Map.tryFind key newFiles with
+                            | Some oldFile, Some newFile -> oldFile = newFile
+                            | None, Some _ -> true
+                            | _ -> false)
+                { model with
+                    WorkingTree = changes.Entries
+                    WorkingTreeChanges = Some changes
+                    WorkingTreeStartedAtTicks = None
+                    WorkingTreeExpansions = prunedExpansions }, Cmd.none
             | Error err ->
                 { model with Status = "Diff Error: " + GitError.describe err; WorkingTreeChanges = None; WorkingTreeStartedAtTicks = None }, Cmd.none
         | WorkingTreeChangesLoaded _ ->
@@ -806,11 +869,11 @@ module App =
                     { model with
                         IgnoreWhitespace = ignoreWhitespace
                         SelectedDiff = None
-                        SelectedDiffStartedAtTicks = model.SelectedCommitHash |> Option.map (fun _ -> Stopwatch.GetTimestamp()) }
+                        SelectedDiffStartedAtTicks = model.SelectedCommitHash |> Option.map (fun _ -> Timing.mark()) }
 
                 match model.RevisionComparison, model.Selection with
                 | Some comparison, _ ->
-                    let startedAtTicks = Stopwatch.GetTimestamp()
+                    let startedAtTicks = Timing.mark()
                     { nextModel with SelectedDiffStartedAtTicks = Some startedAtTicks },
                     startRevisionComparisonLoad model.GitEnv comparison.BaseRevision comparison.TargetRevision startedAtTicks model.DiffContextLines ignoreWhitespace
                 | None, CommitSelected hash ->
@@ -828,19 +891,19 @@ module App =
                         model with
                             DiffContextLines = normalizedContextLines
                             SelectedDiff = None
-                            SelectedDiffStartedAtTicks = model.SelectedCommitHash |> Option.map (fun _ -> Stopwatch.GetTimestamp())
+                            SelectedDiffStartedAtTicks = model.SelectedCommitHash |> Option.map (fun _ -> Timing.mark())
                     }
 
                 match model.RevisionComparison, model.Selection with
                 | Some comparison, _ ->
-                    let startedAtTicks = Stopwatch.GetTimestamp()
+                    let startedAtTicks = Timing.mark()
                     { nextModel with SelectedDiffStartedAtTicks = Some startedAtTicks },
                     startRevisionComparisonLoad model.GitEnv comparison.BaseRevision comparison.TargetRevision startedAtTicks normalizedContextLines model.IgnoreWhitespace
                 | None, CommitSelected hash ->
                     let startedAtTicks = nextModel.SelectedDiffStartedAtTicks.Value
                     nextModel, startDiffLoad model.GitEnv hash startedAtTicks normalizedContextLines model.IgnoreWhitespace
                 | None, WorkingTreeSelected ->
-                    let startedAtTicks = Stopwatch.GetTimestamp()
+                    let startedAtTicks = Timing.mark()
                     { nextModel with WorkingTreeStartedAtTicks = Some startedAtTicks },
                     startWorkingTreeChangesLoad model.GitEnv normalizedContextLines startedAtTicks
                 | None, NoSelection ->
@@ -874,7 +937,7 @@ module App =
                 if String.IsNullOrWhiteSpace searchQuery then
                     nextModel, historyCmd
                 else
-                    let startedAtTicks = Stopwatch.GetTimestamp()
+                    let startedAtTicks = Timing.mark()
                     let searchModel =
                         {
                             nextModel with
@@ -895,7 +958,7 @@ module App =
                 if String.IsNullOrWhiteSpace searchQuery then
                     nextModel, Cmd.batch [ historyCmd; loadFullCmd ]
                 else
-                    let startedAtTicks = Stopwatch.GetTimestamp()
+                    let startedAtTicks = Timing.mark()
                     let searchModel =
                         {
                             nextModel with
@@ -964,7 +1027,7 @@ module App =
         | RevisionComparisonLoaded _ -> model, Cmd.none
         | CloseRevisionComparison ->
             match model.SelectedCommitHash with
-            | Some hash -> model, Cmd.ofMsg (SelectCommit(hash, Stopwatch.GetTimestamp()))
+            | Some hash -> model, Cmd.ofMsg (SelectCommit(hash, Timing.mark()))
             | None -> { model with RevisionComparison = None }, Cmd.none
         | SelectCommit (hash, startedAtTicks) ->
             selectionJob.Cancel()
@@ -1062,7 +1125,7 @@ module App =
         | DiffFilesLoaded (hash, startedAtTicks, Ok files) ->
             match model.SelectedCommitHash, model.SelectionStartedAtTicks with
             | Some currentHash, Some currentStartedAtTicks when currentHash = hash && currentStartedAtTicks = startedAtTicks ->
-                let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
+                let elapsed = (Timing.elapsedFrom startedAtTicks)
                 logTiming $"commit click -> file list ready hash={hash} elapsed={elapsed.TotalMilliseconds:F1}ms files={files.Length}"
             | _ ->
                 ()
@@ -1097,7 +1160,7 @@ module App =
         | DiffFilesLoaded (hash, startedAtTicks, Error err) ->
             match model.SelectedCommitHash, model.SelectionStartedAtTicks with
             | Some currentHash, Some currentStartedAtTicks when currentHash = hash && currentStartedAtTicks = startedAtTicks ->
-                let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
+                let elapsed = (Timing.elapsedFrom startedAtTicks)
                 logTiming $"commit click -> file list error hash={hash} elapsed={elapsed.TotalMilliseconds:F1}ms error={GitError.describe err}"
             | _ ->
                 ()
@@ -1111,7 +1174,7 @@ module App =
             match model.SelectedCommitHash, model.SelectedDiffStartedAtTicks with
             | Some currentCommitHash, Some currentStartedAtTicks
                 when currentCommitHash = hash && currentStartedAtTicks = startedAtTicks ->
-                let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
+                let elapsed = (Timing.elapsedFrom startedAtTicks)
                 logTiming $"commit click -> unified diff ready hash={hash} elapsed={elapsed.TotalMilliseconds:F1}ms files={diff.Length}"
             | _ ->
                 ()
@@ -1124,7 +1187,7 @@ module App =
             match model.SelectedCommitHash, model.SelectedDiffStartedAtTicks with
             | Some currentCommitHash, Some currentStartedAtTicks
                 when currentCommitHash = hash && currentStartedAtTicks = startedAtTicks ->
-                let elapsed = Stopwatch.GetElapsedTime(startedAtTicks)
+                let elapsed = (Timing.elapsedFrom startedAtTicks)
                 logTiming $"commit click -> unified diff error hash={hash} elapsed={elapsed.TotalMilliseconds:F1}ms error={GitError.describe err}"
             | _ ->
                 ()
@@ -1228,6 +1291,42 @@ module App =
                     Cmd.none
             | _ ->
                 model, Cmd.none
+        | ExpandWorkingTreeFile (key, range, requestedAtTicks) ->
+            if model.IsWorkingTreeSelected then
+                let current =
+                    model.WorkingTreeExpansions
+                    |> Map.tryFind key
+                    |> Option.defaultValue { FullContext = None; Revealed = []; PendingRequestId = None }
+                let revealed = { current with Revealed = DiffExpansion.addRange range current.Revealed }
+                match current.FullContext, current.PendingRequestId with
+                | None, None ->
+                    let expansion = { revealed with PendingRequestId = Some requestedAtTicks }
+                    { model with WorkingTreeExpansions = model.WorkingTreeExpansions |> Map.add key expansion },
+                    startWorkingTreeContextLoad model.GitEnv key requestedAtTicks
+                | _ ->
+                    { model with WorkingTreeExpansions = model.WorkingTreeExpansions |> Map.add key revealed }, Cmd.none
+            else
+                model, Cmd.none
+        | CollapseWorkingTreeFileContext key ->
+            match Map.tryFind key model.WorkingTreeExpansions with
+            | Some expansion ->
+                { model with WorkingTreeExpansions = model.WorkingTreeExpansions |> Map.add key { expansion with Revealed = [] } }, Cmd.none
+            | None ->
+                model, Cmd.none
+        | WorkingTreeFileContextLoaded (key, requestId, result) ->
+            match Map.tryFind key model.WorkingTreeExpansions with
+            | Some expansion when expansion.PendingRequestId = Some requestId ->
+                match result with
+                | Ok file ->
+                    let expansion = { expansion with FullContext = Some file; PendingRequestId = None }
+                    { model with WorkingTreeExpansions = model.WorkingTreeExpansions |> Map.add key expansion }, Cmd.none
+                | Error err ->
+                    { model with
+                        Status = "Context Error: " + GitError.describe err
+                        WorkingTreeExpansions = model.WorkingTreeExpansions |> Map.remove key },
+                    Cmd.none
+            | _ ->
+                model, Cmd.none
         | CreateTag (hash, name) ->
             model, Cmd.OfFlow.ofFlow "create tag" runtime model.GitEnv (GitService.createTag hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | CreateBranch (hash, name) ->
@@ -1249,7 +1348,7 @@ module App =
                 { model with StartupSelection = NoStartupSelection }, Cmd.none
             elif historyHasCommit then
                 // History already loaded (and picked a default): select the requested commit now.
-                { model with StartupSelection = NoStartupSelection }, Cmd.ofMsg (SelectCommit(hash, Stopwatch.GetTimestamp()))
+                { model with StartupSelection = NoStartupSelection }, Cmd.ofMsg (SelectCommit(hash, Timing.mark()))
             else
                 // History still loading, or the commit is older than the first page: selected when it arrives.
                 { model with StartupSelection = SelectionFound hash }, Cmd.none
@@ -1268,7 +1367,7 @@ module App =
             | RereadRefs -> "RereadRefs"
             | NoOp -> "NoOp"
             | _ -> Diagnostics.messageTypeName (box msg)
-        let startedAt = Stopwatch.GetTimestamp()
+        let startedAt = Timing.mark()
         Diagnostics.beginMessage name
         try
             update msg model

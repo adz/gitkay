@@ -52,8 +52,7 @@ public sealed partial class WholeFileProjection : ObservableObject {
     [ObservableProperty] private bool _isPreview;
     [ObservableProperty] private Bitmap? _imageSource;
     [ObservableProperty] private bool _previewAvailable = true;
-    [ObservableProperty] private IReadOnlyDictionary<string, Bitmap> _images = new Dictionary<string, Bitmap>();
-    [ObservableProperty] private IReadOnlyDictionary<string, Bitmap> _oldImages = new Dictionary<string, Bitmap>();
+    [ObservableProperty] private RenderedImagesState _renderedImages = RenderedImagesState.Empty;
     private GitKay.Core.RenderedMarkdownContent? _renderedContent;
 
     public bool IsSource => !IsPreview;
@@ -118,10 +117,10 @@ public sealed partial class WholeFileProjection : ObservableObject {
                 }
                 catch { }
             }
-            foreach (var bitmap in OldImages.Values) bitmap.Dispose();
-            foreach (var bitmap in Images.Values) bitmap.Dispose();
-            OldImages = oldImages;
-            Images = newImages;
+            var previous = RenderedImages;
+            RenderedImages = new RenderedImagesState(oldImages, newImages);
+            foreach (var bitmap in previous.Old.Values) bitmap.Dispose();
+            foreach (var bitmap in previous.New.Values) bitmap.Dispose();
         }
         if (payload.ImageBytes != null) ApplyImage(payload.ImageBytes.Value);
         Rebuild();
@@ -194,8 +193,8 @@ public partial class WholeFileWindow : Window {
         main.WholeFileChanged += ApplyChanged;
         Closed += (_, _) => {
             main.WholeFileChanged -= ApplyChanged;
-            foreach (var bitmap in projection.OldImages.Values) bitmap.Dispose();
-            foreach (var bitmap in projection.Images.Values) bitmap.Dispose();
+            foreach (var bitmap in projection.RenderedImages.Old.Values) bitmap.Dispose();
+            foreach (var bitmap in projection.RenderedImages.New.Values) bitmap.Dispose();
             projection.ImageSource?.Dispose();
         };
         Surface.TextCopied += (_, lines) => projection.LoadStatus = lines switch { 0 => "Copied", 1 => "Copied 1 line", _ => $"Copied {lines} lines" };
