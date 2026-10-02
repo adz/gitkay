@@ -13,6 +13,9 @@ open Axial
 open GitKay.Core
 open GitKay.UI
 
+[<CollectionDefinition("Timing", DisableParallelization = true)>]
+type TimingCollection() = class end
+
 module private RefHelpers =
     let commitRef (kind: Models.CommitRefKind) (name: string) (isCurrentHead: bool option) : Models.CommitRef =
         {
@@ -428,6 +431,51 @@ summary Another line
             match first, second with
             | Ok a, Ok b -> test <@ obj.ReferenceEquals(a, b) @>
             | _ -> failwith "expected file lists")
+
+    // These two exercise Axial's single-flight Cache through gitkay's real load path: many callers race for the same
+    // commit, and every one of them must receive the one result the cache loaded. If the cache ever let two lookups
+    // run, the callers would hold distinct list/diff instances and the identity assertions below would fail.
+    [<Fact>]
+    let ``concurrent diff file list loads for one commit share the single-flight result`` () =
+        withTempRepository (fun root repo ->
+            let commit = commitFile repo root "foo.txt" "one\n" "first commit"
+            let env = GitService.environment root
+
+            let loads =
+                [ for _ in 1 .. 16 ->
+                      Task.Run(fun () -> Flow.run env (GitService.fetchDiffFileList commit.Sha) |> Exit.toResult) ]
+
+            let files =
+                loads
+                |> List.map (fun load ->
+                    match load.Result with
+                    | Ok result -> result
+                    | Error error -> failwith (GitError.describe error))
+
+            let head = files.Head
+            test <@ files |> List.forall (fun candidate -> obj.ReferenceEquals(candidate, head)) @>)
+
+    [<Fact>]
+    let ``concurrent file content loads for one commit share the single-flight result`` () =
+        withTempRepository (fun root repo ->
+            let _ = commitFile repo root "foo.txt" "line1\nline2\nline3\n" "base commit"
+            let changed = commitFile repo root "foo.txt" "line1\nline2 changed\nline3\n" "change a line"
+            let env = GitService.environment root
+
+            let loads =
+                [ for _ in 1 .. 16 ->
+                      Task.Run(fun () ->
+                          Flow.run env (GitService.fetchDiffFileContent 3 changed.Sha "foo.txt" "foo.txt") |> Exit.toResult) ]
+
+            let diffs =
+                loads
+                |> List.map (fun load ->
+                    match load.Result with
+                    | Ok result -> result
+                    | Error error -> failwith (GitError.describe error))
+
+            let head = diffs.Head
+            test <@ diffs |> List.forall (fun candidate -> obj.ReferenceEquals(candidate, head)) @>)
 
     [<Fact>]
     let ``resolveCommit should accept short hashes, branches, tags and relative revisions`` () =
@@ -1482,6 +1530,7 @@ module AppTests =
             SelectedDiff = None
             SelectedDiffFileKey = None
             DiffExpansions = Map.empty
+            WorkingTreeExpansions = Map.empty
             RenderedMarkdown = None
             FormattedFile = None
             WholeFile = None
@@ -2283,13 +2332,12 @@ module AppTests =
         test <@ captured = Settings.normalize settings @>
 
     [<Fact>]
-    let ``AppSettingsStore should round-trip settings and produce startup args`` () =
+    let ``SettingsStore should round-trip settings and produce startup args`` () =
         let root = Path.Combine(Path.GetTempPath(), "gitkay-settings-" + Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(root) |> ignore
 
         try
             let path = Path.Combine(root, "settings.json")
-            let store = AppSettingsStore(path)
             let settings =
                 { Settings.defaults with
                     ShowBranchRefs = true
@@ -2303,9 +2351,9 @@ module AppTests =
                     CommitRowBadgeFontSize = 8.5
                     SearchDebounceSeconds = 1.25 }
 
-            store.Save(settings)
+            GitKay.Serialization.SettingsStore.save path settings
 
-            let loaded = store.Load()
+            let loaded = GitKay.Serialization.SettingsStore.load path
 
             test <@ loaded = Settings.normalize settings @>
             test <@ File.Exists(path) @>
@@ -2320,22 +2368,21 @@ module AppTests =
                 ()
 
     [<Fact>]
-    let ``AppUiStateStore should round-trip window size and repo selection`` () =
+    let ``UiStateStore should round-trip window size and repo selection`` () =
         let root = Path.Combine(Path.GetTempPath(), "gitkay-ui-state-" + Guid.NewGuid().ToString("N"))
         Directory.CreateDirectory(root) |> ignore
 
         try
             let path = Path.Combine(root, "ui-state.json")
-            let store = AppUiStateStore(path)
             let repoKey = Path.Combine(root, ".git")
             let state =
                 UiState.empty
                 |> UiState.withWindowSize (Some 1280.0) (Some 720.0)
                 |> UiState.withSelectedCommit repoKey "abc123"
 
-            store.Save(state)
+            GitKay.Serialization.UiStateStore.save path state
 
-            let loaded = store.Load()
+            let loaded = GitKay.Serialization.UiStateStore.load path
 
             test <@ loaded.WindowWidth = Some 1280.0 && loaded.WindowHeight = Some 720.0 @>
             test <@ UiState.selectedCommit repoKey loaded = Some "abc123" @>
@@ -2345,14 +2392,14 @@ module AppTests =
             test <@ loaded.Layout.HistoryPaneRatio = None @>
 
             let layout = { UiLayout.empty with HistoryPaneRatio = Some 0.3; FileListWidth = Some 260.0; HashColumnWidth = Some 70.0; DateColumnWidth = Some 2.0e6 }
-            store.Save(UiState.withLayout layout state)
-            let reloaded = store.Load()
+            GitKay.Serialization.UiStateStore.save path (UiState.withLayout layout state)
+            let reloaded = GitKay.Serialization.UiStateStore.load path
             test <@ reloaded.Layout = { UiLayout.empty with HistoryPaneRatio = Some 0.3; FileListWidth = Some 260.0; HashColumnWidth = Some 70.0; DateColumnWidth = Some 10000.0 } @>
             test <@ UiState.selectedCommit repoKey reloaded = Some "abc123" @>
 
             // A file that isn't UI state is ignored rather than failing.
             File.WriteAllText(path, "not json")
-            test <@ store.Load() = UiState.empty @>
+            test <@ GitKay.Serialization.UiStateStore.load path = UiState.empty @>
         finally
             try
                 Directory.Delete(root, true)
@@ -2360,34 +2407,30 @@ module AppTests =
                 ()
 
     [<Fact>]
-    let ``MainProjection should debounce live search updates as the query changes`` () =
-        let projection = MainProjection()
-        let messages = ConcurrentQueue<App.Msg>()
-        projection.SetDispatch (fun msg -> messages.Enqueue msg |> ignore)
-        // Generous margins: a loaded machine that stalls between the two edits would otherwise run the first search too.
-        projection.SearchDebounceSeconds <- 1.0
+    let ``SettingsStore loadReporting should report an unreadable file and stay silent otherwise`` () =
+        let root = Path.Combine(Path.GetTempPath(), "gitkay-report-" + Guid.NewGuid().ToString("N"))
+        Directory.CreateDirectory(root) |> ignore
 
-        projection.SearchQuery <- "nee"
-        Task.Delay(50).Wait()
-        projection.SearchQuery <- "needle"
+        try
+            let path = Path.Combine(root, "settings.json")
 
-        Task.Delay(2500).Wait()
+            // A missing file is the ordinary first run: defaults, nothing to report.
+            let missing = GitKay.Serialization.SettingsStore.loadReporting path
+            test <@ missing.Value = Settings.defaults @>
+            test <@ missing.Failure = None @>
 
-        let dispatched = messages.ToArray()
-        let setQueries =
-            dispatched
-            |> Array.choose (function
-                | App.Msg.SetSearchQuery query -> Some query
-                | _ -> None)
-
-        let runSearches =
-            dispatched
-            |> Array.choose (function
-                | App.Msg.RunSearch(query, scopeKey, _) -> Some(query, scopeKey)
-                | _ -> None)
-
-        test <@ setQueries = [| "nee"; "needle" |] @>
-        test <@ runSearches = [| ("needle", "commit") |] @>
+            // A file that exists but cannot be read reports its path and a reason, so the UI can offer to open it.
+            File.WriteAllText(path, "not json")
+            let corrupt = GitKay.Serialization.SettingsStore.loadReporting path
+            test <@ corrupt.Value = Settings.defaults @>
+            match corrupt.Failure with
+            | Some failure -> test <@ failure.Path = path @>
+            | None -> test <@ false @>
+        finally
+            try
+                Directory.Delete(root, true)
+            with _ ->
+                ()
 
     [<Fact>]
     let ``SearchResultProjection should surface matched fields, files, and counts`` () =
@@ -3396,35 +3439,6 @@ module DiffSearchBorrowTests =
         let headers = projection.SelectedDiffRows |> Seq.filter (fun row -> row :? DiffFileHeaderProjection) |> Seq.length
         test <@ headers = 2 @>
 
-    [<Fact>]
-    let ``working tree watcher reports edits once, index changes, and ignores other git files`` () =
-        let root = IO.Path.Combine(IO.Path.GetTempPath(), "gitkay-watch-" + Guid.NewGuid().ToString("N"))
-        let gitDir = IO.Path.Combine(root, ".git")
-        IO.Directory.CreateDirectory(IO.Path.Combine(gitDir, "objects")) |> ignore
-        try
-            let mutable count = 0
-            use watcher = WorkingTreeWatcher.TryStart(root, gitDir, fun () -> Threading.Interlocked.Increment(&count) |> ignore)
-            test <@ not (isNull watcher) @>
-            let settle () = Threading.Thread.Sleep 900
-            // How many reports the edits produce depends on how the machine batches them; that there is at least one,
-            // and none at all for the files GitKay ignores, is what the watcher promises.
-            let waitForReport previous =
-                let deadline = DateTime.UtcNow.AddSeconds 10.0
-                while count <= previous && DateTime.UtcNow < deadline do Threading.Thread.Sleep 50
-                count
-
-            IO.File.WriteAllText(IO.Path.Combine(gitDir, "objects", "ab"), "x")
-            settle ()
-            test <@ count = 0 @>
-
-            for i in 1..5 do IO.File.WriteAllText(IO.Path.Combine(root, $"file{i}.txt"), "x")
-            let afterEdits = waitForReport 0
-            test <@ afterEdits >= 1 @>
-
-            IO.File.WriteAllText(IO.Path.Combine(gitDir, "index"), "x")
-            test <@ waitForReport afterEdits > afterEdits @>
-        finally
-            IO.Directory.Delete(root, true)
 
 module SearchFieldSuggestionTests =
 
@@ -3487,15 +3501,24 @@ module WorkingTreeStagingTests =
         finally
             try Directory.Delete(root, true) with _ -> ()
 
-    /// The history window showing the uncommitted changes of a repository.
+    /// The history window showing the uncommitted changes of a repository, with a live Elmish loop for dispatched
+    /// intents (context expansion loads are real flows, so the projection alone is not enough).
     let private showing (gitDir: string) =
         let projection = MainProjection(RepositoryPath = gitDir)
         let model0, _ = App.init [||]
+        let env = GitService.environment gitDir
         let changes =
-            match Flow.run (GitService.environment gitDir) (GitService.fetchWorkingTreeChanges 3) |> Exit.toResult with
+            match Flow.run env (GitService.fetchWorkingTreeChanges 3) |> Exit.toResult with
             | Ok changes -> changes
             | Error error -> failwith (GitError.describe error)
-        projection.Update { model0 with Selection = App.WorkingTreeSelected; WorkingTree = changes.Entries; WorkingTreeChanges = Some changes }
+        let mutable model = { model0 with GitEnv = env; Selection = App.WorkingTreeSelected; WorkingTree = changes.Entries; WorkingTreeChanges = Some changes }
+        let rec dispatch (msg: App.Msg) =
+            let next, cmd = App.update msg model
+            model <- next
+            projection.Update next
+            for subscription in cmd do subscription dispatch
+        projection.SetDispatch dispatch
+        projection.Update model
         projection
 
     let private lineRows (projection: MainProjection) =
@@ -4245,8 +4268,8 @@ module MarkdownTests =
     let ``changes only collapses long unchanged runs with surrounding context`` () =
         let oldText = [ for n in 1..12 -> if n = 7 then "old" else $"same {n}" ] |> String.concat "\n\n"
         let newText = oldText.Replace("old", "new")
-        let display = Markdown.renderDiff oldText newText |> Markdown.changesOnly 2
-        test <@ display |> List.exists (function UnchangedSections 2 -> true | _ -> false) @>
+        let display = Markdown.renderDiff oldText newText |> Markdown.projectRendered 2 []
+        test <@ display |> List.exists (function UnchangedSections _ -> true | _ -> false) @>
         test <@ display |> List.exists (function RenderedBlock row when row.Change <> MarkdownChangeKind.Unchanged -> true | _ -> false) @>
 
     [<Fact>]
@@ -4739,3 +4762,95 @@ module SharedKeysTests =
         let path = "/home/adam/" + String.replicate 8 "some-long-folder/" + "repo"
         let shown = Presentation.WindowTitle.abbreviatePath "/home/adam" path
         test <@ shown.StartsWith "\u2026/" && shown.EndsWith "/repo" && shown.Length <= 60 @>
+
+[<Collection("Timing")>]
+module TimingSensitiveTests =
+
+    [<Fact>]
+    let ``MainProjection should debounce live search updates as the query changes`` () =
+        // SetDispatch wires and hosts this projection's search debounce, so no app-wide setup is needed.
+        let projection = MainProjection()
+        let messages = ConcurrentQueue<App.Msg>()
+        projection.SetDispatch (fun msg -> messages.Enqueue msg |> ignore)
+        // Generous margins: a loaded machine that stalls between the two edits would otherwise run the first search too.
+        projection.SearchDebounceSeconds <- 1.0
+
+        projection.SearchQuery <- "nee"
+        Task.Delay(50).Wait()
+        projection.SearchQuery <- "needle"
+
+        Task.Delay(2500).Wait()
+
+        let dispatched = messages.ToArray()
+        let setQueries =
+            dispatched
+            |> Array.choose (function
+                | App.Msg.SetSearchQuery query -> Some query
+                | _ -> None)
+
+        let runSearches =
+            dispatched
+            |> Array.choose (function
+                | App.Msg.RunSearch(query, scopeKey, _) -> Some(query, scopeKey)
+                | _ -> None)
+
+        test <@ setQueries = [| "nee"; "needle" |] @>
+        test <@ runSearches = [| ("needle", "commit") |] @>
+
+    // The debounce is driven by Axial's clock, so this runs on manual time: no wall-clock waits, no flakiness.
+    [<Fact>]
+    let ``Debounce keeps only the last value of a burst`` () =
+        let clock = ManualClock(DateTimeOffset.UnixEpoch)
+        let emitted = ConcurrentQueue<int>()
+        let debounce =
+            GitKay.Core.Debounce<int>(clock :> IClock, TimeSpan.FromSeconds 1.0, Action<int>(fun value -> emitted.Enqueue value))
+
+        use cancellation = new System.Threading.CancellationTokenSource()
+        use _host = Axial.App.startWithCancellation cancellation.Token (ClockEnvironment(clock :> IClock)) debounce.Run
+
+        let waitUntil predicate =
+            let deadline = DateTime.UtcNow.AddSeconds 10.0
+            while not (predicate ()) && DateTime.UtcNow < deadline do System.Threading.Thread.Sleep 5
+            predicate ()
+
+        debounce.Offer 1
+        debounce.Offer 2
+        debounce.Offer 3
+
+        // Once the consumer has drained the burst it waits on the clock; that wait is the quiet window.
+        test <@ waitUntil (fun () -> clock.Sleepers > 0) @>
+        clock.AdvanceToNextDeadline() |> ignore
+        test <@ waitUntil (fun () -> emitted.Count > 0) @>
+        test <@ emitted.ToArray() = [| 3 |] @>
+
+    [<Fact>]
+    let ``working tree watcher reports edits once, index changes, and ignores other git files`` () =
+        let root = IO.Path.Combine(IO.Path.GetTempPath(), "gitkay-watch-" + Guid.NewGuid().ToString("N"))
+        let gitDir = IO.Path.Combine(root, ".git")
+        IO.Directory.CreateDirectory(IO.Path.Combine(gitDir, "objects")) |> ignore
+        try
+            // The quiet period is an Axial stream consumer; the app host must be running for it to deliver.
+            App.startHosts()
+            let mutable count = 0
+            use watcher = WorkingTreeWatcher.TryStart(root, gitDir, fun () -> Threading.Interlocked.Increment(&count) |> ignore)
+            test <@ not (isNull watcher) @>
+            let settle () = Threading.Thread.Sleep 900
+            // How many reports the edits produce depends on how the machine batches them; that there is at least one,
+            // and none at all for the files GitKay ignores, is what the watcher promises.
+            let waitForReport previous =
+                let deadline = DateTime.UtcNow.AddSeconds 10.0
+                while count <= previous && DateTime.UtcNow < deadline do Threading.Thread.Sleep 50
+                count
+
+            IO.File.WriteAllText(IO.Path.Combine(gitDir, "objects", "ab"), "x")
+            settle ()
+            test <@ count = 0 @>
+
+            for i in 1..5 do IO.File.WriteAllText(IO.Path.Combine(root, $"file{i}.txt"), "x")
+            let afterEdits = waitForReport 0
+            test <@ afterEdits >= 1 @>
+
+            IO.File.WriteAllText(IO.Path.Combine(gitDir, "index"), "x")
+            test <@ waitForReport afterEdits > afterEdits @>
+        finally
+            IO.Directory.Delete(root, true)

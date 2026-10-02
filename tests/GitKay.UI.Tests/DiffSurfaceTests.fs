@@ -1042,9 +1042,9 @@ printfn $"value = {answer}"
             try
                 window.Show()
                 Headless.pump ()
-                // Card inset + chevron + path width + padding places the preview action immediately after README.md.
-                window.MouseDown(Point(202.0, 31.0), MouseButton.Left)
-                window.MouseUp(Point(202.0, 31.0), MouseButton.Left)
+                // The preview toggle's right segment is "Preview"; the file is not yet previewing, so it asks.
+                window.MouseDown(Point(282.0, 31.0), MouseButton.Left)
+                window.MouseUp(Point(282.0, 31.0), MouseButton.Left)
                 Headless.pump ()
                 test <@ requested = Some file @>
             finally
@@ -1578,7 +1578,7 @@ module ChangesOnlyToggleTests =
 
                 // Capture both rendered states and check that the same arrow location remains usable.
                 let before = window.CaptureRenderedFrame()
-                file.RenderedChangesOnly <- true
+                file.ToggleRenderedContext()
                 surface.InvalidateVisual()
                 Headless.pump ()
                 let after = window.CaptureRenderedFrame()
@@ -1598,19 +1598,19 @@ module ChangesOnlyToggleTests =
                 Headless.pump ())
 
     [<Fact>]
-    let ``toggling changes only drops the unchanged blocks and puts them back`` () =
+    let ``expanding rendered Markdown drops the unchanged blocks and collapsing puts them back`` () =
         Headless.run (fun () ->
             let projection = MainProjection()
             let file = renderedFile ()
             projection.SelectedDiffFiles.Add file
             projection.RefreshDiffRows()
-            let whole = projection.SelectedDiffRows.Count
-            projection.ToggleRenderedChangesOnly file
-            let filtered = projection.SelectedDiffRows.Count
-            projection.ToggleRenderedChangesOnly file
+            let collapsed = projection.SelectedDiffRows.Count
+            projection.ToggleRenderedContext file
+            let expanded = projection.SelectedDiffRows.Count
+            projection.ToggleRenderedContext file
             let restored = projection.SelectedDiffRows.Count
-            test <@ file.RenderedChangesOnly = false @>
-            test <@ filtered < whole && restored = whole @>)
+            test <@ file.IsRenderedCollapsed @>
+            test <@ collapsed < expanded && restored = collapsed @>)
 
 module FormattedPreviewProjectionTests =
     let private jsonFile () =
@@ -1967,7 +1967,7 @@ module FolderWindowTests =
                     Headless.pump ()
                     test <@ file.IsRenderedMarkdown @>
                     // The image was found on disk and decoded, not reported as missing.
-                    test <@ projection.Images.Count = 1 && projection.Images.ContainsKey "logo.png" @>
+                    test <@ projection.RenderedImages.New.Count = 1 && projection.RenderedImages.New.ContainsKey "logo.png" @>
                 finally
                     window.Close()
                     Headless.pump ()
@@ -2474,9 +2474,8 @@ module UiStateSaveTests =
             let make = Diagnostics.Process.Start("mkfifo", path)
             make.WaitForExit()
             try
-                let store = AppUiStateStore(path)
                 let clock = Diagnostics.Stopwatch.StartNew()
-                let pending = store.SaveInBackground UiState.empty
+                let pending = GitKay.Serialization.UiStateStore.saveInBackground path UiState.empty
                 test <@ clock.Elapsed < TimeSpan.FromSeconds 1.0 @>
                 test <@ not pending.IsCompleted @>
                 // Release the blocked write so the test does not leave a thread parked on the pipe.
@@ -2489,10 +2488,9 @@ module UiStateSaveTests =
     let ``saves made while one is being written collapse into the newest`` () =
         let path = IO.Path.Combine(IO.Path.GetTempPath(), "gitkay-ui-state-" + Guid.NewGuid().ToString("N") + ".json")
         try
-            let store = AppUiStateStore(path)
             let first = UiState.withSelectedCommit "repo" "aaaa" UiState.empty
             let last = UiState.withSelectedCommit "repo" "bbbb" UiState.empty
-            let tasks = [ store.SaveInBackground first; store.SaveInBackground last ]
+            let tasks = [ GitKay.Serialization.UiStateStore.saveInBackground path first; GitKay.Serialization.UiStateStore.saveInBackground path last ]
             test <@ Threading.Tasks.Task.WaitAll(tasks |> Array.ofList, TimeSpan.FromSeconds 10.0) @>
             let saved = IO.File.ReadAllText path
             test <@ saved.Contains "bbbb" && not (saved.Contains "aaaa") @>
