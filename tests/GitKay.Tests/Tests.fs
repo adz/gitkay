@@ -4797,7 +4797,7 @@ module TimingSensitiveTests =
         test <@ setQueries = [| "nee"; "needle" |] @>
         test <@ runSearches = [| ("needle", "commit") |] @>
 
-    // The debounce is driven by Axial's clock, so this runs on manual time: no wall-clock waits, no flakiness.
+    // The debounce is driven by Axial's clock, so the burst is offered before any quiet window can close.
     [<Fact>]
     let ``Debounce keeps only the last value of a burst`` () =
         let clock = ManualClock(DateTimeOffset.UnixEpoch)
@@ -4808,19 +4808,36 @@ module TimingSensitiveTests =
         use cancellation = new System.Threading.CancellationTokenSource()
         use _host = Axial.App.startWithCancellation cancellation.Token (ClockEnvironment(clock :> IClock)) debounce.Run
 
-        let waitUntil predicate =
-            let deadline = DateTime.UtcNow.AddSeconds 10.0
-            while not (predicate ()) && DateTime.UtcNow < deadline do System.Threading.Thread.Sleep 5
-            predicate ()
-
         debounce.Offer 1
         debounce.Offer 2
         debounce.Offer 3
 
-        // Once the consumer has drained the burst it waits on the clock; that wait is the quiet window.
-        test <@ waitUntil (fun () -> clock.Sleepers > 0) @>
-        clock.AdvanceToNextDeadline() |> ignore
-        test <@ waitUntil (fun () -> emitted.Count > 0) @>
+        // The clock moves only when this thread moves it, so the three values are all offered before any quiet
+        // window elapses. Wait for the consumer to stop shuffling values through the thread pool before advancing,
+        // the way Axial's own manual-time tests do: advancing while a value is still in flight closes an earlier
+        // window and emits a value the burst would have replaced.
+        let deadline = DateTime.UtcNow.AddSeconds 20.0
+        let mutable lastCount = -1
+        let mutable stablePolls = 0
+
+        while emitted.IsEmpty && DateTime.UtcNow < deadline do
+            let count = clock.Sleepers
+
+            if count > 0 && count = lastCount then
+                stablePolls <- stablePolls + 1
+            else
+                stablePolls <- 0
+
+            lastCount <- count
+
+            // Unchanged polls with no queued thread-pool work mean no fiber is still running towards a deadline.
+            if stablePolls >= 15 && (Threading.ThreadPool.PendingWorkItemCount = 0L || stablePolls >= 200) then
+                clock.AdvanceToNextDeadline() |> ignore
+                lastCount <- -1
+                stablePolls <- 0
+            else
+                Threading.Thread.Sleep 1
+
         test <@ emitted.ToArray() = [| 3 |] @>
 
     [<Fact>]
