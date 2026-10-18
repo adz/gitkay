@@ -3,7 +3,7 @@ namespace GitKay.Core
 open System
 open Elmish
 open Axial
-open Axial.Elmish
+open Axial.ElmishFlows
 
 /// <summary>
 /// The commit window (git gui style): unstaged and staged files, staging whole files, hunks or lines, and committing.
@@ -11,8 +11,8 @@ open Axial.Elmish
 /// </summary>
 module CommitWindow =
 
-    let private operationJob = AxialLatestSlot(App.runtime)
-    let private scanJob = AxialLatestSlot(App.runtime)
+    let private operationKey = "commitWindow.operationJob"
+    let private scanKey = "commitWindow.scanJob"
 
     /// <summary>The two file lists: working tree changes (with untracked files) and the index.</summary>
     type ListKind =
@@ -68,6 +68,14 @@ module CommitWindow =
         | DiscardSucceeded of Trash.Backup
         | UndoDiscard
         | OperationFailed of description: string * GitError
+
+    /// Runs a named flow against the current GitEnv, delivered through the app runtime.
+    let private ofFlow name (env: GitService.GitEnv) (work: Flow<GitService.GitEnv, 'error, 'value>) onSuccess onError : Cmd<Msg> =
+        Cmd.OfFlow.either name App.runtime (work |> Flow.localEnv (fun _ -> env)) onSuccess onError
+
+    /// Runs a named flow as the latest occupant of a stable key; starting a newer one cancels the previous.
+    let private ofFlowLatest key name (env: GitService.GitEnv) (work: Flow<GitService.GitEnv, 'error, 'value>) onSuccess onError : Cmd<Msg> =
+        Cmd.OfFlow.Latest.either key App.runtime (work |> Flow.localEnv (fun _ -> env)) onSuccess onError
 
     /// <summary>A file's current path: the new path, or the old one for a deletion.</summary>
     let pathOf (file: Models.FileDiff) = FileChange.currentPath file.OldPath file.NewPath
@@ -152,17 +160,17 @@ module CommitWindow =
 
     let private scan (model: Model) =
         Cmd.batch
-            [ Cmd.OfFlow.ofFlowLatest "commit window scan" scanJob model.GitEnv (GitService.fetchWorkingTreeChangesFor model.Amend model.ContextLines) (Ok >> ChangesLoaded) (Error >> ChangesLoaded)
-              Cmd.OfFlow.ofFlow "current branch" App.runtime model.GitEnv GitService.fetchCurrentBranch BranchLoaded (fun _ -> BranchLoaded "") ]
+            [ ofFlowLatest scanKey "commit window scan" model.GitEnv (GitService.fetchWorkingTreeChangesFor model.Amend model.ContextLines) (Ok >> ChangesLoaded) (Error >> ChangesLoaded)
+              ofFlow "current branch" model.GitEnv GitService.fetchCurrentBranch BranchLoaded (fun _ -> BranchLoaded "") ]
 
     let private operation (model: Model) (description: string) (committed: bool) (work: Flow<GitService.GitEnv, GitError, unit>) =
         { model with Busy = Some description; Status = description + "…"; FailureOutput = None },
-        Cmd.OfFlow.ofFlowLatest description operationJob model.GitEnv work (fun () -> OperationSucceeded(description, committed)) (fun error -> OperationFailed(description, error))
+        ofFlowLatest operationKey description model.GitEnv work (fun () -> OperationSucceeded(description, committed)) (fun error -> OperationFailed(description, error))
 
     /// <summary>A discard, which reports the backup that can undo it.</summary>
     let private discarding (model: Model) (description: string) (work: Flow<GitService.GitEnv, GitError, Trash.Backup>) =
         { model with Busy = Some description; Status = description + "…"; FailureOutput = None },
-        Cmd.OfFlow.ofFlowLatest description operationJob model.GitEnv work DiscardSucceeded (fun error -> OperationFailed(description, error))
+        ofFlowLatest operationKey description model.GitEnv work DiscardSucceeded (fun error -> OperationFailed(description, error))
 
     let private plural (count: int) (noun: string) = if count = 1 then "1 " + noun else $"{count} {noun}s"
     let private fileCount (count: int) = plural count "file"
@@ -194,7 +202,7 @@ module CommitWindow =
         | ApplyLines(GitService.StageInIndex, path, lines) ->
             let description = $"Staging {lineCount lines.Length} of {path}"
             { model with Busy = Some description; Status = description + "…"; FailureOutput = None },
-            Cmd.OfFlow.ofFlowLatest description operationJob model.GitEnv
+            ofFlowLatest operationKey description model.GitEnv
                 (GitService.stageLinesWithUndoAt model.ContextLines path lines)
                 StagedLinesSucceeded (fun error -> OperationFailed(description, error))
         | ApplyLines(GitService.DiscardFromWorkingTree, path, lines) ->
@@ -215,7 +223,7 @@ module CommitWindow =
             | None, [] -> { model with Status = "Nothing to unstage" }, Cmd.none
             | None, patch :: _ ->
                 { model with Busy = Some "Undoing stage"; Status = "Unstaging the last selection…" },
-                Cmd.OfFlow.ofFlowLatest "undo last stage" operationJob model.GitEnv (GitService.undoStagedPatch patch)
+                ofFlowLatest operationKey "undo last stage" model.GitEnv (GitService.undoStagedPatch patch)
                     (fun () -> UndoLastStageSucceeded) (fun error -> OperationFailed("Undo stage", error))
         | UndoLastStageSucceeded ->
             let remaining = match model.LastStagedPatches with _ :: rest -> rest | [] -> []
@@ -232,7 +240,7 @@ module CommitWindow =
             let model = { model with Amend = true }
             model,
             Cmd.batch
-                [ Cmd.OfFlow.ofFlow "last commit message" App.runtime model.GitEnv GitService.fetchLastCommitMessage AmendMessageLoaded (fun _ -> AmendMessageLoaded "")
+                [ ofFlow "last commit message" model.GitEnv GitService.fetchLastCommitMessage AmendMessageLoaded (fun _ -> AmendMessageLoaded "")
                   scan model ]
         | SetAmend false when model.Amend ->
             // Put back an empty draft if the message is still the one loaded for amending.
@@ -276,7 +284,7 @@ module CommitWindow =
             | None -> { model with Status = "Nothing to undo" }, Cmd.none
             | Some backup ->
                 { model with Busy = Some "Undoing"; Status = "Putting the discarded changes back…"; LastDiscard = None },
-                Cmd.OfFlow.ofFlowLatest "undo discard" operationJob model.GitEnv (GitService.undoDiscard backup)
+                ofFlowLatest operationKey "undo discard" model.GitEnv (GitService.undoDiscard backup)
                     (fun () -> OperationSucceeded($"Restored {backup.Description}", false))
                     (fun error -> OperationFailed("Undo", error))
         | OperationFailed(description, error) ->

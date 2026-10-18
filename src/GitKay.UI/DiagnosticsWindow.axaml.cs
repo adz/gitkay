@@ -5,7 +5,7 @@ using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
-using Axial.Elmish;
+using GitKay.Core;
 
 namespace GitKay.UI;
 

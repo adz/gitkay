@@ -6,7 +6,7 @@ open System
 open System.Threading
 open System.Threading.Tasks
 open Axial
-open Axial.Elmish
+open Axial.ElmishFlows
 
 /// Core half of `gitkay --self-test`: exercises paths that break under NativeAOT (rendering F# types, Axial command
 /// instrumentation, LibGit2Sharp reads) in the shipped binary, where unit tests running on the JIT can't see them.
@@ -34,8 +34,22 @@ module SelfTest =
         if dispatched.Task.Wait(TimeSpan.FromSeconds 10.0) then Some dispatched.Task.Result else None
 
     let run (repoPath: string) : Check list =
-        use runtime = new AxialElmishRuntime()
         let env = GitService.environment repoPath
+        let runtime : ElmishRuntime<GitService.GitEnv> =
+            ElmishRuntime.start
+                { Post = (fun callback -> callback ())
+                  OnDefect = (fun _ -> ())
+                  HistoryCapacity = 500 }
+                env
+        use _ = runtime
+
+        // The shipped self-test reads diagnostics through CmdDiagnostics after the F# checks above have run; point it
+        // at this local runtime's registry so those reads see the commands exercised here.
+        CmdDiagnostics.SetRegistry runtime.Registry
+
+        let runCancel name =
+            for subscription in (Cmd.OfFlow.Latest.cancel name runtime : Elmish.Cmd<string>) do
+                subscription ignore
 
         [ check "vim keys interpret and render actions" (fun () ->
               let context: Vim.KeyContext =
@@ -56,50 +70,49 @@ module SelfTest =
               expect (Diagnostics.messageTypeName (box (App.Msg.SetShowStashes true))) "SetShowStashes")
 
           check "command success is instrumented" (fun () ->
-              let outcome = runCommand (Cmd.OfFlow.ofFlow "self-test success" runtime env (Flow.succeed 42) (fun value -> $"ok {value}") (fun error -> error.ToString()))
+              let outcome = runCommand (Cmd.OfFlow.either "self-test success" runtime (Flow.succeed 42) (fun value -> $"ok {value}") (fun error -> error.ToString()))
               match outcome with
               | Some "ok 42" -> None
               | other -> Some("dispatched " + (other |> Option.defaultValue "nothing")))
 
           check "command failure is rendered" (fun () ->
               let failing: Flow<GitService.GitEnv, GitError, int> = Flow.fail (GitError.RevisionNotFound "nope")
-              match runCommand (Cmd.OfFlow.ofFlow "self-test failure" runtime env failing (fun _ -> "ok") (fun error -> error.ToString())) with
+              match runCommand (Cmd.OfFlow.either "self-test failure" runtime failing (fun _ -> "ok") (fun error -> error.ToString())) with
               | Some "Revision not found: nope" ->
-                  CmdDiagnostics.Failures()
-                  |> Array.tryFind (fun failure -> failure.Name = "self-test failure")
+                  runtime.Registry.Settled()
+                  |> List.tryFind (fun fiber -> fiber.Fiber.Name = Some "self-test failure")
                   |> function
-                      | Some failure when failure.Cause.Contains "Revision not found: nope" -> None
-                      | Some failure -> Some("failure cause " + failure.Cause)
+                      | Some fiber when (fiber.Failure |> Option.defaultValue "").Contains "Revision not found: nope" -> None
+                      | Some fiber -> Some("failure cause " + (fiber.Failure |> Option.defaultValue ""))
                       | None -> Some "failure not recorded"
               | other -> Some("dispatched " + (other |> Option.defaultValue "nothing")))
 
           check "command defect is recorded" (fun () ->
               let dying: Flow<GitService.GitEnv, GitError, int> = Flow.delay (fun () -> raise (InvalidOperationException "self-test defect")) // axial-allow-raise
-              runCommand (Cmd.OfFlow.ofFlowLatest "self-test defect" (AxialLatestSlot runtime) env dying (fun _ -> "ok") (fun _ -> "error")) |> ignore
+              runCommand (Cmd.OfFlow.Latest.either "self-test defect" runtime dying (fun _ -> "ok") (fun _ -> "error")) |> ignore
               Thread.Sleep 200
-              if CmdDiagnostics.Settled() |> Array.exists (fun fiber -> fiber.Fiber.Name = Some "self-test defect") then None
+              if runtime.Registry.Settled() |> List.exists (fun fiber -> fiber.Fiber.Name = Some "self-test defect") then None
               else Some "defect fiber not recorded")
 
           check "command cancellation settles" (fun () ->
-              let slot = AxialLatestSlot runtime
               let slow: Flow<GitService.GitEnv, GitError, int> = Flow.sleep (TimeSpan.FromSeconds 30.0) |> Flow.map (fun () -> 1)
-              for subscription in Cmd.OfFlow.ofFlowLatest "self-test cancelled" slot env slow (fun _ -> "ok") (fun _ -> "error") do
+              for subscription in Cmd.OfFlow.Latest.either "self-test cancelled" runtime slow (fun _ -> "ok") (fun _ -> "error") do
                   subscription ignore
               Thread.Sleep 200
-              slot.Cancel()
+              runCancel "self-test cancelled"
               Thread.Sleep 500
-              let dump = CmdDiagnostics.Registry.DumpAt(env.Runtime.Clock)
+              let dump = runtime.Registry.DumpAt(env.Runtime.Clock)
               if dump.Contains "self-test cancelled" then Some("still running: " + dump) else None)
 
           check "command cancel from diagnostics" (fun () ->
               let slow: Flow<GitService.GitEnv, GitError, int> = Flow.sleep (TimeSpan.FromSeconds 30.0) |> Flow.map (fun () -> 1)
-              for subscription in Cmd.OfFlow.ofFlow "self-test diagnostics cancel" runtime env slow (fun _ -> "ok") (fun _ -> "error") do
+              for subscription in Cmd.OfFlow.either "self-test diagnostics cancel" runtime slow (fun _ -> "ok") (fun _ -> "error") do
                   subscription ignore
               Thread.Sleep 300
-              let cancelled = CmdDiagnostics.Cancel "self-test diagnostics cancel"
+              let cancelled = runtime.Registry.InterruptByName "self-test diagnostics cancel"
               Thread.Sleep 500
               if cancelled <> 1 then Some $"cancelled {cancelled} commands"
-              elif CmdDiagnostics.RunningCommands() |> Array.contains "self-test diagnostics cancel" then Some "still running"
+              elif runtime.Registry.Snapshot() |> List.exists (fun dump -> dump.Name = Some "self-test diagnostics cancel") then Some "still running"
               else None)
 
           check "history, search and whole file load" (fun () ->

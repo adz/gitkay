@@ -1,6 +1,7 @@
 namespace GitKay.Core
 
 open System
+open System.Threading
 open Axial
 open Axial.PlatformService
 
@@ -55,7 +56,7 @@ type Debounce<'value>(clock: IClock, initialQuiet: TimeSpan, sink: Action<'value
         quiet <- window
         Queue.tryOffer window windows |> ignore
 
-    /// The host flow. Run it for the application's lifetime with <c>AxialElmishRuntime.Host</c>.
+    /// The host flow. Run it for the application's lifetime with <c>App.startWithCancellation</c>.
     member _.Run: Flow<ClockEnvironment, Never, unit> = supervise quiet
 
 /// The application's stream-backed debounces.
@@ -71,9 +72,9 @@ module Debounces =
     let createSearch () =
         Debounce<SearchInput>(Clock.live, TimeSpan.FromSeconds 0.5, Action<SearchInput>(fun _ -> ()))
 
-    /// Runs a window's debounce for the lifetime of the application runtime.
-    let startHost (runtime: Axial.Elmish.AxialElmishRuntime) (debounce: Debounce<'value>) : IDisposable =
-        runtime.Host(ClockEnvironment(Clock.live), debounce.Run)
+    /// Runs a window's debounce for the lifetime of the application host.
+    let startHost (token: CancellationToken) (debounce: Debounce<'value>) : IDisposable =
+        App.startWithCancellation token (ClockEnvironment(Clock.live)) debounce.Run :> IDisposable
 
     /// The working-tree watcher's quiet period: a build or checkout that touches many files refreshes once. There is
     /// one working tree, so one shared debounce.
@@ -87,5 +88,5 @@ module Debounces =
     let setWatchSink (sink: Action) =
         watch.SetSink(Action<unit>(fun () -> sink.Invoke()))
 
-    /// Starts the shared working-tree watcher debounce for the lifetime of the application runtime.
-    let startWatchHost (runtime: Axial.Elmish.AxialElmishRuntime) : IDisposable = startHost runtime watch
+    /// Starts the shared working-tree watcher debounce for the lifetime of the application host.
+    let startWatchHost (token: CancellationToken) : IDisposable = startHost token watch

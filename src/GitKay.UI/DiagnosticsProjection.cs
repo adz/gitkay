@@ -5,8 +5,8 @@ using System.Linq;
 using System.Text;
 using Avalonia.Collections;
 using Axial;
-using Axial.Elmish;
 using CommunityToolkit.Mvvm.ComponentModel;
+using GitKay.Core;
 using Microsoft.FSharp.Core;
 
 using Timing = GitKay.Core.Timing;

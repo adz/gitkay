@@ -1323,7 +1323,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         _searchDebounce.SetWindow(TimeSpan.FromSeconds(Math.Max(0d, SearchDebounceSeconds)));
         if (!_searchHostStarted) {
             _searchHostStarted = true;
-            GitKay.Core.Debounces.startHost(GitKay.Core.App.runtime, _searchDebounce);
+            GitKay.Core.Debounces.startHost(GitKay.Core.App.hostToken, _searchDebounce);
         }
     }
 

@@ -147,7 +147,7 @@ public static class SelfTest {
         });
 
         Check("flow details render", () => {
-            var settled = Axial.Elmish.CmdDiagnostics.Settled();
+            var settled = GitKay.Core.CmdDiagnostics.Settled();
             if (settled.Length == 0) return "no settled fibers";
             var text = DiagnosticsProjection.DescribeSettled(settled[^1]);
             var failed = settled.FirstOrDefault(fiber => fiber.Fiber.Name?.Value == "self-test failure");

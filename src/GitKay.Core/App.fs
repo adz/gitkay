@@ -3,41 +3,67 @@ namespace GitKay.Core
 open Elmish
 open System
 open System.Diagnostics
+open System.Threading
 open Axial
-open Axial.Elmish
+open Axial.ElmishFlows
+open Axial.PlatformService
 open GitKay.Core.Models
 
 module App =
 
-    /// Shared cancellation lifetime for every Axial-backed Cmd this program issues.
-    let runtime = new AxialElmishRuntime()
+    let private runtimePost : ((unit -> unit) -> unit) ref = ref (fun callback -> callback ())
+    let private hostCts = new CancellationTokenSource()
 
-    /// Tears down the runtime. Call alongside disposing the ElmishHostConnection so no flow
+    /// Installs the UI-thread post callback the runtime uses to deliver command results. GitKay.UI wires this to
+    /// Elmish.Avalonia.Glue.ElmishHost.post before the first command runs.
+    let configureRuntime (post: Action<Action>) =
+        runtimePost.Value <- fun callback -> post.Invoke(Action(callback))
+
+    /// Shared runtime for every Axial-backed Cmd this program issues. Its clock environment is stable; each command
+    /// supplies its current GitEnv through Flow.localEnv (the per-command environment recipe in the Axial docs).
+    let runtime : ElmishRuntime<ClockEnvironment> =
+        ElmishRuntime.start
+            { Post = (fun callback -> runtimePost.Value callback)
+              OnDefect = (fun defect -> CmdDiagnostics.ReportFailure(defect.Name, defect.Rendered))
+              HistoryCapacity = 500 }
+            (ClockEnvironment Clock.live)
+
+    // Expose the live runtime's registry to the diagnostics windows and hang reports.
+    do CmdDiagnostics.SetRegistry runtime.Registry
+
+    /// Cancellation token for long-lived hosts (the shared watcher debounce and per-window search debounce).
+    let hostToken = hostCts.Token
+
+    /// Tears down the runtime and long-lived hosts. Call alongside disposing the ElmishHostConnection so no flow
     /// outlives the window.
-    let stopRuntime () = (runtime :> IDisposable).Dispose()
+    let stopRuntime () =
+        hostCts.Cancel()
+        (runtime :> IDisposable).Dispose()
 
     let private hostGate = obj ()
     let mutable private hostsStarted = false
 
-    /// Starts the shared working-tree watcher debounce on the app runtime. Safe to call more than once, so a test or
+    /// Starts the shared working-tree watcher debounce. Safe to call more than once, so a test or
     /// a second window shares the one host; stopRuntime interrupts it. Each window starts its own search host.
     let startHosts () =
         lock hostGate (fun () ->
             if not hostsStarted then
                 hostsStarted <- true
-                Debounces.startWatchHost runtime |> ignore)
+                Debounces.startWatchHost hostCts.Token |> ignore)
 
-    let private selectionJob = AxialLatestSlot(runtime)
-    let private diffJob = AxialLatestSlot(runtime)
-    let private workingTreeStatusJob = AxialLatestSlot(runtime)
-    let private workingTreeChangesJob = AxialLatestSlot(runtime)
-    let private searchJob = AxialLatestSlot(runtime)
-    let private contextJobs = AxialLatestSlotRegistry<GitService.DiffFileKey>(runtime)
-    let private workingTreeContextJob = AxialLatestSlot(runtime)
-    let private renderedMarkdownJob = AxialLatestSlot(runtime)
-    let private formattedFileJob = AxialLatestSlot(runtime)
-    let private wholeFileJob = AxialLatestSlot(runtime)
-    let private remoteMarkdownImageJob = AxialLatestSlot(runtime)
+    let private selectionKey = "selectionJob"
+    let private diffKey = "diffJob"
+    let private workingTreeStatusKey = "workingTreeStatusJob"
+    let private workingTreeChangesKey = "workingTreeChangesJob"
+    let private searchKey = "searchJob"
+    let private workingTreeContextKey = "workingTreeContextJob"
+    let private renderedMarkdownKey = "renderedMarkdownJob"
+    let private formattedFileKey = "formattedFileJob"
+    let private wholeFileKey = "wholeFileJob"
+    let private remoteMarkdownImageKey = "remoteMarkdownImageJob"
+
+    /// The latest-wins key for a per-file context load; distinct from every file-level slot above.
+    let private contextKey (key: GitService.DiffFileKey) = "context:" + key.OldPath + "\u0000" + key.NewPath
 
     /// Presentation-only expansion state for one file of the selected diff.
     type FileExpansion =
@@ -231,9 +257,27 @@ module App =
         | OperationResult of Result<unit, GitError>
         | NoOp
 
+    /// Runs a named flow against the current GitEnv, delivered through the shared runtime.
+    let private ofFlow name (env: GitService.GitEnv) (work: Flow<GitService.GitEnv, 'error, 'value>) onSuccess onError : Cmd<Msg> =
+        Cmd.OfFlow.either name runtime (work |> Flow.localEnv (fun _ -> env)) onSuccess onError
+
+    /// Runs a named flow as the latest occupant of a stable key; starting a newer one cancels the previous.
+    let private ofFlowLatest key name (env: GitService.GitEnv) (work: Flow<GitService.GitEnv, 'error, 'value>) onSuccess onError : Cmd<Msg> =
+        Cmd.OfFlow.Latest.either key runtime (work |> Flow.localEnv (fun _ -> env)) onSuccess onError
+
+    /// Cancels whatever a latest-wins key currently holds, as a command.
+    let private cancelLatest key : Cmd<Msg> = Cmd.OfFlow.Latest.cancel key runtime
+
+    /// Cancels every per-file context load still recorded in the expansion map.
+    let private cancelAllContextJobs (model: Model) : Cmd<Msg> =
+        let cancels = model.DiffExpansions |> Map.keys |> Seq.map (contextKey >> cancelLatest) |> List.ofSeq
+        match cancels with
+        | [] -> Cmd.none
+        | _ -> Cmd.batch cancels
+
     let private loadHistory (env: GitService.GitEnv) (limit: int option) (includeStashes: bool) (targets: GitStartup.StartupTarget list) =
         let isFull = limit.IsNone
-        Cmd.OfFlow.ofFlow (if isFull then "history (full)" else $"history (first {limit.Value})") runtime env (GitService.fetchHistory limit includeStashes targets) (fun r -> HistoryLoaded(isFull, Ok r)) (fun ex -> HistoryLoaded (isFull, Error ex))
+        ofFlow (if isFull then "history (full)" else $"history (first {limit.Value})") env (GitService.fetchHistory limit includeStashes targets) (fun r -> HistoryLoaded(isFull, Ok r)) (fun ex -> HistoryLoaded (isFull, Error ex))
 
     let private historyLimit = 1000
 
@@ -244,7 +288,7 @@ module App =
     /// <summary>Runs a staging, unstaging or discard from the history window, then rereads the working tree.</summary>
     let private workingTreeOperation (model: Model) (description: string) (work: Flow<GitService.GitEnv, GitError, Trash.Backup option>) =
         { model with Status = description + "…" },
-        Cmd.OfFlow.ofFlow description runtime model.GitEnv work
+        ofFlow description model.GitEnv work
             (fun backup -> WorkingTreeOperationDone(description, Ok backup))
             (fun error -> WorkingTreeOperationDone(description, Error error))
 
@@ -273,20 +317,12 @@ module App =
 
 
     let private startDiffFilesLoad (env: GitService.GitEnv) (hash: string) (startedAtTicks: int64) =
-        Cmd.OfFlow.ofFlowLatest
-            $"diff files {hash}"
-            selectionJob
-            env
-            (loadDiffFilesFlow hash)
+        ofFlowLatest selectionKey $"diff files {hash}" env (loadDiffFilesFlow hash)
             (fun result -> DiffFilesLoaded(hash, startedAtTicks, Ok result))
             (fun err -> DiffFilesLoaded(hash, startedAtTicks, Error err))
 
     let private startDiffLoad (env: GitService.GitEnv) (hash: string) (startedAtTicks: int64) (contextLines: int) (ignoreWhitespace: bool) =
-        Cmd.OfFlow.ofFlowLatest
-            $"diff {hash}"
-            diffJob
-            env
-            (loadDiffFlow ignoreWhitespace contextLines hash)
+        ofFlowLatest diffKey $"diff {hash}" env (loadDiffFlow ignoreWhitespace contextLines hash)
             (fun result -> DiffLoaded(hash, startedAtTicks, Ok result))
             (fun err -> DiffLoaded(hash, startedAtTicks, Error err))
 
@@ -298,26 +334,17 @@ module App =
             let! diff = GitService.fetchRevisionDiff ignoreWhitespace contextLines comparison
             return comparison, diff
         }
-        Cmd.OfFlow.ofFlowLatest
-            $"compare {baseRevision}...{targetRevision}" diffJob env work
+        ofFlowLatest diffKey $"compare {baseRevision}...{targetRevision}" env work
             (fun result -> RevisionComparisonLoaded(baseRevision, targetRevision, startedAtTicks, Ok result))
             (fun error -> RevisionComparisonLoaded(baseRevision, targetRevision, startedAtTicks, Error error))
 
     let private startWorkingTreeStatusLoad (env: GitService.GitEnv) =
-        Cmd.OfFlow.ofFlowLatest
-            "working tree status"
-            workingTreeStatusJob
-            env
-            GitService.fetchWorkingTreeStatus
+        ofFlowLatest workingTreeStatusKey "working tree status" env GitService.fetchWorkingTreeStatus
             (fun entries -> WorkingTreeStatusLoaded(Ok entries))
             (fun err -> WorkingTreeStatusLoaded(Error err))
 
     let private startWorkingTreeChangesLoad (env: GitService.GitEnv) (contextLines: int) (startedAtTicks: int64) =
-        Cmd.OfFlow.ofFlowLatest
-            "working tree changes"
-            workingTreeChangesJob
-            env
-            (GitService.fetchWorkingTreeChanges contextLines)
+        ofFlowLatest workingTreeChangesKey "working tree changes" env (GitService.fetchWorkingTreeChanges contextLines)
             (fun changes -> WorkingTreeChangesLoaded(startedAtTicks, Ok changes))
             (fun err -> WorkingTreeChangesLoaded(startedAtTicks, Error err))
 
@@ -349,11 +376,7 @@ module App =
                     foundSinceReport <- true)
 
             let command =
-                Cmd.OfFlow.ofFlowLatest
-                    $"search [{scopeKey}] {query}"
-                    searchJob
-                    env
-                    (loadSearchResultsFlow contextLines commits query scopeKey useRegex progress onFound)
+                ofFlowLatest searchKey $"search [{scopeKey}] {query}" env (loadSearchResultsFlow contextLines commits query scopeKey useRegex progress onFound)
                     (fun result -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Ok result))
                     (fun err -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Error err))
 
@@ -369,11 +392,7 @@ module App =
                 | None -> return! GitService.fetchDiffFileFullContext hash key.OldPath key.NewPath
             }
 
-        Cmd.OfFlow.ofFlowLatest
-            $"full context {hash} {key.NewPath}"
-            contextJobs.[key]
-            env
-            workflow
+        ofFlowLatest (contextKey key) $"full context {hash} {key.NewPath}" env workflow
             (fun result -> DiffFileContextLoaded(hash, key, requestId, Ok result))
             (fun err -> DiffFileContextLoaded(hash, key, requestId, Error err))
 
@@ -384,11 +403,7 @@ module App =
                 return! GitService.fetchWorkingTreeFile key.Section key.OldPath key.NewPath
             }
 
-        Cmd.OfFlow.ofFlowLatest
-            $"working tree context {key.NewPath}"
-            workingTreeContextJob
-            env
-            workflow
+        ofFlowLatest workingTreeContextKey $"working tree context {key.NewPath}" env workflow
             (fun result -> WorkingTreeFileContextLoaded(key, requestId, Ok result))
             (fun err -> WorkingTreeFileContextLoaded(key, requestId, Error err))
 
@@ -467,11 +482,10 @@ module App =
                 Cmd.batch [ startDiffFilesLoad model.GitEnv hash startedAtTicks; startDiffLoad model.GitEnv hash startedAtTicks model.DiffContextLines model.IgnoreWhitespace ]
             | _ when keepsWorkingTree -> Cmd.none
             | _ ->
-                selectionJob.Cancel()
                 if not diffReadyForSelection then
-                    diffJob.Cancel()
-                    contextJobs.CancelAll()
-                Cmd.none
+                    Cmd.batch [ cancelLatest selectionKey; cancelLatest diffKey; cancelAllContextJobs model ]
+                else
+                    cancelLatest selectionKey
 
         nextModel, cmd
 
@@ -614,7 +628,7 @@ module App =
                 let resolveSelection =
                     match startupOptions.SelectedCommitHash with
                     | Some revision ->
-                        Cmd.OfFlow.ofFlow $"resolve {revision}" runtime gitEnv (GitService.resolveCommit revision)
+                        ofFlow $"resolve {revision}" gitEnv (GitService.resolveCommit revision)
                             (fun hash -> SelectionRevisionResolved(revision, Ok hash))
                             (fun err -> SelectionRevisionResolved(revision, Error err))
                     | None -> Cmd.none
@@ -636,10 +650,7 @@ module App =
                 | Some comparison, _ -> GitService.loadRevisionRenderedMarkdown model.GitEnv.RepoPath comparison key.OldPath key.NewPath allowRemoteImages
                 | None, Some hash -> GitService.loadCommitRenderedMarkdown model.GitEnv.RepoPath hash key.OldPath key.NewPath allowRemoteImages
                 | _ -> Error(GitError.OperationFailed("Render Markdown", "No revision is selected"))
-        Cmd.OfFlow.ofFlowLatest
-            $"render markdown {key.NewPath}"
-            renderedMarkdownJob
-            model.GitEnv
+        ofFlowLatest renderedMarkdownKey $"render markdown {key.NewPath}" model.GitEnv
             // LibGit2Sharp blob reads do not accept cancellation; latest-slot cancellation still rejects stale results.
             // axial-allow-discarded-cancellation
             (Flow.fromTaskResult (fun _ -> Threading.Tasks.Task.Run load))
@@ -665,10 +676,7 @@ module App =
                     if isImage then GitService.loadCommitPreviewImage model.GitEnv.RepoPath hash key.OldPath key.NewPath |> Result.map PreviewImage
                     else GitService.loadCommitFormattedFile model.DiffContextLines model.GitEnv.RepoPath hash key.OldPath key.NewPath |> Result.map FormattedText
                 | _ -> Error(GitError.OperationFailed("Preview", "No revision is selected"))
-        Cmd.OfFlow.ofFlowLatest
-            $"format file {key.NewPath}"
-            formattedFileJob
-            model.GitEnv
+        ofFlowLatest formattedFileKey $"format file {key.NewPath}" model.GitEnv
             // LibGit2Sharp blob reads do not accept cancellation; latest-slot cancellation still rejects stale results.
             // axial-allow-discarded-cancellation
             (Flow.fromTaskResult (fun _ -> Threading.Tasks.Task.Run load))
@@ -691,10 +699,7 @@ module App =
                 | None, Some hash ->
                     GitService.loadCommitWholeFilePayload model.GitEnv.RepoPath hash key.OldPath key.NewPath allowRemoteImages
                 | _ -> Error(GitError.OperationFailed("Open file", "No commit revision is selected"))
-        Cmd.OfFlow.ofFlowLatest
-            $"whole file {key.NewPath}"
-            wholeFileJob
-            model.GitEnv
+        ofFlowLatest wholeFileKey $"whole file {key.NewPath}" model.GitEnv
             // LibGit2Sharp reads have no cancellation overload; the latest slot rejects stale completion.
             // axial-allow-discarded-cancellation
             (Flow.fromTaskResult (fun _ -> Threading.Tasks.Task.Run load))
@@ -702,10 +707,7 @@ module App =
             (fun error -> WholeFileLoaded(key, section, requestId, Error error))
 
     let private startRemoteMarkdownImageLoad (model: Model) source =
-        Cmd.OfFlow.ofFlowLatest
-            $"remote markdown image {source}"
-            remoteMarkdownImageJob
-            model.GitEnv
+        ofFlowLatest remoteMarkdownImageKey $"remote markdown image {source}" model.GitEnv
             (Flow.fromTaskResult (fun cancellationToken -> GitService.loadRemoteMarkdownImage cancellationToken source))
             (fun bytes -> RemoteMarkdownImageLoaded(source, Ok bytes))
             (fun error -> RemoteMarkdownImageLoaded(source, Error error))
@@ -713,9 +715,8 @@ module App =
     let update msg model : Model * Cmd<Msg> =
         match msg with
         | RereadRefs ->
-            searchJob.Cancel()
             let nextModel = { model with Status = "Refreshing..."; HasFullHistory = false }
-            nextModel, Cmd.batch [ loadHistory model.GitEnv (Some historyLimit) model.ShowStashes model.StartupTargets; startWorkingTreeStatusLoad model.GitEnv ]
+            nextModel, Cmd.batch [ cancelLatest searchKey; loadHistory model.GitEnv (Some historyLimit) model.ShowStashes model.StartupTargets; startWorkingTreeStatusLoad model.GitEnv ]
         | RefreshWorkingTree ->
             model, startWorkingTreeStatusLoad model.GitEnv
         | StageWorkingTree [] | UnstageWorkingTree [] | DiscardWorkingTree([], []) | ApplyWorkingTreeLines(_, _, []) ->
@@ -733,7 +734,7 @@ module App =
         | ApplyWorkingTreeLines(GitService.StageInIndex, path, lines) ->
             let description = $"Staging {lineCount lines.Length} of {path}"
             { model with Status = description + "…" },
-            Cmd.OfFlow.ofFlow description runtime model.GitEnv (GitService.stageLinesWithUndoAt model.DiffContextLines path lines)
+            ofFlow description model.GitEnv (GitService.stageLinesWithUndoAt model.DiffContextLines path lines)
                 (fun patch -> WorkingTreeLinesStaged(path, patch))
                 (fun error -> WorkingTreeOperationDone(description, Error error))
         | ApplyWorkingTreeLines(target, path, lines) ->
@@ -748,7 +749,7 @@ module App =
             | false, [] -> { model with Status = "Nothing to unstage" }, Cmd.none
             | false, (_, patch) :: _ ->
                 { model with StageUndoPending = true; Status = "Unstaging the last selection…" },
-                Cmd.OfFlow.ofFlow "undo last stage" runtime model.GitEnv (GitService.undoStagedPatch patch)
+                ofFlow "undo last stage" model.GitEnv (GitService.undoStagedPatch patch)
                     (fun () -> LastWorkingTreeStageUndone)
                     (fun error -> WorkingTreeOperationDone("Undo stage", Error error))
         | LastWorkingTreeStageUndone ->
@@ -759,7 +760,7 @@ module App =
             | None -> { model with Status = "Nothing to undo" }, Cmd.none
             | Some backup ->
                 { model with LastDiscard = None },
-                Cmd.OfFlow.ofFlow "undo discard" runtime model.GitEnv (GitService.undoDiscard backup |> Flow.map (fun () -> None))
+                ofFlow "undo discard" model.GitEnv (GitService.undoDiscard backup |> Flow.map (fun () -> None))
                     (fun _ -> WorkingTreeOperationDone($"Restored {backup.Description}", Ok None))
                     (fun error -> WorkingTreeOperationDone("Undo", Error error))
         | WorkingTreeOperationDone(description, Ok backup) ->
@@ -793,11 +794,6 @@ module App =
             logTiming $"working tree status error={GitError.describe err}"
             { model with WorkingTree = [] }, Cmd.none
         | SelectWorkingTree startedAtTicks ->
-            selectionJob.Cancel()
-            diffJob.Cancel()
-            contextJobs.CancelAll()
-            renderedMarkdownJob.Cancel()
-            formattedFileJob.Cancel()
             { model with
                 Selection = WorkingTreeSelected
                 RevisionComparison = None
@@ -811,7 +807,13 @@ module App =
                 SelectionStartedAtTicks = None
                 SelectedDiffStartedAtTicks = None
                 WorkingTreeStartedAtTicks = Some startedAtTicks },
-            startWorkingTreeChangesLoad model.GitEnv model.DiffContextLines startedAtTicks
+            Cmd.batch
+                [ cancelLatest selectionKey
+                  cancelLatest diffKey
+                  cancelAllContextJobs model
+                  cancelLatest renderedMarkdownKey
+                  cancelLatest formattedFileKey
+                  startWorkingTreeChangesLoad model.GitEnv model.DiffContextLines startedAtTicks ]
         | WorkingTreeChangesLoaded (startedAtTicks, result) when model.IsWorkingTreeSelected && model.WorkingTreeStartedAtTicks = Some startedAtTicks ->
             match result with
             | Ok changes ->
@@ -844,13 +846,11 @@ module App =
         | WorkingTreeChangesLoaded _ ->
             model, Cmd.none
         | SetHistoryTargets targets ->
-            searchJob.Cancel()
             let nextModel = { model with StartupTargets = targets; Status = "Loading history..."; HasFullHistory = false }
-            nextModel, loadHistory model.GitEnv (Some historyLimit) model.ShowStashes targets
+            nextModel, Cmd.batch [ cancelLatest searchKey; loadHistory model.GitEnv (Some historyLimit) model.ShowStashes targets ]
         | SetShowBranchRefs showBranchRefs ->
             { model with ShowBranchRefs = showBranchRefs }, Cmd.none
         | SetShowStashes showStashes ->
-            searchJob.Cancel()
             let nextModel =
                 {
                     model with
@@ -859,7 +859,7 @@ module App =
                         HasFullHistory = false
                 }
 
-            nextModel, loadHistory model.GitEnv (Some historyLimit) showStashes model.StartupTargets
+            nextModel, Cmd.batch [ cancelLatest searchKey; loadHistory model.GitEnv (Some historyLimit) showStashes model.StartupTargets ]
         | SetIgnoreWhitespace ignoreWhitespace ->
             if ignoreWhitespace = model.IgnoreWhitespace then
                 model, Cmd.none
@@ -907,14 +907,12 @@ module App =
                     { nextModel with WorkingTreeStartedAtTicks = Some startedAtTicks },
                     startWorkingTreeChangesLoad model.GitEnv normalizedContextLines startedAtTicks
                 | None, NoSelection ->
-                    diffJob.Cancel()
-                    nextModel, Cmd.none
+                    nextModel, cancelLatest diffKey
         | SetDiffLayout layout -> { model with DiffLayout = layout }, Cmd.none
         | HistoryLoaded (isFull, Ok commits) ->
             // A path-limited first page scans a bounded number of commits, so few matches doesn't mean it's complete.
             let hasPaths = model.StartupTargets |> List.exists (function GitStartup.StartupTarget.Path _ -> true | _ -> false)
             if isFull || (not hasPaths && commits.Length < historyLimit) then
-                searchJob.Cancel()
                 let graphInfo = Graph.calculateLanes commits
                 let nextModel, historyCmd = historyLoadSelection model graphInfo
                 // Say what the history is limited to, so a branch or path launch visibly differs from the full history.
@@ -935,7 +933,7 @@ module App =
                 let searchQuery = nextModel.SearchQuery.Trim()
 
                 if String.IsNullOrWhiteSpace searchQuery then
-                    nextModel, historyCmd
+                    nextModel, Cmd.batch [ cancelLatest searchKey; historyCmd ]
                 else
                     let startedAtTicks = Timing.mark()
                     let searchModel =
@@ -945,7 +943,7 @@ module App =
                                 Status = $"Searching {nextModel.SearchQuery}..."
                         }
 
-                    searchModel, Cmd.batch [ historyCmd; startSearchLoad model.GitEnv searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey model.SearchUseRegex startedAtTicks ]
+                    searchModel, Cmd.batch [ cancelLatest searchKey; historyCmd; startSearchLoad model.GitEnv searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey model.SearchUseRegex startedAtTicks ]
             else
                 // Partial history loaded
                 let graphInfo = Graph.calculateLanes commits
@@ -986,14 +984,8 @@ module App =
                     Status = $"No commit found for '{described}'" }
             nextModel, loadHistory model.GitEnv (Some historyLimit) model.ShowStashes fallbackTargets
         | HistoryLoaded (_, Error err) ->
-            searchJob.Cancel()
-            { model with Status = "Error: " + GitError.describe err; SearchResults = None; SearchStartedAtTicks = None }, Cmd.none
+            { model with Status = "Error: " + GitError.describe err; SearchResults = None; SearchStartedAtTicks = None }, cancelLatest searchKey
         | OpenRevisionComparison (baseRevision, targetRevision, startedAtTicks) ->
-            selectionJob.Cancel()
-            diffJob.Cancel()
-            contextJobs.CancelAll()
-            renderedMarkdownJob.Cancel()
-            formattedFileJob.Cancel()
             { model with
                 Status = $"Comparing {baseRevision}…{targetRevision}…"
                 RevisionComparison = None
@@ -1006,7 +998,13 @@ module App =
                 FormattedFile = None
                 SelectionStartedAtTicks = None
                 SelectedDiffStartedAtTicks = Some startedAtTicks },
-            startRevisionComparisonLoad model.GitEnv baseRevision targetRevision startedAtTicks model.DiffContextLines model.IgnoreWhitespace
+            Cmd.batch
+                [ cancelLatest selectionKey
+                  cancelLatest diffKey
+                  cancelAllContextJobs model
+                  cancelLatest renderedMarkdownKey
+                  cancelLatest formattedFileKey
+                  startRevisionComparisonLoad model.GitEnv baseRevision targetRevision startedAtTicks model.DiffContextLines model.IgnoreWhitespace ]
         | RevisionComparisonLoaded (baseRevision, targetRevision, startedAtTicks, Ok (comparison, diff))
             when model.SelectedDiffStartedAtTicks = Some startedAtTicks ->
             let id = comparisonId baseRevision targetRevision
@@ -1030,11 +1028,6 @@ module App =
             | Some hash -> model, Cmd.ofMsg (SelectCommit(hash, Timing.mark()))
             | None -> { model with RevisionComparison = None }, Cmd.none
         | SelectCommit (hash, startedAtTicks) ->
-            selectionJob.Cancel()
-            diffJob.Cancel()
-            contextJobs.CancelAll()
-            renderedMarkdownJob.Cancel()
-            formattedFileJob.Cancel()
             let nextModel =
                 {
                     model with
@@ -1053,15 +1046,22 @@ module App =
                         WorkingTreeStartedAtTicks = None
                 }
 
-            workingTreeChangesJob.Cancel()
-            let cmd = Cmd.batch [ startDiffFilesLoad model.GitEnv hash startedAtTicks; startDiffLoad model.GitEnv hash startedAtTicks model.DiffContextLines model.IgnoreWhitespace ]
+            let cmd =
+                Cmd.batch
+                    [ cancelLatest selectionKey
+                      cancelLatest diffKey
+                      cancelAllContextJobs model
+                      cancelLatest renderedMarkdownKey
+                      cancelLatest formattedFileKey
+                      cancelLatest workingTreeChangesKey
+                      startDiffFilesLoad model.GitEnv hash startedAtTicks
+                      startDiffLoad model.GitEnv hash startedAtTicks model.DiffContextLines model.IgnoreWhitespace ]
             nextModel, cmd
         | SetSearchQuery query ->
             let trimmed = query.Trim()
 
             if String.IsNullOrWhiteSpace trimmed then
-                searchJob.Cancel()
-                { model with SearchQuery = query; SearchResults = None; SearchStartedAtTicks = None }, Cmd.none
+                { model with SearchQuery = query; SearchResults = None; SearchStartedAtTicks = None }, cancelLatest searchKey
             else
                 { model with SearchQuery = query }, Cmd.none
         | SetSearchScope scopeKey ->
@@ -1069,10 +1069,8 @@ module App =
         | SetSearchRegex useRegex ->
             { model with SearchUseRegex = useRegex }, Cmd.none
         | RunSearch (query, scopeKey, startedAtTicks) ->
-            searchJob.Cancel()
-
             if String.IsNullOrWhiteSpace query then
-                { model with SearchQuery = query; SearchScopeKey = scopeKey; SearchResults = None; SearchStartedAtTicks = None; Status = "Search cleared" }, Cmd.none
+                { model with SearchQuery = query; SearchScopeKey = scopeKey; SearchResults = None; SearchStartedAtTicks = None; Status = "Search cleared" }, cancelLatest searchKey
             else
                 let nextModel =
                     {
@@ -1084,7 +1082,7 @@ module App =
                             Status = $"Searching {query}..."
                     }
 
-                let cmd = startSearchLoad model.GitEnv model.DiffContextLines model.Commits query scopeKey model.SearchUseRegex startedAtTicks
+                let cmd = Cmd.batch [ cancelLatest searchKey; startSearchLoad model.GitEnv model.DiffContextLines model.Commits query scopeKey model.SearchUseRegex startedAtTicks ]
                 nextModel, cmd
         | SearchProgressed (startedAtTicks, checkedCount, total) ->
             match model.SearchStartedAtTicks with
@@ -1103,8 +1101,7 @@ module App =
         | CancelSearch ->
             match model.SearchStartedAtTicks with
             | Some _ ->
-                searchJob.Cancel()
-                { model with SearchStartedAtTicks = None; SearchProgress = None; Status = $"Search cancelled: {model.SearchQuery}" }, Cmd.none
+                { model with SearchStartedAtTicks = None; SearchProgress = None; Status = $"Search cancelled: {model.SearchQuery}" }, cancelLatest searchKey
             | None -> model, Cmd.none
         | SearchResultsLoaded (query, scopeKey, startedAtTicks, Ok results) ->
             match model.SearchQuery, model.SearchScopeKey, model.SearchStartedAtTicks with
@@ -1166,8 +1163,7 @@ module App =
                 ()
 
             if model.SelectedCommitHash = Some hash && model.SelectionStartedAtTicks = Some startedAtTicks then
-                contextJobs.CancelAll()
-                { model with Status = "Diff Error: " + GitError.describe err; SelectedDiffHash = None; SelectedDiffFiles = None; SelectedDiff = None; SelectedDiffFileKey = None; DiffExpansions = Map.empty; SelectionStartedAtTicks = None; SelectedDiffStartedAtTicks = None }, Cmd.none
+                { model with Status = "Diff Error: " + GitError.describe err; SelectedDiffHash = None; SelectedDiffFiles = None; SelectedDiff = None; SelectedDiffFileKey = None; DiffExpansions = Map.empty; SelectionStartedAtTicks = None; SelectedDiffStartedAtTicks = None }, cancelAllContextJobs model
             else
                 model, Cmd.none
         | DiffLoaded (hash, startedAtTicks, Ok diff) ->
@@ -1328,15 +1324,15 @@ module App =
             | _ ->
                 model, Cmd.none
         | CreateTag (hash, name) ->
-            model, Cmd.OfFlow.ofFlow "create tag" runtime model.GitEnv (GitService.createTag hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, ofFlow "create tag" model.GitEnv (GitService.createTag hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | CreateBranch (hash, name) ->
-            model, Cmd.OfFlow.ofFlow "create branch" runtime model.GitEnv (GitService.createBranch hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, ofFlow "create branch" model.GitEnv (GitService.createBranch hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | CherryPick hash ->
-            model, Cmd.OfFlow.ofFlow "cherry-pick" runtime model.GitEnv (GitService.cherryPick hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, ofFlow "cherry-pick" model.GitEnv (GitService.cherryPick hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | ResetTo (hash, hard) ->
-            model, Cmd.OfFlow.ofFlow "reset" runtime model.GitEnv (GitService.resetTo hash hard) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, ofFlow "reset" model.GitEnv (GitService.resetTo hash hard) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | Revert hash ->
-            model, Cmd.OfFlow.ofFlow "revert" runtime model.GitEnv (GitService.revert hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, ofFlow "revert" model.GitEnv (GitService.revert hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | OperationResult (Ok _) ->
             model, Cmd.ofMsg RereadRefs
         | OperationResult (Error err) ->

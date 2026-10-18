@@ -8,6 +8,7 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
 using Elmish.Avalonia.Glue;
 using GitKay.Core;
+using Microsoft.FSharp.Core;
 
 namespace GitKay.UI;
 
@@ -241,6 +242,9 @@ public partial class App : Application {
                 failures.Add(new SettingsLoadFailureDialog.Failure("UI state", uiStateFailure.Path, uiStateFailure.Reason));
             if (failures.Count > 0)
                 await SettingsLoadFailureDialog.ShowAsync(mainWindow, failures);
+
+            GitKay.Core.App.configureRuntime(new Action<Action>(callback =>
+                ElmishHost.post(FuncConvert.ToFSharpFunc<Microsoft.FSharp.Core.Unit>(_ => callback()))));
 
             var host = ElmishHost.startAndBind(
                 GitKay.Core.App.program(startupArgs),

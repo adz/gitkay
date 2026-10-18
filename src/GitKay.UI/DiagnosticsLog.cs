@@ -6,7 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using Avalonia.Threading;
-using Axial.Elmish;
+using GitKay.Core;
 
 using Timing = GitKay.Core.Timing;
 
