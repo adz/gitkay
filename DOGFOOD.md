@@ -10,10 +10,11 @@ Status: package version switch and initial Process API conversion attempted; sol
 | observed | Axial.Guardrails | `src/GitKay.Core/GitKay.Core.fsproj`, packaged `build/Axial.Guardrails.targets` | `AXIAL_GUARDRAILS_SEVERITY=warning dotnet build` still reports AXG001/AXG008 as errors: the packaged target writes severity from the MSBuild `AxialGuardrailsSeverity` property, not the environment variable. | Honour `AXIAL_GUARDRAILS_SEVERITY` in the package targets when no explicit MSBuild severity is supplied, or document `-p:AxialGuardrailsSeverity=warning` as the migration command. |
 | read | Axial.Elmish | `src/GitKay.Core/App.fs` | New runtime requires a host `Post`, `OnDefect`, and an environment; the local runtime uses static diagnostics and slots. | Include a complete Avalonia host migration example showing diagnostics and shutdown. |
 
-Suppressions before: **25** occurrences of `axial-allow-effect` under `src` (`grep -r ... | wc -l`). After current changes: **25**. Filesystem suppressions have **not** been removed.
+Suppressions before: **25** occurrences of `axial-allow-effect` under `src` (`grep -r ... | wc -l`). After current changes: **26** (one explicit blocking self-test entry-point annotation). Filesystem suppressions have **not** been removed.
 
 ## Validation
 
 - `dotnet build GitKay.slnx -p:UseLocalGlue=false`: **failed** with AXG008 and AXG001 after initial Process API fixes.
 - `AXIAL_GUARDRAILS_SEVERITY=warning dotnet build GitKay.slnx -p:UseLocalGlue=false --no-restore`: **failed**; packaged targets ignore that environment variable and still emit errors. Retried with `-p:AxialGuardrailsSeverity=warning`; build did not finish within 120 seconds. No successful build verified.
-- Tests, Render harness, self-test, AOT publish/self-test: **not run**, since the solution does not build.
+- `timeout 1500 dotnet build GitKay.slnx -p:UseLocalGlue=false -p:AxialGuardrailsSeverity=warning`: **succeeded** after marking the blocking self-test entry-point wait. This is a transitional warning-level build, not a clean guardrails build.
+- Tests, Render harness, self-test, AOT publish/self-test: **not run**.

@@ -30,6 +30,7 @@ module SelfTest =
         let dispatched = TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously)
         for subscription in command do
             subscription (fun message -> dispatched.TrySetResult message |> ignore)
+        // axial-allow-effect: blocking (self-test entry point)
         if dispatched.Task.Wait(TimeSpan.FromSeconds 10.0) then Some dispatched.Task.Result else None
 
     let run (repoPath: string) : Check list =
