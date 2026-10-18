@@ -127,7 +127,7 @@ module GitService =
             return!
                 Process.commandArgs "git" arguments
                 |> Process.workingDirectory repoPath
-                |> Process.capture
+                |> Process.toFlow
                 |> Flow.map _.StdOut
                 |> Flow.mapError (fun error -> GitError.GitProcessFailed(arguments, error))
         }
@@ -535,7 +535,7 @@ module GitService =
                 let! outcome =
                     Process.commandArgs "git" arguments
                     |> Process.workingDirectory workingDirectory
-                    |> Process.capture
+                    |> Process.toFlow
                     |> Flow.map (fun (result: ProcessResult) -> Some result.StdOut)
                     |> Flow.orElseWith (fun _ -> Flow.ok None)
                     |> Flow.mapError (fun (error: ProcessError) -> GitError.GitProcessFailed(arguments, error))
@@ -678,10 +678,10 @@ module GitService =
             let directory = match workingDirectory repoPath with null -> repoPath | directory -> directory
             let arguments = [ "--no-optional-locks"; "-c"; "core.quotePath=false"; "-c"; "color.ui=false"; "-c"; "diff.noprefix=false"; "-c"; "diff.mnemonicPrefix=false" ] @ arguments
             let spec = Process.commandArgs "git" arguments |> Process.workingDirectory directory
-            let spec = match input with Some text -> spec |> Process.stdin (DSL.Input.text text) | None -> spec
+            let spec = match input with Some text -> spec |> Process.stdinFromText text | None -> spec
             return!
                 spec
-                |> Process.capture
+                |> Process.toFlow
                 |> Flow.map _.StdOut
                 |> Flow.mapError (fun error -> GitError.GitProcessFailed(arguments, error))
         }
