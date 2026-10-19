@@ -819,7 +819,7 @@ public partial class CommitWindow : Window, IVimCommands {
 
         // The message being written survives closing the window, until it is committed.
         var draft = GitKay.Core.UiStateModule.commitDraft(repositoryPath, GitKay.Serialization.UiStateStore.loadDefault());
-        var env = GitKay.Core.GitService.environment(repositoryPath);
+        var env = GitKay.Core.GitService.environmentWithoutCaches(repositoryPath);
         _host = ElmishHost.startAndBind(
             GitKay.Core.CommitWindow.program(env, draft == null ? "" : draft.Value, appSettings.DiffContextLines),
             model => projection.Update(model),

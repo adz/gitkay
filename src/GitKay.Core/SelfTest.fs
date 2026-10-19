@@ -34,7 +34,7 @@ module SelfTest =
         if dispatched.Task.Wait(TimeSpan.FromSeconds 10.0) then Some dispatched.Task.Result else None
 
     let run (repoPath: string) : Check list =
-        let env = GitService.environment repoPath
+        use env = GitService.environment repoPath
         let runtime : ElmishRuntime<GitService.GitEnv> =
             ElmishRuntime.start
                 { Post = (fun callback -> callback ())

@@ -36,7 +36,7 @@ public static class SelfTest {
 
         Check("streaming search reports matches as found", () => {
             var repository = GitKay.Core.GitService.tryDiscoverRepositoryPath();
-            var env = GitKay.Core.GitService.environment(repository);
+            using var env = GitKay.Core.GitService.environment(repository);
             var history = Axial.Flow.run(env, GitKay.Core.GitService.fetchHistory(Microsoft.FSharp.Core.FSharpOption<int>.Some(200), false, Microsoft.FSharp.Collections.FSharpList<GitKay.Core.GitStartup.StartupTarget>.Empty));
             if (!history.IsSuccess) return "history failed";
             var commits = ((Axial.Exit<Microsoft.FSharp.Collections.FSharpList<GitKay.Core.Models.Commit>, GitKay.Core.GitError>.Success)history).Item;
@@ -58,7 +58,8 @@ public static class SelfTest {
             var patch = GitKay.Core.WorkingTree.parsePatch("diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-one\n+two\n");
             if (patch.Length != 1 || patch.Head.Hunks.Head.Lines.Length != 2) return "patch did not parse";
             var repository = GitKay.Core.GitService.tryDiscoverRepositoryPath();
-            var loaded = Axial.Exit.toResult(Axial.Flow.run(GitKay.Core.GitService.environment(repository), GitKay.Core.GitService.fetchWorkingTreeChanges(3)));
+            using var env = GitKay.Core.GitService.environment(repository);
+            var loaded = Axial.Exit.toResult(Axial.Flow.run(env, GitKay.Core.GitService.fetchWorkingTreeChanges(3)));
             return loaded.IsOk ? null : "git status and diff failed: " + GitKay.Core.GitErrorModule.describe(loaded.ErrorValue);
         });
 

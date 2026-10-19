@@ -159,6 +159,7 @@ public partial class App : Application {
             await InitializeFolderWindowAsync(desktop, FolderMode.Preview, preview.folder, null);
             return;
         }
+        GitService.GitEnv? repositoryEnv = null;
         try {
             var (settingsResult, uiStateResult, repoKey) = await Task.Run(() => {
                 return (GitKay.Serialization.SettingsStore.loadDefaultReporting(), GitKay.Serialization.UiStateStore.loadDefaultReporting(), GitService.tryDiscoverRepositoryPath());
@@ -246,7 +247,6 @@ public partial class App : Application {
             GitKay.Core.App.configureRuntime(new Action<Action>(callback =>
                 ElmishHost.post(FuncConvert.ToFSharpFunc<Microsoft.FSharp.Core.Unit>(_ => callback()))));
 
-            GitService.GitEnv? repositoryEnv = null;
             var host = ElmishHost.startAndBind(
                 GitKay.Core.App.program(startupArgs),
                 model => {
@@ -278,11 +278,12 @@ public partial class App : Application {
                 watcher?.Dispose();
                 ((IDisposable)host).Dispose();
                 GitKay.Core.App.stopRuntime();
-                if (repositoryEnv != null) ((IDisposable)repositoryEnv).Dispose();
+                repositoryEnv?.StopForExit(TimeSpan.FromSeconds(2));
             };
 
         }
         catch (Exception ex) {
+            if (repositoryEnv != null) ((IDisposable)repositoryEnv).Dispose();
             FatalErrorPresenter.ShowStartupFailure(desktop, ex);
         }
     }

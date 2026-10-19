@@ -100,11 +100,33 @@ module GitService =
           HttpClient: IHttp
           Cache: GitCache
           CacheScope: AppHandle<GitError, unit> option ref }
+        /// Requests the cache scope stop without blocking the caller. Window-close handlers run on the UI
+        /// thread and must not wait on an in-flight diff: the stop is requested here and its completion is
+        /// observed on the thread pool.
+        member this.StopInBackground() =
+            match System.Threading.Interlocked.Exchange(this.CacheScope, None) with
+            | Some handle ->
+                Async.Start(async {
+                    try
+                        let! _ = handle.Stop()
+                        ()
+                    with error ->
+                        System.Diagnostics.Trace.WriteLine("[git-env] cache scope stop failed: " + error.Message)
+                })
+            | None -> ()
+
+        /// Stops the cache scope and waits briefly for it to settle. Used at process exit, where a bounded
+        /// wait is acceptable; a timeout is logged rather than ignored.
+        member this.StopForExit(timeout: TimeSpan) =
+            match System.Threading.Interlocked.Exchange(this.CacheScope, None) with
+            | Some handle ->
+                if not (handle.StopAndWait timeout) then
+                    System.Diagnostics.Trace.WriteLine(
+                        "[git-env] cache scope did not stop within " + timeout.TotalSeconds.ToString("F1") + "s at exit")
+            | None -> ()
+
         interface IDisposable with
-            member this.Dispose() =
-                match System.Threading.Interlocked.Exchange(this.CacheScope, None) with
-                | Some handle -> handle.StopAndWait(TimeSpan.FromSeconds 10.) |> ignore
-                | None -> ()
+            member this.Dispose() = this.StopInBackground()
         interface IHasClock with member this.Clock = this.Runtime.Clock
         interface IHasProcess with member this.Process = this.Processes
         interface IHasHttp with member this.Http = this.HttpClient
@@ -237,9 +259,11 @@ module GitService =
         }
 
     let private loadDiffCacheEntryFlow (repoPath: string) (hash: string) : Flow<GitEnv, GitError, DiffCacheEntry> =
-        // LibGit2Sharp's Diff.Compare has no cancellation hook: an interrupted joiner stops waiting, but
-        // the load itself still runs to completion in the background. axial-allow-discarded-cancellation
-        Flow.fromTaskResult (fun _ -> Task.Run(fun () -> loadDiffCacheEntry repoPath hash))
+        // LibGit2Sharp's Diff.Compare has no cancellation hook: the token is observed before the load
+        // starts, but an in-flight compare still runs to completion in the background.
+        Flow.fromBlockingResult (fun token ->
+            token.ThrowIfCancellationRequested()
+            loadDiffCacheEntry repoPath hash)
 
     let private getDiffCacheEntry (hash: string) : Flow<GitEnv, GitError, DiffCacheEntry> =
         flow {
@@ -292,6 +316,7 @@ module GitService =
     let private loadDiffFileContents (contextLines: int) (hash: string) (files: (string * string) list) : Flow<GitEnv, GitError, FileDiff list> =
         flow {
             let! env = Flow.env
+            let! token = Flow.cancellationToken
             let files = List.toArray files
 
             use repo = new Repository(env.RepoPath)
@@ -306,6 +331,7 @@ module GitService =
                 let parent = commit.Parents |> Seq.tryHead |> Option.toObj
                 let compareOptions = buildCompareOptions contextLines
                 for index in start .. finish - 1 do
+                    token.ThrowIfCancellationRequested()
                     let oldPath, newPath = files.[index]
                     results.[index] <- diffFileInCommit workerRepo compareOptions commit parent oldPath newPath
 
@@ -313,15 +339,19 @@ module GitService =
                 loadRange repo 0 files.Length
             else
                 let chunk = (files.Length + workers - 1) / workers
-                System.Threading.Tasks.Parallel.For(0, workers, fun worker ->
-                    let start = worker * chunk
-                    let finish = min files.Length (start + chunk)
-                    if start < finish then
-                        if worker = 0 then
-                            loadRange repo start finish
-                        else
-                            use workerRepo = new Repository(env.RepoPath)
-                            loadRange workerRepo start finish)
+                System.Threading.Tasks.Parallel.For(
+                    0,
+                    workers,
+                    System.Threading.Tasks.ParallelOptions(CancellationToken = token),
+                    fun worker ->
+                        let start = worker * chunk
+                        let finish = min files.Length (start + chunk)
+                        if start < finish then
+                            if worker = 0 then
+                                loadRange repo start finish
+                            else
+                                use workerRepo = new Repository(env.RepoPath)
+                                loadRange workerRepo start finish)
                 |> ignore
 
             return List.ofArray results
@@ -339,17 +369,19 @@ module GitService =
     // axial-allow-effect: http — one shared client at the live service boundary.
     let private sharedHttpClient = new HttpClient()
 
-    let environment repoPath =
+    let private environmentCore repoPath : GitEnv =
         let runtime = BaseRuntime.liveValue
         let cache = GitCache()
 
-        let env =
-            { RepoPath = repoPath
-              Runtime = runtime
-              Processes = Process.live runtime.Clock FileSystem.live Console.live
-              HttpClient = Http.live runtime.Clock sharedHttpClient
-              Cache = cache
-              CacheScope = ref None }
+        { RepoPath = repoPath
+          Runtime = runtime
+          Processes = Process.live runtime.Clock FileSystem.live Console.live
+          HttpClient = Http.live runtime.Clock sharedHttpClient
+          Cache = cache
+          CacheScope = ref None }
+
+    let environment repoPath =
+        let env = environmentCore repoPath
 
         let build = flow {
             let! diffCache = Cache.make (loadDiffCacheEntryFlow repoPath)
@@ -359,11 +391,15 @@ module GitService =
         // axial-allow-effect: blocking — synchronous repository-open boundary; cache scope outlives this call.
         match App.startWith env build |> Async.RunSynchronously with
         | Ok (handle, (diffCache, fileContentCache)) ->
-            cache.DiffCache <- diffCache
-            cache.FileContentCache <- fileContentCache
+            env.Cache.DiffCache <- diffCache
+            env.Cache.FileContentCache <- fileContentCache
             env.CacheScope.Value <- Some handle
         | Error error -> failwith ("Cannot create repository caches: " + GitError.describe error)
         env
+
+    /// A repository environment without the diff caches or their scope. The commit window only runs
+    /// working-tree commands, so it does not need a cache scope to stop.
+    let environmentWithoutCaches repoPath = environmentCore repoPath
 
     let private loadCommit (repo: Repository) (hash: string) =
         repo.Lookup<LibGit2Sharp.Commit>(hash) |> requireNotNull (GitError.CommitNotFound hash)
