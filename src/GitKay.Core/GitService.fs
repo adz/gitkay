@@ -98,7 +98,13 @@ module GitService =
           Runtime: BaseRuntime
           Processes: IProcess
           HttpClient: IHttp
-          Cache: GitCache }
+          Cache: GitCache
+          CacheScope: AppHandle<GitError, unit> option ref }
+        interface IDisposable with
+            member this.Dispose() =
+                match System.Threading.Interlocked.Exchange(this.CacheScope, None) with
+                | Some handle -> handle.StopAndWait(TimeSpan.FromSeconds 10.) |> ignore
+                | None -> ()
         interface IHasClock with member this.Clock = this.Runtime.Clock
         interface IHasProcess with member this.Process = this.Processes
         interface IHasHttp with member this.Http = this.HttpClient
@@ -342,21 +348,21 @@ module GitService =
               Runtime = runtime
               Processes = Process.live runtime.Clock FileSystem.live Console.live
               HttpClient = Http.live runtime.Clock sharedHttpClient
-              Cache = cache }
+              Cache = cache
+              CacheScope = ref None }
 
-        cache.DiffCache <-
-            match Flow.run env (Cache.make (loadDiffCacheEntryFlow repoPath)) |> Exit.toResult with
-            | Ok diffCache -> diffCache
-            | Error never -> Never.absurd never
-
-        cache.FileContentCache <-
-            match
-                Flow.run env (Cache.make (fun key -> loadDiffFileContent key.ContextLines key.Hash key.OldPath key.NewPath))
-                |> Exit.toResult
-            with
-            | Ok fileContentCache -> fileContentCache
-            | Error never -> Never.absurd never
-
+        let build = flow {
+            let! diffCache = Cache.make (loadDiffCacheEntryFlow repoPath)
+            let! fileContentCache = Cache.make (fun key -> loadDiffFileContent key.ContextLines key.Hash key.OldPath key.NewPath)
+            return diffCache, fileContentCache
+        }
+        // axial-allow-effect: blocking — synchronous repository-open boundary; cache scope outlives this call.
+        match App.startWith env build |> Async.RunSynchronously with
+        | Ok (handle, (diffCache, fileContentCache)) ->
+            cache.DiffCache <- diffCache
+            cache.FileContentCache <- fileContentCache
+            env.CacheScope.Value <- Some handle
+        | Error error -> failwith ("Cannot create repository caches: " + GitError.describe error)
         env
 
     let private loadCommit (repo: Repository) (hash: string) =

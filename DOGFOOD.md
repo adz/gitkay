@@ -1,9 +1,7 @@
 # Unreleased package dogfood
 
-Status: Axial packages are on `0.11.0-local.2`; the in-repo `src/Axial.Elmish` shim is gone and GitKay now uses the
-packaged `Axial.Elmish` (namespace `Axial.ElmishFlows`) with the per-command `Flow.localEnv` recipe. The solution builds
-and the full test suite passes at the transitional warning-level guardrails setting. The AXG008/AXG001 findings are still
-real ownership/blocking-boundary questions, not yet redesigned; they are downgraded with `-p:AxialGuardrailsSeverity=warning`.
+Status: Axial packages are on `0.11.0-local.4`; the Elmish package is now `Axial.ElmishFlows` (namespace unchanged).
+The repository caches live in a root scope owned by the repository environment. Default-severity guardrails build passes.
 
 | Label | Package | File affected | Finding | Suggested fix |
 | --- | --- | --- | --- | --- |
@@ -16,7 +14,15 @@ real ownership/blocking-boundary questions, not yet redesigned; they are downgra
 Suppressions before: **25** `axial-allow-effect` occurrences under `src`. After current changes: **26** (one explicit blocking
 self-test entry-point annotation). Filesystem suppressions have **not** been removed.
 
-## Validation
+## Verification
+
+- `timeout 1500 dotnet build GitKay.slnx -p:UseLocalGlue=false`: passed at default guardrails severity, no AXG errors. The two cache AXG008 findings disappeared after moving construction into `App.startWith`; unscoped Debounce queues no longer report AXG008. Repository-open synchronously publishes the cache scope (`axial-allow-effect: blocking` at this host boundary); the environment stops it on switch and shutdown.
+- `timeout 1500 dotnet test GitKay.slnx -p:UseLocalGlue=false`: passed (341 core, 90 UI).
+- Render harness (UI test project, headless pixel tests): passed (90).
+- `timeout 1500 dotnet run --project src/GitKay.UI/GitKay.UI.csproj -p:UseLocalGlue=false --no-build -- --self-test`: passed.
+- Filesystem suppression count under `src`: 19 before, 19 after. Filesystem migration deferred.
+
+## Previous validation (local.2)
 
 - `timeout 1500 dotnet build GitKay.slnx -p:UseLocalGlue=false -p:AxialGuardrailsSeverity=warning`: **succeeded**.
 - `timeout 1500 dotnet test GitKay.slnx -p:UseLocalGlue=false -p:AxialGuardrailsSeverity=warning`: **passed** — GitKay.Tests 341, GitKay.UI.Tests 90.

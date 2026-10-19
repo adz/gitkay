@@ -836,6 +836,7 @@ public partial class CommitWindow : Window, IVimCommands {
         Closed += (_, _) => {
             SaveDraft(projection.Message);
             _host?.Dispose();
+            ((IDisposable)env).Dispose();
         };
         projection.Committed += _ => SaveDraft("");
         // Take keyboard focus as soon as the window is up, so its keys go here and not to the window behind.

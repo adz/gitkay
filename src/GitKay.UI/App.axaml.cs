@@ -246,9 +246,16 @@ public partial class App : Application {
             GitKay.Core.App.configureRuntime(new Action<Action>(callback =>
                 ElmishHost.post(FuncConvert.ToFSharpFunc<Microsoft.FSharp.Core.Unit>(_ => callback()))));
 
+            GitService.GitEnv? repositoryEnv = null;
             var host = ElmishHost.startAndBind(
                 GitKay.Core.App.program(startupArgs),
-                model => projection.Update(model),
+                model => {
+                    if (!ReferenceEquals(repositoryEnv, model.GitEnv)) {
+                        if (repositoryEnv != null) ((IDisposable)repositoryEnv).Dispose();
+                        repositoryEnv = model.GitEnv;
+                    }
+                    projection.Update(model);
+                },
                 dispatch => projection.SetDispatch(dispatch)
             );
             GitKay.Core.App.startHosts();
@@ -271,6 +278,7 @@ public partial class App : Application {
                 watcher?.Dispose();
                 ((IDisposable)host).Dispose();
                 GitKay.Core.App.stopRuntime();
+                if (repositoryEnv != null) ((IDisposable)repositoryEnv).Dispose();
             };
 
         }
