@@ -536,7 +536,7 @@ module GitService =
                     let exists (name: string) =
                         try
                             let full = Path.GetFullPath(name, launchDirectory)
-                            File.Exists full || Directory.Exists full // axial-allow-effect: filesystem
+                            File.Exists full || Directory.Exists full // axial-allow-effect: filesystem — synchronous command-line argument resolution before a flow exists
                         with _ ->
                             false
 
@@ -796,16 +796,23 @@ module GitService =
 
     let private untrackedSizeLimit = 2L * 1024L * 1024L
 
-    let private readUntracked (repoPath: string) (path: string) : FileDiff =
+    let private readUntracked (repoPath: string) (path: string) : Flow<GitEnv, GitError, FileDiff> =
         let full = IO.Path.Combine((match workingDirectory repoPath with null -> repoPath | directory -> directory), path)
-        try
-            let info = IO.FileInfo full
-            if not info.Exists || info.Length > untrackedSizeLimit then
-                { OldPath = FileChange.missing; NewPath = path; Hunks = []; NewLineCount = None }
+        let empty = { OldPath = FileChange.missing; NewPath = path; Hunks = []; NewLineCount = None }
+        flow {
+            let! exists = FileSystem.fileExists full
+            if not exists then return empty
             else
-                WorkingTree.untrackedDiff path (IO.File.ReadAllText full) // axial-allow-effect: filesystem
-        with :? IO.IOException | :? UnauthorizedAccessException ->
-            { OldPath = FileChange.missing; NewPath = path; Hunks = []; NewLineCount = None }
+                let! length = FileSystem.getFileLength full
+                if length > untrackedSizeLimit then return empty
+                else
+                    let! text = FileSystem.readAllText full
+                    return WorkingTree.untrackedDiff path text
+        }
+        |> Flow.orElseWith (function
+            | FileSystemError.Io _ | FileSystemError.Unauthorized _ -> Flow.ok empty
+            | error -> Flow.fail error)
+        |> Flow.mapError (fun error -> GitError.OperationFailed("Read untracked file", string error))
 
     /// <summary>The staged, unstaged and untracked diffs, with <paramref name="contextLines"/> lines of context.</summary>
     /// <summary>The commit HEAD would replace when amending, or None on a repository's first commit.</summary>
@@ -832,8 +839,8 @@ module GitService =
             let unstaged = plainGit [ "diff"; "--no-ext-diff"; context ] |> Flow.map WorkingTree.parsePatch
             let! (entries, (staged, unstaged)) = Flow.zipPar fetchWorkingTreeStatus (Flow.zipPar staged unstaged)
             let! repoPath = Flow.envWith _.RepoPath
-            let untracked =
-                entries |> List.filter _.Untracked |> List.map (fun entry -> readUntracked repoPath entry.Path)
+            let! untracked =
+                entries |> List.filter _.Untracked |> Flow.traverse (fun entry -> readUntracked repoPath entry.Path)
             return { Entries = entries; Staged = staged; Unstaged = unstaged; Untracked = untracked }
         }
 
@@ -855,7 +862,7 @@ module GitService =
             match section with
             | WorkingTree.Untracked ->
                 let! repoPath = Flow.envWith _.RepoPath
-                return readUntracked repoPath newPath
+                return! readUntracked repoPath newPath
             | WorkingTree.Staged
             | WorkingTree.Unstaged ->
                 let staged = if section = WorkingTree.Staged then [ "--cached"; "--find-renames" ] else []
@@ -1157,13 +1164,13 @@ module GitService =
                 let fullPath = Path.GetFullPath(Path.Combine(root, path.Replace('/', Path.DirectorySeparatorChar)))
                 let relative = Path.GetRelativePath(root, fullPath)
                 // This compatibility API is the explicit synchronous boundary used by the UI preview loader.
-                // axial-allow-effect: filesystem
+                // axial-allow-effect: filesystem — synchronous compatibility preview API; no flow environment
                 if Path.IsPathRooted relative || relative = ".." || relative.StartsWith(".." + string Path.DirectorySeparatorChar, StringComparison.Ordinal) || not (File.Exists fullPath) then
                     Error (GitError.OperationFailed("Load image", $"File not found: {path}"))
                 else
                     let info = FileInfo fullPath
                     if info.Length > 10L * 1024L * 1024L then Error (GitError.OperationFailed("Load image", "Image is larger than the 10 MB preview limit"))
-                    // axial-allow-effect: filesystem
+                    // axial-allow-effect: filesystem — synchronous compatibility preview API; no flow environment
                     else Ok(File.ReadAllBytes fullPath)
             | WorkingTree.Untracked, true -> Error (GitError.OperationFailed("Load image", "Untracked files have no old revision"))
         with error -> Error (GitError.OperationFailed("Load image", error.Message))
