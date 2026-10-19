@@ -809,8 +809,11 @@ module GitService =
                     let! text = FileSystem.readAllText full
                     return WorkingTree.untrackedDiff path text
         }
+        // Recover every IOException kind, as before: a file deleted between listing and reading is no longer there.
         |> Flow.orElseWith (function
-            | FileSystemError.Io _ | FileSystemError.Unauthorized _ -> Flow.ok empty
+            | FileSystemError.FileNotFound _ | FileSystemError.DirectoryNotFound _
+            | FileSystemError.PathTooLong _ | FileSystemError.Io _
+            | FileSystemError.Unauthorized _ -> Flow.ok empty
             | error -> Flow.fail error)
         |> Flow.mapError (fun error -> GitError.OperationFailed("Read untracked file", string error))
 

@@ -10,6 +10,7 @@
     <Compile Include="VimTests.fs" />
     <Compile Include="KitTests.fs" />
     <Compile Include="LinkTests.fs" />
+    <Compile Include="FileSystemRecoveryTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -52,10 +52,16 @@ module Trash =
                     (flow {
                         let! stream = FileSystem.openRead file
                         use stream = stream
-                        return Some(Convert.ToHexString(Security.Cryptography.SHA256.HashData stream))
+                        // Reading the stream can still fail after opening it, like the old IOException catch.
+                        try
+                            return Some(Convert.ToHexString(Security.Cryptography.SHA256.HashData stream))
+                        with :? IOException | :? UnauthorizedAccessException ->
+                            return None
                     }
                     |> Flow.orElseWith (function
-                        | FileSystemError.Io _ | FileSystemError.Unauthorized _ -> Flow.ok None
+                        | FileSystemError.FileNotFound _ | FileSystemError.DirectoryNotFound _
+                        | FileSystemError.PathTooLong _ | FileSystemError.Io _
+                        | FileSystemError.Unauthorized _ -> Flow.ok None
                         | error -> Flow.fail error))
         }
 
@@ -111,6 +117,7 @@ module Trash =
                     do!
                         FileSystem.deleteDirectory folder true
                         |> Flow.orElseWith (function
+                            | FileSystemError.DirectoryNotFound _ | FileSystemError.PathTooLong _
                             | FileSystemError.Io _ | FileSystemError.Unauthorized _ -> Flow.ok ()
                             | error -> Flow.fail error)
         }
