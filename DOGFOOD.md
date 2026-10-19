@@ -11,8 +11,36 @@ The repository caches live in a root scope owned by the repository environment. 
 | resolved | Axial.HttpClient | `src/GitKay.Core/GitService.fs`, `App.fs` | Remote Markdown image requests now use `Http.send` with a 10 MB body limit and 10 s timeout through `GitEnv.IHasHttp`; the UI's existing cancellable image command binds the flow. The one shared live `HttpClient` needs an explicit `axial-allow-effect: http` annotation at its construction boundary. | No API friction; `Request.maxResponseBytes` enforces the limit even without `Content-Length`. |
 | read | Axial.Elmish | `src/GitKay.Core/CmdDiagnostics.fs` | The package's `CmdDiagnostics` equivalent is per-runtime; the diagnostics windows still need one stable surface, so GitKay keeps a thin `GitKay.Core.CmdDiagnostics` shim that `App` points at the live runtime's `Registry` (and `SelfTest` at its local runtime). | n/a (app-level adapter, not a package gap). |
 
-Suppressions before: **25** `axial-allow-effect` occurrences under `src`. After current changes: **26** (one explicit blocking
-self-test entry-point annotation). Filesystem suppressions have **not** been removed.
+## Remaining guardrail suppressions
+
+Suppressions under `src` went from **28** to **13** `axial-allow-effect` occurrences (commits f4839ef, 2705fa2:
+trash-folder access and untracked-file reads now route through `IFileSystem`, removing all 14 `Git/Trash.fs` markers and
+one `GitService.fs` marker).
+
+Two boundaries stay by design:
+
+- `src/GitKay.Core/FolderSource.fs` keeps its file-level `axial-allow-effect-file: filesystem`. It is the documented
+  synchronous filesystem boundary for folder comparison and previewing: the C# UI calls it synchronously
+  (`App.axaml.cs`, `FolderWindow.axaml.cs`, `SelfTest.cs`).
+- `src/GitKay.Core/Debounce.fs` stays as the C# projection's debounce (`MainProjection.cs` uses it directly), rather than
+  moving behind an Elmish command, and carries no suppression marker.
+
+The other 12 markers, by category:
+
+| Category | Where | Why it stays |
+| --- | --- | --- |
+| environment | `App.fs:577` | Resolves startup targets against `Environment.CurrentDirectory` before a `GitEnv` flow exists. |
+| environment | `Git/Internal/RepositoryDiscovery.fs:11` | Host startup lists candidate repository roots from the process environment. |
+| environment | `GitService.fs:313` | Sizes diff-worker parallelism from `Environment.ProcessorCount`; no behavioural effect worth routing through `env`. |
+| environment | `GitService.fs:1486` | Sizes search-worker parallelism from `Environment.ProcessorCount`. |
+| clock | `CmdDiagnostics.fs:63` | Timestamps an unobserved defect with `DateTimeOffset.UtcNow` outside a flow. |
+| filesystem | `GitService.fs:539` | Synchronous command-line argument resolution (`File.Exists`/`Directory.Exists`) before a flow exists. |
+| filesystem | `GitService.fs:1167` | Synchronous compatibility preview API reads the working-tree image path; no flow environment. |
+| filesystem | `GitService.fs:1173` | The same preview API reads the image bytes. |
+| http | `GitService.fs:371` | One shared `HttpClient` at the live service boundary. |
+| blocking | `GitService.fs:394` | Synchronous repository-open boundary; the cache scope outlives this call. |
+| blocking | `SelfTest.fs:33` | Self-test entry point blocks on command dispatch (`Task.Wait`). |
+| sleep | `SelfTest.fs:2` (file-level) | The self-test runs at a process entry point and waits on real commands and time. |
 
 ## Verification
 
@@ -20,7 +48,7 @@ self-test entry-point annotation). Filesystem suppressions have **not** been rem
 - `timeout 1500 dotnet test GitKay.slnx -p:UseLocalGlue=false`: passed (341 core, 90 UI).
 - Render harness (UI test project, headless pixel tests): passed (90).
 - `timeout 1500 dotnet run --project src/GitKay.UI/GitKay.UI.csproj -p:UseLocalGlue=false --no-build -- --self-test`: passed.
-- Filesystem suppression count under `src`: 19 before, 19 after. Filesystem migration deferred.
+- Filesystem suppression count under `src`: 19 before, 4 after (FolderSource plus three synchronous compatibility or argument-resolution boundaries); trash-folder and untracked-file reads now go through `IFileSystem`.
 
 ## Previous validation (local.2)
 
