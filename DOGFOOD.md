@@ -29,4 +29,15 @@ self-test entry-point annotation). Filesystem suppressions have **not** been rem
 - `AXIAL_GUARDRAILS_SEVERITY=warning dotnet build GitKay.slnx -p:UseLocalGlue=false --no-restore`: **failed** with AXG008/AXG001 because `Directory.Build.props` forces `AxialGuardrailsSeverity=error`, so the package's env-var override (which applies only when the property is empty) never runs.
 - Render harness, published self-test, and AOT publish/self-test: **not run** in this pass.
 
-Release verification: switched references to Axial 0.11.0, Reified 0.11.0 and Glue 0.2.0 and removed the local feed. NuGet.org currently lists Axial.FileSystem only through 0.10.0 (HTTP 200 from its flat-container index); forced restore fails NU1102. Default-severity build, tests, app self-test and Linux NativeAOT publish also fail because restore cannot resolve that package; shipped-binary self-test cannot run without a published binary. The app does **not yet build** on the released packages.
+## Released-package verification
+
+With the stale NuGet HTTP cache cleared, forced restore from nuget.org succeeds using Axial 0.11.0, Reified 0.11.0 and Glue 0.2.0 (`dotnet restore GitKay.slnx -p:UseLocalGlue=false --force-evaluate`). Each verification command below ran under `timeout 1500`:
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Default-severity build | `dotnet build GitKay.slnx -p:UseLocalGlue=false` | Passed; 10 obsolete API warnings, 0 errors. |
+| Tests | `dotnet test GitKay.slnx -p:UseLocalGlue=false` | Passed; 341 core and 90 UI tests. |
+| Render harness | `dotnet test tests/GitKay.UI.Tests/GitKay.UI.Tests.fsproj -p:UseLocalGlue=false --filter FullyQualifiedName~Render` | Passed; 15 render tests. |
+| App self-test | `dotnet run --project src/GitKay.UI/GitKay.UI.csproj -p:UseLocalGlue=false --no-build -- --self-test` | Passed. |
+| Linux NativeAOT publish | `bash scripts/publish-gitkay.sh --aot --linux -p:UseLocalGlue=false` | Passed; existing FSharp.Core AOT/trim and obsolete API warnings. |
+| Published self-test | `artifacts/publish/gitkay/gitkay --self-test` | Passed. |
