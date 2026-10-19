@@ -28,3 +28,5 @@ self-test entry-point annotation). Filesystem suppressions have **not** been rem
 - `timeout 1500 dotnet test GitKay.slnx -p:UseLocalGlue=false -p:AxialGuardrailsSeverity=warning`: **passed** — GitKay.Tests 341, GitKay.UI.Tests 90.
 - `AXIAL_GUARDRAILS_SEVERITY=warning dotnet build GitKay.slnx -p:UseLocalGlue=false --no-restore`: **failed** with AXG008/AXG001 because `Directory.Build.props` forces `AxialGuardrailsSeverity=error`, so the package's env-var override (which applies only when the property is empty) never runs.
 - Render harness, published self-test, and AOT publish/self-test: **not run** in this pass.
+
+Release verification: switched references to Axial 0.11.0, Reified 0.11.0 and Glue 0.2.0 and removed the local feed. NuGet.org currently lists Axial.FileSystem only through 0.10.0 (HTTP 200 from its flat-container index); forced restore fails NU1102. Default-severity build, tests, app self-test and Linux NativeAOT publish also fail because restore cannot resolve that package; shipped-binary self-test cannot run without a published binary. The app does **not yet build** on the released packages.

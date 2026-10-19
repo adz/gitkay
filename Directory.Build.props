@@ -4,7 +4,7 @@
     <AxialGuardrailsSeverity>error</AxialGuardrailsSeverity>
 
     <!-- Local/dev default only; the release workflow stamps the real version via -p:Version from the release tag. -->
-    <VersionPrefix>0.15.0</VersionPrefix>
+    <VersionPrefix>0.16.0</VersionPrefix>
     <Authors>Adam Davies</Authors>
     <Product>GitKay</Product>
     <RepositoryUrl>https://github.com/adz/gitkay</RepositoryUrl>
@@ -13,7 +13,7 @@
       This dogfood branch uses the local NuGet package by default. Opt into a source checkout
       explicitly with -p:UseLocalGlue=source and -p:GlueSourceRoot=<path>.
     -->
-    <ElmishGlueVersion>0.2.0-local.1</ElmishGlueVersion>
+    <ElmishGlueVersion>0.2.0</ElmishGlueVersion>
     <GlueSourceRoot Condition="'$(GlueSourceRoot)' == ''">$(MSBuildThisFileDirectory)..\..\..\Elmish.Avalonia.Glue\main\</GlueSourceRoot>
     <UseLocalGlue Condition="'$(UseLocalGlue)' == 'source' and '$(CI)' != 'true' and Exists('$(GlueSourceRoot)src')">true</UseLocalGlue>
   </PropertyGroup>
