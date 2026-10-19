@@ -10,6 +10,7 @@ open System.Net.Http
 open Axial
 open Axial.Console
 open Axial.FileSystem
+open Axial.HttpClient
 open Axial.PlatformService
 open Axial.Process
 open Reified.Result
@@ -96,9 +97,11 @@ module GitService =
         { RepoPath: string
           Runtime: BaseRuntime
           Processes: IProcess
+          HttpClient: IHttp
           Cache: GitCache }
         interface IHasClock with member this.Clock = this.Runtime.Clock
         interface IHasProcess with member this.Process = this.Processes
+        interface IHasHttp with member this.Http = this.HttpClient
 
     /// Repository comparison base used on first open: main, then master, including their origin counterparts.
     let defaultComparisonBase (repoPath: string) =
@@ -327,6 +330,9 @@ module GitService =
     // content, keyed by commit, path and context. Successes are kept for later commands, failures are not, so a
     // transient failure retries. Built here, at the repository boundary, so every command that touches this
     // repository shares them.
+    // axial-allow-effect: http — one shared client at the live service boundary.
+    let private sharedHttpClient = new HttpClient()
+
     let environment repoPath =
         let runtime = BaseRuntime.liveValue
         let cache = GitCache()
@@ -335,6 +341,7 @@ module GitService =
             { RepoPath = repoPath
               Runtime = runtime
               Processes = Process.live runtime.Clock FileSystem.live Console.live
+              HttpClient = Http.live runtime.Clock sharedHttpClient
               Cache = cache }
 
         cache.DiffCache <-
@@ -1115,55 +1122,20 @@ module GitService =
             | WorkingTree.Untracked, true -> Error (GitError.OperationFailed("Load image", "Untracked files have no old revision"))
         with error -> Error (GitError.OperationFailed("Load image", error.Message))
 
-    let private markdownHttp = new HttpClient(Timeout = TimeSpan.FromSeconds 10.0)
+    let private loadRemoteImage (url: string) : Flow<GitEnv, string, byte array> =
+        Http.get url
+        |> Request.timeout (TimeSpan.FromSeconds 10.0)
+        |> Request.maxResponseBytes (10L * 1024L * 1024L)
+        |> Http.send
+        |> Flow.map Response.bytes
+        |> Flow.mapError HttpError.describe
 
-    let private loadRemoteImage (url: string) =
-        try
-            use response = markdownHttp.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult()
-            response.EnsureSuccessStatusCode() |> ignore
-            let length = response.Content.Headers.ContentLength
-            if length.HasValue && length.Value > 10L * 1024L * 1024L then Error "Remote image is larger than the 10 MB preview limit"
-            else
-                use input = response.Content.ReadAsStream()
-                use output = new MemoryStream()
-                let buffer = Array.zeroCreate<byte> 81920
-                let mutable total, read = 0, 0
-                while total <= 10 * 1024 * 1024 && (read <- input.Read(buffer, 0, buffer.Length); read > 0) do
-                    output.Write(buffer, 0, read)
-                    total <- total + read
-                if total > 10 * 1024 * 1024 then Error "Remote image is larger than the 10 MB preview limit"
-                else Ok(output.ToArray())
-        with error -> Error error.Message
-
-    let loadRemoteMarkdownImage cancellationToken (url: string) =
-        task {
-            match Uri.TryCreate(url, UriKind.Absolute) with
-            | false, _ -> return Error(GitError.OperationFailed("Load remote image", "The image target is not an HTTP or HTTPS URL"))
-            | true, uri when uri.Scheme <> Uri.UriSchemeHttp && uri.Scheme <> Uri.UriSchemeHttps ->
-                return Error(GitError.OperationFailed("Load remote image", "The image target is not an HTTP or HTTPS URL"))
-            | _ ->
-                try
-                    use! response = markdownHttp.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-                    response.EnsureSuccessStatusCode() |> ignore
-                    let length = response.Content.Headers.ContentLength
-                    if length.HasValue && length.Value > 10L * 1024L * 1024L then
-                        return Error(GitError.OperationFailed("Load remote image", "Remote image is larger than the 10 MB preview limit"))
-                    else
-                        use! input = response.Content.ReadAsStreamAsync(cancellationToken)
-                        use output = new MemoryStream()
-                        let buffer = Array.zeroCreate<byte> 81920
-                        let mutable total, read = 0, 0
-                        while total <= 10 * 1024 * 1024 && (read <- input.Read(buffer.AsSpan()); read > 0) do
-                            cancellationToken.ThrowIfCancellationRequested()
-                            output.Write(buffer, 0, read)
-                            total <- total + read
-                        if total > 10 * 1024 * 1024 then
-                            return Error(GitError.OperationFailed("Load remote image", "Remote image is larger than the 10 MB preview limit"))
-                        else return Ok(output.ToArray())
-                with
-                | :? OperationCanceledException as error -> return raise error
-                | error -> return Error(GitError.OperationFailed("Load remote image", error.Message))
-        }
+    let loadRemoteMarkdownImage (url: string) : Flow<GitEnv, GitError, byte array> =
+        match Uri.TryCreate(url, UriKind.Absolute) with
+        | true, uri when uri.Scheme = Uri.UriSchemeHttp || uri.Scheme = Uri.UriSchemeHttps ->
+            loadRemoteImage url
+            |> Flow.mapError (fun message -> GitError.OperationFailed("Load remote image", message))
+        | _ -> Flow.fail (GitError.OperationFailed("Load remote image", "The image target is not an HTTP or HTTPS URL"))
 
     let private imageData allowRemote loader (request: MarkdownImageRequest) =
         match request.Target with
@@ -1171,10 +1143,9 @@ module GitService =
             match loader request.Side path with
             | Ok bytes -> { Side = request.Side; Source = request.Source; Bytes = Some bytes; Error = None }
             | Error error -> { Side = request.Side; Source = request.Source; Bytes = None; Error = Some(GitError.describe error) }
-        | RemoteUrl url when allowRemote ->
-            match loadRemoteImage url with
-            | Ok bytes -> { Side = request.Side; Source = request.Source; Bytes = Some bytes; Error = None }
-            | Error error -> { Side = request.Side; Source = request.Source; Bytes = None; Error = Some error }
+        | RemoteUrl _ when allowRemote ->
+            // Remote images are loaded separately by the UI's cancellable image command.
+            { Side = request.Side; Source = request.Source; Bytes = None; Error = None }
         | RemoteUrl _ -> { Side = request.Side; Source = request.Source; Bytes = None; Error = Some "Remote image blocked" }
         | HeadingTarget _ | InvalidTarget _ -> { Side = request.Side; Source = request.Source; Bytes = None; Error = Some "Invalid image target" }
 

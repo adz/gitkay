@@ -708,7 +708,7 @@ module App =
 
     let private startRemoteMarkdownImageLoad (model: Model) source =
         ofFlowLatest remoteMarkdownImageKey $"remote markdown image {source}" model.GitEnv
-            (Flow.fromTaskResult (fun cancellationToken -> GitService.loadRemoteMarkdownImage cancellationToken source))
+            (GitService.loadRemoteMarkdownImage source)
             (fun bytes -> RemoteMarkdownImageLoaded(source, Ok bytes))
             (fun error -> RemoteMarkdownImageLoaded(source, Error error))
 
