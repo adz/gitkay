@@ -51,13 +51,19 @@ type Debounce<'value>(clock: IClock, initialQuiet: TimeSpan, sink: Action<'value
     /// Replaces the sink that receives debounced values.
     member _.SetSink(action: Action<'value>) = sink <- action
 
-    /// Replaces the quiet window. An in-flight debounce is abandoned; later values use the new window.
+    /// Replaces the quiet window. An in-flight debounce is abandoned; later values use the new window. Repeating the
+    /// current window is a no-op, so a projection that reapplies its unchanged setting never rebuilds the consumer.
     member _.SetWindow(window: TimeSpan) =
-        quiet <- window
-        Queue.tryOffer window windows |> ignore
+        if window <> quiet then
+            quiet <- window
+            Queue.tryOffer window windows |> ignore
 
     /// The host flow. Run it for the application's lifetime with <c>App.startWithCancellation</c>.
     member _.Run: Flow<ClockEnvironment, Never, unit> = supervise quiet
+
+    /// Starts the host under this debounce's clock, so a manual clock in tests drives the quiet window too.
+    member _.Start(token: CancellationToken) : IDisposable =
+        App.startWithCancellation token environment (supervise quiet) :> IDisposable
 
 /// The application's stream-backed debounces.
 [<RequireQualifiedAccess>]
@@ -67,14 +73,17 @@ module Debounces =
     /// immediate search can retire a debounced one that is still pending.
     type SearchInput = { Query: string; ScopeKey: string; Generation: int64 }
 
-    /// A search debounce owned by one window, on the live clock. Each window owns its stream, so a second window (or
-    /// a test) never replaces another's sink.
-    let createSearch () =
-        Debounce<SearchInput>(Clock.live, TimeSpan.FromSeconds 0.5, Action<SearchInput>(fun _ -> ()))
+    /// A search debounce owned by one window, on a caller-supplied clock (live in production, manual in tests). Each
+    /// window owns its stream, so a second window (or a test) never replaces another's sink.
+    let createSearchWithClock (clock: IClock) =
+        Debounce<SearchInput>(clock, TimeSpan.FromSeconds 0.5, Action<SearchInput>(fun _ -> ()))
 
-    /// Runs a window's debounce for the lifetime of the application host.
+    /// A search debounce on the live clock.
+    let createSearch () = createSearchWithClock Clock.live
+
+    /// Runs a window's debounce for the lifetime of the application host, under the debounce's own clock.
     let startHost (token: CancellationToken) (debounce: Debounce<'value>) : IDisposable =
-        App.startWithCancellation token (ClockEnvironment(Clock.live)) debounce.Run :> IDisposable
+        debounce.Start token
 
     /// The working-tree watcher's quiet period: a build or checkout that touches many files refreshes once. There is
     /// one working tree, so one shared debounce.

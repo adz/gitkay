@@ -4769,18 +4769,47 @@ module TimingSensitiveTests =
 
     [<Fact>]
     let ``MainProjection should debounce live search updates as the query changes`` () =
-        // SetDispatch wires and hosts this projection's search debounce, so no app-wide setup is needed.
-        let projection = MainProjection()
+        // The search debounce runs on a manual clock, so the quiet window can be crossed without wall-clock sleeps
+        // and a loaded machine cannot run the first search before the second edit replaces it.
+        let clock = ManualClock(DateTimeOffset.UnixEpoch)
+        let debounce = Debounces.createSearchWithClock(clock :> IClock)
+        let projection = MainProjection(debounce)
         let messages = ConcurrentQueue<App.Msg>()
         projection.SetDispatch (fun msg -> messages.Enqueue msg |> ignore)
-        // Generous margins: a loaded machine that stalls between the two edits would otherwise run the first search too.
-        projection.SearchDebounceSeconds <- 1.0
 
         projection.SearchQuery <- "nee"
-        Task.Delay(50).Wait()
         projection.SearchQuery <- "needle"
 
-        Task.Delay(2500).Wait()
+        // Both edits are offered before any quiet window can close. Wait for the consumer to stop shuffling values
+        // through the thread pool before advancing, the way Axial's own manual-time tests do: advancing while a value
+        // is still in flight closes an earlier window and emits a value the burst would have replaced.
+        let searches () =
+            messages.ToArray()
+            |> Array.choose (function
+                | App.Msg.RunSearch(query, scopeKey, _) -> Some(query, scopeKey)
+                | _ -> None)
+
+        let deadline = DateTime.UtcNow.AddSeconds 20.0
+        let mutable lastCount = -1
+        let mutable stablePolls = 0
+
+        while (searches ()).Length = 0 && DateTime.UtcNow < deadline do
+            let count = clock.Sleepers
+
+            if count > 0 && count = lastCount then
+                stablePolls <- stablePolls + 1
+            else
+                stablePolls <- 0
+
+            lastCount <- count
+
+            // Unchanged polls with no queued thread-pool work mean no fiber is still running towards a deadline.
+            if stablePolls >= 15 && (Threading.ThreadPool.PendingWorkItemCount = 0L || stablePolls >= 200) then
+                clock.AdvanceToNextDeadline() |> ignore
+                lastCount <- -1
+                stablePolls <- 0
+            else
+                Threading.Thread.Sleep 1
 
         let dispatched = messages.ToArray()
         let setQueries =
@@ -4789,14 +4818,8 @@ module TimingSensitiveTests =
                 | App.Msg.SetSearchQuery query -> Some query
                 | _ -> None)
 
-        let runSearches =
-            dispatched
-            |> Array.choose (function
-                | App.Msg.RunSearch(query, scopeKey, _) -> Some(query, scopeKey)
-                | _ -> None)
-
         test <@ setQueries = [| "nee"; "needle" |] @>
-        test <@ runSearches = [| ("needle", "commit") |] @>
+        test <@ searches () = [| ("needle", "commit") |] @>
 
     // The debounce is driven by Axial's clock, so the burst is offered before any quiet window can close.
     [<Fact>]

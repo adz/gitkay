@@ -100,7 +100,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     private GitKay.Core.GitSearch.DiffMark _diffMark = GitKay.Core.GitSearch.noDiffMark;
     private string? _diffMarkKey;
     private long _searchGeneration;
-    private readonly GitKay.Core.Debounce<GitKay.Core.Debounces.SearchInput> _searchDebounce = GitKay.Core.Debounces.createSearch();
+    private readonly GitKay.Core.Debounce<GitKay.Core.Debounces.SearchInput> _searchDebounce;
     private bool _searchHostStarted;
 
     public ObservableCollection<DiffPresentationModeProjection> DiffPresentationModes { get; } =
@@ -381,7 +381,12 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public FontFamily CommitRowFont => FontStacks.Resolve(CommitRowFontFamily);
     public FontFamily CommitRowMonoFont => FontStacks.Resolve(CommitRowMonoFontFamily);
 
-    public MainProjection() {
+    public MainProjection()
+        : this(searchDebounce: null) {
+    }
+
+    public MainProjection(GitKay.Core.Debounce<GitKay.Core.Debounces.SearchInput>? searchDebounce) {
+        _searchDebounce = searchDebounce ?? GitKay.Core.Debounces.createSearch();
         SelectedDiffPresentationMode = DiffPresentationModes[0];
         SelectedDiffContextLineCount = DiffContextLineCounts.First(option => option.Count == DiffContextLineCount);
         SelectedThemeMode = ThemeModes[0];
