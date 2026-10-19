@@ -98,6 +98,7 @@ module GitService =
           Runtime: BaseRuntime
           Processes: IProcess
           HttpClient: IHttp
+          Files: IFileSystem
           Cache: GitCache
           CacheScope: AppHandle<GitError, unit> option ref }
         /// Requests the cache scope stop without blocking the caller. Window-close handlers run on the UI
@@ -130,6 +131,7 @@ module GitService =
         interface IHasClock with member this.Clock = this.Runtime.Clock
         interface IHasProcess with member this.Process = this.Processes
         interface IHasHttp with member this.Http = this.HttpClient
+        interface IHasFileSystem with member this.FileSystem = this.Files
 
     /// Repository comparison base used on first open: main, then master, including their origin counterparts.
     let defaultComparisonBase (repoPath: string) =
@@ -377,6 +379,7 @@ module GitService =
           Runtime = runtime
           Processes = Process.live runtime.Clock FileSystem.live Console.live
           HttpClient = Http.live runtime.Clock sharedHttpClient
+          Files = FileSystem.live
           Cache = cache
           CacheScope = ref None }
 
@@ -979,8 +982,8 @@ module GitService =
             let! gitDir = plainGit [ "rev-parse"; "--absolute-git-dir" ] |> Flow.map _.Trim()
             let! root = workingRoot
             let! now = Clock.now
-            let backup = Trash.capture gitDir root description now paths
-            Trash.prune gitDir 20
+            let! backup = Trash.capture gitDir root description now paths |> Flow.mapError (fun e -> GitError.OperationFailed("Backup", string e))
+            do! Trash.prune gitDir 20 |> Flow.mapError (fun e -> GitError.OperationFailed("Prune backups", string e))
             return backup
         }
 
@@ -989,8 +992,9 @@ module GitService =
         flow {
             let! root = workingRoot
             // The undo is a safety net; it mustn't become a second way to lose work.
-            match Trash.changedSince root backup with
-            | [] -> Trash.restore root backup
+            let! changed = Trash.changedSince root backup |> Flow.mapError (fun e -> GitError.OperationFailed("Undo", string e))
+            match changed with
+            | [] -> do! Trash.restore root backup |> Flow.mapError (fun e -> GitError.OperationFailed("Undo", string e))
             | changed ->
                 let names = String.Join(", ", changed)
                 return!
@@ -1007,7 +1011,7 @@ module GitService =
             let! backup = backupBeforeDiscard description [ path ]
             do! applyLinesWithContext contextLines DiscardFromWorkingTree path lines
             let! root = workingRoot
-            return Trash.seal root backup
+            return! Trash.seal root backup |> Flow.mapError (fun e -> GitError.OperationFailed("Backup", string e))
         }
 
     /// <summary>Throws away working tree changes to whole files; untracked files are deleted. Both are backed up first.</summary>
@@ -1021,7 +1025,7 @@ module GitService =
             if not untracked.IsEmpty then
                 do! plainGit ([ "clean"; "--force"; "--quiet"; "--" ] @ untracked) |> Flow.map ignore
             let! root = workingRoot
-            return Trash.seal root backup
+            return! Trash.seal root backup |> Flow.mapError (fun e -> GitError.OperationFailed("Backup", string e))
         }
 
     let discardFiles (tracked: string list) (untracked: string list) : Flow<GitEnv, GitError, unit> =

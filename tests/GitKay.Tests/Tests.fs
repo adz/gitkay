@@ -1145,7 +1145,8 @@ summary Another line
             test <@ read "a.txt" = numbered [ "one"; "two"; "three" ] && not (File.Exists(Path.Combine(root, "new.txt"))) @>
             run gitDir (GitService.undoDiscard fileBackup)
             test <@ read "a.txt" = edited && read "new.txt" = numbered [ "scratch" ] @>
-            test <@ Trash.isIntact fileBackup @>)
+            let intact = run gitDir (Trash.isIntact fileBackup |> Flow.mapError (fun e -> GitError.OperationFailed("Backup", string e)))
+            test <@ intact @>)
 
     [<Fact>]
     let ``an undo refuses to overwrite edits made since the discard`` () =
