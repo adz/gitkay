@@ -1,48 +1,47 @@
 # Unreleased package dogfood
 
-Status: Axial packages are on `0.11.0-local.4`; the Elmish package is now `Axial.ElmishFlows` (namespace unchanged).
-The repository caches live in a root scope owned by the repository environment. Default-severity guardrails build passes.
+Status: Axial packages are on `0.12.0-local.1`, Reified on `0.12.1`; the Elmish package is `Axial.ElmishFlows`
+(namespace unchanged). The repository caches live in a root scope owned by the repository environment. Guardrails use
+`Axial.Guardrails.toml` roles and boundaries; `AxialGuardrailsSeverity` was removed from `Directory.Build.props`.
 
 | Label | Package | File affected | Finding | Suggested fix |
 | --- | --- | --- | --- | --- |
 | resolved | Axial.Elmish | `src/GitKay.Core/App.fs`, `CommitWindow.fs`, `SelfTest.fs`, `Debounce.fs` | Replaced the in-repo `Axial.Elmish` project with the `Axial.Elmish` package. `AxialElmishRuntime` → `ElmishRuntime<ClockEnvironment>` (`Post` wired to Glue's `ElmishHost.post` from `GitKay.UI`, `OnDefect` to the existing `CmdDiagnostics` failure path); `Cmd.OfFlow.ofFlow` → `Cmd.OfFlow.either` with `Flow.localEnv (fun _ -> gitEnv)`; `ofFlowLatest`/`slot.Cancel` → `Cmd.OfFlow.Latest.either`/`cancel` keyed by the slot name (and `context:<old>\0<new>` per context file); `CmdDiagnostics.Registry` → `runtime.Registry`; `runtime.Host` → `App.startWithCancellation` with an app-owned token. | Document the recipe in the Axial.Elmish guide (it now has "Per-command environments"). |
-| observed | Axial.Guardrails | `Directory.Build.props`, packaged `build/Axial.Guardrails.props` | The package now honours `AXIAL_GUARDRAILS_SEVERITY`, but only when `AxialGuardrailsSeverity` is still empty. GitKay's `Directory.Build.props` pins `<AxialGuardrailsSeverity>error</AxialGuardrailsSeverity>`, so the environment variable has no effect here; `-p:AxialGuardrailsSeverity=warning` (a command-line global property) is required to downgrade. | Remove the hard `error` default (or gate it on `CI`) so the documented env var works locally, and document `-p:AxialGuardrailsSeverity=warning` as the explicit override. |
+| resolved | Axial.Guardrails | `Directory.Build.props` | The 0.11 severity property was removed; 0.12 rules carry their own levels and the policy lives in `Axial.Guardrails.toml`. | n/a |
 | observed | Axial.Guardrails | `src/GitKay.Core/Debounce.fs`, `GitService.fs` | AXG008: scope-owned Cache/Queue returned from `Flow.run` at long-lived boundaries. | Document how to construct long-lived caches and queues in a host scope. |
 | resolved | Axial.HttpClient | `src/GitKay.Core/GitService.fs`, `App.fs` | Remote Markdown image requests now use `Http.send` with a 10 MB body limit and 10 s timeout through `GitEnv.IHasHttp`; the UI's existing cancellable image command binds the flow. The one shared live `HttpClient` needs an explicit `axial-allow-effect: http` annotation at its construction boundary. | No API friction; `Request.maxResponseBytes` enforces the limit even without `Content-Length`. |
 | read | Axial.Elmish | `src/GitKay.Core/CmdDiagnostics.fs` | The package's `CmdDiagnostics` equivalent is per-runtime; the diagnostics windows still need one stable surface, so GitKay keeps a thin `GitKay.Core.CmdDiagnostics` shim that `App` points at the live runtime's `Registry` (and `SelfTest` at its local runtime). | n/a (app-level adapter, not a package gap). |
 
-## Remaining guardrail suppressions
+## Guardrail policy and remaining suppressions
 
-Suppressions under `src` went from **28** to **13** `axial-allow-effect` occurrences (commits f4839ef, 2705fa2:
-trash-folder access and untracked-file reads now route through `IFileSystem`, removing all 14 `Git/Trash.fs` markers and
-one `GitService.fs` marker).
+`Axial.Guardrails.toml` assigns the default `domain` role and makes `FolderSource.fs`, `HostCancellation.fs` and
+`SelfTestBridge.fs` `capabilities`: the folder-reading boundary, the process-lifetime token source and the blocking
+self-test bridge. `FolderSource.fs` no longer performs raw filesystem access: it walks and reads through
+`Axial.FileSystem`'s `IFileSystem`, so its old file-level suppression is gone. The TOML also lists the four exact files
+that keep one-off AXG001 allow comments: `App.fs`, `CmdDiagnostics.fs`, `GitService.fs` and
+`Git/Internal/RepositoryDiscovery.fs`.
 
-Two boundaries stay by design:
-
-- `src/GitKay.Core/FolderSource.fs` keeps its file-level `axial-allow-effect-file: filesystem`. It is the documented
-  synchronous filesystem boundary for folder comparison and previewing: the C# UI calls it synchronously
-  (`App.axaml.cs`, `FolderWindow.axaml.cs`, `SelfTest.cs`).
-- `src/GitKay.Core/Debounce.fs` stays as the C# projection's debounce (`MainProjection.cs` uses it directly), rather than
-  moving behind an Elmish command, and carries no suppression marker.
-
-The other 12 markers, by category:
+Remaining AXG001 allow comments:
 
 | Category | Where | Why it stays |
 | --- | --- | --- |
-| environment | `App.fs:577` | Resolves startup targets against `Environment.CurrentDirectory` before a `GitEnv` flow exists. |
-| environment | `Git/Internal/RepositoryDiscovery.fs:11` | Host startup lists candidate repository roots from the process environment. |
-| environment | `GitService.fs:313` | Sizes diff-worker parallelism from `Environment.ProcessorCount`; no behavioural effect worth routing through `env`. |
-| environment | `GitService.fs:1486` | Sizes search-worker parallelism from `Environment.ProcessorCount`. |
-| clock | `CmdDiagnostics.fs:63` | Timestamps an unobserved defect with `DateTimeOffset.UtcNow` outside a flow. |
-| filesystem | `GitService.fs:539` | Synchronous command-line argument resolution (`File.Exists`/`Directory.Exists`) before a flow exists. |
-| filesystem | `GitService.fs:1167` | Synchronous compatibility preview API reads the working-tree image path; no flow environment. |
-| filesystem | `GitService.fs:1173` | The same preview API reads the image bytes. |
-| http | `GitService.fs:371` | One shared `HttpClient` at the live service boundary. |
-| blocking | `GitService.fs:394` | Synchronous repository-open boundary; the cache scope outlives this call. |
-| blocking | `SelfTest.fs:33` | Self-test entry point blocks on command dispatch (`Task.Wait`). |
-| sleep | `SelfTest.fs:2` (file-level) | The self-test runs at a process entry point and waits on real commands and time. |
+| clock | `CmdDiagnostics.fs` | Timestamps an unobserved defect outside a flow. |
+| filesystem | `GitService.fs` | Synchronous command-line argument resolution and the compatibility preview API, both before a flow environment exists. |
+| http | `GitService.fs` | One shared `HttpClient` at the live service boundary. |
+| blocking | `GitService.fs` | Synchronous repository-open boundary; the cache scope outlives this call. |
+| environment | `GitService.fs` | Sizes diff and search workers from `Environment.ProcessorCount`; no behavioural effect. |
 
-## Verification
+The remaining AXG010 handlers are acknowledged with `// axial-note AXG010: <reason>` so they stay visible as Info
+instead of warnings. `Axial.Guardrails.lock` matches the current policy; ordinary builds pass `axial check`.
+
+## 0.12 migration verification
+
+- `dotnet build GitKay.slnx` and `dotnet build GitKay.slnx -c Release`: passed.
+- `dotnet test GitKay.slnx`: passed (344 core, 90 UI).
+- `dotnet run --project src/GitKay.UI/GitKay.UI.csproj --no-build -- --self-test`: passed.
+- `dotnet restore` used `--source` for the local 0.12 feed and nuget.org; no machine paths are committed.
+
+## Previous validation (0.11)
 
 - `timeout 1500 dotnet build GitKay.slnx -p:UseLocalGlue=false`: passed at default guardrails severity, no AXG errors. The two cache AXG008 findings disappeared after moving construction into `App.startWith`; unscoped Debounce queues no longer report AXG008. Repository-open synchronously publishes the cache scope (`axial-allow-effect: blocking` at this host boundary); the environment stops it on switch and shutdown.
 - `timeout 1500 dotnet test GitKay.slnx -p:UseLocalGlue=false`: passed (341 core, 90 UI).

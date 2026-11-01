@@ -1,0 +1,36 @@
+version = 2
+BASELINE_PATH  Axial.Guardrails.baseline
+SHA256  45d6915370041de8e083cf67e8f099086ad8977e143236cf5a760bdb99ac5e99  .editorconfig
+SHA256  9abe2edc195cbffd1b65dde5c8c73e6ce594360981294e6c31a673071e97e051  Axial.Guardrails.baseline
+SHA256  25b0360adc99fa90b6a693ca5d592c0cc57cec2baaa6d50af2720945f290c4ae  Axial.Guardrails.toml
+SHA256  681b7782a3df7ce4cd4099c025c7a3027fc58450b47e68608e414b779876e299  Directory.Build.props
+CAPABILITY  src/GitKay.Core/FolderSource.fs
+CAPABILITY  src/GitKay.Core/HostCancellation.fs
+CAPABILITY  src/GitKay.Core/SelfTestBridge.fs
+BOUNDARY  src/GitKay.Core/App.fs
+BOUNDARY  src/GitKay.Core/CmdDiagnostics.fs
+BOUNDARY  src/GitKay.Core/Git/Internal/RepositoryDiscovery.fs
+BOUNDARY  src/GitKay.Core/GitService.fs
+SUPPRESSION  src/GitKay.Core/CmdDiagnostics.fs	1	// axial-allow-AXG001:timestamps an unobserved defect outside a flow
+SUPPRESSION  src/GitKay.Core/CmdDiagnostics.fs	1	// axial-note AXG010:failure reporting must never throw; the registry already holds the cause.
+SUPPRESSION  src/GitKay.Core/FolderSource.fs	1	// axial-note AXG010:an unreadable folder is shown as empty rather than failing the whole comparison.
+SUPPRESSION  src/GitKay.Core/FolderSource.fs	1	// axial-note AXG010:an unreadable subfolder is skipped so the rest of the tree stays visible.
+SUPPRESSION  src/GitKay.Core/Git/Internal/RepositoryDiscovery.fs	1	// axial-note AXG010:the executable path is one candidate root; an unreadable one is simply skipped.
+SUPPRESSION  src/GitKay.Core/GitService.fs	1	// axial-allow-AXG001:one shared client at the live service boundary
+SUPPRESSION  src/GitKay.Core/GitService.fs	1	// axial-allow-AXG001:sizes diff workers; no behavioural effect
+SUPPRESSION  src/GitKay.Core/GitService.fs	1	// axial-allow-AXG001:sizes search workers; no behavioural effect
+SUPPRESSION  src/GitKay.Core/GitService.fs	1	// axial-allow-AXG001:synchronous command-line argument resolution before a flow exists
+SUPPRESSION  src/GitKay.Core/GitService.fs	1	// axial-allow-AXG001:synchronous compatibility preview API; no flow environment
+SUPPRESSION  src/GitKay.Core/GitService.fs	1	// axial-allow-AXG001:synchronous repository-open boundary; cache scope outlives this call
+SUPPRESSION  src/GitKay.Core/GitService.fs	1	// axial-note AXG010:a revision that does not resolve is the expected None result, not an error.
+SUPPRESSION  src/GitKay.Core/GitService.fs	1	// axial-note AXG010:an invalid candidate path is not a path argument.
+SUPPRESSION  src/GitKay.Core/GitService.fs	1	// axial-note AXG010:an invalid path is kept exactly as the user typed it.
+SUPPRESSION  src/GitKay.Core/GitService.fs	1	// axial-note AXG010:an unreadable repository has no comparison base; the caller falls back to the default.
+SUPPRESSION  src/GitKay.Core/GitService.fs	1	// axial-note AXG010:an unreadable repository has no working directory, as with a bare repository.
+SUPPRESSION  src/GitKay.Core/GitService.fs	1	// axial-note AXG010:an unreadable repository lists no comparison refs; the picker shows none.
+SUPPRESSION  src/GitKay.Core/GitService.fs	1	// axial-note AXG010:an unreadable working tree leaves the startup targets untouched.
+SUPPRESSION  src/GitKay.Core/GitService.fs	2	// axial-allow-AXG001:synchronous compatibility preview API; no flow environment
+SUPPRESSION  src/GitKay.Core/GitService.fs	2	// axial-note AXG010:a revision that does not resolve is the expected None result, not an error.
+SUPPRESSION  src/GitKay.Core/Markdown.fs	1	// axial-note AXG010:malformed JSON is reported to the caller as the preview error.
+SUPPRESSION  src/GitKay.Core/Markdown.fs	1	// axial-note AXG010:malformed XML is reported to the caller as the preview error.
+REVIEWED_POINT  ff52cae0cf2ee0192303e5a6aa77597dc5c519ae

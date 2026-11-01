@@ -545,7 +545,9 @@ module Markdown =
                 match document.Declaration with
                 | null -> Ok body
                 | declaration -> Ok(string declaration + "\n" + body)
-            with _ -> Error "This file is not well-formed XML"
+            with _ ->
+                // axial-note AXG010: malformed XML is reported to the caller as the preview error.
+                Error "This file is not well-formed XML"
         | JsonFormat ->
             try
                 use document = Text.Json.JsonDocument.Parse(text, Text.Json.JsonDocumentOptions(AllowTrailingCommas = true, CommentHandling = Text.Json.JsonCommentHandling.Skip))
@@ -554,7 +556,9 @@ module Markdown =
                 document.WriteTo writer
                 writer.Flush()
                 Ok(Text.Encoding.UTF8.GetString(stream.ToArray()))
-            with _ -> Error "This file is not valid JSON"
+            with _ ->
+                // axial-note AXG010: malformed JSON is reported to the caller as the preview error.
+                Error "This file is not valid JSON"
 
     let resolveTarget (documentPath: string) (target: string) =
         if String.IsNullOrWhiteSpace target then InvalidTarget target

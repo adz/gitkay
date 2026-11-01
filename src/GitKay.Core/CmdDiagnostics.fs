@@ -60,7 +60,7 @@ type CmdDiagnostics private () =
                         Name = fiber.Name |> Option.defaultValue "(unobserved)"
                         Cause = defect.Defect } ]
                 | None ->
-                    [ { At = DateTimeOffset.UtcNow // axial-allow-effect: clock
+                    [ { At = DateTimeOffset.UtcNow // axial-allow-AXG001: timestamps an unobserved defect outside a flow
                         Name = "(unobserved)"
                         Cause = defect.Defect } ])
 
@@ -68,6 +68,7 @@ type CmdDiagnostics private () =
 
     static member internal ReportFailure(name: string, cause: string) =
         // The registry already records the fiber's rendered cause; this only taps the log handler.
+        // axial-note AXG010: failure reporting must never throw; the registry already holds the cause.
         try onFailure name cause with _ -> ()
 
     static member OnFailure = onFailure

@@ -1,5 +1,4 @@
 // The self-test runs at a process entry point and waits on real commands and time.
-// axial-allow-effect-file: sleep
 namespace GitKay.Core
 
 open System
@@ -7,6 +6,7 @@ open System.Threading
 open System.Threading.Tasks
 open Axial
 open Axial.ElmishFlows
+open Axial.PlatformService
 
 /// Core half of `gitkay --self-test`: exercises paths that break under NativeAOT (rendering F# types, Axial command
 /// instrumentation, LibGit2Sharp reads) in the shipped binary, where unit tests running on the JIT can't see them.
@@ -26,12 +26,7 @@ module SelfTest =
         if actual = expected then None else Some("expected <" + expected + "> got <" + actual + ">")
 
     /// Runs one command the way the Elmish program does and waits for its dispatch (or settles without one).
-    let private runCommand (command: Elmish.Cmd<string>) =
-        let dispatched = TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously)
-        for subscription in command do
-            subscription (fun message -> dispatched.TrySetResult message |> ignore)
-        // axial-allow-effect: blocking (self-test entry point)
-        if dispatched.Task.Wait(TimeSpan.FromSeconds 10.0) then Some dispatched.Task.Result else None
+    let private runCommand (command: Elmish.Cmd<string>) = SelfTestBridge.runCommand command
 
     let run (repoPath: string) : Check list =
         use env = GitService.environment repoPath
@@ -39,7 +34,9 @@ module SelfTest =
             ElmishRuntime.start
                 { Post = (fun callback -> callback ())
                   OnDefect = (fun _ -> ())
-                  HistoryCapacity = 500 }
+                  HistoryCapacity = 500
+                  Clock = Some Clock.live
+                  LogSink = Some LogSink.none }
                 env
         use _ = runtime
 
@@ -88,9 +85,9 @@ module SelfTest =
               | other -> Some("dispatched " + (other |> Option.defaultValue "nothing")))
 
           check "command defect is recorded" (fun () ->
-              let dying: Flow<GitService.GitEnv, GitError, int> = Flow.delay (fun () -> raise (InvalidOperationException "self-test defect")) // axial-allow-raise
+              let dying: Flow<GitService.GitEnv, GitError, int> = Flow.delay (fun () -> raise (InvalidOperationException "self-test defect"))
               runCommand (Cmd.OfFlow.Latest.either "self-test defect" runtime dying (fun _ -> "ok") (fun _ -> "error")) |> ignore
-              Thread.Sleep 200
+              SelfTestBridge.sleepMs 200
               if runtime.Registry.Settled() |> List.exists (fun fiber -> fiber.Fiber.Name = Some "self-test defect") then None
               else Some "defect fiber not recorded")
 
@@ -98,19 +95,19 @@ module SelfTest =
               let slow: Flow<GitService.GitEnv, GitError, int> = Flow.sleep (TimeSpan.FromSeconds 30.0) |> Flow.map (fun () -> 1)
               for subscription in Cmd.OfFlow.Latest.either "self-test cancelled" runtime slow (fun _ -> "ok") (fun _ -> "error") do
                   subscription ignore
-              Thread.Sleep 200
+              SelfTestBridge.sleepMs 200
               runCancel "self-test cancelled"
-              Thread.Sleep 500
-              let dump = runtime.Registry.DumpAt(env.Runtime.Clock)
+              SelfTestBridge.sleepMs 500
+              let dump = runtime.Registry.DumpAt(Clock.live)
               if dump.Contains "self-test cancelled" then Some("still running: " + dump) else None)
 
           check "command cancel from diagnostics" (fun () ->
               let slow: Flow<GitService.GitEnv, GitError, int> = Flow.sleep (TimeSpan.FromSeconds 30.0) |> Flow.map (fun () -> 1)
               for subscription in Cmd.OfFlow.either "self-test diagnostics cancel" runtime slow (fun _ -> "ok") (fun _ -> "error") do
                   subscription ignore
-              Thread.Sleep 300
+              SelfTestBridge.sleepMs 300
               let cancelled = runtime.Registry.InterruptByName "self-test diagnostics cancel"
-              Thread.Sleep 500
+              SelfTestBridge.sleepMs 500
               if cancelled <> 1 then Some $"cancelled {cancelled} commands"
               elif runtime.Registry.Snapshot() |> List.exists (fun dump -> dump.Name = Some "self-test diagnostics cancel") then Some "still running"
               else None)

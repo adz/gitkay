@@ -95,7 +95,6 @@ module GitService =
 
     type GitEnv =
         { RepoPath: string
-          Runtime: BaseRuntime
           Processes: IProcess
           HttpClient: IHttp
           Files: IFileSystem
@@ -128,7 +127,6 @@ module GitService =
 
         interface IDisposable with
             member this.Dispose() = this.StopInBackground()
-        interface IHasClock with member this.Clock = this.Runtime.Clock
         interface IHasProcess with member this.Process = this.Processes
         interface IHasHttp with member this.Http = this.HttpClient
         interface IHasFileSystem with member this.FileSystem = this.Files
@@ -140,7 +138,9 @@ module GitService =
             [ "main"; "master"; "origin/main"; "origin/master" ]
             |> List.tryFind (fun name -> not (isNull repo.Branches.[name]))
             |> Option.toObj
-        with _ -> null
+        with _ ->
+            // axial-note AXG010: an unreadable repository has no comparison base; the caller falls back to the default.
+            null
 
     /// Local and remote branch names for the comparison picker, independent of which refs the history currently shows.
     let comparisonRevisions (repoPath: string) =
@@ -152,7 +152,9 @@ module GitService =
             |> Seq.distinct
             |> Seq.sort
             |> Seq.toArray
-        with _ -> Array.empty
+        with _ ->
+            // axial-note AXG010: an unreadable repository lists no comparison refs; the picker shows none.
+            Array.empty
 
     let executeGitCommand (arguments: string list) : Flow<GitEnv, GitError, string> =
         flow {
@@ -309,9 +311,7 @@ module GitService =
     [<Literal>]
     let private parallelDiffMinimumFilesPerWorker = 24
 
-    // Worker count only sizes CPU parallelism; it has no behavioural effect worth routing through 'env.
-    // axial-allow-effect: environment
-    let private diffWorkerCount = Math.Clamp(Environment.ProcessorCount / 2, 1, 4)
+    let private diffWorkerCount = Math.Clamp(Environment.ProcessorCount / 2, 1, 4) // axial-allow-AXG001: sizes diff workers; no behavioural effect
 
     /// Loads file diffs for one commit. Cold blob decompression and diffing dominate large commits, so files
     /// are split into contiguous chunks across workers, each with its own repository handle; order is preserved.
@@ -368,17 +368,15 @@ module GitService =
     // content, keyed by commit, path and context. Successes are kept for later commands, failures are not, so a
     // transient failure retries. Built here, at the repository boundary, so every command that touches this
     // repository shares them.
-    // axial-allow-effect: http — one shared client at the live service boundary.
-    let private sharedHttpClient = new HttpClient()
+    let private sharedHttpClient = new HttpClient() // axial-allow-AXG001: one shared client at the live service boundary
 
     let private environmentCore repoPath : GitEnv =
-        let runtime = BaseRuntime.liveValue
+        let clock = Clock.live
         let cache = GitCache()
 
         { RepoPath = repoPath
-          Runtime = runtime
-          Processes = Process.live runtime.Clock FileSystem.live Console.live
-          HttpClient = Http.live runtime.Clock sharedHttpClient
+          Processes = Process.live clock FileSystem.live Console.live
+          HttpClient = Http.live clock sharedHttpClient
           Files = FileSystem.live
           Cache = cache
           CacheScope = ref None }
@@ -391,8 +389,7 @@ module GitService =
             let! fileContentCache = Cache.make (fun key -> loadDiffFileContent key.ContextLines key.Hash key.OldPath key.NewPath)
             return diffCache, fileContentCache
         }
-        // axial-allow-effect: blocking — synchronous repository-open boundary; cache scope outlives this call.
-        match App.startWith env build |> Async.RunSynchronously with
+        match App.startWith env build |> Async.RunSynchronously with // axial-allow-AXG001: synchronous repository-open boundary; cache scope outlives this call
         | Ok (handle, (diffCache, fileContentCache)) ->
             env.Cache.DiffCache <- diffCache
             env.Cache.FileContentCache <- fileContentCache
@@ -422,6 +419,7 @@ module GitService =
             | :? TagAnnotation as tag -> match tag.Target with :? LibGit2Sharp.Commit as commit -> Some commit | _ -> None
             | _ -> None
         with _ ->
+            // axial-note AXG010: a revision that does not resolve is the expected None result, not an error.
             None
 
     /// Commits hidden by ^X, A..B and A...B.
@@ -502,6 +500,7 @@ module GitService =
                         | _ -> None
                     | _ -> None
                 with _ ->
+                    // axial-note AXG010: a revision that does not resolve is the expected None result, not an error.
                     None
 
             match resolved with
@@ -520,6 +519,7 @@ module GitService =
             elif relative.StartsWith ".." || Path.IsPathRooted relative then asGiven
             else relative.Replace('\\', '/')
         with _ ->
+            // axial-note AXG010: an invalid path is kept exactly as the user typed it.
             asGiven
 
     /// Resolves command-line path arguments against the launch directory: a bare argument that is not a revision but
@@ -536,8 +536,9 @@ module GitService =
                     let exists (name: string) =
                         try
                             let full = Path.GetFullPath(name, launchDirectory)
-                            File.Exists full || Directory.Exists full // axial-allow-effect: filesystem — synchronous command-line argument resolution before a flow exists
+                            File.Exists full || Directory.Exists full // axial-allow-AXG001: synchronous command-line argument resolution before a flow exists
                         with _ ->
+                            // axial-note AXG010: an invalid candidate path is not a path argument.
                             false
 
                     targets
@@ -551,6 +552,7 @@ module GitService =
                         | StartupTarget.Path path -> StartupTarget.Path(path.Replace('\\', '/'))
                         | _ -> target)
             with _ ->
+                // axial-note AXG010: an unreadable working tree leaves the startup targets untouched.
                 targets
 
     /// The commits `git log` lists for these revisions and paths. git reads commit-graph changed-path Bloom filters,
@@ -705,6 +707,7 @@ module GitService =
             | null -> null
             | directory -> Path.TrimEndingDirectorySeparator directory
         with _ ->
+            // axial-note AXG010: an unreadable repository has no working directory, as with a bare repository.
             null
 
     // ----- Uncommitted changes, read through the git command line (see dev-docs/uncommitted-changes-plan.md) -----
@@ -1167,14 +1170,12 @@ module GitService =
                 let fullPath = Path.GetFullPath(Path.Combine(root, path.Replace('/', Path.DirectorySeparatorChar)))
                 let relative = Path.GetRelativePath(root, fullPath)
                 // This compatibility API is the explicit synchronous boundary used by the UI preview loader.
-                // axial-allow-effect: filesystem — synchronous compatibility preview API; no flow environment
-                if Path.IsPathRooted relative || relative = ".." || relative.StartsWith(".." + string Path.DirectorySeparatorChar, StringComparison.Ordinal) || not (File.Exists fullPath) then
+                if Path.IsPathRooted relative || relative = ".." || relative.StartsWith(".." + string Path.DirectorySeparatorChar, StringComparison.Ordinal) || not (File.Exists fullPath) then // axial-allow-AXG001: synchronous compatibility preview API; no flow environment
                     Error (GitError.OperationFailed("Load image", $"File not found: {path}"))
                 else
                     let info = FileInfo fullPath
                     if info.Length > 10L * 1024L * 1024L then Error (GitError.OperationFailed("Load image", "Image is larger than the 10 MB preview limit"))
-                    // axial-allow-effect: filesystem — synchronous compatibility preview API; no flow environment
-                    else Ok(File.ReadAllBytes fullPath)
+                    else Ok(File.ReadAllBytes fullPath) // axial-allow-AXG001: synchronous compatibility preview API; no flow environment
             | WorkingTree.Untracked, true -> Error (GitError.OperationFailed("Load image", "Untracked files have no old revision"))
         with error -> Error (GitError.OperationFailed("Load image", error.Message))
 
@@ -1486,7 +1487,7 @@ module GitService =
     /// hold what a search is for.
     let private searchBlobSizeLimit = 2L * 1024L * 1024L
 
-    let private searchWorkers = Math.Clamp(Environment.ProcessorCount - 1, 1, 8) // axial-allow-effect: environment
+    let private searchWorkers = Math.Clamp(Environment.ProcessorCount - 1, 1, 8) // axial-allow-AXG001: sizes search workers; no behavioural effect
 
     /// A search content reader with its own repository handle (libgit2 handles are not shared across threads).
     let private openSearchReader (repoPath: string) : GitSearch.ContentReader<GitEnv> =

@@ -8,7 +8,7 @@ open LibGit2Sharp
 module internal RepositoryDiscovery =
     let private candidateRoots () =
         seq {
-            yield Environment.CurrentDirectory // axial-allow-effect: environment
+            yield Environment.CurrentDirectory
             yield AppContext.BaseDirectory
 
             match Environment.ProcessPath with
@@ -22,6 +22,7 @@ module internal RepositoryDiscovery =
                     | null -> ()
                     | resolved -> yield Path.GetDirectoryName resolved.FullName
                 with _ ->
+                    // axial-note AXG010: the executable path is one candidate root; an unreadable one is simply skipped.
                     ()
         }
         |> Seq.choose (fun path ->

@@ -1,12 +1,16 @@
-// axial-allow-effect-file: filesystem
 // This module is the filesystem boundary for folder comparison and folder previewing: it reads, and everything it
 // reads is handed to GitKay.Core.Folder, which is pure.
 namespace GitKay.Core
 
 open System
 open System.IO
+open Axial.FileSystem
 
 module FolderSource =
+
+    /// The explicit file-system boundary. The C# UI calls this module synchronously, so the live service is constructed
+    /// once here rather than threaded through every preview call.
+    let private fileSystem = FileSystem.live
 
     let private relativePath (root: string) (full: string) =
         Path.GetRelativePath(root, full).Replace(Path.DirectorySeparatorChar, '/')
@@ -18,32 +22,37 @@ module FolderSource =
     let rec private walk (root: string) (directory: string) : Folder.Entry list =
         let files =
             try
-                Directory.EnumerateFiles directory
-                |> Seq.map (fun file ->
-                    { Folder.RelativePath = relativePath root file
-                      Folder.FullPath = file
-                      Folder.Size = FileInfo(file).Length })
+                fileSystem.EnumerateFileSystemInfos(directory, "*", SearchOption.TopDirectoryOnly)
+                |> Seq.filter (fun entry -> entry.Kind = FileSystemEntryKind.File)
+                |> Seq.map (fun entry ->
+                    { Folder.RelativePath = relativePath root entry.FullPath
+                      Folder.FullPath = entry.FullPath
+                      Folder.Size = entry.Size })
                 |> List.ofSeq
-            with _ -> []
+            with _ ->
+                // axial-note AXG010: an unreadable folder is shown as empty rather than failing the whole comparison.
+                []
         let nested =
             try
-                Directory.EnumerateDirectories directory
+                fileSystem.EnumerateDirectories(directory, "*", SearchOption.TopDirectoryOnly)
                 |> Seq.filter (Path.GetFileName >> Folder.isSkippedDirectory >> not)
                 |> Seq.collect (walk root)
                 |> List.ofSeq
-            with _ -> []
+            with _ ->
+                // axial-note AXG010: an unreadable subfolder is skipped so the rest of the tree stays visible.
+                []
         files @ nested
 
     /// <summary>Every file under a folder, ordered by path, or why the folder could not be read.</summary>
     let read (root: string) : Result<Folder.Entry list, GitError> =
         if String.IsNullOrWhiteSpace root then Error(GitError.OperationFailed("Read folder", "No folder was given"))
-        elif not (Directory.Exists root) then Error(GitError.OperationFailed("Read folder", $"Not a folder: {root}"))
+        elif not (fileSystem.DirectoryExists root) then Error(GitError.OperationFailed("Read folder", $"Not a folder: {root}"))
         else
             let full = Path.GetFullPath root
             Ok(walk full full |> List.sortBy _.RelativePath)
 
     let bytesOf (entry: Folder.Entry) : Result<byte array, GitError> =
-        try Ok(File.ReadAllBytes entry.FullPath)
+        try Ok(fileSystem.ReadAllBytes entry.FullPath)
         with error -> Error(GitError.OperationFailed("Read file", error.Message))
 
     /// <summary>One side's text, or nothing when that side does not exist or holds something that is not text.</summary>
@@ -99,8 +108,8 @@ module FolderSource =
             let rooted = Path.GetFullPath root
             if not (full.StartsWith(rooted, StringComparison.Ordinal)) then
                 Error(GitError.OperationFailed("Load image", "Outside the folder"))
-            elif not (File.Exists full) then Error(GitError.OperationFailed("Load image", $"Not found: {relativePath}"))
-            else Ok(File.ReadAllBytes full)
+            elif not (fileSystem.FileExists full) then Error(GitError.OperationFailed("Load image", $"Not found: {relativePath}"))
+            else Ok(fileSystem.ReadAllBytes full)
         with error -> Error(GitError.OperationFailed("Load image", error.Message))
 
     /// <summary>The pairs worth showing: everything except files that are identical on both sides.</summary>

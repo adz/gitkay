@@ -4830,7 +4830,7 @@ module TimingSensitiveTests =
             GitKay.Core.Debounce<int>(clock :> IClock, TimeSpan.FromSeconds 1.0, Action<int>(fun value -> emitted.Enqueue value))
 
         use cancellation = new System.Threading.CancellationTokenSource()
-        use _host = Axial.App.startWithCancellation cancellation.Token (ClockEnvironment(clock :> IClock)) debounce.Run
+        use _host = debounce.Start cancellation.Token
 
         debounce.Offer 1
         debounce.Offer 2

@@ -14,15 +14,13 @@ open Axial.PlatformService
 /// debounce is testable against a ManualClock.
 [<Sealed>]
 type Debounce<'value>(clock: IClock, initialQuiet: TimeSpan, sink: Action<'value>) =
-    let environment = ClockEnvironment(clock)
-
     let inputs: Queue<'value> =
-        match Flow.run environment (Queue.unbounded ()) |> Exit.toResult with
+        match Flow.run () (Queue.unbounded ()) |> Exit.toResult with
         | Ok queue -> queue
         | Error never -> Never.absurd never
 
     let windows: Queue<TimeSpan> =
-        match Flow.run environment (Queue.unbounded ()) |> Exit.toResult with
+        match Flow.run () (Queue.unbounded ()) |> Exit.toResult with
         | Ok queue -> queue
         | Error never -> Never.absurd never
 
@@ -37,7 +35,7 @@ type Debounce<'value>(clock: IClock, initialQuiet: TimeSpan, sink: Action<'value
     // The host keeps running while only the consumer is rebuilt, so a new window takes effect immediately. Values
     // still queued survive the change; only the one value the interrupted consumer was holding for the quiet window
     // is dropped.
-    let rec supervise (window: TimeSpan) : Flow<ClockEnvironment, Never, unit> =
+    let rec supervise (window: TimeSpan) : Flow<unit, Never, unit> =
         flow {
             let! consumer = Flow.fork (consume window)
             let! next = Dequeue.take windows
@@ -59,11 +57,11 @@ type Debounce<'value>(clock: IClock, initialQuiet: TimeSpan, sink: Action<'value
             Queue.tryOffer window windows |> ignore
 
     /// The host flow. Run it for the application's lifetime with <c>App.startWithCancellation</c>.
-    member _.Run: Flow<ClockEnvironment, Never, unit> = supervise quiet
+    member _.Run: Flow<unit, Never, unit> = Flow.withClock clock (supervise quiet)
 
     /// Starts the host under this debounce's clock, so a manual clock in tests drives the quiet window too.
     member _.Start(token: CancellationToken) : IDisposable =
-        App.startWithCancellation token environment (supervise quiet) :> IDisposable
+        App.startWithCancellation token () (Flow.withClock clock (supervise quiet)) :> IDisposable
 
 /// The application's stream-backed debounces.
 [<RequireQualifiedAccess>]

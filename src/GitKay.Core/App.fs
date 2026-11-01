@@ -12,32 +12,34 @@ open GitKay.Core.Models
 module App =
 
     let private runtimePost : ((unit -> unit) -> unit) ref = ref (fun callback -> callback ())
-    let private hostCts = new CancellationTokenSource()
 
     /// Installs the UI-thread post callback the runtime uses to deliver command results. GitKay.UI wires this to
     /// Elmish.Avalonia.Glue.ElmishHost.post before the first command runs.
     let configureRuntime (post: Action<Action>) =
         runtimePost.Value <- fun callback -> post.Invoke(Action(callback))
 
-    /// Shared runtime for every Axial-backed Cmd this program issues. Its clock environment is stable; each command
-    /// supplies its current GitEnv through Flow.localEnv (the per-command environment recipe in the Axial docs).
-    let runtime : ElmishRuntime<ClockEnvironment> =
+    /// Shared runtime for every Axial-backed Cmd this program issues. Each command supplies its current GitEnv
+    /// through Flow.localEnv (the per-command environment recipe in the Axial docs); the runtime itself needs no
+    /// authority of its own.
+    let runtime : ElmishRuntime<unit> =
         ElmishRuntime.start
             { Post = (fun callback -> runtimePost.Value callback)
               OnDefect = (fun defect -> CmdDiagnostics.ReportFailure(defect.Name, defect.Rendered))
-              HistoryCapacity = 500 }
-            (ClockEnvironment Clock.live)
+              HistoryCapacity = 500
+              Clock = None
+              LogSink = Some LogSink.none }
+            ()
 
     // Expose the live runtime's registry to the diagnostics windows and hang reports.
     do CmdDiagnostics.SetRegistry runtime.Registry
 
     /// Cancellation token for long-lived hosts (the shared watcher debounce and per-window search debounce).
-    let hostToken = hostCts.Token
+    let hostToken = HostCancellation.token
 
     /// Tears down the runtime and long-lived hosts. Call alongside disposing the ElmishHostConnection so no flow
     /// outlives the window.
     let stopRuntime () =
-        hostCts.Cancel()
+        HostCancellation.cancel ()
         (runtime :> IDisposable).Dispose()
 
     let private hostGate = obj ()
@@ -49,7 +51,7 @@ module App =
         lock hostGate (fun () ->
             if not hostsStarted then
                 hostsStarted <- true
-                Debounces.startWatchHost hostCts.Token |> ignore)
+                Debounces.startWatchHost HostCancellation.token |> ignore)
 
     let private selectionKey = "selectionJob"
     let private diffKey = "diffJob"
@@ -574,7 +576,7 @@ module App =
             let startupOptions =
                 { startupOptions with
                     StartupTargets =
-                        GitService.resolvePathArguments gitEnv.RepoPath Environment.CurrentDirectory startupOptions.StartupTargets } // axial-allow-effect: environment
+                        GitService.resolvePathArguments gitEnv.RepoPath Environment.CurrentDirectory startupOptions.StartupTargets }
             let model =
                 {
                     StartupSelection =
@@ -652,8 +654,7 @@ module App =
                 | _ -> Error(GitError.OperationFailed("Render Markdown", "No revision is selected"))
         ofFlowLatest renderedMarkdownKey $"render markdown {key.NewPath}" model.GitEnv
             // LibGit2Sharp blob reads do not accept cancellation; latest-slot cancellation still rejects stale results.
-            // axial-allow-discarded-cancellation
-            (Flow.fromTaskResult (fun _ -> Threading.Tasks.Task.Run load))
+            (Flow.delay (fun () -> Flow.fromResult (load ())) |> Flow.runOn RunOn.DedicatedThread)
             (fun content -> RenderedMarkdownLoaded(key, section, requestId, Ok content))
             (fun error -> RenderedMarkdownLoaded(key, section, requestId, Error error))
 
@@ -678,8 +679,7 @@ module App =
                 | _ -> Error(GitError.OperationFailed("Preview", "No revision is selected"))
         ofFlowLatest formattedFileKey $"format file {key.NewPath}" model.GitEnv
             // LibGit2Sharp blob reads do not accept cancellation; latest-slot cancellation still rejects stale results.
-            // axial-allow-discarded-cancellation
-            (Flow.fromTaskResult (fun _ -> Threading.Tasks.Task.Run load))
+            (Flow.delay (fun () -> Flow.fromResult (load ())) |> Flow.runOn RunOn.DedicatedThread)
             (fun content -> FormattedFileLoaded(key, section, requestId, Ok content))
             (fun error -> FormattedFileLoaded(key, section, requestId, Error error))
 
@@ -701,8 +701,7 @@ module App =
                 | _ -> Error(GitError.OperationFailed("Open file", "No commit revision is selected"))
         ofFlowLatest wholeFileKey $"whole file {key.NewPath}" model.GitEnv
             // LibGit2Sharp reads have no cancellation overload; the latest slot rejects stale completion.
-            // axial-allow-discarded-cancellation
-            (Flow.fromTaskResult (fun _ -> Threading.Tasks.Task.Run load))
+            (Flow.delay (fun () -> Flow.fromResult (load ())) |> Flow.runOn RunOn.DedicatedThread)
             (fun payload -> WholeFileLoaded(key, section, requestId, Ok payload))
             (fun error -> WholeFileLoaded(key, section, requestId, Error error))
 

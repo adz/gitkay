@@ -1,0 +1,22 @@
+version = 2
+
+[default]
+role = "domain"
+
+# Raw I/O boundaries. FolderSource is the synchronous filesystem boundary for folder comparison and preview;
+# HostCancellation owns the process lifetime token source; SelfTestBridge is the blocking process-entry-point bridge.
+[files]
+capabilities = [
+  "src/GitKay.Core/FolderSource.fs",
+  "src/GitKay.Core/HostCancellation.fs",
+  "src/GitKay.Core/SelfTestBridge.fs",
+]
+
+# Exact exceptional files that legitimately perform one-off ambient effects at a host or live-service boundary.
+[boundaries]
+files = [
+  "src/GitKay.Core/App.fs",
+  "src/GitKay.Core/CmdDiagnostics.fs",
+  "src/GitKay.Core/GitService.fs",
+  "src/GitKay.Core/Git/Internal/RepositoryDiscovery.fs",
+]
