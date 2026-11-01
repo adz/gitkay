@@ -2,7 +2,6 @@ namespace GitKay.Core
 
 open System
 open Axial
-open Axial.PlatformService
 
 /// The single time source for application timing. Every duration the UI reports — click-to-diff, a command's
 /// round trip, the diagnostics breadcrumbs — is measured against Axial's explicit, mockable IClock rather than

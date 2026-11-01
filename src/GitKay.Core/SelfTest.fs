@@ -6,7 +6,6 @@ open System.Threading
 open System.Threading.Tasks
 open Axial
 open Axial.ElmishFlows
-open Axial.PlatformService
 
 /// Core half of `gitkay --self-test`: exercises paths that break under NativeAOT (rendering F# types, Axial command
 /// instrumentation, LibGit2Sharp reads) in the shipped binary, where unit tests running on the JIT can't see them.

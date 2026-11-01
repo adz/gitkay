@@ -174,7 +174,7 @@ public static class DiagnosticsLog {
         builder.AppendLine(DescribeUiActivity());
         builder.AppendLine("Running flows (Axial fibers):");
         try {
-            var dump = CmdDiagnostics.Registry.DumpAt(Axial.PlatformService.Clock.live);
+            var dump = CmdDiagnostics.Registry.DumpAt(Axial.Clock.live);
             builder.AppendLine(string.IsNullOrWhiteSpace(dump) ? "  (none)" : dump);
         }
         catch (Exception exception) {

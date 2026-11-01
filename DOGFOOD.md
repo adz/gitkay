@@ -1,6 +1,6 @@
 # Unreleased package dogfood
 
-Status: Axial packages are on `0.12.0-local.1`, Reified on `0.12.1`; the Elmish package is `Axial.ElmishFlows`
+Status: Axial packages are on `0.12.0-local.2`, Reified on `0.12.1`; the Elmish package is `Axial.ElmishFlows`
 (namespace unchanged). The repository caches live in a root scope owned by the repository environment. Guardrails use
 `Axial.Guardrails.toml` roles and boundaries; `AxialGuardrailsSeverity` was removed from `Directory.Build.props`.
 
@@ -34,12 +34,17 @@ Remaining AXG001 allow comments:
 The remaining AXG010 handlers are acknowledged with `// axial-note AXG010: <reason>` so they stay visible as Info
 instead of warnings. `Axial.Guardrails.lock` matches the current policy; ordinary builds pass `axial check`.
 
-## 0.12 migration verification
+## 0.12.0-local.2 migration verification
 
+- `dotnet restore` used `--source` for the local 0.12.0-local.2 feed and nuget.org; no machine paths are committed.
 - `dotnet build GitKay.slnx` and `dotnet build GitKay.slnx -c Release`: passed.
-- `dotnet test GitKay.slnx`: passed (344 core, 90 UI).
-- `dotnet run --project src/GitKay.UI/GitKay.UI.csproj --no-build -- --self-test`: passed.
-- `dotnet restore` used `--source` for the local 0.12 feed and nuget.org; no machine paths are committed.
+- `dotnet test GitKay.slnx --no-build -c Release`: passed (344 core, 90 UI, including the headless render checks).
+- `dotnet run --project src/GitKay.UI/GitKay.UI.csproj -c Release --no-build -- --self-test`: passed.
+- `Axial.Tool.dll check`: `Axial policy check passed.`
+
+`0.12.0-local.2` removed the `Axial.PlatformService` namespace, so the migration now uses `open Axial` for the runtime
+helpers. `Process.live` and `Http.live` read the running flow's clock and no longer take one at construction, so
+`GitService` no longer threads a live clock into the repository environment.
 
 ## Previous validation (0.11)
 
@@ -48,13 +53,6 @@ instead of warnings. `Axial.Guardrails.lock` matches the current policy; ordinar
 - Render harness (UI test project, headless pixel tests): passed (90).
 - `timeout 1500 dotnet run --project src/GitKay.UI/GitKay.UI.csproj -p:UseLocalGlue=false --no-build -- --self-test`: passed.
 - Filesystem suppression count under `src`: 19 before, 4 after (FolderSource plus three synchronous compatibility or argument-resolution boundaries); trash-folder and untracked-file reads now go through `IFileSystem`.
-
-## Previous validation (local.2)
-
-- `timeout 1500 dotnet build GitKay.slnx -p:UseLocalGlue=false -p:AxialGuardrailsSeverity=warning`: **succeeded**.
-- `timeout 1500 dotnet test GitKay.slnx -p:UseLocalGlue=false -p:AxialGuardrailsSeverity=warning`: **passed** — GitKay.Tests 341, GitKay.UI.Tests 90.
-- `AXIAL_GUARDRAILS_SEVERITY=warning dotnet build GitKay.slnx -p:UseLocalGlue=false --no-restore`: **failed** with AXG008/AXG001 because `Directory.Build.props` forces `AxialGuardrailsSeverity=error`, so the package's env-var override (which applies only when the property is empty) never runs.
-- Render harness, published self-test, and AOT publish/self-test: **not run** in this pass.
 
 ## Released-package verification
 

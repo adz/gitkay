@@ -11,7 +11,6 @@ open Axial
 open Axial.Console
 open Axial.FileSystem
 open Axial.HttpClient
-open Axial.PlatformService
 open Axial.Process
 open Reified.Result
 open Reified.ResultDSL
@@ -371,12 +370,11 @@ module GitService =
     let private sharedHttpClient = new HttpClient() // axial-allow-AXG001: one shared client at the live service boundary
 
     let private environmentCore repoPath : GitEnv =
-        let clock = Clock.live
         let cache = GitCache()
 
         { RepoPath = repoPath
-          Processes = Process.live clock FileSystem.live Console.live
-          HttpClient = Http.live clock sharedHttpClient
+          Processes = Process.live FileSystem.live Console.live
+          HttpClient = Http.live sharedHttpClient
           Files = FileSystem.live
           Cache = cache
           CacheScope = ref None }

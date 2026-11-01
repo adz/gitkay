@@ -6,7 +6,6 @@ open System.Diagnostics
 open System.Threading
 open Axial
 open Axial.ElmishFlows
-open Axial.PlatformService
 open GitKay.Core.Models
 
 module App =

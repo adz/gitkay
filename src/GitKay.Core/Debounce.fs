@@ -3,7 +3,6 @@ namespace GitKay.Core
 open System
 open System.Threading
 open Axial
-open Axial.PlatformService
 
 /// A quiet-period debounce over Axial streams. Values are offered from any thread; a host flow keeps only the one
 /// that stays quiet for the window and hands it to the sink. The window can be replaced without stopping the host:
