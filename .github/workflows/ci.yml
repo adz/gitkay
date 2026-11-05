@@ -33,6 +33,12 @@ jobs:
       - name: Restore
         run: dotnet restore GitKay.slnx
 
+      # Warn only: lists unreviewed Guardrails policy changes; the release workflow enforces the review.
+      - name: Axial policy review (warn only)
+        run: |
+          dotnet tool restore
+          dotnet axial policy review || echo "::warning::axial policy review failed; see the log above."
+
       - name: Build
         run: dotnet build GitKay.slnx --configuration Release --no-restore --nologo -v minimal -m:1
 

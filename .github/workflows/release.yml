@@ -39,9 +39,39 @@ jobs:
           echo "value=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
+  # Release gate: unreviewed Axial Guardrails policy loosening stops the release
+  # before any artifact is built. Runs once rather than on every platform runner.
+  guardrails:
+    needs: version
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up .NET 11
+        uses: actions/setup-dotnet@v4
+        with:
+          # An exact version pins the RC; dotnet-quality only works with major.minor.x and would be rejected here.
+          dotnet-version: 11.0.100-rc.1.26425.128
+
+      - name: Restore
+        run: dotnet restore GitKay.slnx
+
+      # Policy review only, not `axial check --full`: the full check requires Guardrails coverage for every F# project
+      # in GitKay.slnx, and only GitKay.Core references Axial.Guardrails. Switch to `dotnet axial check --full
+      # --configuration Release` once the other F# projects are guarded or set AxialGuardrailsEnabled=false.
+      - name: Axial Guardrails policy gate
+        run: |
+          dotnet tool restore
+          dotnet axial policy review --check
+
   # NativeAOT can't cross-compile, so each platform builds on its own runner.
   build:
-    needs: version
+    needs: [version, guardrails]
     strategy:
       fail-fast: true
       matrix:
