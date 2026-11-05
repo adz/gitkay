@@ -1,6 +1,6 @@
 # Unreleased package dogfood
 
-Status: Axial packages are on `0.12.0-local.2`, Reified on `0.12.1`; the Elmish package is `Axial.ElmishFlows`
+Status: Axial packages are on the released `0.12.0` from nuget.org, Reified on `0.12.1`; the Elmish package is `Axial.ElmishFlows`
 (namespace unchanged). The repository caches live in a root scope owned by the repository environment. Guardrails use
 `Axial.Guardrails.toml` roles and boundaries; `AxialGuardrailsSeverity` was removed from `Directory.Build.props`.
 
@@ -33,6 +33,14 @@ Remaining AXG001 allow comments:
 
 The remaining AXG010 handlers are acknowledged with `// axial-note AXG010: <reason>` so they stay visible as Info
 instead of warnings. `Axial.Guardrails.lock` matches the current policy; ordinary builds pass `axial check`.
+
+## 0.12.0 release verification (2026-11-05)
+
+- `dotnet restore` from nuget.org only; no NuGet.config is committed.
+- `dotnet build GitKay.slnx -c Release -m:1`: passed, 0 errors; the 10 existing CS0618/AVLN5001 obsolete-API warnings.
+  No Guardrails findings at minimal verbosity.
+- `dotnet test tests/GitKay.Tests` and `tests/GitKay.UI.Tests` (Release, `--no-build`): passed (344 core, 90 UI).
+- `dotnet run --project src/GitKay.UI/GitKay.UI.csproj -c Release --no-build -- --self-test`: passed.
 
 ## 0.12.0-local.2 migration verification
 
