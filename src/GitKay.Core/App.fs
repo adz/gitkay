@@ -717,7 +717,7 @@ module App =
             if model.IsWorkingTreeSelected then
                 match WorkingTree.tryParseSection section with
                 | Some parsed ->
-                    if isImage then GitService.loadWorkingTreePreviewImage model.RepoPath parsed key.OldPath key.NewPath |> Result.map PreviewImage
+                    if isImage then GitService.loadWorkingTreePreviewImage env parsed key.OldPath key.NewPath |> Result.map PreviewImage
                     else GitService.loadWorkingTreeFormattedFile model.DiffContextLines env parsed key.OldPath key.NewPath |> Result.map FormattedText
                 | None -> Error(GitError.OperationFailed("Preview", $"Unknown working-tree section: {section}"))
             else

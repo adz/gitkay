@@ -291,7 +291,7 @@ module GitService =
     [<Literal>]
     let private parallelDiffMinimumFilesPerWorker = 24
 
-    let private diffWorkerCount = Math.Clamp(Environment.ProcessorCount / 2, 1, 4) // axial-allow-AXG001: sizes diff workers; no behavioural effect
+    let private diffWorkerCount = Math.Clamp(Processors.count / 2, 1, 4)
 
     /// Loads file diffs for one commit. Cold blob decompression and diffing dominate large commits, so files
     /// are split into contiguous chunks across workers, each with its own repository handle; order is preserved.
@@ -494,7 +494,7 @@ module GitService =
 
     /// Resolves command-line path arguments against the launch directory: a bare argument that is not a revision but
     /// names a file or folder becomes a path (as in `gitk file.cs`), and every path becomes repository-relative.
-    let resolvePathArguments (repoPath: string) (launchDirectory: string) (targets: StartupTarget list) =
+    let resolvePathArguments (pathExists: string -> bool) (repoPath: string) (launchDirectory: string) (targets: StartupTarget list) =
         if String.IsNullOrEmpty repoPath || targets.IsEmpty then
             targets
         else
@@ -506,7 +506,7 @@ module GitService =
                     let exists (name: string) =
                         try
                             let full = Path.GetFullPath(name, launchDirectory)
-                            File.Exists full || Directory.Exists full // axial-allow-AXG001: synchronous command-line argument resolution before a flow exists
+                            pathExists full
                         with _ ->
                             // axial-note AXG010: an invalid candidate path is not a path argument.
                             false
@@ -1157,7 +1157,7 @@ module GitService =
 
     /// Raw repository image bytes from one side of an uncommitted diff. Staged compares HEAD/index;
     /// unstaged compares index/worktree; untracked has only a worktree side.
-    let loadWorkingTreeSideFileBytes (repoPath: string) (section: WorkingTree.Section) (oldSide: bool) (path: string) : Result<byte array, GitError> =
+    let loadWorkingTreeSideFileBytes (files: IFileSystem) (repoPath: string) (section: WorkingTree.Section) (oldSide: bool) (path: string) : Result<byte array, GitError> =
         let readBlob (blob: Blob) =
             result {
                 if isNull blob then return! Error (GitError.OperationFailed("Load image", $"File not found: {path}"))
@@ -1184,13 +1184,12 @@ module GitService =
                 let root = Path.GetFullPath(repo.Info.WorkingDirectory)
                 let fullPath = Path.GetFullPath(Path.Combine(root, path.Replace('/', Path.DirectorySeparatorChar)))
                 let relative = Path.GetRelativePath(root, fullPath)
-                // This compatibility API is the explicit synchronous boundary used by the UI preview loader.
-                if Path.IsPathRooted relative || relative = ".." || relative.StartsWith(".." + string Path.DirectorySeparatorChar, StringComparison.Ordinal) || not (File.Exists fullPath) then // axial-allow-AXG001: synchronous compatibility preview API; no flow environment
+                // The working-tree file is read through the environment's file system, so a test can supply one.
+                if Path.IsPathRooted relative || relative = ".." || relative.StartsWith(".." + string Path.DirectorySeparatorChar, StringComparison.Ordinal) || not (files.FileExists fullPath) then
                     Error (GitError.OperationFailed("Load image", $"File not found: {path}"))
-                else
-                    let info = FileInfo fullPath
-                    if info.Length > 10L * 1024L * 1024L then Error (GitError.OperationFailed("Load image", "Image is larger than the 10 MB preview limit"))
-                    else Ok(File.ReadAllBytes fullPath) // axial-allow-AXG001: synchronous compatibility preview API; no flow environment
+                elif files.GetFileLength fullPath > 10L * 1024L * 1024L then
+                    Error (GitError.OperationFailed("Load image", "Image is larger than the 10 MB preview limit"))
+                else Ok(files.ReadAllBytes fullPath)
             | WorkingTree.Untracked, true -> Error (GitError.OperationFailed("Load image", "Untracked files have no old revision"))
         with error -> Error (GitError.OperationFailed("Load image", error.Message))
 
@@ -1403,9 +1402,9 @@ module GitService =
         let deleted = FileChange.isDeleted oldPath newPath
         loadCommitSideFileBytes repoPath hash deleted (if deleted then oldPath else newPath)
 
-    let loadWorkingTreePreviewImage (repoPath: string) (section: WorkingTree.Section) (oldPath: string) (newPath: string) =
+    let loadWorkingTreePreviewImage (env: GitEnv) (section: WorkingTree.Section) (oldPath: string) (newPath: string) =
         let deleted = FileChange.isDeleted oldPath newPath
-        loadWorkingTreeSideFileBytes repoPath section deleted (if deleted then oldPath else newPath)
+        loadWorkingTreeSideFileBytes env.Files env.RepoPath section deleted (if deleted then oldPath else newPath)
 
     let loadRevisionPreviewImage (repoPath: string) (comparison: RevisionComparison) (oldPath: string) (newPath: string) =
         let deleted = FileChange.isDeleted oldPath newPath
@@ -1461,7 +1460,7 @@ module GitService =
         result {
             let! file = loadWorkingTreeFile env section oldPath newPath
             let oldSource, newSource = sidesOf file
-            let loader side path = loadWorkingTreeSideFileBytes env.RepoPath section (side = MarkdownImageSide.Old) path
+            let loader side path = loadWorkingTreeSideFileBytes env.Files env.RepoPath section (side = MarkdownImageSide.Old) path
             return! renderedMarkdownOf file oldPath newPath oldSource newSource allowRemote loader
         }
 
@@ -1491,7 +1490,7 @@ module GitService =
             | ImagePreview _ ->
                 let! file = loadWorkingTreeFile env section oldPath newPath
                 let path = FileChange.currentPath oldPath newPath
-                let! bytes = loadWorkingTreeSideFileBytes env.RepoPath section false path
+                let! bytes = loadWorkingTreeSideFileBytes env.Files env.RepoPath section false path
                 return { File = file; Rendered = None; ImageBytes = Some bytes }
             | FormattedPreview _ | SourceOnly ->
                 let! file = loadWorkingTreeFile env section oldPath newPath
@@ -1502,7 +1501,7 @@ module GitService =
     /// hold what a search is for.
     let private searchBlobSizeLimit = 2L * 1024L * 1024L
 
-    let private searchWorkers = Math.Clamp(Environment.ProcessorCount - 1, 1, 8) // axial-allow-AXG001: sizes search workers; no behavioural effect
+    let private searchWorkers = Math.Clamp(Processors.count - 1, 1, 8)
 
     /// A search content reader with its own repository handle (libgit2 handles are not shared across threads).
     let private openSearchReader (repoPath: string) : GitSearch.ContentReader<GitEnv> =

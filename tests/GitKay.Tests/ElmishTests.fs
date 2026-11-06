@@ -135,7 +135,8 @@ module ElmishTests =
 
         waitFor (fun () -> clock.Sleepers >= 1)
         clock.AdvanceBy(TimeSpan.FromMilliseconds 499.0)
-        Thread.Sleep 50
+        // A millisecond short of the window, the debounce is still waiting, and nothing has settled.
+        waitFor (fun () -> clock.Sleepers >= 1)
         TestRuntime.drain runtime
         test <@ TestRuntime.dispatched runtime = [] @>
 
@@ -162,12 +163,23 @@ module ElmishTests =
         let recovered, _ = appUpdate App.Msg.WorkingTreeFilesChanged (failTimes 1 watched)
         test <@ recovered.WatchFailures = 0 @>
 
+    [<Fact>]
+    let ``only the index and HEAD of the git directory move the uncommitted changes`` () =
+        let root = Path.Combine(Path.GetTempPath(), "repo")
+        let gitDir = Path.Combine(root, ".git")
+        test <@ WorkingTreeWatch.matters gitDir (Path.Combine(root, "src", "a.txt")) @>
+        test <@ WorkingTreeWatch.matters gitDir (Path.Combine(gitDir, "index")) @>
+        test <@ WorkingTreeWatch.matters gitDir (Path.Combine(gitDir, "HEAD")) @>
+        test <@ not (WorkingTreeWatch.matters gitDir (Path.Combine(gitDir, "objects", "ab"))) @>
+        test <@ not (WorkingTreeWatch.matters gitDir (Path.Combine(gitDir, "refs", "heads", "main"))) @>
+        test <@ not (WorkingTreeWatch.matters gitDir (Path.Combine(gitDir, "index.lock"))) @>
+
     type private WatchEnv =
         { Files: IFileSystem }
         interface IHasFileSystem with member this.FileSystem = this.Files
 
     [<Fact>]
-    let ``the working tree watch reports edits after its quiet period, index changes, and ignores other git files`` () =
+    let ``the working tree watch reports edits and index changes after its quiet period`` () =
         let root = Path.Combine(Path.GetTempPath(), "gitkay-watch-" + Guid.NewGuid().ToString("N"))
         let gitDir = Path.Combine(root, ".git")
         let files = FileSystem.test ()
@@ -180,11 +192,6 @@ module ElmishTests =
         // The git directory is inside the working tree, so one recursive watcher covers both.
         waitFor (fun () -> files.ActiveWatchers = 1)
         let change path = files.RaiseChange { Kind = FileSystemChangeKind.Changed; Path = path; OldPath = None }
-
-        change (Path.Combine(gitDir, "objects", "ab"))
-        change (Path.Combine(gitDir, "refs", "heads", "main"))
-        Thread.Sleep 50
-        test <@ clock.Sleepers = 0 @>
 
         for i in 1..5 do change (Path.Combine(root, $"file{i}.txt"))
         waitFor (fun () -> clock.Sleepers >= 1)

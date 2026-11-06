@@ -49,8 +49,11 @@ module JsonFile =
             else
                 let! text = FileSystem.readAllText path
                 let decoded =
-                    // axial-note AXG010: a decoder that throws on a malformed file reads as an invalid file.
-                    try decode text with error -> Error error.Message
+                    try
+                        decode text
+                    with error ->
+                        // A decoder that throws on a malformed file reads as an invalid file.
+                        Error error.Message
                 match decoded with
                 | Ok value -> return { Value = value; Failure = None }
                 | Error error ->

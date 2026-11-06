@@ -2396,11 +2396,10 @@ module BranchRightClickTests =
         git dir "branch feature/x"
         dir
 
+    /// Runs the UI loop for a while: the app loads and renders as it would while the user waits.
     let private spin (milliseconds: int) =
-        let clock = Diagnostics.Stopwatch.StartNew()
-        while clock.ElapsedMilliseconds < int64 milliseconds do
-            Dispatcher.UIThread.RunJobs()
-            Thread.Sleep 10
+        use elapsed = new Threading.CancellationTokenSource(milliseconds)
+        Dispatcher.UIThread.MainLoop elapsed.Token
 
     [<Fact>]
     let ``right-clicking a branch badge just after its commit renders Markdown opens the branch menu promptly`` () =
@@ -2442,7 +2441,6 @@ module BranchRightClickTests =
                         spin 100
                     test <@ (DiagnosticsLog.DescribeUiActivity()).Contains "commit list context menu: opened" @>
                 finally
-                    // The Elmish runtime is process-wide; stopping it would break every later test that dispatches.
                     (host :> IDisposable).Dispose()
                     window.Close())
         finally

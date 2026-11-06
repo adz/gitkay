@@ -3605,10 +3605,8 @@ module WorkingTreeStagingTests =
 
             // Reveal the whole file, which adds context rows between the two hunks.
             projection.ToggleDiffFileContextCommand.Execute file
-            let deadline = DateTime.UtcNow.AddSeconds 10.0
-            while (lineRows projection |> List.length) = before && DateTime.UtcNow < deadline do
-                Threading.Thread.Sleep 50
-            test <@ (lineRows projection |> List.length) > before @>
+            let expanded = Threading.SpinWait.SpinUntil((fun () -> (lineRows projection |> List.length) > before), 10000)
+            test <@ expanded @>
 
             let cursor = lineRows projection |> List.find (fun line -> line.Content = "THIRTY-FIVE")
             let lines = projection.LinesOf(file, [ cursor :> IDiffRowProjection ], true)
@@ -3937,11 +3935,11 @@ module CliTests =
             commit "b.txt" "2" |> ignore
             let c3 = commit "src/a.txt" "3"
 
-            let fromSrc = GitService.resolvePathArguments root (Path.Combine(root, "src")) [ GitStartup.Revision "a.txt"; GitStartup.Revision "HEAD" ]
+            let fromSrc = GitService.resolvePathArguments (fun full -> File.Exists full || Directory.Exists full) root (Path.Combine(root, "src")) [ GitStartup.Revision "a.txt"; GitStartup.Revision "HEAD" ]
             test <@ fromSrc = [ GitStartup.Path "src/a.txt"; GitStartup.Revision "HEAD" ] @>
-            let windowsStyle = GitService.resolvePathArguments root root [ GitStartup.Path "src\\a.txt" ]
+            let windowsStyle = GitService.resolvePathArguments (fun full -> File.Exists full || Directory.Exists full) root root [ GitStartup.Path "src\\a.txt" ]
             test <@ windowsStyle = [ GitStartup.Path "src/a.txt" ] || windowsStyle = [ GitStartup.Path "src\\a.txt" ] @>
-            let missing = GitService.resolvePathArguments root (Path.Combine(root, "src")) [ GitStartup.Path "gone/old.txt" ]
+            let missing = GitService.resolvePathArguments (fun full -> File.Exists full || Directory.Exists full) root (Path.Combine(root, "src")) [ GitStartup.Path "gone/old.txt" ]
             test <@ missing = [ GitStartup.Path "gone/old.txt" ] @>
 
             let history targets =

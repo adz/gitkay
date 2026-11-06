@@ -46,7 +46,7 @@ module Host =
     /// the runtime's root scope, so stopping the runtime releases them. Provisioning only allocates caches and never
     /// waits for the UI dispatcher, so blocking on it here is safe.</summary>
     let private start (post: (unit -> unit) -> unit) (services: GitService.GitServices) (repoPath: string) : App.Runtime =
-        // axial-allow-AXG001: synchronous desktop host boundary; the runtime outlives this call
+       
         match ElmishRuntime.startLayer (options post) (GitService.layer services repoPath) () |> Async.RunSynchronously with
         | Ok runtime -> runtime
         | Error never -> Never.absurd never
@@ -74,20 +74,21 @@ module Host =
     /// against the launch directory, and the repository's working tree.</summary>
     let flags (repoPath: string) (startupArgs: string array) (searchDebounce: TimeSpan) : App.Flags =
         let repoPath = if isNull repoPath then "" else repoPath
-        let launchDirectory = Environment.CurrentDirectory // axial-allow-AXG001: the launch directory, read once before the program starts
+        let launchDirectory = Environment.CurrentDirectory
         let workingDirectory =
             if String.IsNullOrEmpty repoPath then None
             else
                 match GitService.workingDirectory repoPath with
                 | null -> None
-                | directory when Directory.Exists directory -> Some directory // axial-allow-AXG001: read once before the program starts
+                | directory when Directory.Exists directory -> Some directory
                 | _ -> None
         { RepoPath = repoPath
           WorkingDirectory = workingDirectory
           StartupOptions =
             GitStartup.parseStartupOptions startupArgs
             |> Result.map (fun options ->
-                { options with StartupTargets = GitService.resolvePathArguments repoPath launchDirectory options.StartupTargets })
+                let pathExists full = File.Exists full || Directory.Exists full
+                { options with StartupTargets = GitService.resolvePathArguments pathExists repoPath launchDirectory options.StartupTargets })
           SearchDebounce = searchDebounce }
 
     /// <summary>Records each message and how long its update took, for crash and hang reports. The records are the
@@ -133,10 +134,10 @@ module UiLaunch =
 
     /// The first file of this name on PATH.
     let private findOnPath (name: string) =
-        (Environment.GetEnvironmentVariable "PATH" |> Option.ofObj |> Option.defaultValue "").Split(Path.PathSeparator) // axial-allow-AXG001: the host resolves the editor executable from PATH
+        (Environment.GetEnvironmentVariable "PATH" |> Option.ofObj |> Option.defaultValue "").Split(Path.PathSeparator)
         |> Array.filter (String.IsNullOrWhiteSpace >> not)
         |> Array.map (fun directory -> Path.Combine(directory, name))
-        |> Array.tryFind File.Exists // axial-allow-AXG001: the host resolves the editor executable from PATH
+        |> Array.tryFind File.Exists
 
     let private run (name: string) (runtime: ElmishRuntime<'env>) (launch: Flow<'env, ProcessError, unit>) (onFailure: Action<string>) =
         UiFlow.run name runtime launch (Action<Result<unit, ProcessError>>(function
@@ -158,7 +159,7 @@ module UiLaunch =
     let openInVsCode (runtime: ElmishRuntime<'env>) (arguments: string seq) (workingDirectory: string) (onFailure: Action<string>) =
         let codeOnPath =
             match platform with
-            | Launch.Windows -> findOnPath "code.cmd" |> Option.map Launch.codeExecutableFor |> Option.filter File.Exists // axial-allow-AXG001: the host checks the editor executable exists
+            | Launch.Windows -> findOnPath "code.cmd" |> Option.map Launch.codeExecutableFor |> Option.filter File.Exists
             | _ -> findOnPath "code"
         run "open in VS Code" runtime (Launch.openInVsCode platform codeOnPath (List.ofSeq arguments) workingDirectory) onFailure
 
