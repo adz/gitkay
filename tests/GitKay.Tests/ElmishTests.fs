@@ -38,6 +38,33 @@ module ElmishTests =
             List.length (TestRuntime.dispatched runtime) >= count)
         TestRuntime.dispatched runtime
 
+    /// Moves time past the watcher's quiet period until it reports, since every file event restarts the wait: the
+    /// report comes one quiet period after the last event has been taken, which takes a pass per queued event.
+    let private reportedAfterQuiet (clock: ManualClock) (runtime: TestRuntime<'env>) (already: int) =
+        let reported () =
+            TestRuntime.drain runtime
+            List.length (TestRuntime.dispatched runtime) > already
+
+        let mutable rounds = 0
+        let mutable found = reported ()
+
+        while not found && rounds < 16 do
+            rounds <- rounds + 1
+            clock.AdvanceBy WorkingTreeWatch.quietPeriod
+            // The window's continuation posts the report from the runtime's own thread, so spin for it rather than sleep.
+            found <- SpinWait.SpinUntil((fun () -> reported ()), 250)
+
+        found
+
+    /// Lets the quiet periods in flight pass with the time held still, then counts what the watcher reported.
+    let private settledDispatchCount (clock: ManualClock) (runtime: TestRuntime<'env>) =
+        for _ in 1..4 do
+            clock.AdvanceBy WorkingTreeWatch.quietPeriod
+            SpinWait.SpinUntil((fun () -> TestRuntime.drain runtime; false), 50) |> ignore
+
+        TestRuntime.drain runtime
+        List.length (TestRuntime.dispatched runtime)
+
     [<Fact>]
     let ``a search reports progress and matches in batches, then its results`` () =
         let clock = ManualClock(DateTimeOffset.UnixEpoch)
@@ -179,7 +206,7 @@ module ElmishTests =
         interface IHasFileSystem with member this.FileSystem = this.Files
 
     [<Fact>]
-    let ``the working tree watch reports edits and index changes after its quiet period`` () =
+    let ``the working tree watch reports a burst of edits and an index change once each`` () =
         let root = Path.Combine(Path.GetTempPath(), "gitkay-watch-" + Guid.NewGuid().ToString("N"))
         let gitDir = Path.Combine(root, ".git")
         let files = FileSystem.test ()
@@ -193,18 +220,18 @@ module ElmishTests =
         waitFor (fun () -> files.ActiveWatchers = 1)
         let change path = files.RaiseChange { Kind = FileSystemChangeKind.Changed; Path = path; OldPath = None }
 
+        // A build or a checkout touching many files refreshes once: the quiet period restarts with each event.
         for i in 1..5 do change (Path.Combine(root, $"file{i}.txt"))
-        waitFor (fun () -> clock.Sleepers >= 1)
-        clock.AdvanceBy WorkingTreeWatch.quietPeriod
-        let afterEdits = dispatchedAfter 1 runtime |> List.length
-        test <@ afterEdits >= 1 @>
+        test <@ reportedAfterQuiet clock runtime 0 @>
+        let afterEdits = settledDispatchCount clock runtime
+        test <@ afterEdits = 1 @>
+
+        // The index moves the uncommitted changes; other git files do not.
+        change (Path.Combine(gitDir, "objects", "ab"))
+        test <@ settledDispatchCount clock runtime = afterEdits @>
 
         change (Path.Combine(gitDir, "index"))
-        waitFor (fun () -> clock.Sleepers >= 1)
-        clock.AdvanceBy WorkingTreeWatch.quietPeriod
-        waitFor (fun () ->
-            TestRuntime.drain runtime
-            List.length (TestRuntime.dispatched runtime) > afterEdits)
+        test <@ reportedAfterQuiet clock runtime afterEdits @>
         test <@ TestRuntime.dispatched runtime |> List.forall (fun message -> unbox<string> message = "changed") @>
 
     [<Fact>]

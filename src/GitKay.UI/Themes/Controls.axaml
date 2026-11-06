@@ -128,7 +128,7 @@
         <Setter Property="BorderThickness" Value="0,0,0,2" />
         <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
     </Style>
-    <Style Selector="Button.inline, Button.funnel">
+    <Style Selector="Button.inline">
         <Setter Property="Width" Value="20" />
         <Setter Property="Height" Value="20" />
         <Setter Property="MinHeight" Value="0" />
@@ -176,11 +176,7 @@
         <Setter Property="Background" Value="{DynamicResource GitKaySelectionBrush}" />
         <Setter Property="Foreground" Value="{DynamicResource GitKayTextBrush}" />
     </Style>
-    <Style Selector="Button.funnel">
-        <Setter Property="Width" Value="14" />
-        <Setter Property="Height" Value="14" />
-    </Style>
-    <Style Selector="Button.inline:pointerover /template/ ContentPresenter#PART_ContentPresenter, Button.funnel:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Style Selector="Button.inline:pointerover /template/ ContentPresenter#PART_ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource GitKayHoverBrush}" />
     </Style>
     <Style Selector="ToggleButton.expander">

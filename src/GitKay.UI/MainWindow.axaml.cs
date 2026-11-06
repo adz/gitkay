@@ -42,7 +42,10 @@ public partial class MainWindow : Window, IVimCommands {
         CommitScrollViewer.AddHandler(InputElement.PointerPressedEvent, OnCommitScrollPointerPressed, RoutingStrategies.Tunnel);
         DiffRowsListBox.AddHandler(InputElement.KeyDownEvent, OnMainListBoxKeyDown, RoutingStrategies.Tunnel);
         DiffFilesListBox.AddHandler(InputElement.KeyDownEvent, OnMainListBoxKeyDown, RoutingStrategies.Tunnel);
+        // The history has no header row: its column widths live in a zero-height grid, and the resize handles ride on the
+        // list, so they are placed after every layout pass and whenever the pane changes size.
         HistoryHeaderGrid.LayoutUpdated += (_, _) => SyncCommitColumnWidths();
+        CommitScrollViewer.SizeChanged += (_, _) => SyncCommitColumnWidths();
         AddHandler(InputElement.KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
         AddHandler(InputElement.KeyUpEvent, OnWindowKeyUp, RoutingStrategies.Tunnel);
         AddHandler(InputElement.PointerMovedEvent, OnWindowPointerMoved, RoutingStrategies.Tunnel);
@@ -1108,29 +1111,6 @@ public partial class MainWindow : Window, IVimCommands {
         }
     }
 
-    private void OnHistoryHeaderContextRequested(object? sender, ContextRequestedEventArgs e) {
-        if (sender is not Control { Tag: string column } header || _projection is not { } projection) return;
-        var menu = new ContextMenu();
-        void Add(string title, Action action) {
-            var item = new MenuItem { Header = title };
-            item.Click += (_, _) => action();
-            menu.Items.Add(item);
-        }
-
-        switch (column) {
-            case "message": Add("Filter by message…", () => OnCommitFilterRequested("message", null)); Add("Filter by branch / tag…", () => OnCommitFilterRequested("ref", null)); break;
-            case "hash": Add("Filter by hash…", () => OnCommitFilterRequested("hash", null)); break;
-            case "author": Add("Filter by author…", () => OnCommitFilterRequested("author", null)); break;
-            case "date": Add("Commits after…", () => OnCommitFilterRequested("after", null)); Add("Commits before…", () => OnCommitFilterRequested("before", null)); break;
-        }
-
-        menu.Items.Add(new Separator());
-        Add("Clear this filter", () => projection.ClearColumnFilterCommand.Execute(column));
-        Add(projection.ShowOnlySearchMatches ? "Show all commits" : "Show only matching commits", () => projection.ShowOnlySearchMatches = !projection.ShowOnlySearchMatches);
-        menu.Open(header);
-        e.Handled = true;
-    }
-
     private async void OnSettingsMenuItemClick(object? sender, RoutedEventArgs e) {
         var settingsWindow = new SettingsWindow {
             DataContext = DataContext,
@@ -1585,15 +1565,40 @@ public partial class MainWindow : Window, IVimCommands {
     }
 
     private void SyncCommitColumnWidths() {
-        if (HistoryHeaderGrid.ColumnDefinitions.Count < 5)
+        var columns = HistoryHeaderGrid.ColumnDefinitions;
+        if (columns.Count < 5)
             return;
 
-        CommitListBox.GraphWidth = HistoryHeaderGrid.ColumnDefinitions[0].ActualWidth;
-        CommitListBox.SubjectWidth = HistoryHeaderGrid.ColumnDefinitions[1].ActualWidth;
-        CommitListBox.HashWidth = HistoryHeaderGrid.ColumnDefinitions[2].ActualWidth;
-        CommitListBox.AuthorWidth = HistoryHeaderGrid.ColumnDefinitions[3].ActualWidth;
-        CommitListBox.DateWidth = HistoryHeaderGrid.ColumnDefinitions[4].ActualWidth;
+        CommitListBox.GraphWidth = columns[0].ActualWidth;
+        CommitListBox.SubjectWidth = columns[1].ActualWidth;
+        CommitListBox.HashWidth = columns[2].ActualWidth;
+        CommitListBox.AuthorWidth = columns[3].ActualWidth;
+        CommitListBox.DateWidth = columns[4].ActualWidth;
+
+        // There is no header row to hold the resize handles, so each one rides on its column boundary for the height
+        // of the list, centred on the boundary so the pointer's SizeWestEast cursor marks the line it moves. Values are
+        // only written when they change: this runs after every layout pass, and writing them unconditionally would
+        // invalidate layout and start the pass again.
+        var height = CommitScrollViewer.Bounds.Height;
+        var boundary = 0d;
+        var handles = CommitResizeHandles;
+
+        for (var index = 0; index < handles.Length && index < columns.Count - 1; index++) {
+            boundary += columns[index].ActualWidth;
+            var handle = handles[index];
+            var left = Math.Max(0, boundary - handle.Width / 2);
+
+            // A handle starts with no height and no Canvas position (both NaN), which no comparison catches.
+            if (!double.IsNaN(height) && (double.IsNaN(handle.Height) || Math.Abs(handle.Height - height) > 0.5)) handle.Height = height;
+            if (double.IsNaN(Canvas.GetLeft(handle)) || Math.Abs(Canvas.GetLeft(handle) - left) > 0.5) Canvas.SetLeft(handle, left);
+            if (double.IsNaN(Canvas.GetTop(handle)) || Math.Abs(Canvas.GetTop(handle)) > 0.5) Canvas.SetTop(handle, 0);
+        }
     }
+
+    private Border[]? _commitResizeHandles;
+
+    private Border[] CommitResizeHandles =>
+        _commitResizeHandles ??= [CommitResizeHandle0, CommitResizeHandle1, CommitResizeHandle2, CommitResizeHandle3];
 
     private double GetEffectiveColumnWidth(int columnIndex, ColumnDefinition column) {
         if (column.ActualWidth > 0d) {

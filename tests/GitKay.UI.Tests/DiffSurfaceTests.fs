@@ -610,6 +610,38 @@ module HistoryChipTests =
 module CommitColumnTests =
 
     [<Fact>]
+    let ``the commit columns are resized by dragging a line on the list, with no header row`` () =
+        Headless.run (fun () ->
+            let projection = MainProjection()
+            let window = MainWindow(Width = 900.0, Height = 700.0, DataContext = projection)
+            try
+                window.Show()
+                window.UpdateLayout()
+                Headless.pump ()
+                let header = window.FindControl<Grid>("HistoryHeaderGrid")
+                let graphColumn = header.ColumnDefinitions[0]
+                let before = graphColumn.ActualWidth
+                // The first boundary sits on the right edge of the graph column, which is where its handle rides.
+                let handle = window.FindControl<Border>("CommitResizeHandle0")
+                test <@ Math.Abs(Canvas.GetLeft(handle) - (before - handle.Width / 2.0)) < 1.0 @>
+                test <@ handle.Bounds.Height > 50.0 @>
+                let start = handle.TranslatePoint(Point(handle.Width / 2.0, 40.0), window).Value
+                window.MouseDown(start, MouseButton.Left)
+                window.MouseMove(Point(start.X + 20.0, start.Y))
+                window.MouseUp(Point(start.X + 20.0, start.Y), MouseButton.Left)
+                Headless.pump ()
+                window.UpdateLayout()
+                Headless.pump ()
+                // Dragging right widened the graph column by the drag distance, so the columns are still resizable.
+                test <@ graphColumn.ActualWidth > before + 10.0 @>
+                // And the band that held the headers takes no room: the commits start where the search bar ends.
+                let historyRows = (window.FindControl<Border>("CommitPaneContent").Child :?> Grid).RowDefinitions
+                test <@ historyRows[1].ActualHeight = 0.0 @>
+            finally
+                window.Close()
+                Headless.pump ())
+
+    [<Fact>]
     let ``a row full of branches widens the commit column instead of losing them`` () =
         Headless.run (fun () ->
             let projection = MainProjection()
@@ -1528,8 +1560,11 @@ module CommitVocabularyTests =
                 window.UpdateLayout()
                 Headless.pump ()
                 let shown = labels window
-                // The column shows the message's first line, which git calls the subject.
-                test <@ shown |> List.contains "SUBJECT" @>
+                // The history has no header row: the columns are named by what they hold, which the rows show.
+                test <@ shown |> List.contains "SUBJECT" |> not @>
+                test <@ shown |> List.contains "HASH" |> not @>
+                test <@ shown |> List.contains "AUTHOR" |> not @>
+                test <@ shown |> List.contains "DATE" |> not @>
                 test <@ shown |> List.contains "COMMIT" |> not @>
                 // The details row labelled "Commit" held a hash, which the column beside it already calls HASH.
                 test <@ shown |> List.contains "Hash" @>
