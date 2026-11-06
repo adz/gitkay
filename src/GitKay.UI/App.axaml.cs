@@ -17,6 +17,20 @@ public partial class App : Application {
     public static GitStartup.LaunchMode LaunchMode { get; set; } = GitStartup.LaunchMode.History;
     private static Exception? _startupInitializationFailure;
 
+    /// <summary>
+    /// The app's runtime, which this host starts once the UI dispatcher exists and stops at exit. Windows and controls
+    /// with no program of their own (links, the about and diagnostics windows) launch external programs on it.
+    /// </summary>
+    public static Axial.ElmishFlows.ElmishRuntime<GitService.GitEnv>? Runtime { get; private set; }
+
+    /// <summary>Starts the app's runtime for a repository (or none), and stops it when the app exits.</summary>
+    private static Axial.ElmishFlows.ElmishRuntime<GitService.GitEnv> StartRuntime(IClassicDesktopStyleApplicationLifetime desktop, string repository) {
+        var runtime = GitKay.Core.Host.startRepositoryRuntime(UiPost, repository);
+        Runtime = runtime;
+        desktop.Exit += (_, _) => GitKay.Core.Host.stop(runtime, TimeSpan.FromSeconds(2));
+        return runtime;
+    }
+
     public override void Initialize() {
         try {
             AvaloniaXamlLoader.Load(this);
@@ -53,21 +67,22 @@ public partial class App : Application {
     /// </summary>
     private async Task InitializeFolderWindowAsync(IClassicDesktopStyleApplicationLifetime desktop, FolderMode mode, string left, string? right) {
         try {
-            var settingsResult = await Task.Run(() => GitKay.Serialization.SettingsStore.loadDefaultReporting());
+            var settingsResult = (await ReadStartupAsync()).Settings;
             var settings = settingsResult.Value;
             RequestedThemeVariant =
                 settings.Theme.IsLightTheme ? Avalonia.Styling.ThemeVariant.Light
                 : settings.Theme.IsDarkTheme ? Avalonia.Styling.ThemeVariant.Dark
                 : Avalonia.Styling.ThemeVariant.Default;
 
-            var built = await Task.Run(() => BuildFolderPairs(mode, left, right));
-            if (built.Error is { } message) {
-                Console.Error.WriteLine(message);
+            var runtime = StartRuntime(desktop, "");
+            var built = await UiFlows.RunAsync("read folders", runtime, LoadFolders(mode, left, right));
+            if (built.IsError) {
+                Console.Error.WriteLine(built.ErrorValue);
                 desktop.Shutdown(2);
                 return;
             }
 
-            var projection = new FolderProjection(mode, left, right, built.Pairs, built.Changed);
+            var projection = new FolderProjection(mode, left, right, built.ResultValue.Pairs.ToList(), built.ResultValue.Changed.ToList());
             // The saved settings that mean something away from a repository: layout, previews, remote images.
             projection.ApplySettings(settings);
             var window = new FolderWindow(projection) {
@@ -87,29 +102,15 @@ public partial class App : Application {
         }
     }
 
-    /// <summary>Reads the folders and pairs their files, off the UI thread. A folder that cannot be read says so.</summary>
-    internal static (IReadOnlyList<GitKay.Core.Folder.Pair> Pairs, IReadOnlyList<GitKay.Core.Folder.Pair> Changed, string? Error) BuildFolderPairs(FolderMode mode, string left, string? right) {
-        var empty = Array.Empty<GitKay.Core.Folder.Pair>();
-        var leftEntries = GitKay.Core.FolderSource.read(left);
-        if (leftEntries.IsError) return (empty, empty, GitKay.Core.GitErrorModule.describe(leftEntries.ErrorValue));
-
-        if (mode == FolderMode.Preview) {
-            // One folder: every file paired against nothing, so it reads as the folder's contents rather than a diff.
-            var only = GitKay.Core.Folder.pair(Microsoft.FSharp.Collections.SeqModule.Empty<GitKay.Core.Folder.Entry>(), leftEntries.ResultValue).ToList();
-            return (only, only, null);
-        }
-
-        var rightEntries = GitKay.Core.FolderSource.read(right ?? "");
-        if (rightEntries.IsError) return (empty, empty, GitKay.Core.GitErrorModule.describe(rightEntries.ErrorValue));
-
-        var pairs = GitKay.Core.Folder.pair(leftEntries.ResultValue, rightEntries.ResultValue);
-        return (pairs.ToList(), GitKay.Core.FolderSource.changedPairs(pairs).ToList(), null);
-    }
+    /// <summary>Reads the folders and pairs their files, as a flow for the app's runtime. A folder that cannot be read says so.</summary>
+    internal static Axial.Flow<GitService.GitEnv, string, GitKay.Core.FolderSource.Listing> LoadFolders(FolderMode mode, string left, string? right) =>
+        GitKay.Core.FolderSource.load<GitService.GitEnv>(left, mode == FolderMode.Preview || right == null ? null : Microsoft.FSharp.Core.FSharpOption<string>.Some(right));
 
     /// <summary>gitkay gui: only the commit window, with the saved theme; closing it exits.</summary>
     private async Task InitializeCommitWindowAsync(IClassicDesktopStyleApplicationLifetime desktop) {
         try {
-            var (settingsResult, repository) = await Task.Run(() => (GitKay.Serialization.SettingsStore.loadDefaultReporting(), GitService.tryDiscoverRepositoryPath()));
+            var reads = await ReadStartupAsync();
+            var (settingsResult, repository) = (reads.Settings, reads.Repository);
             var settings = settingsResult.Value;
             RequestedThemeVariant =
                 settings.Theme.IsLightTheme ? Avalonia.Styling.ThemeVariant.Light
@@ -123,17 +124,12 @@ public partial class App : Application {
             }
 
             // The commit window alone gets the runtime the history window would have: closing it stops the runtime.
-            var runtime = GitKay.Core.Host.startRepositoryRuntime(UiPost, repository!);
-            desktop.Exit += (_, _) => GitKay.Core.Host.stop(runtime, TimeSpan.FromSeconds(2));
+            var runtime = StartRuntime(desktop, repository!);
             var window = new CommitWindow(runtime, repository!, System.IO.Path.GetFileName(directory)) { WindowStartupLocation = Avalonia.Controls.WindowStartupLocation.CenterScreen };
             window.OpenInVsCode = (path, line) => {
                 var full = System.IO.Path.GetFullPath(System.IO.Path.Combine(directory, path));
-                try {
-                    ExternalTools.StartVsCode(line is { } number ? [directory, "--goto", $"{full}:{number}"] : [directory, "--goto", full], directory);
-                }
-                catch (Exception) {
-                    // VS Code isn't on PATH; nothing else to do from a commit-only window.
-                }
+                // VS Code not on PATH is logged; there is nothing else to do from a commit-only window.
+                ExternalTools.StartVsCode(line is { } number ? [directory, "--goto", $"{full}:{number}"] : [directory, "--goto", full], directory);
             };
             desktop.MainWindow = window;
             desktop.ShutdownMode = Avalonia.Controls.ShutdownMode.OnMainWindowClose;
@@ -164,9 +160,8 @@ public partial class App : Application {
         }
         Axial.ElmishFlows.ElmishRuntime<GitService.GitEnv>? runtime = null;
         try {
-            var (settingsResult, uiStateResult, repoKey) = await Task.Run(() => {
-                return (GitKay.Serialization.SettingsStore.loadDefaultReporting(), GitKay.Serialization.UiStateStore.loadDefaultReporting(), GitService.tryDiscoverRepositoryPath());
-            });
+            var reads = await ReadStartupAsync();
+            var (settingsResult, uiStateResult, repoKey) = (reads.Settings, reads.UiState, reads.Repository);
             var persistedSettings = settingsResult.Value;
             var persistedUiState = uiStateResult.Value;
 
@@ -251,6 +246,7 @@ public partial class App : Application {
             // its commands and its subscriptions (the search debounce and the working tree watcher) all run on it.
             var appRuntime = GitKay.Core.Host.startRepositoryRuntime(UiPost, repoKey ?? "");
             runtime = appRuntime;
+            Runtime = appRuntime;
             projection.Runtime = appRuntime;
             var flags = GitKay.Core.Host.flags(repoKey ?? "", startupArgs, projection.SearchDebounce);
 
@@ -283,6 +279,10 @@ public partial class App : Application {
             FatalErrorPresenter.ShowStartupFailure(desktop, ex);
         }
     }
+
+    /// <summary>The saved settings and UI state and the launch repository, read off the UI thread before any runtime exists.</summary>
+    private static async Task<GitKay.Serialization.StartupReads> ReadStartupAsync() =>
+        GitKay.Serialization.Stores.value(await GitKay.Serialization.Startup.read.StartAsTask(GitKay.Serialization.Stores.live, null));
 
     /// <summary>The runtime's Post: inline when already on the UI thread, otherwise posted to it.</summary>
     private static readonly Action<Action> UiPost = callback =>

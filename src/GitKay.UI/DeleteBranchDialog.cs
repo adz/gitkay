@@ -58,38 +58,12 @@ public sealed class DeleteBranchDialog : Window {
         Content = panel;
     }
 
-    public static async Task<Choice?> ShowAsync(Window owner, string workingDirectory, BranchTarget branch) {
-        var (tip, merged) = await Task.Run(() => Inspect(workingDirectory, branch.Name));
-        var dialog = new DeleteBranchDialog(branch, tip, merged);
+    public static async Task<Choice?> ShowAsync(Window owner, Axial.ElmishFlows.ElmishRuntime<GitKay.Core.GitService.GitEnv> runtime, BranchTarget branch) {
+        // The inspection cannot fail: git that can't answer reads as an unknown tip and an unknown merge state.
+        var inspection = (await UiFlows.RunAsync("inspect branch", runtime, GitKay.Core.GitService.inspectBranch(branch.Name))).ResultValue;
+        var merged = inspection.Merged == null ? (bool?)null : inspection.Merged.Value;
+        var dialog = new DeleteBranchDialog(branch, inspection.Tip, merged);
         await dialog.ShowDialog(owner);
         return dialog._choice;
-    }
-
-    private static (string Tip, bool? Merged) Inspect(string workingDirectory, string branch) {
-        string Git(params string[] arguments) {
-            var info = new ProcessStartInfo("git") { WorkingDirectory = workingDirectory, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
-            foreach (var argument in arguments) info.ArgumentList.Add(argument);
-            using var process = Process.Start(info)!;
-            var output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit();
-            return process.ExitCode == 0 ? output.Trim() : throw new InvalidOperationException(process.StandardError.ReadToEnd());
-        }
-
-        string tip;
-        try { tip = Git("log", "-1", "--format=%h %s", $"refs/heads/{branch}"); }
-        catch (Exception) { tip = "(unknown)"; }
-
-        bool? merged;
-        try {
-            using var check = Process.Start(new ProcessStartInfo("git") {
-                WorkingDirectory = workingDirectory, UseShellExecute = false, CreateNoWindow = true,
-                ArgumentList = { "merge-base", "--is-ancestor", $"refs/heads/{branch}", "HEAD" },
-            })!;
-            check.WaitForExit();
-            merged = check.ExitCode switch { 0 => true, 1 => false, _ => null };
-        }
-        catch (Exception) { merged = null; }
-
-        return (tip, merged);
     }
 }

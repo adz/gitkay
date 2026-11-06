@@ -222,8 +222,7 @@ public partial class WholeFileWindow : Window {
         if (link.StartsWith('#')) { Surface.MoveToHeading(link); return; }
         var resolved = GitKay.Core.Markdown.resolveTarget(projection.DocumentPath, link);
         if (resolved is GitKay.Core.MarkdownTarget.RemoteUrl remote) {
-            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(remote.Item) { UseShellExecute = true }); }
-            catch (Exception error) { projection.LoadStatus = $"Could not open link: {error.Message}"; }
+            ExternalTools.OpenLink(remote.Item, message => projection.LoadStatus = $"Could not open link: {message}");
         }
         else if (_relativeLinkRequested?.Invoke(link) != true) projection.LoadStatus = $"Cannot open link: {link}";
     }

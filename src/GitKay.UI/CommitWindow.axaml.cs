@@ -431,14 +431,14 @@ public sealed partial class CommitWindowProjection : ObservableObject {
 
     /// <summary>Every file of HEAD, read once, for the all-files tree.</summary>
     private void LoadAllPaths() {
-        if (RepositoryPath is not { } repo || _allPathsLoading || _allPaths.Count > 0) return;
+        if (Runtime is not { } runtime || _allPathsLoading || _allPaths.Count > 0) return;
         _allPathsLoading = true;
-        _ = Task.Run(() => GitKay.Core.GitService.listCommitFiles(repo, "HEAD")).ContinueWith(task => Avalonia.Threading.Dispatcher.UIThread.Post(() => {
+        GitKay.Core.UiFlow.run("list HEAD files", runtime, GitKay.Core.GitService.fetchCommitFiles("HEAD"), result => {
             _allPathsLoading = false;
-            if (task.IsFaulted || task.Result.IsError) return;
-            _allPaths = task.Result.ResultValue.ToArray();
+            if (result.IsError) return;
+            _allPaths = result.ResultValue.ToArray();
             if (IsAllFilesMode) RebuildRows();
-        }));
+        });
     }
 
     private void RebuildRows() {

@@ -8,6 +8,7 @@
   <ItemGroup>
     <Compile Include="JsonSerialization.fs" />
     <Compile Include="Persistence.fs" />
+    <Compile Include="Stores.fs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -16,6 +17,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\GitKay.Core\GitKay.Core.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Axial.Guardrails" Version="0.13.0-local.2" PrivateAssets="all" />
   </ItemGroup>
 
 </Project>

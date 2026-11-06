@@ -115,3 +115,27 @@ module FolderSource =
     /// <summary>The pairs worth showing: everything except files that are identical on both sides.</summary>
     let changedPairs (pairs: Folder.Pair list) =
         pairs |> List.filter (fun pair -> Folder.couldDiffer pair || not (holdsSameBytes pair))
+
+    /// <summary>What a folder window shows: every pair, and the changed ones.</summary>
+    type Listing = { Pairs: Folder.Pair list; Changed: Folder.Pair list }
+
+    /// <summary>Reads the folders and pairs their files. With one folder (<c>gitkay browse</c>), every file is paired
+    /// against nothing, so it reads as the folder's contents rather than a diff. A folder that cannot be read says so.</summary>
+    let listing (left: string) (right: string option) : Result<Listing, string> =
+        match read left with
+        | Error error -> Error(GitError.describe error)
+        | Ok leftEntries ->
+            match right with
+            | None ->
+                let only = Folder.pair Seq.empty leftEntries
+                Ok { Pairs = only; Changed = only }
+            | Some right ->
+                match read right with
+                | Error error -> Error(GitError.describe error)
+                | Ok rightEntries ->
+                    let pairs = Folder.pair leftEntries rightEntries
+                    Ok { Pairs = pairs; Changed = changedPairs pairs }
+
+    /// <summary><c>listing</c> as a flow, on a thread that may block on the disk.</summary>
+    let load (left: string) (right: string option) : Axial.Flow<'env, string, Listing> =
+        Axial.Flow.fromBlockingResult (fun _ -> listing left right)

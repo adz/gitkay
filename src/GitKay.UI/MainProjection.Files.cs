@@ -103,16 +103,10 @@ public partial class MainProjection {
     }
 
     private void LoadAllFiles(string hash) {
-        if (RepositoryPath is not { } repo || _allFilesLoadingHash == hash) return;
+        if (Runtime is not { } runtime || _allFilesLoadingHash == hash) return;
         _allFilesLoadingHash = hash;
-        _ = Task.Run(() => GitKay.Core.GitService.listCommitFiles(repo, hash)).ContinueWith(task => Dispatcher.UIThread.Post(() => {
+        GitKay.Core.UiFlow.run("list commit files", runtime, GitKay.Core.GitService.fetchCommitFiles(hash), result => {
             if (_allFilesLoadingHash == hash) _allFilesLoadingHash = null;
-            if (task.IsFaulted) {
-                Status = $"Could not list files: {task.Exception?.GetBaseException().Message}";
-                return;
-            }
-
-            var result = task.Result;
             if (result.IsError) {
                 Status = GitKay.Core.GitErrorModule.describe(result.ErrorValue);
                 return;
@@ -121,7 +115,7 @@ public partial class MainProjection {
             _allFilesHash = hash;
             _allFiles = result.ResultValue.ToArray();
             if (IsAllFilesMode && (_selectedDiffHash == hash || hash == "HEAD" && IsWorkingTreeDiffShown)) RebuildDiffFileListRows();
-        }));
+        });
     }
 
     /// <summary>Every file of the selected commit when "All files" has loaded it; otherwise only changed files.</summary>
@@ -258,11 +252,6 @@ public partial class MainProjection {
             }
         }
 
-        try {
-            ExternalTools.StartVsCode(arguments, root);
-        }
-        catch (Exception exception) {
-            Status = $"Could not start VS Code (is 'code' on PATH?): {exception.Message}";
-        }
+        ExternalTools.StartVsCode(arguments, root, message => Status = $"Could not start VS Code (is 'code' on PATH?): {message}");
     }
 }

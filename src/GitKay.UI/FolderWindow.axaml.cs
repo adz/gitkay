@@ -415,18 +415,14 @@ public partial class FolderWindow : Window {
     /// <summary>Opens what is chosen in the bar, in a new window, leaving this one where it is.</summary>
     private void OnCompareClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e) {
         if (DataContext is not FolderProjection projection) return;
-        try {
-            if (projection.Mode == FolderMode.Compare) {
-                var left = projection.ChosenLeft;
-                var right = projection.ChosenRight ?? "";
-                if (OpenFoldersDialog.Problem(left, right) is { } problem) { projection.Status = problem; return; }
-                ExternalTools.StartGitKay(left, "diff", left, right);
-            }
-            else ExternalTools.StartGitKay(projection.ChosenLeft, "browse", projection.ChosenLeft);
+        void Failed(string message) => projection.Status = $"Could not open: {message}";
+        if (projection.Mode == FolderMode.Compare) {
+            var left = projection.ChosenLeft;
+            var right = projection.ChosenRight ?? "";
+            if (OpenFoldersDialog.Problem(left, right) is { } problem) { projection.Status = problem; return; }
+            ExternalTools.StartGitKay(Failed, left, "diff", left, right);
         }
-        catch (Exception error) {
-            projection.Status = $"Could not open: {error.Message}";
-        }
+        else ExternalTools.StartGitKay(Failed, projection.ChosenLeft, "browse", projection.ChosenLeft);
     }
 
     /// <summary>Double-clicking a folder folds it away or opens it again.</summary>
@@ -446,11 +442,11 @@ public partial class FolderWindow : Window {
             var diffOffset = Surface.CurrentScrollOffset;
             var diffAnchor = Surface.CaptureMarkdownViewAnchor();
             var focused = FocusManager?.GetFocusedElement();
-            var built = await System.Threading.Tasks.Task.Run(() => App.BuildFolderPairs(projection.Mode, projection.LeftRoot, projection.RightRoot));
+            var built = await UiFlows.RunAsync("re-read folders", UiFlows.AppRuntime, App.LoadFolders(projection.Mode, projection.LeftRoot, projection.RightRoot));
             if (generation != _reloadGeneration || DataContext != projection) return;
-            if (built.Error is { } problem) { projection.Status = problem; return; }
+            if (built.IsError) { projection.Status = built.ErrorValue; return; }
             if (diffAnchor == null) Surface.RestoreScrollOffsetWhenReady(diffOffset);
-            projection.Refresh(built.Pairs, built.Changed);
+            projection.Refresh(built.ResultValue.Pairs.ToList(), built.ResultValue.Changed.ToList());
             Surface.RestoreMarkdownViewAnchor(diffAnchor);
             projection.Status = "Re-read from disk";
             Dispatcher.UIThread.Post(() => {
@@ -536,21 +532,22 @@ public partial class FolderWindow : Window {
 
     private async void OpenElsewhere(string what) {
         if (DataContext is not FolderProjection projection) return;
+        void Failed(string message) => projection.Status = $"Could not open: {message}";
         try {
             switch (what) {
                 case "repository": {
                     if (await PickFolder("Open Git repository", projection.ChosenLeft) is { } path)
-                        ExternalTools.StartGitKay(path);
+                        ExternalTools.StartGitKay(Failed, path);
                     break;
                 }
                 case "folder": {
                     if (await PickFolder("Browse folder", projection.ChosenLeft) is { } path)
-                        ExternalTools.StartGitKay(path, "browse", path);
+                        ExternalTools.StartGitKay(Failed, path, "browse", path);
                     break;
                 }
                 case "compare": {
                     if (await OpenFoldersDialog.ShowAsync(this, projection.ChosenLeft) is { } folders)
-                        ExternalTools.StartGitKay(folders.Left, "diff", folders.Left, folders.Right);
+                        ExternalTools.StartGitKay(Failed, folders.Left, "diff", folders.Left, folders.Right);
                     break;
                 }
             }

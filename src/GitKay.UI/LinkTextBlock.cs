@@ -90,12 +90,6 @@ public class LinkTextBlock : SelectableTextBlock {
     /// <summary>Opens the URL in the default browser; only http(s) is ever passed to the shell.</summary>
     public static void OpenUrl(string url) {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) return;
-        try {
-            if (OperatingSystem.IsWindows()) Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
-            else Process.Start(new ProcessStartInfo(OperatingSystem.IsMacOS() ? "open" : "xdg-open") { ArgumentList = { uri.AbsoluteUri }, UseShellExecute = false });
-        }
-        catch (Exception exception) {
-            Trace.WriteLine($"[links] could not open {url}: {exception.Message}");
-        }
+        ExternalTools.OpenLink(uri.AbsoluteUri);
     }
 }

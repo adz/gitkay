@@ -84,12 +84,7 @@ public sealed class SettingsLoadFailureDialog : Window {
     }
 
     private static void OpenPath(string path) {
-        try {
-            ExternalTools.OpenInDefaultApp(path);
-        }
-        catch (Exception exception) {
-            System.Diagnostics.Trace.WriteLine($"[settings] could not open {path}: {exception.Message}");
-        }
+        ExternalTools.OpenInDefaultApp(path);
     }
 
     /// <summary>Shows the dialog for these failures and completes when it is closed.</summary>

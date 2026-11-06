@@ -1,59 +1,57 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
 
 namespace GitKay.UI;
 
-/// <summary>Launches external programs: VS Code, and new GitKay instances for other repositories.</summary>
+/// <summary>
+/// Launches external programs (VS Code, the browser, the file manager, another GitKay) through Core's
+/// <c>Launch</c> flows on the app's runtime. A program that fails to start reports a typed failure, passed to
+/// <c>onFailure</c> as text; nothing here throws.
+/// </summary>
 public static class ExternalTools {
-    /// <summary>Runs the <c>code</c> CLI; on Windows it is a .cmd shim, and on macOS the app bundle is a fallback.</summary>
-    public static void StartVsCode(IReadOnlyList<string> arguments, string workingDirectory) {
-        if (OperatingSystem.IsWindows()) {
-            var start = new ProcessStartInfo("cmd.exe") { WorkingDirectory = workingDirectory, CreateNoWindow = true, UseShellExecute = false };
-            start.ArgumentList.Add("/c");
-            start.ArgumentList.Add("code");
-            foreach (var argument in arguments) start.ArgumentList.Add(argument);
-            Process.Start(start);
-            return;
+    private static bool TryRuntime(Action<string>? onFailure, out Axial.ElmishFlows.ElmishRuntime<GitKay.Core.GitService.GitEnv> runtime) {
+        if (App.Runtime is { } started) {
+            runtime = started;
+            return true;
         }
+        runtime = null!;
+        onFailure?.Invoke("GitKay is not running yet");
+        return false;
+    }
 
-        if (OperatingSystem.IsMacOS() && FindOnPath("code") == null) {
-            var open = new ProcessStartInfo("open") { WorkingDirectory = workingDirectory, UseShellExecute = false };
-            foreach (var argument in new[] { "-b", "com.microsoft.VSCode", "--args" }.Concat(arguments)) open.ArgumentList.Add(argument);
-            Process.Start(open);
-            return;
-        }
-
-        var info = new ProcessStartInfo(FindOnPath("code") ?? "code") { WorkingDirectory = workingDirectory, UseShellExecute = false };
-        foreach (var argument in arguments) info.ArgumentList.Add(argument);
-        Process.Start(info);
+    /// <summary>Opens VS Code with these arguments in <paramref name="workingDirectory"/>.</summary>
+    public static void StartVsCode(IReadOnlyList<string> arguments, string workingDirectory, Action<string>? onFailure = null) {
+        if (TryRuntime(onFailure, out var runtime)) GitKay.Core.UiLaunch.openInVsCode(runtime, arguments, workingDirectory, onFailure);
     }
 
     /// <summary>Starts another GitKay in <paramref name="directory"/>; repository discovery starts from the working directory.</summary>
-    public static void StartGitKay(string directory, params string[] arguments) {
-        var path = Environment.ProcessPath ?? throw new InvalidOperationException("Unknown GitKay executable path");
-        var info = new ProcessStartInfo(path) { WorkingDirectory = directory, UseShellExecute = false };
-        // `dotnet gitkay.dll` runs under the dotnet host; pass the app's entry dll along.
-        if (Path.GetFileNameWithoutExtension(path).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
-            info.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "gitkay.dll"));
-        foreach (var argument in arguments) info.ArgumentList.Add(argument);
-        Process.Start(info);
+    public static void StartGitKay(Action<string>? onFailure, string directory, params string[] arguments) {
+        if (TryRuntime(onFailure, out var runtime)) GitKay.Core.UiLaunch.startGitKay(runtime, directory, arguments, onFailure);
     }
 
-    /// <summary>Opens a file or folder with the OS default handler: the editor for a file, the file manager for a folder.</summary>
-    public static void OpenInDefaultApp(string path) {
-        var opener = OperatingSystem.IsWindows() ? "explorer.exe" : OperatingSystem.IsMacOS() ? "open" : "xdg-open";
-        Process.Start(new ProcessStartInfo(opener) { ArgumentList = { path }, UseShellExecute = false });
+    /// <summary>Opens a file or folder GitKay wrote with the OS default handler: the file manager for a folder.</summary>
+    public static void OpenInDefaultApp(string path, Action<string>? onFailure = null) {
+        if (TryRuntime(onFailure, out var runtime)) GitKay.Core.UiLaunch.openOwnedPath(runtime, path, onFailure);
     }
 
-    private static string? FindOnPath(string name) {
-        foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)) {
-            if (string.IsNullOrWhiteSpace(directory)) continue;
-            var candidate = Path.Combine(directory, name);
-            if (File.Exists(candidate)) return candidate;
-        }
-        return null;
+    /// <summary>Opens an http or https link in the browser; anything else is refused.</summary>
+    public static void OpenLink(string url, Action<string>? onFailure = null) {
+        if (TryRuntime(onFailure, out var runtime)) GitKay.Core.UiLaunch.openLink(runtime, url, onFailure);
     }
+}
+
+/// <summary>Awaits a Core flow run on the app's runtime (see <c>GitKay.Core.UiFlow</c>), in place of <c>Task.Run</c>.</summary>
+public static class UiFlows {
+    /// <summary>Runs <paramref name="flow"/> on <paramref name="runtime"/>; the task completes on the UI thread with its result.</summary>
+    public static System.Threading.Tasks.Task<Microsoft.FSharp.Core.FSharpResult<TValue, TError>> RunAsync<TValue, TError>(
+        string name, Axial.ElmishFlows.ElmishRuntime<GitKay.Core.GitService.GitEnv> runtime, Axial.Flow<GitKay.Core.GitService.GitEnv, TError, TValue> flow) {
+        var completion = new System.Threading.Tasks.TaskCompletionSource<Microsoft.FSharp.Core.FSharpResult<TValue, TError>>(
+            System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+        GitKay.Core.UiFlow.run(name, runtime, flow, completion.SetResult);
+        return completion.Task;
+    }
+
+    /// <summary>The app's runtime; it exists from the moment the app's first window can be shown.</summary>
+    public static Axial.ElmishFlows.ElmishRuntime<GitKay.Core.GitService.GitEnv> AppRuntime =>
+        App.Runtime ?? throw new InvalidOperationException("GitKay's runtime has not started");
 }

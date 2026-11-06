@@ -1036,6 +1036,36 @@ module GitService =
                 return if head = "" then "no commits yet" else $"detached at {head}"
         }
 
+    /// <summary>The checked-out branch's short name, or None when HEAD is detached or git can't say.</summary>
+    let fetchBranchName : Flow<GitEnv, Never, string option> =
+        plainGit [ "symbolic-ref"; "--short"; "HEAD" ]
+        |> Flow.map (fun output -> match output.Trim() with "" -> None | name -> Some name)
+        |> Flow.recover (fun _ -> Flow.succeed None)
+
+    /// <summary>What deleting a local branch would lose: its tip commit, and whether HEAD contains it (None when git
+    /// can't say).</summary>
+    type BranchInspection = { Tip: string; Merged: bool option }
+
+    /// <summary>Inspects a local branch before it is deleted.</summary>
+    let inspectBranch (branch: string) : Flow<GitEnv, Never, BranchInspection> =
+        flow {
+            let! tip =
+                plainGit [ "log"; "-1"; "--format=%h %s"; $"refs/heads/{branch}" ]
+                |> Flow.map _.Trim()
+                |> Flow.recover (fun _ -> Flow.succeed "(unknown)")
+            let! repoPath = Flow.envWith _.RepoPath
+            let directory = match workingDirectory repoPath with null -> repoPath | directory -> directory
+            // Exit code 1 is the answer "not merged", not a failure.
+            let! merged =
+                Process.commandArgs "git" [ "merge-base"; "--is-ancestor"; $"refs/heads/{branch}"; "HEAD" ]
+                |> Process.workingDirectory directory
+                |> Process.successCodes [ 0; 1 ]
+                |> Process.toFlow
+                |> Flow.map (fun result -> match result.ExitCode with 0 -> Some true | 1 -> Some false | _ -> None)
+                |> Flow.recover (fun _ -> Flow.succeed None)
+            return { Tip = tip; Merged = merged }
+        }
+
     /// <summary>The last commit's full message, for amending; empty before the first commit.</summary>
     let fetchLastCommitMessage : Flow<GitEnv, GitError, string> =
         plainGit [ "log"; "-1"; "--format=%B" ] |> Flow.orElseWith (fun _ -> Flow.ok "")
@@ -1070,6 +1100,20 @@ module GitService =
         }
 
     /// Raw blob bytes at a revision, used by safe whole-file and repository-image previews.
+    /// <summary>Every file of a commit (or of HEAD), read through LibGit2Sharp on a blocking-capable thread.</summary>
+    let fetchCommitFiles (hash: string) : Flow<GitEnv, GitError, string list> =
+        flow {
+            let! repoPath = Flow.envWith _.RepoPath
+            return! Flow.fromBlockingResult (fun _ -> listCommitFiles repoPath hash)
+        }
+
+    /// <summary>Local and remote branch names for the comparison picker, read through LibGit2Sharp.</summary>
+    let fetchComparisonBranches : Flow<GitEnv, Never, string array> =
+        flow {
+            let! repoPath = Flow.envWith _.RepoPath
+            return! Flow.fromBlocking (fun _ -> comparisonRevisions repoPath)
+        }
+
     let loadFileBytes (repoPath: string) (hash: string) (path: string) : Result<byte array, GitError> =
         result {
             use repo = new Repository(repoPath)

@@ -119,3 +119,57 @@ module UiFlow =
     let run (name: string) (runtime: ElmishRuntime<'env>) (work: Flow<'env, 'error, 'value>) (onResult: Action<Result<'value, 'error>>) : unit =
         for start in Cmd.OfFlow.either name runtime work Ok Error do
             start onResult.Invoke
+
+/// <summary>
+/// The external programs the C# UI starts, as Core <c>Launch</c> flows run on the app's runtime: a launch that fails
+/// to start is a typed <c>ProcessError</c>, logged and handed to <c>onFailure</c> (which may be null) as text.
+/// </summary>
+module UiLaunch =
+
+    let private platform =
+        if OperatingSystem.IsWindows() then Launch.Windows
+        elif OperatingSystem.IsMacOS() then Launch.MacOS
+        else Launch.OtherPlatform
+
+    /// The first file of this name on PATH.
+    let private findOnPath (name: string) =
+        (Environment.GetEnvironmentVariable "PATH" |> Option.ofObj |> Option.defaultValue "").Split(Path.PathSeparator) // axial-allow-AXG001: the host resolves the editor executable from PATH
+        |> Array.filter (String.IsNullOrWhiteSpace >> not)
+        |> Array.map (fun directory -> Path.Combine(directory, name))
+        |> Array.tryFind File.Exists // axial-allow-AXG001: the host resolves the editor executable from PATH
+
+    let private run (name: string) (runtime: ElmishRuntime<'env>) (launch: Flow<'env, ProcessError, unit>) (onFailure: Action<string>) =
+        UiFlow.run name runtime launch (Action<Result<unit, ProcessError>>(function
+            | Ok () -> ()
+            | Error error ->
+                let message = ProcessError.describe error
+                Trace.WriteLine $"[launch] {name}: {message}"
+                if not (isNull onFailure) then onFailure.Invoke message))
+
+    /// <summary>Opens an http or https link in the browser; any other target is refused.</summary>
+    let openLink (runtime: ElmishRuntime<'env>) (url: string) (onFailure: Action<string>) =
+        run "open link" runtime (Launch.openLink url) onFailure
+
+    /// <summary>Opens a file or folder GitKay wrote with the default handler.</summary>
+    let openOwnedPath (runtime: ElmishRuntime<'env>) (path: string) (onFailure: Action<string>) =
+        run "open path" runtime (Launch.openOwnedPath path) onFailure
+
+    /// <summary>Opens VS Code with these arguments in <paramref name="workingDirectory"/>.</summary>
+    let openInVsCode (runtime: ElmishRuntime<'env>) (arguments: string seq) (workingDirectory: string) (onFailure: Action<string>) =
+        let codeOnPath =
+            match platform with
+            | Launch.Windows -> findOnPath "code.cmd" |> Option.map Launch.codeExecutableFor |> Option.filter File.Exists // axial-allow-AXG001: the host checks the editor executable exists
+            | _ -> findOnPath "code"
+        run "open in VS Code" runtime (Launch.openInVsCode platform codeOnPath (List.ofSeq arguments) workingDirectory) onFailure
+
+    /// <summary>Starts another GitKay in <paramref name="directory"/> with these arguments.</summary>
+    let startGitKay (runtime: ElmishRuntime<'env>) (directory: string) (arguments: string seq) (onFailure: Action<string>) =
+        match Environment.ProcessPath with
+        | null -> if not (isNull onFailure) then onFailure.Invoke "Unknown GitKay executable path"
+        | executable ->
+            // `dotnet gitkay.dll` runs under the dotnet host; pass the app's entry dll along.
+            let entryAssembly =
+                if Path.GetFileNameWithoutExtension(executable).Equals("dotnet", StringComparison.OrdinalIgnoreCase) then
+                    Some(Path.Combine(AppContext.BaseDirectory, "gitkay.dll"))
+                else None
+            run "start GitKay" runtime (Launch.startGitKay executable entryAssembly directory (List.ofSeq arguments)) onFailure

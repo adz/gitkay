@@ -16,6 +16,7 @@
     <Compile Include="Keys.fs" />
     <Compile Include="Presentation.fs" />
     <Compile Include="Links.fs" />
+    <Compile Include="Launch.fs" />
     <Compile Include="DiffExpansion.fs" />
     <Compile Include="Markdown.fs" />
     <Compile Include="DiffFind.fs" />

@@ -82,12 +82,6 @@ public partial class DiagnosticsWindow : Window {
     }
 
     private void OnOpenLogs(object? sender, RoutedEventArgs e) {
-        try {
-            var opener = OperatingSystem.IsWindows() ? "explorer.exe" : OperatingSystem.IsMacOS() ? "open" : "xdg-open";
-            Process.Start(new ProcessStartInfo(opener) { ArgumentList = { DiagnosticsLog.LogDirectory }, UseShellExecute = false });
-        }
-        catch (Exception exception) {
-            Trace.WriteLine($"[diagnostics] could not open {DiagnosticsLog.LogDirectory}: {exception.Message}");
-        }
+        ExternalTools.OpenInDefaultApp(DiagnosticsLog.LogDirectory);
     }
 }

@@ -79,8 +79,8 @@ public partial class MainWindow : Window, IVimCommands {
 
     /// <summary>Read off the UI thread: opening the repository and listing every branch and remote branch is disk work.</summary>
     private async System.Threading.Tasks.Task<IReadOnlyList<string>> ComparisonRevisionsAsync() {
-        if (_projection?.RepositoryPath is not { } repository) return [];
-        return await System.Threading.Tasks.Task.Run(() => GitService.comparisonRevisions(repository));
+        if (_projection?.Runtime is not { } runtime) return [];
+        return (await UiFlows.RunAsync("comparison revisions", runtime, GitService.fetchComparisonBranches)).ResultValue;
     }
 
     private async void OnRevisionComparisonRequested(string target, bool chooseBase) {
@@ -830,8 +830,7 @@ public partial class MainWindow : Window, IVimCommands {
         var file = projection.SelectedDiffFile;
         var resolved = GitKay.Core.Markdown.resolveTarget(file?.ContentPath ?? "", link);
         if (resolved is GitKay.Core.MarkdownTarget.RemoteUrl remote) {
-            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(remote.Item) { UseShellExecute = true }); }
-            catch (Exception error) { projection.Status = $"Could not open link: {error.Message}"; }
+            ExternalTools.OpenLink(remote.Item, message => projection.Status = $"Could not open link: {message}");
             return;
         }
         if (resolved is GitKay.Core.MarkdownTarget.RepositoryPath path
@@ -997,13 +996,8 @@ public partial class MainWindow : Window, IVimCommands {
     }
 
     private static void Launch(MainProjection projection, string directory, string status, params string[] arguments) {
-        try {
-            ExternalTools.StartGitKay(directory, arguments);
-            projection.Status = status;
-        }
-        catch (Exception exception) {
-            projection.Status = $"Could not open {directory}: {exception.Message}";
-        }
+        projection.Status = status;
+        ExternalTools.StartGitKay(message => projection.Status = $"Could not open {directory}: {message}", directory, arguments);
     }
 
     private static bool IsInsideRepository(string path) {
@@ -1018,8 +1012,8 @@ public partial class MainWindow : Window, IVimCommands {
             return;
         }
 
-        if (_projection is not { WorkingDirectory: { } directory }) return;
-        var choice = await DeleteBranchDialog.ShowAsync(this, directory, branch);
+        if (_projection is not { WorkingDirectory: not null, Runtime: { } runtime }) return;
+        var choice = await DeleteBranchDialog.ShowAsync(this, runtime, branch);
         if (choice != null) RunGitOperation(GitOperations.DeleteBranch(branch, force: choice == DeleteBranchDialog.Choice.ForceDelete));
     }
 
@@ -1082,21 +1076,9 @@ public partial class MainWindow : Window, IVimCommands {
     }
 
     private async System.Threading.Tasks.Task PushCurrentBranchAsync(string directory) {
-        var branch = await System.Threading.Tasks.Task.Run(() => {
-            try {
-                var info = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = directory, RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
-                info.ArgumentList.Add("symbolic-ref");
-                info.ArgumentList.Add("--short");
-                info.ArgumentList.Add("HEAD");
-                using var process = System.Diagnostics.Process.Start(info)!;
-                var name = process.StandardOutput.ReadToEnd().Trim();
-                process.WaitForExit();
-                return process.ExitCode == 0 && name.Length > 0 ? name : null;
-            }
-            catch (Exception) {
-                return null;
-            }
-        });
+        if (_projection?.Runtime is not { } runtime) return;
+        var current = (await UiFlows.RunAsync("current branch", runtime, GitService.fetchBranchName)).ResultValue;
+        var branch = current == null ? null : current.Value;
         if (branch == null) {
             if (_projection != null) _projection.Status = "Not pushed: HEAD isn't on a branch";
             return;

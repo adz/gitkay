@@ -84,12 +84,6 @@ public sealed class AboutWindow : Window {
     }
 
     private static void Open(string url) {
-        try {
-            var opener = OperatingSystem.IsWindows() ? "explorer.exe" : OperatingSystem.IsMacOS() ? "open" : "xdg-open";
-            Process.Start(new ProcessStartInfo(opener) { ArgumentList = { url }, UseShellExecute = false });
-        }
-        catch (Exception exception) {
-            Trace.WriteLine($"[about] could not open {url}: {exception.Message}");
-        }
+        ExternalTools.OpenLink(url);
     }
 }

@@ -222,3 +222,87 @@ module ElmishTests =
             |> List.head
         let messages = dispatchedAfter 1 runtime |> List.map unbox<string>
         test <@ messages = [ "failed" ] @>
+
+/// External programs are launched through the process service: the test service records each launch.
+module LaunchTests =
+
+    open Axial.Process
+
+    let private launched (work: Flow<ProcessHostEnvironment, ProcessError, unit>) =
+        let host = ProcessHostEnvironment.test ()
+        let exit = work |> Flow.run host.Environment
+        exit, List.ofSeq host.Process.Launches
+
+    [<Fact>]
+    let ``links open only when they are http or https`` () =
+        let opened, launches = launched (Launch.openLink "https://example.com/a b")
+        test <@ opened = Exit.Success () @>
+        match launches with
+        | [ ProcessLaunch.ShellOpen target ] -> test <@ target = "https://example.com/a%20b" @>
+        | other -> failwithf "expected one shell open, got %A" other
+        let refused, nothing = launched (Launch.openLink "file:///etc/passwd")
+        test <@ List.isEmpty nothing @>
+        match refused with
+        | Exit.Failure(Cause.Fail(ProcessError.ShellOpenRejected rejection)) -> test <@ rejection.Target = "file:///etc/passwd" @>
+        | other -> failwithf "expected a refusal, got %O" other
+
+    [<Fact>]
+    let ``VS Code gets each argument as one, and the app bundle on macOS without the CLI`` () =
+        let path = "/repo/a & b.txt"
+        let _, direct = launched (Launch.openInVsCode Launch.OtherPlatform (Some "/usr/bin/code") [ "/repo"; "--goto"; path ] "/repo")
+        match direct with
+        | [ ProcessLaunch.Command command ] ->
+            test <@ Process.fileName command = "/usr/bin/code" && Process.arguments command = [ "/repo"; "--goto"; path ] @>
+        | other -> failwithf "expected one launch, got %A" other
+        let _, bundle = launched (Launch.openInVsCode Launch.MacOS None [ "/repo" ] "/repo")
+        match bundle with
+        | [ ProcessLaunch.Command command ] ->
+            test <@ Process.fileName command = "open" && Process.arguments command = [ "-b"; "com.microsoft.VSCode"; "--args"; "/repo" ] @>
+        | other -> failwithf "expected one launch, got %A" other
+
+    [<Fact>]
+    let ``a GitKay started under the dotnet host gets its entry assembly first`` () =
+        let _, launches = launched (Launch.startGitKay "/usr/bin/dotnet" (Some "/app/gitkay.dll") "/work" [ "browse"; "/work" ])
+        match launches with
+        | [ ProcessLaunch.Command command ] ->
+            test <@ Process.arguments command = [ "/app/gitkay.dll"; "browse"; "/work" ] @>
+        | other -> failwithf "expected one launch, got %A" other
+
+    [<Fact>]
+    let ``a launch that cannot start is a typed failure`` () =
+        let host = ProcessHostEnvironment.test ()
+        let notInstalled = ProcessError.StartFailed { Command = "code"; Message = "not installed" }
+        host.Process.LaunchHandler <- Some(fun _ -> Flow.fail notInstalled)
+        let exit = Launch.openInVsCode Launch.OtherPlatform None [ "/repo" ] "/repo" |> Flow.run host.Environment
+        test <@ exit = Exit.Failure(Cause.Fail notInstalled) @>
+
+/// The settings and UI state files go through the environment's file system.
+module StoreTests =
+
+    open GitKay.Serialization
+
+    [<Fact>]
+    let ``a missing settings file reads as defaults and a corrupt one says why it was ignored`` () =
+        let files = FileSystem.test ()
+        let env : StoreEnv = { Files = files }
+        let path = Path.Combine(Path.GetTempPath(), "gitkay-store-" + Guid.NewGuid().ToString("N"), "settings.json")
+        match SettingsFile.load path |> Flow.run env with
+        | Exit.Success loaded -> test <@ loaded = { Value = Settings.defaults; Failure = None } @>
+        | other -> failwithf "%O" other
+        (files :> IFileSystem).WriteAllText(path, "{ not json")
+        match SettingsFile.load path |> Flow.run env with
+        | Exit.Success loaded -> test <@ loaded.Value = Settings.defaults && loaded.Failure.IsSome && loaded.Failure.Value.Path = path @>
+        | other -> failwithf "%O" other
+
+    [<Fact>]
+    let ``saved UI state reads back, and a save that cannot write is ignored`` () =
+        let files = FileSystem.test ()
+        let env : StoreEnv = { Files = files }
+        let path = Path.Combine(Path.GetTempPath(), "gitkay-store-" + Guid.NewGuid().ToString("N"), "ui-state.json")
+        let state = UiState.withWindowSize (Some 800.0) (Some 600.0) UiState.empty
+        test <@ UiStateFile.save path state |> Flow.run env = Exit.Success () @>
+        match UiStateFile.load path |> Flow.run env with
+        | Exit.Success loaded -> test <@ loaded.Value = UiState.normalize state && loaded.Failure = None @>
+        | other -> failwithf "%O" other
+        let unwritable : StoreEnv = { Files = FileSystem.test () }
+        test <@ UiStateFile.save "" state |> Flow.run unwritable = Exit.Success () @>
