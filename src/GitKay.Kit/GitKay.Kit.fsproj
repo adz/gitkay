@@ -21,4 +21,8 @@
     <Compile Include="PathTree.fs" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Axial.Guardrails" Version="0.13.0-local.2" PrivateAssets="all" />
+  </ItemGroup>
+
 </Project>

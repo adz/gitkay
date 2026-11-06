@@ -1506,7 +1506,7 @@ module AppTests =
             MatchedRefs = matchedRefs
         }
 
-    let private emptyModel : App.Model =
+    let private emptyModel () : App.Model =
         {
             StartupSelection = App.NoStartupSelection
             StartupShowOnlyMatches = false
@@ -1594,7 +1594,7 @@ module AppTests =
                 sampleCommit "second" "Second"
             ]
 
-        let next, _ = appUpdate (App.Msg.HistoryLoaded (true, Ok commits)) emptyModel
+        let next, _ = appUpdate (App.Msg.HistoryLoaded (true, Ok commits)) (emptyModel ())
 
         test <@ next.Status = "Loaded 2 commits" @>
         test <@ next.Commits.Length = 2 @>
@@ -1618,7 +1618,7 @@ module AppTests =
             appUpdate
                 (App.Msg.HistoryLoaded (true, Ok commits))
                 {
-                    emptyModel with
+                    (emptyModel ()) with
                         SearchQuery = "needle"
                         SearchScopeKey = "message"
                 }
@@ -1629,7 +1629,7 @@ module AppTests =
 
     [<Fact>]
     let ``SetShowStashes should update the view state`` () =
-        let next, _ = appUpdate (App.Msg.SetShowStashes true) emptyModel
+        let next, _ = appUpdate (App.Msg.SetShowStashes true) (emptyModel ())
 
         test <@ next.ShowStashes @>
         test <@ next.Status = "Refreshing..." @>
@@ -1651,7 +1651,7 @@ module AppTests =
 
         let initial =
             {
-                emptyModel with
+                (emptyModel ()) with
                     Selection = App.CommitSelected "commit"
                     SelectedDiffHash = Some "commit"
                     SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
@@ -1671,7 +1671,7 @@ module AppTests =
 
     [<Fact>]
     let ``SetDiffLayout should update the view state`` () =
-        let next, _ = appUpdate (App.Msg.SetDiffLayout DiffLayout.SideBySide) emptyModel
+        let next, _ = appUpdate (App.Msg.SetDiffLayout DiffLayout.SideBySide) (emptyModel ())
 
         test <@ next.DiffLayout = DiffLayout.SideBySide @>
 
@@ -1698,7 +1698,7 @@ module AppTests =
 
         let initial =
             {
-                emptyModel with
+                (emptyModel ()) with
                     Selection = App.CommitSelected "second"
                     SelectedDiffHash = Some "second"
                     SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
@@ -1739,7 +1739,7 @@ module AppTests =
 
         let initial =
             {
-                emptyModel with
+                (emptyModel ()) with
                     Selection = App.CommitSelected "missing"
                     SelectedDiffHash = Some "missing"
                     SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
@@ -1777,7 +1777,7 @@ module AppTests =
 
         let initial =
             {
-                emptyModel with
+                (emptyModel ()) with
                     Selection = App.CommitSelected "old"
                     SelectedDiffHash = Some "old"
                     SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
@@ -1802,14 +1802,14 @@ module AppTests =
 
     [<Fact>]
     let ``SelectWorkingTree clears the commit selection and has no commit hash`` () =
-        let initial = { emptyModel with Selection = App.CommitSelected "old"; SelectedDiffHash = Some "old"; SelectedDiff = Some [] }
+        let initial = { (emptyModel ()) with Selection = App.CommitSelected "old"; SelectedDiffHash = Some "old"; SelectedDiff = Some [] }
         let next, _ = appUpdate (App.Msg.SelectWorkingTree 5L) initial
         test <@ next.Selection = App.WorkingTreeSelected && next.SelectedCommitHash = None @>
         test <@ next.SelectedDiffHash = None && next.SelectedDiff = None && next.WorkingTreeStartedAtTicks = Some 5L @>
 
     [<Fact>]
     let ``WorkingTreeChangesLoaded applies only the current load`` () =
-        let selected, _ = appUpdate (App.Msg.SelectWorkingTree 5L) emptyModel
+        let selected, _ = appUpdate (App.Msg.SelectWorkingTree 5L) (emptyModel ())
         let changes : GitService.WorkingTreeChanges = { Entries = [ workingEntry "a.txt" ]; Staged = []; Unstaged = []; Untracked = [] }
         let stale, _ = appUpdate (App.Msg.WorkingTreeChangesLoaded(4L, Ok changes)) selected
         test <@ stale.WorkingTreeChanges = None @>
@@ -1819,7 +1819,7 @@ module AppTests =
     [<Fact>]
     let ``WorkingTreeStatusLoaded reloads changes only when selected and changed`` () =
         let entries = [ workingEntry "a.txt" ]
-        let unselected, _ = appUpdate (App.Msg.WorkingTreeStatusLoaded(Ok entries)) emptyModel
+        let unselected, _ = appUpdate (App.Msg.WorkingTreeStatusLoaded(Ok entries)) (emptyModel ())
         test <@ unselected.WorkingTree = entries && unselected.WorkingTreeStartedAtTicks = None @>
         let selected = { unselected with Selection = App.WorkingTreeSelected }
         let same, _ = appUpdate (App.Msg.WorkingTreeStatusLoaded(Ok entries)) selected
@@ -1831,10 +1831,10 @@ module AppTests =
     let ``staging from the history reports what happened, and a discard can be undone`` () =
         let backup : Trash.Backup =
             { Directory = "/tmp/backup"; Entries = []; Description = "1 file"; CreatedAt = DateTimeOffset.UnixEpoch }
-        let staged, _ = appUpdate (App.Msg.WorkingTreeOperationDone("Staged 2 files", Ok None)) emptyModel
+        let staged, _ = appUpdate (App.Msg.WorkingTreeOperationDone("Staged 2 files", Ok None)) (emptyModel ())
         test <@ staged.Status = "Staged 2 files" && staged.LastDiscard = None @>
 
-        let discarded, _ = appUpdate (App.Msg.WorkingTreeOperationDone("Discarded 1 file", Ok(Some backup))) emptyModel
+        let discarded, _ = appUpdate (App.Msg.WorkingTreeOperationDone("Discarded 1 file", Ok(Some backup))) (emptyModel ())
         test <@ discarded.Status = "Discarded 1 file · Ctrl+Z to undo" && discarded.LastDiscard = Some backup @>
 
         let undone, _ = appUpdate App.Msg.UndoWorkingTreeDiscard discarded
@@ -1842,12 +1842,12 @@ module AppTests =
         let nothing, _ = appUpdate App.Msg.UndoWorkingTreeDiscard undone
         test <@ nothing.Status = "Nothing to undo" @>
 
-        let failed, _ = appUpdate (App.Msg.WorkingTreeOperationDone("Staging", Error(GitError.OperationFailed("add", "locked")))) emptyModel
+        let failed, _ = appUpdate (App.Msg.WorkingTreeOperationDone("Staging", Error(GitError.OperationFailed("add", "locked")))) (emptyModel ())
         test <@ failed.Status.StartsWith "Staging failed" @>
 
     [<Fact>]
     let ``two staged patches can be undone in reverse order in the main diff`` () =
-        let once, _ = appUpdate (App.Msg.WorkingTreeLinesStaged("a.txt", "first")) emptyModel
+        let once, _ = appUpdate (App.Msg.WorkingTreeLinesStaged("a.txt", "first")) (emptyModel ())
         let refreshed, _ = appUpdate App.Msg.RereadRefs once
         let twice, _ = appUpdate (App.Msg.WorkingTreeLinesStaged("b.txt", "second")) refreshed
         test <@ twice.LastStagedPatches = [ "b.txt", "second"; "a.txt", "first" ] @>
@@ -1861,14 +1861,14 @@ module AppTests =
     [<Fact>]
     let ``a clean working tree moves the selection off the uncommitted changes row`` () =
         let a = sampleCommit "a" "subject"
-        let selected = { emptyModel with Commits = Graph.calculateLanes [ a ]; Selection = App.WorkingTreeSelected; WorkingTree = [ workingEntry "a.txt" ] }
+        let selected = { (emptyModel ()) with Commits = Graph.calculateLanes [ a ]; Selection = App.WorkingTreeSelected; WorkingTree = [ workingEntry "a.txt" ] }
         let next, _ = appUpdate (App.Msg.WorkingTreeStatusLoaded(Ok [])) selected
         test <@ next.Selection = App.NoSelection && next.WorkingTree.IsEmpty && next.WorkingTreeChanges.IsNone @>
 
     [<Fact>]
     let ``history reload keeps the working tree row selected`` () =
         let a = sampleCommit "a" "subject"
-        let selected = { emptyModel with Selection = App.WorkingTreeSelected }
+        let selected = { (emptyModel ()) with Selection = App.WorkingTreeSelected }
         let next, _ = appUpdate (App.Msg.HistoryLoaded(false, Ok [ a ])) selected
         test <@ next.Selection = App.WorkingTreeSelected @>
 
@@ -1882,7 +1882,7 @@ module AppTests =
 
         let initial =
             {
-                emptyModel with
+                (emptyModel ()) with
                     Selection = App.CommitSelected "commit"
                     SelectionStartedAtTicks = Some 7L
                     SelectedDiffStartedAtTicks = Some 7L
@@ -1900,7 +1900,7 @@ module AppTests =
 
     [<Fact>]
     let ``DiffFilesLoaded should ignore stale file list results from an earlier selection`` () =
-        let firstSelection, _ = appUpdate (App.Msg.SelectCommit("old", 1L)) emptyModel
+        let firstSelection, _ = appUpdate (App.Msg.SelectCommit("old", 1L)) (emptyModel ())
         let currentSelection, _ = appUpdate (App.Msg.SelectCommit("new", 2L)) firstSelection
 
         let staleFiles =
@@ -1928,7 +1928,7 @@ module AppTests =
 
         let initial =
             {
-                emptyModel with
+                (emptyModel ()) with
                     Selection = App.CommitSelected "commit"
                     SelectedDiffHash = Some "commit"
                     SelectedDiffFiles = Some files
@@ -1978,7 +1978,7 @@ module AppTests =
 
         let initial =
             {
-                emptyModel with
+                (emptyModel ()) with
                     Selection = App.CommitSelected "commit"
                     SelectedDiffHash = Some "commit"
                     SelectedDiffFiles = Some files
@@ -1996,7 +1996,7 @@ module AppTests =
     let ``RunSearch should record the pending search and clear stale results`` () =
         let initial =
             {
-                emptyModel with
+                (emptyModel ()) with
                     SearchQuery = "old"
                     SearchScopeKey = "message"
                     SearchResults = Some [ sampleSearchResult (sampleCommit "oldhash" "Old") [ GitSearch.MessageMatch ] "message" ]
@@ -2018,7 +2018,7 @@ module AppTests =
 
         let initial =
             {
-                emptyModel with
+                (emptyModel ()) with
                     SearchQuery = "needle"
                     SearchScopeKey = "all"
                     SearchStartedAtTicks = Some 42L
@@ -2077,7 +2077,7 @@ module AppTests =
 
         let model =
             {
-                emptyModel with
+                (emptyModel ()) with
                     Status = "Loaded"
                     Commits = Graph.calculateLanes [ commit ]
                     Selection = App.CommitSelected commit.Hash
@@ -2148,7 +2148,7 @@ module AppTests =
 
         let model =
             {
-                emptyModel with
+                (emptyModel ()) with
                     Status = "Loaded"
                     Commits = Graph.calculateLanes [ commit ]
                     Selection = App.CommitSelected commit.Hash
@@ -2188,7 +2188,7 @@ module AppTests =
 
         let model =
             {
-                emptyModel with
+                (emptyModel ()) with
                     Status = "Loaded"
                     Commits = Graph.calculateLanes [ commit; otherCommit ]
                     SearchQuery = "needle"
@@ -2228,7 +2228,7 @@ module AppTests =
 
         projection.Update
             {
-                emptyModel with
+                (emptyModel ()) with
                     ShowStashes = true
             }
 
@@ -2252,7 +2252,7 @@ module AppTests =
 
         test <@ projection.IsSearchPanelExpanded @>
 
-        projection.Update emptyModel
+        projection.Update (emptyModel ())
 
         test <@ projection.IsSearchPanelExpanded @>
 
@@ -2276,7 +2276,7 @@ module AppTests =
         let projection = MainProjection()
         projection.SetDispatch ignore
 
-        projection.Update { emptyModel with DiffLayout = DiffLayout.SideBySide }
+        projection.Update { (emptyModel ()) with DiffLayout = DiffLayout.SideBySide }
 
         test <@ projection.IsSideBySideDiffMode @>
         test <@ projection.SelectedDiffPresentationModeLabel = "Side-by-side" @>
@@ -2288,7 +2288,7 @@ module AppTests =
         let messages = ConcurrentQueue<App.Msg>()
         projection.SetDispatch (fun msg -> messages.Enqueue msg |> ignore)
 
-        projection.Update { emptyModel with DiffContextLines = 5 }
+        projection.Update { (emptyModel ()) with DiffContextLines = 5 }
 
         test <@ projection.DiffContextLineCount = 5 @>
         test <@ projection.SelectedDiffContextLineCount <> null @>
@@ -2474,7 +2474,7 @@ module AppTests =
 
         let model =
             {
-                emptyModel with
+                (emptyModel ()) with
                     Status = "Loaded"
                     Commits = Graph.calculateLanes [ matchingCommit; otherCommit ]
                     SearchQuery = "needle"
@@ -2520,7 +2520,7 @@ module AppTests =
 
         let model =
             {
-                emptyModel with
+                (emptyModel ()) with
                     Status = "Loaded"
                     Commits = Graph.calculateLanes [ commit ]
                     Selection = App.CommitSelected commit.Hash
@@ -2555,7 +2555,7 @@ module AppTests =
                 ]
         let summary = sampleSummary "sample.txt" "sample.txt" "sample.txt"
         let model =
-            { emptyModel with
+            { (emptyModel ()) with
                 Status = "Loaded"
                 Commits = Graph.calculateLanes [ commit ]
                 Selection = App.CommitSelected commit.Hash
@@ -2588,7 +2588,7 @@ module AppTests =
                   { Header = "@@ -12 +12 @@"; Lines = [ line 12 "second" ] } ] }
         let summary = sampleSummary "sample.txt" "sample.txt" "sample.txt"
         projection.Update
-            { emptyModel with
+            { (emptyModel ()) with
                 Status = "Loaded"
                 Commits = Graph.calculateLanes [ commit ]
                 Selection = App.CommitSelected commit.Hash
@@ -2615,7 +2615,7 @@ module AppTests =
             { OldPath = "sample.txt"; NewPath = "sample.txt"; NewLineCount = None
               Hunks = [ { Header = "@@ -20 +20 @@"; Lines = [ line 20 ] } ] }
         projection.Update
-            { emptyModel with
+            { (emptyModel ()) with
                 Selection = App.CommitSelected commit.Hash
                 SelectedDiffHash = Some commit.Hash
                 SelectedDiffFiles = Some [ sampleSummary "sample.txt" "sample.txt" "sample.txt" ]
@@ -2640,7 +2640,7 @@ module AppTests =
         let fileB : Models.FileDiff = { OldPath = "b.txt"; NewPath = "b.txt"; NewLineCount = None; Hunks = [ { Header = "@@ -30 +30 @@"; Lines = [ ctx 30 ] } ] }
         let fullA : Models.FileDiff = { fileA with Hunks = [ { Header = "@@ -1,40 +1,40 @@"; Lines = [ 1 .. 40 ] |> List.map ctx } ] }
         let baseModel =
-            { emptyModel with
+            { (emptyModel ()) with
                 Selection = App.CommitSelected commit.Hash
                 SelectedDiffHash = Some commit.Hash
                 SelectedDiffFiles = Some [ sampleSummary "a.txt" "a.txt" "a.txt"; sampleSummary "b.txt" "b.txt" "b.txt" ]
@@ -2662,7 +2662,7 @@ module AppTests =
             |> Seq.toList
         test <@ linesA = [ 20 .. 30 ] @>
         test <@ rowsB () |> Array.map (fun row -> row.GetType()) = (before |> Array.map (fun row -> row.GetType())) @>
-        test <@ projection.DiffContextLineCount = emptyModel.DiffContextLines @>
+        test <@ projection.DiffContextLineCount = (emptyModel ()).DiffContextLines @>
 
     [<Fact>]
     let ``CommitProjection should surface refs in the row summary`` () =
@@ -2778,7 +2778,7 @@ module AppTests =
     let ``DiffLoaded should ignore stale unified diff results`` () =
         let initial =
             {
-                emptyModel with
+                (emptyModel ()) with
                     Selection = App.CommitSelected "new"
                     SelectedDiffHash = Some "new"
                     SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
@@ -2801,7 +2801,7 @@ module AppTests =
     let ``DiffLoaded should apply the unified diff when the request is current`` () =
         let initial =
             {
-                emptyModel with
+                (emptyModel ()) with
                     Selection = App.CommitSelected "new"
                     SelectedDiffHash = Some "new"
                     SelectedDiffFiles = Some [ sampleSummary "foo.txt" "foo.txt" "foo.txt" ]
@@ -2836,7 +2836,7 @@ module AppTests =
     [<Fact>]
     let ``rendered markdown rejects stale results and applies only the current request`` () =
         let key : GitService.DiffFileKey = { OldPath = "README.md"; NewPath = "README.md" }
-        let pending, _ = appUpdate (App.Msg.SetRenderedMarkdown(key, "", true, false, 20L)) emptyModel
+        let pending, _ = appUpdate (App.Msg.SetRenderedMarkdown(key, "", true, false, 20L)) (emptyModel ())
         let file : Models.FileDiff = { OldPath = key.OldPath; NewPath = key.NewPath; Hunks = []; NewLineCount = None }
         let content : RenderedMarkdownContent = { File = file; DiffRows = []; OldRows = []; NewRows = []; Images = [] }
         let stale, _ = appUpdate (App.Msg.RenderedMarkdownLoaded(key, "", 19L, Ok content)) pending
@@ -2852,7 +2852,7 @@ module AppTests =
         let content : RenderedMarkdownContent = { File = file; DiffRows = []; OldRows = []; NewRows = []; Images = [ blocked ] }
         let payload : GitService.WholeFilePayload = { File = file; Rendered = Some content; ImageBytes = None }
         let initial =
-            { emptyModel with
+            { (emptyModel ()) with
                 RenderedMarkdown = Some { Key = key; Section = ""; RequestId = 1L; Content = Some content }
                 WholeFile = Some { Key = key; Section = ""; RequestId = 2L; Preview = true; Payload = Some payload } }
         let updated, _ = appUpdate (App.Msg.RemoteMarkdownImageLoaded(blocked.Source, Ok [| 1uy; 2uy |])) initial
@@ -2862,7 +2862,7 @@ module AppTests =
     [<Fact>]
     let ``whole file payload rejects completion after dismissal`` () =
         let key : GitService.DiffFileKey = { OldPath = "README.md"; NewPath = "README.md" }
-        let pending, _ = appUpdate (App.Msg.OpenWholeFile(key, "", true, false, 30L)) emptyModel
+        let pending, _ = appUpdate (App.Msg.OpenWholeFile(key, "", true, false, 30L)) (emptyModel ())
         let dismissed, _ = appUpdate (App.Msg.DismissWholeFile 30L) pending
         let file : Models.FileDiff = { OldPath = key.OldPath; NewPath = key.NewPath; Hunks = []; NewLineCount = None }
         let payload : GitService.WholeFilePayload = { File = file; Rendered = None; ImageBytes = None }
@@ -2903,14 +2903,14 @@ module DiffExpansionTests =
         test <@ DiffExpansion.availableDirections (gapOf DiffExpansion.Trailing 1 None) = [ DiffExpansion.Down; DiffExpansion.All ] @>
         test <@ DiffExpansion.availableDirections (gapOf DiffExpansion.Internal 1 (Some 10)) = [ DiffExpansion.All ] @>
 
-    let private configured : Models.FileDiff =
+    let private configured () : Models.FileDiff =
         { OldPath = "f"; NewPath = "f"
           NewLineCount = None
           Hunks =
             [ { Header = "@@ -10,2 +10,2 @@ fn a"; Lines = [ ctx 10; { Type = Models.Removed; Content = "x"; OldLineNo = Some 11; NewLineNo = None }; { Type = Models.Added; Content = "y"; OldLineNo = None; NewLineNo = Some 11 } ] }
               { Header = "@@ -40 +40 @@ fn b"; Lines = [ ctx 40 ] } ] }
 
-    let private full : Models.FileDiff =
+    let private full () : Models.FileDiff =
         let lines =
             [ for n in 1 .. 50 do
                 if n = 11 then
@@ -2918,7 +2918,7 @@ module DiffExpansionTests =
                     yield ({ Type = Models.Added; Content = "y"; OldLineNo = None; NewLineNo = Some 11 } : Models.DiffLine)
                 else
                     yield ctx n ]
-        { configured with Hunks = [ { Header = "@@ -1,50 +1,50 @@"; Lines = lines } ] }
+        { (configured ()) with Hunks = [ { Header = "@@ -1,50 +1,50 @@"; Lines = lines } ] }
 
     let private shape blocks =
         blocks
@@ -2928,32 +2928,32 @@ module DiffExpansionTests =
 
     [<Fact>]
     let ``project without full context should emit leading internal and trailing gaps`` () =
-        test <@ shape (DiffExpansion.project configured None []) = [ "gap:Leading:1:Some 9"; "hunk:3"; "gap:Internal:12:Some 28"; "hunk:1"; "gap:Trailing:41:None" ] @>
+        test <@ shape (DiffExpansion.project (configured ()) None []) = [ "gap:Leading:1:Some 9"; "hunk:3"; "gap:Internal:12:Some 28"; "hunk:1"; "gap:Trailing:41:None" ] @>
 
     [<Fact>]
     let ``project should use the new file line count to bound or omit the trailing gap`` () =
-        test <@ shape (DiffExpansion.project { configured with NewLineCount = Some 50 } None []) |> List.last = "gap:Trailing:41:Some 10" @>
-        test <@ shape (DiffExpansion.project { configured with NewLineCount = Some 40 } None []) |> List.last = "hunk:1" @>
+        test <@ shape (DiffExpansion.project { (configured ()) with NewLineCount = Some 50 } None []) |> List.last = "gap:Trailing:41:Some 10" @>
+        test <@ shape (DiffExpansion.project { (configured ()) with NewLineCount = Some 40 } None []) |> List.last = "hunk:1" @>
 
     [<Fact>]
     let ``project without full context should keep hunks unchanged while revealed ranges wait for context`` () =
-        let blocks = DiffExpansion.project configured None [ { Start = 1; End = 9 } ]
-        test <@ blocks |> List.choose (function DiffExpansion.HunkBlock hunk -> Some hunk | _ -> None) = configured.Hunks @>
+        let blocks = DiffExpansion.project (configured ()) None [ { Start = 1; End = 9 } ]
+        test <@ blocks |> List.choose (function DiffExpansion.HunkBlock hunk -> Some hunk | _ -> None) = (configured ()).Hunks @>
 
     [<Fact>]
     let ``project should omit surrounding gaps for added and deleted files`` () =
-        let added = { configured with OldPath = "/dev/null"; NewLineCount = None; Hunks = [ configured.Hunks.Head ] }
+        let added = { (configured ()) with OldPath = "/dev/null"; NewLineCount = None; Hunks = [ (configured ()).Hunks.Head ] }
         test <@ shape (DiffExpansion.project added None []) = [ "hunk:3" ] @>
 
     [<Fact>]
     let ``project with full context should know trailing counts and reveal ranges`` () =
-        test <@ shape (DiffExpansion.project configured (Some full) []) = [ "gap:Leading:1:Some 9"; "hunk:3"; "gap:Internal:12:Some 28"; "hunk:1"; "gap:Trailing:41:Some 10" ] @>
-        let revealed = DiffExpansion.project configured (Some full) [ { Start = 12; End = 21 }; { Start = 5; End = 9 } ]
+        test <@ shape (DiffExpansion.project (configured ()) (Some (full ())) []) = [ "gap:Leading:1:Some 9"; "hunk:3"; "gap:Internal:12:Some 28"; "hunk:1"; "gap:Trailing:41:Some 10" ] @>
+        let revealed = DiffExpansion.project (configured ()) (Some (full ())) [ { Start = 12; End = 21 }; { Start = 5; End = 9 } ]
         test <@ shape revealed = [ "gap:Leading:1:Some 4"; "hunk:18"; "gap:Internal:22:Some 18"; "hunk:1"; "gap:Trailing:41:Some 10" ] @>
 
     [<Fact>]
     let ``project should merge hunks when a gap is fully revealed and keep header context`` () =
-        let blocks = DiffExpansion.project configured (Some full) [ { Start = 12; End = 39 } ]
+        let blocks = DiffExpansion.project (configured ()) (Some (full ())) [ { Start = 12; End = 39 } ]
         test <@ shape blocks = [ "gap:Leading:1:Some 9"; "hunk:32"; "gap:Trailing:41:Some 10" ] @>
         match blocks.[1] with
         | DiffExpansion.HunkBlock hunk -> test <@ hunk.Header = "@@ -10,31 +10,31 @@ fn a" @>
@@ -2962,10 +2962,10 @@ module DiffExpansionTests =
 module DiffExpansionFlowTests =
 
     let private hash = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
-    let private key : GitService.DiffFileKey = { OldPath = "f"; NewPath = "f" }
-    let private gap : DiffExpansion.DiffGap =
+    let private key () : GitService.DiffFileKey = { OldPath = "f"; NewPath = "f" }
+    let private gap () : DiffExpansion.DiffGap =
         { OldPath = "f"; NewPath = "f"; Kind = DiffExpansion.Internal; OldStart = 12; NewStart = 12; HiddenCount = Some 28 }
-    let private file : Models.FileDiff = { OldPath = "f"; NewPath = "f"; NewLineCount = None; Hunks = [] }
+    let private file () : Models.FileDiff = { OldPath = "f"; NewPath = "f"; NewLineCount = None; Hunks = [] }
 
     let private selectedModel () =
         let model, _ = appInit [||]
@@ -2973,58 +2973,58 @@ module DiffExpansionFlowTests =
             Selection = App.CommitSelected hash
             SelectedDiffHash = Some hash
             SelectedDiffFiles = Some [ { OldPath = "f"; NewPath = "f"; DisplayPath = "f" } ]
-            SelectedDiff = Some [ file ] }
+            SelectedDiff = Some [ (file ()) ] }
 
     [<Fact>]
     let ``ExpandDiffGap should record revealed range and start one file load without touching context preference`` () =
         let model = selectedModel ()
-        let next, cmd = appUpdate (App.Msg.ExpandDiffGap(hash, gap, DiffExpansion.Down, 7L)) model
-        let expansion = next.DiffExpansions.[key]
+        let next, cmd = appUpdate (App.Msg.ExpandDiffGap(hash, (gap ()), DiffExpansion.Down, 7L)) model
+        let expansion = next.DiffExpansions.[(key ())]
         test <@ expansion.Revealed = [ { Start = 12; End = 21 } ] @>
         test <@ expansion.PendingRequestId = Some 7L @>
         test <@ not (List.isEmpty cmd) @>
         test <@ next.DiffContextLines = model.DiffContextLines && next.SelectedDiff = model.SelectedDiff @>
 
-        let again, againCmd = appUpdate (App.Msg.ExpandDiffGap(hash, gap, DiffExpansion.Up, 8L)) next
-        test <@ again.DiffExpansions.[key].Revealed = [ { Start = 12; End = 21 }; { Start = 30; End = 39 } ] @>
-        test <@ again.DiffExpansions.[key].PendingRequestId = Some 7L @>
+        let again, againCmd = appUpdate (App.Msg.ExpandDiffGap(hash, (gap ()), DiffExpansion.Up, 8L)) next
+        test <@ again.DiffExpansions.[(key ())].Revealed = [ { Start = 12; End = 21 }; { Start = 30; End = 39 } ] @>
+        test <@ again.DiffExpansions.[(key ())].PendingRequestId = Some 7L @>
         test <@ List.isEmpty againCmd @>
 
     [<Fact>]
     let ``DiffFileContextLoaded should accept only the current commit file and request`` () =
-        let pending, _ = appUpdate (App.Msg.ExpandDiffGap(hash, gap, DiffExpansion.All, 7L)) (selectedModel ())
-        let stale, _ = appUpdate (App.Msg.DiffFileContextLoaded(hash, key, 6L, Ok file)) pending
-        test <@ stale.DiffExpansions.[key].FullContext = None @>
-        let otherCommit, _ = appUpdate (App.Msg.DiffFileContextLoaded("0000", key, 7L, Ok file)) pending
-        test <@ otherCommit.DiffExpansions.[key].FullContext = None @>
-        let otherFile, _ = appUpdate (App.Msg.DiffFileContextLoaded(hash, { OldPath = "g"; NewPath = "g" }, 7L, Ok file)) pending
+        let pending, _ = appUpdate (App.Msg.ExpandDiffGap(hash, (gap ()), DiffExpansion.All, 7L)) (selectedModel ())
+        let stale, _ = appUpdate (App.Msg.DiffFileContextLoaded(hash, (key ()), 6L, Ok (file ()))) pending
+        test <@ stale.DiffExpansions.[(key ())].FullContext = None @>
+        let otherCommit, _ = appUpdate (App.Msg.DiffFileContextLoaded("0000", (key ()), 7L, Ok (file ()))) pending
+        test <@ otherCommit.DiffExpansions.[(key ())].FullContext = None @>
+        let otherFile, _ = appUpdate (App.Msg.DiffFileContextLoaded(hash, { OldPath = "g"; NewPath = "g" }, 7L, Ok (file ()))) pending
         test <@ otherFile.DiffExpansions = pending.DiffExpansions @>
-        let accepted, _ = appUpdate (App.Msg.DiffFileContextLoaded(hash, key, 7L, Ok file)) pending
-        test <@ accepted.DiffExpansions.[key].FullContext = Some file && accepted.DiffExpansions.[key].PendingRequestId = None @>
+        let accepted, _ = appUpdate (App.Msg.DiffFileContextLoaded(hash, (key ()), 7L, Ok (file ()))) pending
+        test <@ accepted.DiffExpansions.[(key ())].FullContext = Some (file ()) && accepted.DiffExpansions.[(key ())].PendingRequestId = None @>
 
     [<Fact>]
     let ``ExpandDiffGap should ignore stale commits and unknown files`` () =
         let model = selectedModel ()
-        let staleCommit, cmd = appUpdate (App.Msg.ExpandDiffGap("0000", gap, DiffExpansion.Down, 7L)) model
+        let staleCommit, cmd = appUpdate (App.Msg.ExpandDiffGap("0000", (gap ()), DiffExpansion.Down, 7L)) model
         test <@ staleCommit.DiffExpansions.IsEmpty && List.isEmpty cmd @>
-        let unknown, _ = appUpdate (App.Msg.ExpandDiffGap(hash, { gap with OldPath = "g"; NewPath = "g" }, DiffExpansion.Down, 7L)) model
+        let unknown, _ = appUpdate (App.Msg.ExpandDiffGap(hash, { (gap ()) with OldPath = "g"; NewPath = "g" }, DiffExpansion.Down, 7L)) model
         test <@ unknown.DiffExpansions.IsEmpty @>
 
     [<Fact>]
     let ``SelectCommit should discard expansion state`` () =
-        let pending, _ = appUpdate (App.Msg.ExpandDiffGap(hash, gap, DiffExpansion.All, 7L)) (selectedModel ())
+        let pending, _ = appUpdate (App.Msg.ExpandDiffGap(hash, (gap ()), DiffExpansion.All, 7L)) (selectedModel ())
         let next, _ = appUpdate (App.Msg.SelectCommit("1111", 9L)) pending
         test <@ next.DiffExpansions.IsEmpty @>
-        let late, _ = appUpdate (App.Msg.DiffFileContextLoaded(hash, key, 7L, Ok file)) next
+        let late, _ = appUpdate (App.Msg.DiffFileContextLoaded(hash, (key ()), 7L, Ok (file ()))) next
         test <@ late.DiffExpansions.IsEmpty @>
 
 
 module FileHeaderTests =
 
     let private hash = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
-    let private key : GitService.DiffFileKey = { OldPath = "f"; NewPath = "f" }
+    let private key () : GitService.DiffFileKey = { OldPath = "f"; NewPath = "f" }
     let private ctx number : Models.DiffLine = { Type = Models.Context; Content = sprintf "l%d" number; OldLineNo = Some number; NewLineNo = Some number }
-    let private file : Models.FileDiff =
+    let private file () : Models.FileDiff =
         { OldPath = "f"; NewPath = "f"; NewLineCount = Some 40
           Hunks = [ { Header = "@@ -20,2 +20,2 @@"; Lines = [ ctx 20; { Type = Models.Added; Content = "x"; OldLineNo = None; NewLineNo = Some 21 } ] } ] }
 
@@ -3034,7 +3034,7 @@ module FileHeaderTests =
             Selection = App.CommitSelected hash
             SelectedDiffHash = Some hash
             SelectedDiffFiles = Some [ { OldPath = "f"; NewPath = "f"; DisplayPath = "f" } ]
-            SelectedDiff = Some [ file ] }
+            SelectedDiff = Some [ (file ()) ] }
 
     [<Fact>]
     let ``DiffStatBar blocks should scale like GitHub and keep both colours visible`` () =
@@ -3050,12 +3050,12 @@ module FileHeaderTests =
 
     [<Fact>]
     let ``ExpandDiffFile should reveal the whole file and CollapseDiffFileContext should clear it`` () =
-        let expanded, cmd = appUpdate (App.Msg.ExpandDiffFile(hash, key, 5L)) (selectedModel ())
-        test <@ expanded.DiffExpansions.[key].Revealed = [ { Start = 1; End = Int32.MaxValue } ] @>
-        test <@ expanded.DiffExpansions.[key].PendingRequestId = Some 5L && not (List.isEmpty cmd) @>
-        let collapsed, _ = appUpdate (App.Msg.CollapseDiffFileContext(hash, key)) expanded
-        test <@ collapsed.DiffExpansions.[key].Revealed = [] @>
-        let stale, _ = appUpdate (App.Msg.CollapseDiffFileContext("0000", key)) expanded
+        let expanded, cmd = appUpdate (App.Msg.ExpandDiffFile(hash, (key ()), 5L)) (selectedModel ())
+        test <@ expanded.DiffExpansions.[(key ())].Revealed = [ { Start = 1; End = Int32.MaxValue } ] @>
+        test <@ expanded.DiffExpansions.[(key ())].PendingRequestId = Some 5L && not (List.isEmpty cmd) @>
+        let collapsed, _ = appUpdate (App.Msg.CollapseDiffFileContext(hash, (key ()))) expanded
+        test <@ collapsed.DiffExpansions.[(key ())].Revealed = [] @>
+        let stale, _ = appUpdate (App.Msg.CollapseDiffFileContext("0000", (key ()))) expanded
         test <@ stale.DiffExpansions = expanded.DiffExpansions @>
 
     [<Fact>]
@@ -3081,17 +3081,17 @@ module FileHeaderTests =
         let fileProjection = projection.SelectedDiffFiles |> Seq.head
         projection.ToggleDiffFileContextCommand.Execute fileProjection
         match List.ofSeq messages with
-        | [ App.Msg.ExpandDiffFile (h, k, _) ] -> test <@ h = hash && k = key @>
+        | [ App.Msg.ExpandDiffFile (h, k, _) ] -> test <@ h = hash && k = (key ()) @>
         | other -> failwithf "unexpected %A" other
 
 
-        let full : Models.FileDiff = { file with Hunks = [ { Header = "@@ -1,40 +1,41 @@"; Lines = [ for n in 1 .. 40 -> ctx n ] } ] }
+        let full : Models.FileDiff = { (file ()) with Hunks = [ { Header = "@@ -1,40 +1,41 @@"; Lines = [ for n in 1 .. 40 -> ctx n ] } ] }
         let expansion : App.FileExpansion = { FullContext = Some full; Revealed = [ { Start = 1; End = Int32.MaxValue } ]; PendingRequestId = None }
-        projection.Update { model with DiffExpansions = Map.ofList [ key, expansion ] }
+        projection.Update { model with DiffExpansions = Map.ofList [ (key ()), expansion ] }
         messages.Clear()
         test <@ not fileProjection.HasHiddenContext && fileProjection.HasRevealedContext @>
         projection.ToggleDiffFileContextCommand.Execute fileProjection
-        test <@ List.ofSeq messages = [ App.Msg.CollapseDiffFileContext(hash, key) ] @>
+        test <@ List.ofSeq messages = [ App.Msg.CollapseDiffFileContext(hash, (key ())) ] @>
 
 
 
@@ -3466,8 +3466,8 @@ module SearchFieldSuggestionTests =
 
 module SearchDateTests =
 
-    let private now = DateTimeOffset(DateTime(2026, 9, 16, 12, 0, 0, DateTimeKind.Local))
-    let private parse text = GitSearch.tryParseDate now text
+    let private now () = DateTimeOffset(DateTime(2026, 9, 16, 12, 0, 0, DateTimeKind.Local))
+    let private parse text = GitSearch.tryParseDate (now ()) text
     let private local (year, month, day, hour, minute, second) =
         Some(DateTimeOffset(DateTime(year, month, day, hour, minute, second, DateTimeKind.Local)).ToUnixTimeSeconds())
 
@@ -3485,8 +3485,8 @@ module SearchDateTests =
         test <@ parse "2026-13" = None && parse "2026-02-30" = None && parse "2026-09-16T24:00" = None @>
         test <@ parse "last tuesday" = None @>
         // Relative dates still work.
-        test <@ parse "2 weeks ago" = Some(now.AddDays(-14.0).ToUnixTimeSeconds()) @>
-        test <@ parse "yesterday" = Some(now.AddDays(-1.0).ToUnixTimeSeconds()) @>
+        test <@ parse "2 weeks ago" = Some((now ()).AddDays(-14.0).ToUnixTimeSeconds()) @>
+        test <@ parse "yesterday" = Some((now ()).AddDays(-1.0).ToUnixTimeSeconds()) @>
 
 module WorkingTreeStagingTests =
 

@@ -28,4 +28,8 @@
     <ProjectReference Include="..\..\src\GitKay.UI\GitKay.UI.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Axial.Guardrails" Version="0.13.0-local.2" PrivateAssets="all" />
+  </ItemGroup>
+
 </Project>
