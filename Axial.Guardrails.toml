@@ -4,12 +4,16 @@ version = 2
 role = "domain"
 
 # Raw I/O boundaries. FolderSource is the synchronous filesystem boundary for folder comparison and preview;
-# HostCancellation owns the process lifetime token source; SelfTestBridge is the blocking process-entry-point bridge.
+# SelfTestBridge is the blocking process-entry-point bridge.
+# Host is the desktop host boundary: live services, the Elmish runtime's start and stop, launch flags, and the update
+# instrumentation for crash reports.
 [files]
 capabilities = [
   "src/GitKay.Core/FolderSource.fs",
-  "src/GitKay.Core/HostCancellation.fs",
   "src/GitKay.Core/SelfTestBridge.fs",
+]
+host = [
+  "src/GitKay.Core/Host.fs",
 ]
 
 # Exact exceptional files that legitimately perform one-off ambient effects at a host or live-service boundary.

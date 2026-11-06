@@ -68,3 +68,20 @@ module Render =
         let at = pixels frame
         let background = at x0 y
         [ x0 .. x1 - 1 ] |> List.tryFind (fun x -> at x y <> background)
+
+/// <summary>The app's runtime and program as the UI tests start them.</summary>
+module AppHost =
+
+    /// A runtime on the app's layer that delivers results on the thread that completes them; the glue host still
+    /// dispatches on the UI thread.
+    let runtime (repoPath: string) = GitKay.Core.Host.startDetachedRuntime GitKay.Core.Host.liveServices repoPath
+
+    /// App.init for the repository the test process runs in.
+    let init (startupArgs: string array) =
+        let repoPath = GitKay.Core.GitService.tryDiscoverRepositoryPath ()
+        GitKay.Core.App.init (runtime repoPath) (GitKay.Core.App.flags repoPath startupArgs)
+
+    /// The instrumented main program for the repository the test process runs in, as the desktop host starts it.
+    let program (startupArgs: string array) =
+        let repoPath = GitKay.Core.GitService.tryDiscoverRepositoryPath ()
+        GitKay.Core.Host.mainProgram (runtime repoPath) (GitKay.Core.Host.flags repoPath startupArgs (TimeSpan.FromSeconds 0.5))

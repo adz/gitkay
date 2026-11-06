@@ -24,6 +24,9 @@ public partial class MainProjection {
     /// <summary>The repository's git directory, as discovered at startup.</summary>
     public string? RepositoryPath { get; set; }
 
+    /// <summary>The app's runtime, which the commit window opened from here shares. The host owns and stops it.</summary>
+    public Axial.ElmishFlows.ElmishRuntime<GitKay.Core.GitService.GitEnv>? Runtime { get; set; }
+
     /// <summary>The repository's working tree root; null for a bare repository.</summary>
     public string? WorkingDirectory => _workingDirectory ??= RepositoryPath == null ? null : GitKay.Core.GitService.workingDirectory(RepositoryPath);
     private string? _workingDirectory;

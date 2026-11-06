@@ -40,7 +40,7 @@ module GitServiceTests =
         test <@ defaultDescription.Contains("Git default") && defaultDescription.Contains("divergent branches") @>
 
     let private runFlow root flow =
-        Flow.run (GitService.environment root) flow
+        Flow.run (gitEnvironment root) flow
         |> Exit.toResult
 
     let private sampleFile oldPath newPath lines : Models.FileDiff =
@@ -424,7 +424,7 @@ summary Another line
     let ``GitCache should retain diff file lists between calls`` () =
         withTempRepository (fun root repo ->
             let commit = commitFile repo root "foo.txt" "one\n" "first commit"
-            let env = GitService.environment root
+            let env = gitEnvironment root
             let first = Flow.run env (GitService.fetchDiffFileList commit.Sha) |> Exit.toResult
             File.WriteAllText(Path.Combine(root, ".git", "objects", "sentinel"), "")
             let second = Flow.run env (GitService.fetchDiffFileList commit.Sha) |> Exit.toResult
@@ -439,7 +439,7 @@ summary Another line
     let ``concurrent diff file list loads for one commit share the single-flight result`` () =
         withTempRepository (fun root repo ->
             let commit = commitFile repo root "foo.txt" "one\n" "first commit"
-            let env = GitService.environment root
+            let env = gitEnvironment root
 
             let loads =
                 [ for _ in 1 .. 16 ->
@@ -460,7 +460,7 @@ summary Another line
         withTempRepository (fun root repo ->
             let _ = commitFile repo root "foo.txt" "line1\nline2\nline3\n" "base commit"
             let changed = commitFile repo root "foo.txt" "line1\nline2 changed\nline3\n" "change a line"
-            let env = GitService.environment root
+            let env = gitEnvironment root
 
             let loads =
                 [ for _ in 1 .. 16 ->
@@ -785,13 +785,13 @@ summary Another line
 
     [<Fact>]
     let ``partial search results should show while the search runs and only for the current search`` () =
-        let model0, _ = App.init [||]
+        let model0, _ = appInit [||]
         let running = { model0 with SearchQuery = "needle"; SearchStartedAtTicks = Some 42L }
         let result : GitSearch.Result =
             { Commit = (searchCommits ()).Head; MatchKinds = [ GitSearch.TextMatch ]; MatchSummary = "text"; MatchedPaths = []; MatchedRefs = [] }
-        let partial, _ = App.update (App.Msg.SearchPartialResults(42L, [ result ])) running
+        let partial, _ = appUpdate (App.Msg.SearchProgressed(42L, { Checked = 10; Total = 100; Matches = Some [ result ] })) running
         test <@ partial.SearchResults = Some [ result ] && partial.SearchStartedAtTicks = Some 42L @>
-        let stale, _ = App.update (App.Msg.SearchPartialResults(7L, [ result ])) running
+        let stale, _ = appUpdate (App.Msg.SearchProgressed(7L, { Checked = 10; Total = 100; Matches = Some [ result ] })) running
         test <@ stale.SearchResults = None @>
 
     [<Fact>]
@@ -817,13 +817,13 @@ summary Another line
 
     [<Fact>]
     let ``cancelling a running search should stop it and keep the query`` () =
-        let model0, _ = App.init [||]
+        let model0, _ = appInit [||]
         let running = { model0 with SearchQuery = "Path"; SearchStartedAtTicks = Some 42L; SearchProgress = Some(10, 100) }
-        let progressed, _ = App.update (App.Msg.SearchProgressed(42L, 50, 100)) running
+        let progressed, _ = appUpdate (App.Msg.SearchProgressed(42L, { Checked = 50; Total = 100; Matches = None })) running
         test <@ progressed.SearchProgress = Some(50, 100) @>
-        let stale, _ = App.update (App.Msg.SearchProgressed(7L, 99, 100)) running
+        let stale, _ = appUpdate (App.Msg.SearchProgressed(7L, { Checked = 99; Total = 100; Matches = None })) running
         test <@ stale.SearchProgress = Some(10, 100) @>
-        let cancelled, _ = App.update App.Msg.CancelSearch progressed
+        let cancelled, _ = appUpdate App.Msg.CancelSearch progressed
         test <@ cancelled.SearchStartedAtTicks = None && cancelled.SearchProgress = None && cancelled.SearchQuery = "Path" @>
         test <@ cancelled.Status = "Search cancelled: Path" @>
 
@@ -1212,7 +1212,7 @@ summary Another line
         withTempRepository (fun root repo ->
             commitFile repo root "seed.txt" "seed\n" "seed" |> ignore
             writeFile root "README.md" "# Untracked\n\nPreview me.\n"
-            let rendered = GitService.loadWorkingTreeRenderedMarkdown root WorkingTree.Untracked "/dev/null" "README.md" false
+            let rendered = GitService.loadWorkingTreeRenderedMarkdown (gitEnvironment root) WorkingTree.Untracked "/dev/null" "README.md" false
             match rendered with
             | Error error -> failwith (GitError.describe error)
             | Ok content ->
@@ -1510,7 +1510,8 @@ module AppTests =
         {
             StartupSelection = App.NoStartupSelection
             StartupShowOnlyMatches = false
-            GitEnv = GitService.environment ""
+            RepoPath = ""
+            WorkingDirectory = None
             Status = ""
             StartupTargets = []
             ShowBranchRefs = false
@@ -1545,12 +1546,17 @@ module AppTests =
             LastDiscard = None
             LastStagedPatches = []
             StageUndoPending = false
+            SearchDebounce = System.TimeSpan.FromSeconds 0.5
+            SearchGeneration = 0L
+            LastRequestId = 0L
+            WatchFailures = 0
+            WatchRestarts = 0
         }
 
     [<Fact>]
     let ``init should store parsed startup options`` () =
         let model, _ =
-            App.init
+            appInit
                 [|
                     "--branch"
                     "topic"
@@ -1576,7 +1582,7 @@ module AppTests =
 
     [<Fact>]
     let ``init should store an initial selected commit hash`` () =
-        let model, _ = App.init [| "--select=deadbeef" |]
+        let model, _ = appInit [| "--select=deadbeef" |]
 
         test <@ model.SelectedCommitHash = Some "deadbeef" @>
 
@@ -1588,7 +1594,7 @@ module AppTests =
                 sampleCommit "second" "Second"
             ]
 
-        let next, _ = App.update (App.Msg.HistoryLoaded (true, Ok commits)) emptyModel
+        let next, _ = appUpdate (App.Msg.HistoryLoaded (true, Ok commits)) emptyModel
 
         test <@ next.Status = "Loaded 2 commits" @>
         test <@ next.Commits.Length = 2 @>
@@ -1609,7 +1615,7 @@ module AppTests =
             ]
 
         let next, _ =
-            App.update
+            appUpdate
                 (App.Msg.HistoryLoaded (true, Ok commits))
                 {
                     emptyModel with
@@ -1623,7 +1629,7 @@ module AppTests =
 
     [<Fact>]
     let ``SetShowStashes should update the view state`` () =
-        let next, _ = App.update (App.Msg.SetShowStashes true) emptyModel
+        let next, _ = appUpdate (App.Msg.SetShowStashes true) emptyModel
 
         test <@ next.ShowStashes @>
         test <@ next.Status = "Refreshing..." @>
@@ -1654,7 +1660,7 @@ module AppTests =
                     SelectedDiffStartedAtTicks = Some 2L
             }
 
-        let next, _ = App.update (App.Msg.SetDiffContextLines 10) initial
+        let next, _ = appUpdate (App.Msg.SetDiffContextLines 10) initial
 
         test <@ next.DiffContextLines = 10 @>
         test <@ next.SelectedDiffHash = Some "commit" @>
@@ -1665,7 +1671,7 @@ module AppTests =
 
     [<Fact>]
     let ``SetDiffLayout should update the view state`` () =
-        let next, _ = App.update (App.Msg.SetDiffLayout DiffLayout.SideBySide) emptyModel
+        let next, _ = appUpdate (App.Msg.SetDiffLayout DiffLayout.SideBySide) emptyModel
 
         test <@ next.DiffLayout = DiffLayout.SideBySide @>
 
@@ -1700,7 +1706,7 @@ module AppTests =
                     SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" }
             }
 
-        let next, _ = App.update (App.Msg.HistoryLoaded (true, Ok commits)) initial
+        let next, _ = appUpdate (App.Msg.HistoryLoaded (true, Ok commits)) initial
 
         test <@ next.SelectedCommitHash = Some "second" @>
         test <@ next.SelectedDiffHash = Some "second" @>
@@ -1743,7 +1749,7 @@ module AppTests =
                     SelectedDiffStartedAtTicks = Some 2L
             }
 
-        let next, _ = App.update (App.Msg.HistoryLoaded (true, Ok commits)) initial
+        let next, _ = appUpdate (App.Msg.HistoryLoaded (true, Ok commits)) initial
 
         test <@ next.Status = "Loaded 2 commits" @>
         test <@ next.SelectedCommitHash = Some "first" @>
@@ -1781,7 +1787,7 @@ module AppTests =
                     SelectedDiffStartedAtTicks = Some 2L
             }
 
-        let next, _ = App.update (App.Msg.SelectCommit("new", 42L)) initial
+        let next, _ = appUpdate (App.Msg.SelectCommit("new", 42L)) initial
 
         test <@ next.SelectedCommitHash = Some "new" @>
         test <@ next.SelectedDiffHash = None @>
@@ -1797,58 +1803,58 @@ module AppTests =
     [<Fact>]
     let ``SelectWorkingTree clears the commit selection and has no commit hash`` () =
         let initial = { emptyModel with Selection = App.CommitSelected "old"; SelectedDiffHash = Some "old"; SelectedDiff = Some [] }
-        let next, _ = App.update (App.Msg.SelectWorkingTree 5L) initial
+        let next, _ = appUpdate (App.Msg.SelectWorkingTree 5L) initial
         test <@ next.Selection = App.WorkingTreeSelected && next.SelectedCommitHash = None @>
         test <@ next.SelectedDiffHash = None && next.SelectedDiff = None && next.WorkingTreeStartedAtTicks = Some 5L @>
 
     [<Fact>]
     let ``WorkingTreeChangesLoaded applies only the current load`` () =
-        let selected, _ = App.update (App.Msg.SelectWorkingTree 5L) emptyModel
+        let selected, _ = appUpdate (App.Msg.SelectWorkingTree 5L) emptyModel
         let changes : GitService.WorkingTreeChanges = { Entries = [ workingEntry "a.txt" ]; Staged = []; Unstaged = []; Untracked = [] }
-        let stale, _ = App.update (App.Msg.WorkingTreeChangesLoaded(4L, Ok changes)) selected
+        let stale, _ = appUpdate (App.Msg.WorkingTreeChangesLoaded(4L, Ok changes)) selected
         test <@ stale.WorkingTreeChanges = None @>
-        let current, _ = App.update (App.Msg.WorkingTreeChangesLoaded(5L, Ok changes)) selected
+        let current, _ = appUpdate (App.Msg.WorkingTreeChangesLoaded(5L, Ok changes)) selected
         test <@ current.WorkingTreeChanges = Some changes && current.WorkingTree = changes.Entries && current.WorkingTreeStartedAtTicks = None @>
 
     [<Fact>]
     let ``WorkingTreeStatusLoaded reloads changes only when selected and changed`` () =
         let entries = [ workingEntry "a.txt" ]
-        let unselected, _ = App.update (App.Msg.WorkingTreeStatusLoaded(Ok entries)) emptyModel
+        let unselected, _ = appUpdate (App.Msg.WorkingTreeStatusLoaded(Ok entries)) emptyModel
         test <@ unselected.WorkingTree = entries && unselected.WorkingTreeStartedAtTicks = None @>
         let selected = { unselected with Selection = App.WorkingTreeSelected }
-        let same, _ = App.update (App.Msg.WorkingTreeStatusLoaded(Ok entries)) selected
+        let same, _ = appUpdate (App.Msg.WorkingTreeStatusLoaded(Ok entries)) selected
         test <@ same.WorkingTreeStartedAtTicks = None @>
-        let changed, _ = App.update (App.Msg.WorkingTreeStatusLoaded(Ok [ workingEntry "b.txt" ])) selected
+        let changed, _ = appUpdate (App.Msg.WorkingTreeStatusLoaded(Ok [ workingEntry "b.txt" ])) selected
         test <@ changed.WorkingTreeStartedAtTicks.IsSome @>
 
     [<Fact>]
     let ``staging from the history reports what happened, and a discard can be undone`` () =
         let backup : Trash.Backup =
             { Directory = "/tmp/backup"; Entries = []; Description = "1 file"; CreatedAt = DateTimeOffset.UnixEpoch }
-        let staged, _ = App.update (App.Msg.WorkingTreeOperationDone("Staged 2 files", Ok None)) emptyModel
+        let staged, _ = appUpdate (App.Msg.WorkingTreeOperationDone("Staged 2 files", Ok None)) emptyModel
         test <@ staged.Status = "Staged 2 files" && staged.LastDiscard = None @>
 
-        let discarded, _ = App.update (App.Msg.WorkingTreeOperationDone("Discarded 1 file", Ok(Some backup))) emptyModel
+        let discarded, _ = appUpdate (App.Msg.WorkingTreeOperationDone("Discarded 1 file", Ok(Some backup))) emptyModel
         test <@ discarded.Status = "Discarded 1 file · Ctrl+Z to undo" && discarded.LastDiscard = Some backup @>
 
-        let undone, _ = App.update App.Msg.UndoWorkingTreeDiscard discarded
+        let undone, _ = appUpdate App.Msg.UndoWorkingTreeDiscard discarded
         test <@ undone.LastDiscard = None @>
-        let nothing, _ = App.update App.Msg.UndoWorkingTreeDiscard undone
+        let nothing, _ = appUpdate App.Msg.UndoWorkingTreeDiscard undone
         test <@ nothing.Status = "Nothing to undo" @>
 
-        let failed, _ = App.update (App.Msg.WorkingTreeOperationDone("Staging", Error(GitError.OperationFailed("add", "locked")))) emptyModel
+        let failed, _ = appUpdate (App.Msg.WorkingTreeOperationDone("Staging", Error(GitError.OperationFailed("add", "locked")))) emptyModel
         test <@ failed.Status.StartsWith "Staging failed" @>
 
     [<Fact>]
     let ``two staged patches can be undone in reverse order in the main diff`` () =
-        let once, _ = App.update (App.Msg.WorkingTreeLinesStaged("a.txt", "first")) emptyModel
-        let refreshed, _ = App.update App.Msg.RereadRefs once
-        let twice, _ = App.update (App.Msg.WorkingTreeLinesStaged("b.txt", "second")) refreshed
+        let once, _ = appUpdate (App.Msg.WorkingTreeLinesStaged("a.txt", "first")) emptyModel
+        let refreshed, _ = appUpdate App.Msg.RereadRefs once
+        let twice, _ = appUpdate (App.Msg.WorkingTreeLinesStaged("b.txt", "second")) refreshed
         test <@ twice.LastStagedPatches = [ "b.txt", "second"; "a.txt", "first" ] @>
-        let undoing, _ = App.update App.Msg.UndoLastWorkingTreeStage twice
-        let repeated, _ = App.update App.Msg.UndoLastWorkingTreeStage undoing
+        let undoing, _ = appUpdate App.Msg.UndoLastWorkingTreeStage twice
+        let repeated, _ = appUpdate App.Msg.UndoLastWorkingTreeStage undoing
         test <@ undoing.StageUndoPending && repeated.StageUndoPending && repeated.LastStagedPatches = undoing.LastStagedPatches @>
-        let undone, _ = App.update App.Msg.LastWorkingTreeStageUndone repeated
+        let undone, _ = appUpdate App.Msg.LastWorkingTreeStageUndone repeated
         test <@ undone.LastStagedPatches = [ "a.txt", "first" ] @>
         test <@ not undone.StageUndoPending @>
 
@@ -1856,14 +1862,14 @@ module AppTests =
     let ``a clean working tree moves the selection off the uncommitted changes row`` () =
         let a = sampleCommit "a" "subject"
         let selected = { emptyModel with Commits = Graph.calculateLanes [ a ]; Selection = App.WorkingTreeSelected; WorkingTree = [ workingEntry "a.txt" ] }
-        let next, _ = App.update (App.Msg.WorkingTreeStatusLoaded(Ok [])) selected
+        let next, _ = appUpdate (App.Msg.WorkingTreeStatusLoaded(Ok [])) selected
         test <@ next.Selection = App.NoSelection && next.WorkingTree.IsEmpty && next.WorkingTreeChanges.IsNone @>
 
     [<Fact>]
     let ``history reload keeps the working tree row selected`` () =
         let a = sampleCommit "a" "subject"
         let selected = { emptyModel with Selection = App.WorkingTreeSelected }
-        let next, _ = App.update (App.Msg.HistoryLoaded(false, Ok [ a ])) selected
+        let next, _ = appUpdate (App.Msg.HistoryLoaded(false, Ok [ a ])) selected
         test <@ next.Selection = App.WorkingTreeSelected @>
 
     [<Fact>]
@@ -1882,7 +1888,7 @@ module AppTests =
                     SelectedDiffStartedAtTicks = Some 7L
             }
 
-        let next, _ = App.update (App.Msg.DiffFilesLoaded("commit", 7L, Ok files)) initial
+        let next, _ = appUpdate (App.Msg.DiffFilesLoaded("commit", 7L, Ok files)) initial
 
         test <@ next.SelectedCommitHash = Some "commit" @>
         test <@ next.SelectedDiffHash = Some "commit" @>
@@ -1894,15 +1900,15 @@ module AppTests =
 
     [<Fact>]
     let ``DiffFilesLoaded should ignore stale file list results from an earlier selection`` () =
-        let firstSelection, _ = App.update (App.Msg.SelectCommit("old", 1L)) emptyModel
-        let currentSelection, _ = App.update (App.Msg.SelectCommit("new", 2L)) firstSelection
+        let firstSelection, _ = appUpdate (App.Msg.SelectCommit("old", 1L)) emptyModel
+        let currentSelection, _ = appUpdate (App.Msg.SelectCommit("new", 2L)) firstSelection
 
         let staleFiles =
             [
                 sampleSummary "foo.txt" "foo.txt" "foo.txt"
             ]
 
-        let next, _ = App.update (App.Msg.DiffFilesLoaded("old", 1L, Ok staleFiles)) currentSelection
+        let next, _ = appUpdate (App.Msg.DiffFilesLoaded("old", 1L, Ok staleFiles)) currentSelection
 
         test <@ next.SelectedCommitHash = Some "new" @>
         test <@ next.SelectedDiffHash = None @>
@@ -1956,7 +1962,7 @@ module AppTests =
                     ]
             ]
 
-        let next, _ = App.update (App.Msg.DiffLoaded("commit", 42L, Ok diff)) initial
+        let next, _ = appUpdate (App.Msg.DiffLoaded("commit", 42L, Ok diff)) initial
 
         test <@ next.SelectedDiffHash = Some "commit" @>
         test <@ next.SelectedDiff = Some diff @>
@@ -1980,7 +1986,7 @@ module AppTests =
                     SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" }
             }
 
-        let next, _ = App.update (App.Msg.SelectDiffFile("commit", "/dev/null", "bar.txt")) initial
+        let next, _ = appUpdate (App.Msg.SelectDiffFile("commit", "/dev/null", "bar.txt")) initial
 
         test <@ next.SelectedDiffFileKey = Some { OldPath = "/dev/null"; NewPath = "bar.txt" } @>
         test <@ next.SelectedDiff = initial.SelectedDiff @>
@@ -1997,7 +2003,7 @@ module AppTests =
                     SearchStartedAtTicks = Some 1L
             }
 
-        let next, _ = App.update (App.Msg.RunSearch("needle", "ref", 42L)) initial
+        let next, _ = appUpdate (App.Msg.RunSearch("needle", "ref", 42L)) initial
 
         test <@ next.SearchQuery = "needle" @>
         test <@ next.SearchScopeKey = "ref" @>
@@ -2019,7 +2025,7 @@ module AppTests =
             }
 
         let next, _ =
-            App.update
+            appUpdate
                 (App.Msg.SearchResultsLoaded("needle", "all", 42L, Ok [ sampleSearchResult commit [ GitSearch.MessageMatch; GitSearch.PathMatch ] "message; paths: src/needle.txt" ]))
                 initial
 
@@ -2326,7 +2332,8 @@ module AppTests =
         test <@ projection.CommitRowMetaFontSize = 9.5 @>
         test <@ projection.CommitRowBadgeFontSize = 8.5 @>
         test <@ projection.SearchDebounceSeconds = 1.25 @>
-        test <@ messages.IsEmpty @>
+        // The debounce window is the program's: the new one is the only message applying settings sends.
+        test <@ List.ofSeq messages = [ App.Msg.SetSearchDebounce(TimeSpan.FromSeconds 1.25) ] @>
 
         let captured = projection.CaptureSettings()
 
@@ -2781,7 +2788,7 @@ module AppTests =
 
         let loadedDiff = [ sampleFile "foo.txt" "foo.txt" [] ]
 
-        let next, _ = App.update (App.Msg.DiffLoaded("old", 1L, Ok loadedDiff)) initial
+        let next, _ = appUpdate (App.Msg.DiffLoaded("old", 1L, Ok loadedDiff)) initial
 
         test <@ next.SelectedCommitHash = Some "new" @>
         test <@ next.SelectedDiffHash = Some "new" @>
@@ -2817,7 +2824,7 @@ module AppTests =
                     ]
             ]
 
-        let current, _ = App.update (App.Msg.DiffLoaded("new", 42L, Ok loadedDiff)) initial
+        let current, _ = appUpdate (App.Msg.DiffLoaded("new", 42L, Ok loadedDiff)) initial
 
         test <@ current.SelectedCommitHash = Some "new" @>
         test <@ current.SelectedDiffHash = Some "new" @>
@@ -2829,11 +2836,11 @@ module AppTests =
     [<Fact>]
     let ``rendered markdown rejects stale results and applies only the current request`` () =
         let key : GitService.DiffFileKey = { OldPath = "README.md"; NewPath = "README.md" }
-        let pending, _ = App.update (App.Msg.SetRenderedMarkdown(key, "", true, false, 20L)) emptyModel
+        let pending, _ = appUpdate (App.Msg.SetRenderedMarkdown(key, "", true, false, 20L)) emptyModel
         let file : Models.FileDiff = { OldPath = key.OldPath; NewPath = key.NewPath; Hunks = []; NewLineCount = None }
         let content : RenderedMarkdownContent = { File = file; DiffRows = []; OldRows = []; NewRows = []; Images = [] }
-        let stale, _ = App.update (App.Msg.RenderedMarkdownLoaded(key, "", 19L, Ok content)) pending
-        let current, _ = App.update (App.Msg.RenderedMarkdownLoaded(key, "", 20L, Ok content)) stale
+        let stale, _ = appUpdate (App.Msg.RenderedMarkdownLoaded(key, "", 19L, Ok content)) pending
+        let current, _ = appUpdate (App.Msg.RenderedMarkdownLoaded(key, "", 20L, Ok content)) stale
         test <@ stale.RenderedMarkdown.Value.Content = None @>
         test <@ current.RenderedMarkdown.Value.Content = Some content @>
 
@@ -2848,18 +2855,18 @@ module AppTests =
             { emptyModel with
                 RenderedMarkdown = Some { Key = key; Section = ""; RequestId = 1L; Content = Some content }
                 WholeFile = Some { Key = key; Section = ""; RequestId = 2L; Preview = true; Payload = Some payload } }
-        let updated, _ = App.update (App.Msg.RemoteMarkdownImageLoaded(blocked.Source, Ok [| 1uy; 2uy |])) initial
+        let updated, _ = appUpdate (App.Msg.RemoteMarkdownImageLoaded(blocked.Source, Ok [| 1uy; 2uy |])) initial
         test <@ updated.RenderedMarkdown.Value.Content.Value.Images.Head.Bytes = Some [| 1uy; 2uy |] @>
         test <@ updated.WholeFile.Value.Payload.Value.Rendered.Value.Images.Head.Error = None @>
 
     [<Fact>]
     let ``whole file payload rejects completion after dismissal`` () =
         let key : GitService.DiffFileKey = { OldPath = "README.md"; NewPath = "README.md" }
-        let pending, _ = App.update (App.Msg.OpenWholeFile(key, "", true, false, 30L)) emptyModel
-        let dismissed, _ = App.update (App.Msg.DismissWholeFile 30L) pending
+        let pending, _ = appUpdate (App.Msg.OpenWholeFile(key, "", true, false, 30L)) emptyModel
+        let dismissed, _ = appUpdate (App.Msg.DismissWholeFile 30L) pending
         let file : Models.FileDiff = { OldPath = key.OldPath; NewPath = key.NewPath; Hunks = []; NewLineCount = None }
         let payload : GitService.WholeFilePayload = { File = file; Rendered = None; ImageBytes = None }
-        let stale, _ = App.update (App.Msg.WholeFileLoaded(key, "", 30L, Ok payload)) dismissed
+        let stale, _ = appUpdate (App.Msg.WholeFileLoaded(key, "", 30L, Ok payload)) dismissed
         test <@ stale.WholeFile = None @>
 
 
@@ -2961,7 +2968,7 @@ module DiffExpansionFlowTests =
     let private file : Models.FileDiff = { OldPath = "f"; NewPath = "f"; NewLineCount = None; Hunks = [] }
 
     let private selectedModel () =
-        let model, _ = App.init [||]
+        let model, _ = appInit [||]
         { model with
             Selection = App.CommitSelected hash
             SelectedDiffHash = Some hash
@@ -2971,44 +2978,44 @@ module DiffExpansionFlowTests =
     [<Fact>]
     let ``ExpandDiffGap should record revealed range and start one file load without touching context preference`` () =
         let model = selectedModel ()
-        let next, cmd = App.update (App.Msg.ExpandDiffGap(hash, gap, DiffExpansion.Down, 7L)) model
+        let next, cmd = appUpdate (App.Msg.ExpandDiffGap(hash, gap, DiffExpansion.Down, 7L)) model
         let expansion = next.DiffExpansions.[key]
         test <@ expansion.Revealed = [ { Start = 12; End = 21 } ] @>
         test <@ expansion.PendingRequestId = Some 7L @>
         test <@ not (List.isEmpty cmd) @>
         test <@ next.DiffContextLines = model.DiffContextLines && next.SelectedDiff = model.SelectedDiff @>
 
-        let again, againCmd = App.update (App.Msg.ExpandDiffGap(hash, gap, DiffExpansion.Up, 8L)) next
+        let again, againCmd = appUpdate (App.Msg.ExpandDiffGap(hash, gap, DiffExpansion.Up, 8L)) next
         test <@ again.DiffExpansions.[key].Revealed = [ { Start = 12; End = 21 }; { Start = 30; End = 39 } ] @>
         test <@ again.DiffExpansions.[key].PendingRequestId = Some 7L @>
         test <@ List.isEmpty againCmd @>
 
     [<Fact>]
     let ``DiffFileContextLoaded should accept only the current commit file and request`` () =
-        let pending, _ = App.update (App.Msg.ExpandDiffGap(hash, gap, DiffExpansion.All, 7L)) (selectedModel ())
-        let stale, _ = App.update (App.Msg.DiffFileContextLoaded(hash, key, 6L, Ok file)) pending
+        let pending, _ = appUpdate (App.Msg.ExpandDiffGap(hash, gap, DiffExpansion.All, 7L)) (selectedModel ())
+        let stale, _ = appUpdate (App.Msg.DiffFileContextLoaded(hash, key, 6L, Ok file)) pending
         test <@ stale.DiffExpansions.[key].FullContext = None @>
-        let otherCommit, _ = App.update (App.Msg.DiffFileContextLoaded("0000", key, 7L, Ok file)) pending
+        let otherCommit, _ = appUpdate (App.Msg.DiffFileContextLoaded("0000", key, 7L, Ok file)) pending
         test <@ otherCommit.DiffExpansions.[key].FullContext = None @>
-        let otherFile, _ = App.update (App.Msg.DiffFileContextLoaded(hash, { OldPath = "g"; NewPath = "g" }, 7L, Ok file)) pending
+        let otherFile, _ = appUpdate (App.Msg.DiffFileContextLoaded(hash, { OldPath = "g"; NewPath = "g" }, 7L, Ok file)) pending
         test <@ otherFile.DiffExpansions = pending.DiffExpansions @>
-        let accepted, _ = App.update (App.Msg.DiffFileContextLoaded(hash, key, 7L, Ok file)) pending
+        let accepted, _ = appUpdate (App.Msg.DiffFileContextLoaded(hash, key, 7L, Ok file)) pending
         test <@ accepted.DiffExpansions.[key].FullContext = Some file && accepted.DiffExpansions.[key].PendingRequestId = None @>
 
     [<Fact>]
     let ``ExpandDiffGap should ignore stale commits and unknown files`` () =
         let model = selectedModel ()
-        let staleCommit, cmd = App.update (App.Msg.ExpandDiffGap("0000", gap, DiffExpansion.Down, 7L)) model
+        let staleCommit, cmd = appUpdate (App.Msg.ExpandDiffGap("0000", gap, DiffExpansion.Down, 7L)) model
         test <@ staleCommit.DiffExpansions.IsEmpty && List.isEmpty cmd @>
-        let unknown, _ = App.update (App.Msg.ExpandDiffGap(hash, { gap with OldPath = "g"; NewPath = "g" }, DiffExpansion.Down, 7L)) model
+        let unknown, _ = appUpdate (App.Msg.ExpandDiffGap(hash, { gap with OldPath = "g"; NewPath = "g" }, DiffExpansion.Down, 7L)) model
         test <@ unknown.DiffExpansions.IsEmpty @>
 
     [<Fact>]
     let ``SelectCommit should discard expansion state`` () =
-        let pending, _ = App.update (App.Msg.ExpandDiffGap(hash, gap, DiffExpansion.All, 7L)) (selectedModel ())
-        let next, _ = App.update (App.Msg.SelectCommit("1111", 9L)) pending
+        let pending, _ = appUpdate (App.Msg.ExpandDiffGap(hash, gap, DiffExpansion.All, 7L)) (selectedModel ())
+        let next, _ = appUpdate (App.Msg.SelectCommit("1111", 9L)) pending
         test <@ next.DiffExpansions.IsEmpty @>
-        let late, _ = App.update (App.Msg.DiffFileContextLoaded(hash, key, 7L, Ok file)) next
+        let late, _ = appUpdate (App.Msg.DiffFileContextLoaded(hash, key, 7L, Ok file)) next
         test <@ late.DiffExpansions.IsEmpty @>
 
 
@@ -3022,7 +3029,7 @@ module FileHeaderTests =
           Hunks = [ { Header = "@@ -20,2 +20,2 @@"; Lines = [ ctx 20; { Type = Models.Added; Content = "x"; OldLineNo = None; NewLineNo = Some 21 } ] } ] }
 
     let private selectedModel () =
-        let model, _ = App.init [||]
+        let model, _ = appInit [||]
         { model with
             Selection = App.CommitSelected hash
             SelectedDiffHash = Some hash
@@ -3043,12 +3050,12 @@ module FileHeaderTests =
 
     [<Fact>]
     let ``ExpandDiffFile should reveal the whole file and CollapseDiffFileContext should clear it`` () =
-        let expanded, cmd = App.update (App.Msg.ExpandDiffFile(hash, key, 5L)) (selectedModel ())
+        let expanded, cmd = appUpdate (App.Msg.ExpandDiffFile(hash, key, 5L)) (selectedModel ())
         test <@ expanded.DiffExpansions.[key].Revealed = [ { Start = 1; End = Int32.MaxValue } ] @>
         test <@ expanded.DiffExpansions.[key].PendingRequestId = Some 5L && not (List.isEmpty cmd) @>
-        let collapsed, _ = App.update (App.Msg.CollapseDiffFileContext(hash, key)) expanded
+        let collapsed, _ = appUpdate (App.Msg.CollapseDiffFileContext(hash, key)) expanded
         test <@ collapsed.DiffExpansions.[key].Revealed = [] @>
-        let stale, _ = App.update (App.Msg.CollapseDiffFileContext("0000", key)) expanded
+        let stale, _ = appUpdate (App.Msg.CollapseDiffFileContext("0000", key)) expanded
         test <@ stale.DiffExpansions = expanded.DiffExpansions @>
 
     [<Fact>]
@@ -3120,7 +3127,7 @@ module DiffFileTreeTests =
             [ { OldPath = "z/last.fs"; NewPath = "z/last.fs"; DisplayPath = "z/last.fs" }
               { OldPath = "a/second.fs"; NewPath = "a/second.fs"; DisplayPath = "a/second.fs" }
               { OldPath = "a/first.fs"; NewPath = "a/first.fs"; DisplayPath = "a/first.fs" } ]
-        let model, _ = App.init [||]
+        let model, _ = appInit [||]
         projection.Update { model with Selection = App.CommitSelected "abc"; SelectedDiffHash = Some "abc"; SelectedDiffFiles = Some summaries }
         let headerPaths () =
             projection.SelectedDiffRows
@@ -3194,7 +3201,7 @@ module DiffFileTreeTests =
         let summaries : GitService.DiffFileSummary list =
             [ { OldPath = "a/x.fs"; NewPath = "a/x.fs"; DisplayPath = "a/x.fs" }
               { OldPath = "a/y.fs"; NewPath = "a/y.fs"; DisplayPath = "a/y.fs" } ]
-        let model, _ = App.init [||]
+        let model, _ = appInit [||]
         projection.Update { model with Selection = App.CommitSelected "abc"; SelectedDiffHash = Some "abc"; SelectedDiffFiles = Some summaries }
         projection.SetDiffFileListModeCommand.Execute "tree"
         test <@ projection.DiffFileListRows.Count = 3 @>
@@ -3269,7 +3276,7 @@ module SearchProjectionTests =
         let third = commitOf "3333333333333333333333333333333333333333" "needle three"
         let projection = MainProjection()
         let messages = ResizeArray<App.Msg>()
-        let model0, _ = App.init [||]
+        let model0, _ = appInit [||]
         let baseModel = { model0 with Commits = Graph.calculateLanes [ first; second; third ]; Selection = App.CommitSelected first.Hash }
         projection.Update baseModel
         projection.SetDispatch (fun message -> messages.Add message)
@@ -3312,7 +3319,7 @@ module SearchProjectionTests =
     [<Fact>]
     let ``an active search with no results should count as active so show-only-matches shows nothing`` () =
         let projection = MainProjection()
-        let model, _ = App.init [||]
+        let model, _ = appInit [||]
         projection.Update { model with SearchQuery = "author:Adzz"; SearchResults = Some [] }
         test <@ projection.IsCommitSearchActive @>
         projection.Update { model with SearchQuery = ""; SearchResults = None }
@@ -3328,7 +3335,7 @@ module DiffSearchBorrowTests =
         let file : Models.FileDiff =
             { OldPath = "a.fs"; NewPath = "a.fs"; NewLineCount = Some 3
               Hunks = [ { Header = "@@ -1,3 +1,3 @@"; Lines = [ line Models.Context "let font = 1" 1; line Models.Added "other" 2; line Models.Added "font size" 3 ] } ] }
-        let model0, _ = App.init [||]
+        let model0, _ = appInit [||]
         let model =
             { model0 with
                 Commits = Graph.calculateLanes [ commit ]
@@ -3371,7 +3378,7 @@ module DiffSearchBorrowTests =
         let side = commitOf (h 2) [ h 1 ] "side"
         let root = commitOf (h 1) [] "root"
         let projection = MainProjection()
-        let model0, _ = App.init [||]
+        let model0, _ = appInit [||]
         let model = { model0 with Commits = Graph.calculateLanes [ merge; side; root ]; Selection = App.CommitSelected merge.Hash }
         let selections = ResizeArray<string>()
         projection.Update model
@@ -3390,7 +3397,7 @@ module DiffSearchBorrowTests =
         let commitOf hash subject refs : Models.Commit =
             { Hash = hash; AuthorName = "A"; AuthorEmail = "a@x"; Timestamp = 1L; Parents = []; Subject = subject; Message = subject; Refs = refs }
         let projection = MainProjection()
-        let model0, _ = App.init [||]
+        let model0, _ = appInit [||]
         let head = commitOf (String.replicate 40 "a") "Head" [ RefHelpers.currentBranchRef "main" ]
         let entry : WorkingTree.Entry = { Path = "a.txt"; OriginalPath = "a.txt"; Staged = WorkingTree.Modified; Unstaged = WorkingTree.Unchanged; Untracked = false }
         let model = { model0 with Commits = Graph.calculateLanes [ head ]; Selection = App.CommitSelected head.Hash }
@@ -3415,7 +3422,7 @@ module DiffSearchBorrowTests =
     [<Fact>]
     let ``uncommitted changes show Staged, Unstaged and Untracked sections in the files list and diff`` () =
         let projection = MainProjection()
-        let model0, _ = App.init [||]
+        let model0, _ = appInit [||]
         let line content : Models.DiffLine = { Type = Models.Added; Content = content; OldLineNo = None; NewLineNo = Some 1 }
         let fileDiff oldPath newPath : Models.FileDiff =
             { OldPath = oldPath; NewPath = newPath; Hunks = [ { Header = "@@ -0,0 +1 @@"; Lines = [ line "x" ] } ]; NewLineCount = None }
@@ -3446,7 +3453,7 @@ module SearchFieldSuggestionTests =
     [<Fact>]
     let ``search fields suggest refs, authors and hashes from the loaded history`` () =
         let projection = MainProjection()
-        let model0, _ = App.init [||]
+        let model0, _ = appInit [||]
         let commitOf hash name email refs : Models.Commit =
             { Hash = hash; AuthorName = name; AuthorEmail = email; Timestamp = 1L; Parents = []; Subject = "Subject"; Message = "Subject"; Refs = refs }
         let a = commitOf (String.replicate 40 "a") "Ada Lovelace" "ada@example.com" [ RefHelpers.branchRef "main"; RefHelpers.tagRef "v1.0" ]
@@ -3506,15 +3513,17 @@ module WorkingTreeStagingTests =
     /// intents (context expansion loads are real flows, so the projection alone is not enough).
     let private showing (gitDir: string) =
         let projection = MainProjection(RepositoryPath = gitDir)
-        let model0, _ = App.init [||]
-        let env = GitService.environment gitDir
+        let model0, _ = appInit [||]
+        let runtime = Host.startDetachedRuntime Host.liveServices gitDir
+        let inbox = Axial.ElmishFlows.Inbox.create 8 runtime
+        let env = runtime.Environment
         let changes =
             match Flow.run env (GitService.fetchWorkingTreeChanges 3) |> Exit.toResult with
             | Ok changes -> changes
             | Error error -> failwith (GitError.describe error)
-        let mutable model = { model0 with GitEnv = env; Selection = App.WorkingTreeSelected; WorkingTree = changes.Entries; WorkingTreeChanges = Some changes }
+        let mutable model = { model0 with RepoPath = env.RepoPath; Selection = App.WorkingTreeSelected; WorkingTree = changes.Entries; WorkingTreeChanges = Some changes }
         let rec dispatch (msg: App.Msg) =
-            let next, cmd = App.update msg model
+            let next, cmd = App.update runtime inbox msg model
             model <- next
             projection.Update next
             for subscription in cmd do subscription dispatch
@@ -3526,7 +3535,7 @@ module WorkingTreeStagingTests =
         projection.SelectedDiffRows |> Seq.choose (function :? DiffLineProjection as line -> Some line | _ -> None) |> List.ofSeq
 
     let private changedContent (gitDir: string) (section: WorkingTree.Section) (path: string) =
-        match Flow.run (GitService.environment gitDir) (GitService.fetchRawFileDiff section path) |> Exit.toResult with
+        match Flow.run (gitEnvironment gitDir) (GitService.fetchRawFileDiff section path) |> Exit.toResult with
         | Error error -> failwith (GitError.describe error)
         | Ok raw ->
             WorkingTree.parsePatch raw
@@ -3546,7 +3555,7 @@ module WorkingTreeStagingTests =
             let commit = repo.Commit("edit", author, author)
 
             let changedLines ignoreWhitespace =
-                match Flow.run (GitService.environment root) (GitService.fetchDiffWith ignoreWhitespace 3 commit.Sha) |> Exit.toResult with
+                match Flow.run (gitEnvironment root) (GitService.fetchDiffWith ignoreWhitespace 3 commit.Sha) |> Exit.toResult with
                 | Error error -> failwith (GitError.describe error)
                 | Ok files ->
                     files
@@ -3577,7 +3586,7 @@ module WorkingTreeStagingTests =
             let lines = projection.LinesOf(file, [ cursor :> IDiffRowProjection ], true)
             test <@ lines |> Seq.map _.Content |> List.ofSeq = [ "14"; "FOURTEEN" ] @>
 
-            match Flow.run (GitService.environment gitDir) (GitService.applyLines GitService.StageInIndex "numbers.txt" (List.ofSeq lines)) |> Exit.toResult with
+            match Flow.run (gitEnvironment gitDir) (GitService.applyLines GitService.StageInIndex "numbers.txt" (List.ofSeq lines)) |> Exit.toResult with
             | Error error -> failwith (GitError.describe error)
             | Ok () ->
                 test <@ changedContent gitDir WorkingTree.Staged "numbers.txt" = [ "14"; "FOURTEEN" ] @>
@@ -3605,7 +3614,7 @@ module WorkingTreeStagingTests =
             let lines = projection.LinesOf(file, [ cursor :> IDiffRowProjection ], true)
             test <@ lines |> Seq.map _.Content |> List.ofSeq = [ "35"; "THIRTY-FIVE" ] @>
 
-            match Flow.run (GitService.environment gitDir) (GitService.applyLines GitService.StageInIndex "numbers.txt" (List.ofSeq lines)) |> Exit.toResult with
+            match Flow.run (gitEnvironment gitDir) (GitService.applyLines GitService.StageInIndex "numbers.txt" (List.ofSeq lines)) |> Exit.toResult with
             | Error error -> failwith (GitError.describe error)
             | Ok () ->
                 test <@ changedContent gitDir WorkingTree.Staged "numbers.txt" = [ "35"; "THIRTY-FIVE" ] @>
@@ -3640,7 +3649,7 @@ module CommitWindowTests =
           Unstaged = unstaged |> List.map diff
           Untracked = untracked |> List.map (fun path -> { diff path with OldPath = "/dev/null" }) }
 
-    let private model0 () = fst (CommitWindow.init (GitService.environment "") "" 3)
+    let private model0 () = fst (CommitWindow.init "" 3)
 
     [<Fact>]
     let ``reselect keeps the file, then its position, then the other list`` () =
@@ -3654,14 +3663,14 @@ module CommitWindowTests =
 
     [<Fact>]
     let ``commit needs a subject and staged changes unless amending`` () =
-        let loaded, _ = CommitWindow.update (CommitWindow.ChangesLoaded(Ok(changes [ "a" ] [] []))) (model0 ())
+        let loaded, _ = commitUpdate (CommitWindow.ChangesLoaded(Ok(changes [ "a" ] [] []))) (model0 ())
         test <@ CommitWindow.commitBlocker loaded = Some "Write a commit message" @>
         let written = { loaded with Message = "Fix it" }
         test <@ CommitWindow.commitBlocker written = Some "Stage changes to commit" @>
         test <@ CommitWindow.commitBlocker { written with Amend = true } = None @>
-        let staged, _ = CommitWindow.update (CommitWindow.ChangesLoaded(Ok(changes [] [ "a" ] []))) written
+        let staged, _ = commitUpdate (CommitWindow.ChangesLoaded(Ok(changes [] [ "a" ] []))) written
         test <@ CommitWindow.commitBlocker staged = None @>
-        let blocked, _ = CommitWindow.update CommitWindow.Commit loaded
+        let blocked, _ = commitUpdate CommitWindow.Commit loaded
         test <@ blocked.Status = "Write a commit message" && blocked.Busy.IsNone @>
 
     [<Fact>]
@@ -3672,61 +3681,61 @@ module CommitWindowTests =
 
     [<Fact>]
     let ``amend fills an empty draft and turning it off restores it`` () =
-        let amending, _ = CommitWindow.update (CommitWindow.SetAmend true) (model0 ())
-        let loaded, _ = CommitWindow.update (CommitWindow.AmendMessageLoaded "Last subject\n\n") amending
+        let amending, _ = commitUpdate (CommitWindow.SetAmend true) (model0 ())
+        let loaded, _ = commitUpdate (CommitWindow.AmendMessageLoaded "Last subject\n\n") amending
         test <@ loaded.Message = "Last subject\n" && loaded.Amend @>
-        let off, _ = CommitWindow.update (CommitWindow.SetAmend false) loaded
+        let off, _ = commitUpdate (CommitWindow.SetAmend false) loaded
         test <@ off.Message = "" && not off.Amend @>
-        let edited, _ = CommitWindow.update (CommitWindow.SetMessage "Rewritten") loaded
-        let keptOff, _ = CommitWindow.update (CommitWindow.SetAmend false) edited
+        let edited, _ = commitUpdate (CommitWindow.SetMessage "Rewritten") loaded
+        let keptOff, _ = commitUpdate (CommitWindow.SetAmend false) edited
         test <@ keptOff.Message = "Rewritten" @>
         let draft = { model0 () with Message = "My draft" }
-        let amendingDraft, _ = CommitWindow.update (CommitWindow.SetAmend true) draft
-        let notReplaced, _ = CommitWindow.update (CommitWindow.AmendMessageLoaded "Last subject") amendingDraft
+        let amendingDraft, _ = commitUpdate (CommitWindow.SetAmend true) draft
+        let notReplaced, _ = commitUpdate (CommitWindow.AmendMessageLoaded "Last subject") amendingDraft
         test <@ notReplaced.Message = "My draft" @>
 
     [<Fact>]
     let ``a discard offers an undo until it is taken`` () =
         let backup : Trash.Backup =
             { Directory = "/tmp/backup"; Entries = []; Description = "2 lines in a.txt"; CreatedAt = DateTimeOffset.UnixEpoch }
-        let discarded, _ = CommitWindow.update (CommitWindow.DiscardSucceeded backup) (model0 ())
+        let discarded, _ = commitUpdate (CommitWindow.DiscardSucceeded backup) (model0 ())
         test <@ discarded.LastDiscard = Some backup && discarded.Status = "Discarded 2 lines in a.txt · Ctrl+Z to undo" @>
 
         // The rescan that follows leaves the offer on screen.
-        let rescanned, _ = CommitWindow.update (CommitWindow.ChangesLoaded(Ok(changes [ "a" ] [] []))) discarded
+        let rescanned, _ = commitUpdate (CommitWindow.ChangesLoaded(Ok(changes [ "a" ] [] []))) discarded
         test <@ rescanned.Status = discarded.Status && rescanned.LastDiscard = Some backup @>
 
-        let undoing, _ = CommitWindow.update CommitWindow.UndoDiscard rescanned
+        let undoing, _ = commitUpdate CommitWindow.UndoDiscard rescanned
         test <@ undoing.LastDiscard = None && undoing.Busy = Some "Undoing" @>
-        let nothing, _ = CommitWindow.update CommitWindow.UndoDiscard undoing
+        let nothing, _ = commitUpdate CommitWindow.UndoDiscard undoing
         test <@ nothing.Status = "Nothing to undo" @>
 
     [<Fact>]
     let ``last staged patch survives a rescan and is cleared by u`` () =
-        let staged, _ = CommitWindow.update (CommitWindow.StagedLinesSucceeded "patch") (model0 ())
-        let rescanned, _ = CommitWindow.update (CommitWindow.ChangesLoaded(Ok(changes [ "a" ] [ "a" ] []))) staged
+        let staged, _ = commitUpdate (CommitWindow.StagedLinesSucceeded "patch") (model0 ())
+        let rescanned, _ = commitUpdate (CommitWindow.ChangesLoaded(Ok(changes [ "a" ] [ "a" ] []))) staged
         test <@ rescanned.LastStagedPatches = [ "patch" ] @>
-        let undoing, _ = CommitWindow.update CommitWindow.UndoLastStage rescanned
+        let undoing, _ = commitUpdate CommitWindow.UndoLastStage rescanned
         test <@ undoing.LastStagedPatches = [ "patch" ] && undoing.Busy = Some "Undoing stage" @>
-        let undone, _ = CommitWindow.update CommitWindow.UndoLastStageSucceeded undoing
+        let undone, _ = commitUpdate CommitWindow.UndoLastStageSucceeded undoing
         test <@ undone.LastStagedPatches = [] && undone.Status = "Last stage undone" @>
 
     [<Fact>]
     let ``two staged patches can be undone in reverse order in the commit diff`` () =
-        let once, _ = CommitWindow.update (CommitWindow.StagedLinesSucceeded "first") (model0 ())
-        let twice, _ = CommitWindow.update (CommitWindow.StagedLinesSucceeded "second") once
+        let once, _ = commitUpdate (CommitWindow.StagedLinesSucceeded "first") (model0 ())
+        let twice, _ = commitUpdate (CommitWindow.StagedLinesSucceeded "second") once
         test <@ twice.LastStagedPatches = [ "second"; "first" ] @>
-        let undone, _ = CommitWindow.update CommitWindow.UndoLastStageSucceeded twice
+        let undone, _ = commitUpdate CommitWindow.UndoLastStageSucceeded twice
         test <@ undone.LastStagedPatches = [ "first" ] @>
 
     [<Fact>]
     let ``a successful commit clears the message and counts it; a failure keeps the output`` () =
         let written = { model0 () with Message = "Fix it"; Amend = true; Busy = Some "Committing" }
-        let committed, _ = CommitWindow.update (CommitWindow.OperationSucceeded("Committing", true)) written
+        let committed, _ = commitUpdate (CommitWindow.OperationSucceeded("Committing", true)) written
         test <@ committed.Message = "" && not committed.Amend && committed.Commits = 1 && committed.Busy.IsNone @>
-        let failed, _ = CommitWindow.update (CommitWindow.OperationFailed("Committing", GitError.OperationFailed("commit", "hook said no"))) written
+        let failed, _ = commitUpdate (CommitWindow.OperationFailed("Committing", GitError.OperationFailed("commit", "hook said no"))) written
         test <@ failed.Message = "Fix it" && failed.FailureOutput = Some "commit failed: hook said no" @>
-        let rescanned, _ = CommitWindow.update (CommitWindow.ChangesLoaded(Ok(changes [ "a" ] [] []))) failed
+        let rescanned, _ = commitUpdate (CommitWindow.ChangesLoaded(Ok(changes [ "a" ] [] []))) failed
         test <@ rescanned.Status = "Committing failed" @>
 
 module PaletteTests =
@@ -3743,7 +3752,7 @@ module PaletteTests =
     [<Fact>]
     let ``palette should rank commands, switch modes by prefix and run the selection`` () =
         let projection = MainProjection()
-        let model0, _ = App.init [||]
+        let model0, _ = appInit [||]
         let a = commitOf (String.replicate 40 "a") "Add fonts" [ RefHelpers.branchRef "main" ]
         let b = commitOf (String.replicate 40 "b") "Fix parser" [ RefHelpers.tagRef "v1.0" ]
         projection.Update { model0 with Commits = Graph.calculateLanes [ a; b ]; Selection = App.CommitSelected a.Hash; ShowBranchRefs = true }
@@ -3765,7 +3774,7 @@ module PaletteTests =
     [<Fact>]
     let ``back and forward should retrace visited commits`` () =
         let projection = MainProjection()
-        let model0, _ = App.init [||]
+        let model0, _ = appInit [||]
         let commits = [ for n in 1 .. 3 -> commitOf (String.replicate 40 (string n)) $"c{n}" [] ]
         let model = { model0 with Commits = Graph.calculateLanes commits }
         let selections = ResizeArray<string>()
@@ -3791,7 +3800,7 @@ module PaletteTests =
         let fileOf path : Models.FileDiff =
             { OldPath = path; NewPath = path; NewLineCount = Some 1
               Hunks = [ { Header = "@@ -1 +1 @@"; Lines = [ { Type = Models.Added; Content = "x"; OldLineNo = None; NewLineNo = Some 1 } ] } ] }
-        let model0, _ = App.init [||]
+        let model0, _ = appInit [||]
         let modelFor (commit: Models.Commit) =
             { model0 with
                 Commits = Graph.calculateLanes [ a; b ]
@@ -3831,23 +3840,23 @@ module StartupSelectionTests =
 
     [<Fact>]
     let ``unknown sha should report and fall back to the normal view`` () =
-        let model0, _ = App.init [| "abcdef1" |]
+        let model0, _ = appInit [| "abcdef1" |]
         test <@ model0.StartupSelection = App.ResolvingSelection "abcdef1" @>
-        let notFound, _ = App.update (App.Msg.SelectionRevisionResolved("abcdef1", Error (GitError.RevisionNotFound "abcdef1"))) model0
+        let notFound, _ = appUpdate (App.Msg.SelectionRevisionResolved("abcdef1", Error (GitError.RevisionNotFound "abcdef1"))) model0
         let a = commitOf (String.replicate 40 "a")
-        let loaded, _ = App.update (App.Msg.HistoryLoaded(true, Ok [ a ])) notFound
+        let loaded, _ = appUpdate (App.Msg.HistoryLoaded(true, Ok [ a ])) notFound
         test <@ loaded.Status = "No commit found for 'abcdef1'" @>
         test <@ loaded.SelectedCommitHash = Some a.Hash && loaded.Commits.Length = 1 @>
 
     [<Fact>]
     let ``resolved sha should be selected when history arrives, even after a partial first page`` () =
-        let model0, _ = App.init [| "bbbbbbb" |]
+        let model0, _ = appInit [| "bbbbbbb" |]
         let a = commitOf (String.replicate 40 "a")
         let b = commitOf (String.replicate 40 "b")
-        let found, _ = App.update (App.Msg.SelectionRevisionResolved("bbbbbbb", Ok b.Hash)) model0
-        let partial, _ = App.update (App.Msg.HistoryLoaded(false, Ok (List.replicate 1000 a))) found
+        let found, _ = appUpdate (App.Msg.SelectionRevisionResolved("bbbbbbb", Ok b.Hash)) model0
+        let partial, _ = appUpdate (App.Msg.HistoryLoaded(false, Ok (List.replicate 1000 a))) found
         test <@ partial.SelectedCommitHash = Some a.Hash && partial.StartupSelection = App.SelectionFound b.Hash @>
-        let full, _ = App.update (App.Msg.HistoryLoaded(true, Ok [ a; b ])) partial
+        let full, _ = appUpdate (App.Msg.HistoryLoaded(true, Ok [ a; b ])) partial
         test <@ full.SelectedCommitHash = Some b.Hash && full.StartupSelection = App.NoStartupSelection @>
 
 
@@ -3902,7 +3911,7 @@ module CliTests =
             let c3 = commit "a.txt" "3"
             repo.ApplyTag("v1", c1.Sha) |> ignore
             let history targets =
-                match Flow.run (GitService.environment root) (GitService.fetchHistory None false targets) |> Exit.toResult with
+                match Flow.run (gitEnvironment root) (GitService.fetchHistory None false targets) |> Exit.toResult with
                 | Ok commits -> commits |> List.map (fun c -> c.Hash)
                 | Error e -> failwith (GitError.describe e)
             test <@ history (GitStartup.revisionTargets "v1..HEAD") = [ c3.Sha; c2.Sha ] @>
@@ -3936,7 +3945,7 @@ module CliTests =
             test <@ missing = [ GitStartup.Path "gone/old.txt" ] @>
 
             let history targets =
-                match Flow.run (GitService.environment root) (GitService.fetchHistory (Some 1000) false targets) |> Exit.toResult with
+                match Flow.run (gitEnvironment root) (GitService.fetchHistory (Some 1000) false targets) |> Exit.toResult with
                 | Ok commits -> commits |> List.map (fun c -> c.Hash)
                 | Error e -> failwith (GitError.describe e)
             test <@ history fromSrc = [ c3.Sha; c1.Sha ] @>
@@ -3963,7 +3972,7 @@ module CliTests =
             let head = commit "c.txt" "3"
 
             let history targets =
-                match Flow.run (GitService.environment root) (GitService.fetchHistory None false targets) |> Exit.toResult with
+                match Flow.run (gitEnvironment root) (GitService.fetchHistory None false targets) |> Exit.toResult with
                 | Ok commits -> commits |> List.map (fun c -> c.Hash) |> Set.ofList
                 | Error e -> failwith (GitError.describe e)
             test <@ history [] = Set.ofList [ head.Sha; trunk.Sha ] @>
@@ -3976,7 +3985,7 @@ module CliTests =
         let projection = MainProjection()
         let messages = Collections.Generic.List<App.Msg>()
         projection.SetDispatch(fun msg -> messages.Add msg)
-        let model, _ = App.init [||]
+        let model, _ = appInit [||]
         projection.Update { model with StartupTargets = [ GitStartup.All; GitStartup.Path "old.txt" ] }
         test <@ projection.IsAllBranches && projection.HistoryPathFilter = "old.txt" @>
         projection.FilterHistoryToFile(FileTarget("src/a.fs", "src/a.fs", "src/a.fs", null))
@@ -3987,11 +3996,11 @@ module CliTests =
 
     [<Fact>]
     let ``a path-limited first page should not be treated as the complete history`` () =
-        let model0, _ = App.init [||]
+        let model0, _ = appInit [||]
         let model = { model0 with StartupTargets = [ GitStartup.Path "src/" ] }
-        let next, _ = App.update (App.Msg.HistoryLoaded(false, Ok [])) model
+        let next, _ = appUpdate (App.Msg.HistoryLoaded(false, Ok [])) model
         test <@ not next.HasFullHistory @>
-        let unfiltered, _ = App.update (App.Msg.HistoryLoaded(false, Ok [])) model0
+        let unfiltered, _ = appUpdate (App.Msg.HistoryLoaded(false, Ok [])) model0
         test <@ unfiltered.HasFullHistory @>
 
     [<Fact>]
@@ -4048,7 +4057,7 @@ module CliTests =
             File.WriteAllText(Path.Combine(root, "a.txt"), "1")
             Commands.Stage(repo, "a.txt")
             repo.Commit("one", signature, signature) |> ignore
-            match Flow.run (GitService.environment root) (GitService.fetchHistory None false [ GitStartup.Revision "ab" ]) with
+            match Flow.run (gitEnvironment root) (GitService.fetchHistory None false [ GitStartup.Revision "ab" ]) with
             | Exit.Failure(Cause.Fail _) -> ()
             | other -> failwithf "expected a clean failure, got %A" other
         finally
@@ -4056,8 +4065,8 @@ module CliTests =
 
     [<Fact>]
     let ``unresolvable command line revisions should fall back to the normal history`` () =
-        let model0, _ = App.init [| "ab"; "--"; "src/" |]
-        let next, _ = App.update (App.Msg.HistoryLoaded(false, Error (GitError.InvalidRevision "ab"))) model0
+        let model0, _ = appInit [| "ab"; "--"; "src/" |]
+        let next, _ = appUpdate (App.Msg.HistoryLoaded(false, Error (GitError.InvalidRevision "ab"))) model0
         test <@ next.StartupTargets = [ GitStartup.Path "src/" ] @>
         test <@ next.Status = "No commit found for 'ab'" @>
 
@@ -4192,7 +4201,7 @@ module HistoryScopeTests =
         let projection = MainProjection()
         let messages = ConcurrentQueue<App.Msg>()
         projection.SetDispatch(fun message -> messages.Enqueue message)
-        let model0, _ = App.init [||]
+        let model0, _ = appInit [||]
         projection.Update { model0 with StartupTargets = [ GitStartup.Path "src/a.fs" ] }
         projection.ShowHistoryOf "origin/main"
         test <@ messages.ToArray() |> Array.last = App.Msg.SetHistoryTargets [ GitStartup.Revision "origin/main"; GitStartup.Path "src/a.fs" ] @>
@@ -4763,135 +4772,3 @@ module SharedKeysTests =
         let path = "/home/adam/" + String.replicate 8 "some-long-folder/" + "repo"
         let shown = Presentation.WindowTitle.abbreviatePath "/home/adam" path
         test <@ shown.StartsWith "\u2026/" && shown.EndsWith "/repo" && shown.Length <= 60 @>
-
-[<Collection("Timing")>]
-module TimingSensitiveTests =
-
-    [<Fact>]
-    let ``MainProjection should debounce live search updates as the query changes`` () =
-        // The search debounce runs on a manual clock, so the quiet window can be crossed without wall-clock sleeps
-        // and a loaded machine cannot run the first search before the second edit replaces it.
-        let clock = ManualClock(DateTimeOffset.UnixEpoch)
-        let debounce = Debounces.createSearchWithClock(clock :> IClock)
-        let projection = MainProjection(debounce)
-        let messages = ConcurrentQueue<App.Msg>()
-        projection.SetDispatch (fun msg -> messages.Enqueue msg |> ignore)
-
-        projection.SearchQuery <- "nee"
-        projection.SearchQuery <- "needle"
-
-        // Both edits are offered before any quiet window can close. Wait for the consumer to stop shuffling values
-        // through the thread pool before advancing, the way Axial's own manual-time tests do: advancing while a value
-        // is still in flight closes an earlier window and emits a value the burst would have replaced.
-        let searches () =
-            messages.ToArray()
-            |> Array.choose (function
-                | App.Msg.RunSearch(query, scopeKey, _) -> Some(query, scopeKey)
-                | _ -> None)
-
-        let deadline = DateTime.UtcNow.AddSeconds 20.0
-        let mutable lastCount = -1
-        let mutable stablePolls = 0
-
-        while (searches ()).Length = 0 && DateTime.UtcNow < deadline do
-            let count = clock.Sleepers
-
-            if count > 0 && count = lastCount then
-                stablePolls <- stablePolls + 1
-            else
-                stablePolls <- 0
-
-            lastCount <- count
-
-            // Unchanged polls with no queued thread-pool work mean no fiber is still running towards a deadline.
-            if stablePolls >= 15 && (Threading.ThreadPool.PendingWorkItemCount = 0L || stablePolls >= 200) then
-                clock.AdvanceToNextDeadline() |> ignore
-                lastCount <- -1
-                stablePolls <- 0
-            else
-                Threading.Thread.Sleep 1
-
-        let dispatched = messages.ToArray()
-        let setQueries =
-            dispatched
-            |> Array.choose (function
-                | App.Msg.SetSearchQuery query -> Some query
-                | _ -> None)
-
-        test <@ setQueries = [| "nee"; "needle" |] @>
-        test <@ searches () = [| ("needle", "commit") |] @>
-
-    // The debounce is driven by Axial's clock, so the burst is offered before any quiet window can close.
-    [<Fact>]
-    let ``Debounce keeps only the last value of a burst`` () =
-        let clock = ManualClock(DateTimeOffset.UnixEpoch)
-        let emitted = ConcurrentQueue<int>()
-        let debounce =
-            GitKay.Core.Debounce<int>(clock :> IClock, TimeSpan.FromSeconds 1.0, Action<int>(fun value -> emitted.Enqueue value))
-
-        use cancellation = new System.Threading.CancellationTokenSource()
-        use _host = debounce.Start cancellation.Token
-
-        debounce.Offer 1
-        debounce.Offer 2
-        debounce.Offer 3
-
-        // The clock moves only when this thread moves it, so the three values are all offered before any quiet
-        // window elapses. Wait for the consumer to stop shuffling values through the thread pool before advancing,
-        // the way Axial's own manual-time tests do: advancing while a value is still in flight closes an earlier
-        // window and emits a value the burst would have replaced.
-        let deadline = DateTime.UtcNow.AddSeconds 20.0
-        let mutable lastCount = -1
-        let mutable stablePolls = 0
-
-        while emitted.IsEmpty && DateTime.UtcNow < deadline do
-            let count = clock.Sleepers
-
-            if count > 0 && count = lastCount then
-                stablePolls <- stablePolls + 1
-            else
-                stablePolls <- 0
-
-            lastCount <- count
-
-            // Unchanged polls with no queued thread-pool work mean no fiber is still running towards a deadline.
-            if stablePolls >= 15 && (Threading.ThreadPool.PendingWorkItemCount = 0L || stablePolls >= 200) then
-                clock.AdvanceToNextDeadline() |> ignore
-                lastCount <- -1
-                stablePolls <- 0
-            else
-                Threading.Thread.Sleep 1
-
-        test <@ emitted.ToArray() = [| 3 |] @>
-
-    [<Fact>]
-    let ``working tree watcher reports edits once, index changes, and ignores other git files`` () =
-        let root = IO.Path.Combine(IO.Path.GetTempPath(), "gitkay-watch-" + Guid.NewGuid().ToString("N"))
-        let gitDir = IO.Path.Combine(root, ".git")
-        IO.Directory.CreateDirectory(IO.Path.Combine(gitDir, "objects")) |> ignore
-        try
-            // The quiet period is an Axial stream consumer; the app host must be running for it to deliver.
-            App.startHosts()
-            let mutable count = 0
-            use watcher = WorkingTreeWatcher.TryStart(root, gitDir, fun () -> Threading.Interlocked.Increment(&count) |> ignore)
-            test <@ not (isNull watcher) @>
-            let settle () = Threading.Thread.Sleep 900
-            // How many reports the edits produce depends on how the machine batches them; that there is at least one,
-            // and none at all for the files GitKay ignores, is what the watcher promises.
-            let waitForReport previous =
-                let deadline = DateTime.UtcNow.AddSeconds 10.0
-                while count <= previous && DateTime.UtcNow < deadline do Threading.Thread.Sleep 50
-                count
-
-            IO.File.WriteAllText(IO.Path.Combine(gitDir, "objects", "ab"), "x")
-            settle ()
-            test <@ count = 0 @>
-
-            for i in 1..5 do IO.File.WriteAllText(IO.Path.Combine(root, $"file{i}.txt"), "x")
-            let afterEdits = waitForReport 0
-            test <@ afterEdits >= 1 @>
-
-            IO.File.WriteAllText(IO.Path.Combine(gitDir, "index"), "x")
-            test <@ waitForReport afterEdits > afterEdits @>
-        finally
-            IO.Directory.Delete(root, true)

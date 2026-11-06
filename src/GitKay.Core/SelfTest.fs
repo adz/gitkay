@@ -28,19 +28,10 @@ module SelfTest =
     let private runCommand (command: Elmish.Cmd<string>) = SelfTestBridge.runCommand command
 
     let run (repoPath: string) : Check list =
-        use env = GitService.environment repoPath
-        let runtime : ElmishRuntime<GitService.GitEnv> =
-            ElmishRuntime.start
-                { Post = (fun callback -> callback ())
-                  OnDefect = (fun _ -> ())
-                  HistoryCapacity = 500
-                  Clock = Some Clock.live
-                  LogSink = Some LogSink.none }
-                env
+        // The same layer and runtime options the app starts with; the registry the diagnostics checks read is this one.
+        let runtime = Host.startDetachedRuntime Host.liveServices repoPath
         use _ = runtime
-
-        // The shipped self-test reads diagnostics through CmdDiagnostics after the F# checks above have run; point it
-        // at this local runtime's registry so those reads see the commands exercised here.
+        let env = runtime.Environment
         CmdDiagnostics.SetRegistry runtime.Registry
 
         let runCancel name =

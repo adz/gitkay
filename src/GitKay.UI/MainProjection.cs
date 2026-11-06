@@ -99,9 +99,8 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     /// <summary>What the applied commit search marks in the diff, and the search it was built from.</summary>
     private GitKay.Core.GitSearch.DiffMark _diffMark = GitKay.Core.GitSearch.noDiffMark;
     private string? _diffMarkKey;
-    private long _searchGeneration;
-    private readonly GitKay.Core.Debounce<GitKay.Core.Debounces.SearchInput> _searchDebounce;
-    private bool _searchHostStarted;
+    /// <summary>The search the model last started, so a debounced search the program runs on its own counts as run.</summary>
+    private Microsoft.FSharp.Core.FSharpOption<long>? _seenSearchStartedAt;
 
     public ObservableCollection<DiffPresentationModeProjection> DiffPresentationModes { get; } =
         new(GitKay.Core.DiffLayoutModule.all.Select(layout => new DiffPresentationModeProjection(layout)));
@@ -381,12 +380,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
     public FontFamily CommitRowFont => FontStacks.Resolve(CommitRowFontFamily);
     public FontFamily CommitRowMonoFont => FontStacks.Resolve(CommitRowMonoFontFamily);
 
-    public MainProjection()
-        : this(searchDebounce: null) {
-    }
-
-    public MainProjection(GitKay.Core.Debounce<GitKay.Core.Debounces.SearchInput>? searchDebounce) {
-        _searchDebounce = searchDebounce ?? GitKay.Core.Debounces.createSearch();
+    public MainProjection() {
         SelectedDiffPresentationMode = DiffPresentationModes[0];
         SelectedDiffContextLineCount = DiffContextLineCounts.First(option => option.Count == DiffContextLineCount);
         SelectedThemeMode = ThemeModes[0];
@@ -499,7 +493,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     private void UpdateWindowTitle(GitKay.Core.App.Model model) =>
         WindowTitle = GitKay.Core.Presentation.WindowTitle.format(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), model.GitEnv.RepoPath);
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), model.RepoPath);
 
     public void Update(GitKay.Core.App.Model model) {
         using var _ = DiagnosticsLog.Enter("MainProjection.Update");
@@ -1323,14 +1317,13 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     public void SetDispatch(Action<GitKay.Core.App.Msg> dispatch) {
         _dispatch = dispatch;
-        // This window owns its search stream: wire the sink, apply the settings window, and host it once.
-        _searchDebounce.SetSink(input => OnSearchDebounced(input));
-        _searchDebounce.SetWindow(TimeSpan.FromSeconds(Math.Max(0d, SearchDebounceSeconds)));
-        if (!_searchHostStarted) {
-            _searchHostStarted = true;
-            GitKay.Core.Debounces.startHost(GitKay.Core.App.hostToken, _searchDebounce);
-        }
     }
+
+    /// <summary>The debounce window the settings ask for, which the host passes to the program as a flag.</summary>
+    public TimeSpan SearchDebounce => TimeSpan.FromSeconds(Math.Max(0d, SearchDebounceSeconds));
+
+    private void DispatchSearchDebounce(double seconds) =>
+        _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetSearchDebounce(TimeSpan.FromSeconds(Math.Max(0d, seconds))));
 
     public void OpenRevisionComparison(string baseRevision, string targetRevision) {
         if (string.IsNullOrWhiteSpace(baseRevision) || string.IsNullOrWhiteSpace(targetRevision)) return;
@@ -1798,6 +1791,11 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
         _modelSearchPending = model.SearchStartedAtTicks != null;
         _modelSearchQuery = model.SearchQuery;
+        if (model.SearchStartedAtTicks != null && !Equals(model.SearchStartedAtTicks, _seenSearchStartedAt)) {
+            // A search started, by a click or by the debounce settling: Enter now steps through its results.
+            _lastRunSearchQuery = model.SearchQuery.Trim();
+        }
+        _seenSearchStartedAt = model.SearchStartedAtTicks;
         if (_jumpToMatchWhenResultsArrive && !_modelSearchPending && model.SearchResults != null) {
             _jumpToMatchWhenResultsArrive = false;
             // Selecting dispatches SelectCommit; the status position updates on the next model update.
@@ -1847,8 +1845,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     [RelayCommand]
     private void Search() {
-        // Retire any debounced query still pending: this click runs now.
-        Interlocked.Increment(ref _searchGeneration);
+        // RunSearch retires any queued search still waiting out the debounce: this click runs now.
         var query = SearchQuery;
         var scopeKey = SelectedSearchScope?.Key ?? "commit";
         _lastRunSearchQuery = query.Trim();
@@ -1863,13 +1860,11 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
 
     /// <summary>Stops the running search and keeps its query.</summary>
     public void CancelSearch() {
-        Interlocked.Increment(ref _searchGeneration);
         _dispatch?.Invoke(GitKay.Core.App.Msg.CancelSearch);
     }
 
     [RelayCommand]
     private void ClearSearch() {
-        Interlocked.Increment(ref _searchGeneration);
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewSetSearchQuery(""));
         _lastRunSearchQuery = null;
         _dispatch?.Invoke(GitKay.Core.App.Msg.NewRunSearch("", SelectedSearchScope?.Key ?? "commit", Timing.mark()));
@@ -1879,31 +1874,17 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         // No-op for now
     }
 
-    // Every keystroke, scope change and regex toggle offers a search input; the stream keeps the last one that stays
-    // quiet for the window and calls back on OnSearchDebounced. No timer, no cancellation source.
+    // Every keystroke, scope change and regex toggle queues a search; the program debounces the queue and runs the one
+    // that stays quiet for the window, unless an explicit search, a cancel or a clear retired it first.
     private void ScheduleSearchDebounce() {
         if (string.IsNullOrWhiteSpace(SearchQuery)) {
             return;
         }
 
-        var generation = Interlocked.Increment(ref _searchGeneration);
-        _searchDebounce.Offer(new GitKay.Core.Debounces.SearchInput(
-            SearchQuery, SelectedSearchScope?.Key ?? "commit", generation));
+        _dispatch?.Invoke(GitKay.Core.App.Msg.NewQueueSearch(SearchQuery, SelectedSearchScope?.Key ?? "commit"));
     }
 
-    /// <summary>Runs the query that stayed quiet for the debounce window, unless a newer search already retired it.</summary>
-    public void OnSearchDebounced(GitKay.Core.Debounces.SearchInput input) {
-        if (input.Generation != Volatile.Read(ref _searchGeneration) || string.IsNullOrWhiteSpace(input.Query)) {
-            return;
-        }
-
-        _lastRunSearchQuery = input.Query.Trim();
-        var startedAtTicks = Timing.mark();
-        _dispatch?.Invoke(GitKay.Core.App.Msg.NewRunSearch(input.Query, input.ScopeKey, startedAtTicks));
-    }
-
-    partial void OnSearchDebounceSecondsChanged(double value) =>
-        _searchDebounce.SetWindow(TimeSpan.FromSeconds(Math.Max(0d, value)));
+    partial void OnSearchDebounceSecondsChanged(double value) => DispatchSearchDebounce(value);
 
     private void SyncSelectedDiffFiles(IReadOnlyList<GitKay.Core.GitService.DiffFileSummary> summaries, bool clearContent) {
         var existingByKey = SelectedDiffFiles.ToDictionary(file => file.Key);

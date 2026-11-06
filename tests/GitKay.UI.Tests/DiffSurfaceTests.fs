@@ -544,7 +544,7 @@ module HistoryChipTests =
             projection.SetDispatch(fun message -> messages.Enqueue message)
             let window = MainWindow(Width = 1400.0, Height = 800.0, DataContext = projection)
             window.Show()
-            let model0, _ = App.init [||]
+            let model0, _ = AppHost.init [||]
             projection.Update { model0 with StartupTargets = [ GitStartup.Revision "main"; GitStartup.Path "src/a.fs" ] }
             Headless.pump ()
 
@@ -579,7 +579,8 @@ module HistoryChipTests =
         try
             let mutable result = (false, false, false, false)
             Headless.run (fun () ->
-                let projection = MainProjection(RepositoryPath = IO.Path.Combine(root, ".git"))
+                let gitDir = IO.Path.Combine(root, ".git")
+                let projection = MainProjection(RepositoryPath = gitDir, Runtime = AppHost.runtime gitDir)
                 let window = MainWindow(Width = 1200.0, Height = 800.0, DataContext = projection)
                 try
                     window.Show()
@@ -621,7 +622,7 @@ module CommitColumnTests =
                 let plain =
                     { Hash = String.replicate 40 "a"; AuthorName = "A"; AuthorEmail = "a@x"; Timestamp = 1L; Parents = []
                       Subject = "A commit with a reasonably long subject"; Message = "body"; Refs = [] } : Models.Commit
-                let model0, _ = App.init [||]
+                let model0, _ = AppHost.init [||]
                 projection.Update { model0 with Commits = Graph.calculateLanes [ plain ]; ShowBranchRefs = true }
                 Headless.pump ()
                 let before = authorColumn.ActualWidth
@@ -695,7 +696,7 @@ module WorkingTreeLineActionTests =
                               Lines = [ { Type = Models.Removed; Content = "before"; OldLineNo = Some 1; NewLineNo = None }
                                         { Type = Models.Added; Content = "after"; OldLineNo = None; NewLineNo = Some 1 } ] } ] }
             let changes : GitService.WorkingTreeChanges = { Entries = []; Staged = []; Unstaged = [ diff ]; Untracked = [] }
-            let model, _ = App.init [||]
+            let model, _ = AppHost.init [||]
             let projection = MainProjection()
             projection.Update { model with Selection = App.WorkingTreeSelected; WorkingTreeChanges = Some changes; DiffLayout = DiffLayout.SideBySide }
             let file = projection.SelectedDiffFiles[0]
@@ -717,7 +718,7 @@ module WorkingTreeLineActionTests =
             let changes : GitService.WorkingTreeChanges =
                 { Entries = []; Staged = [ change "staged.txt" "old" "new" ]
                   Unstaged = [ change "a.txt" "a" "A"; change "b.txt" "b" "B" ]; Untracked = [] }
-            let model, _ = App.init [||]
+            let model, _ = AppHost.init [||]
             let projection = MainProjection()
             let sent = ResizeArray<App.Msg>()
             projection.SetDispatch(fun msg -> sent.Add msg)
@@ -751,7 +752,7 @@ module WorkingTreeLineActionTests =
                               Lines = [ { Type = Models.Removed; Content = "old"; OldLineNo = Some 1; NewLineNo = None }
                                         { Type = Models.Added; Content = "new"; OldLineNo = None; NewLineNo = Some 1 } ] } ] }
             let changes : GitService.WorkingTreeChanges = { Entries = []; Staged = []; Unstaged = [ diff ]; Untracked = [] }
-            let model, _ = App.init [||]
+            let model, _ = AppHost.init [||]
             let projection = MainProjection()
             let sent = ResizeArray<App.Msg>()
             projection.SetDispatch(fun msg -> sent.Add msg)
@@ -2413,7 +2414,7 @@ module BranchRightClickTests =
                 window.Show()
                 let host =
                     Elmish.Avalonia.Glue.ElmishHost.startAndBind
-                        (App.program [||])
+                        (AppHost.program [||])
                         (Action<App.Model>(fun model -> projection.Update model))
                         (Action<Action<App.Msg>>(fun dispatch -> projection.SetDispatch dispatch))
                 try

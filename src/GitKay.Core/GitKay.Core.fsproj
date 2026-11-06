@@ -7,8 +7,6 @@
 
   <ItemGroup>
     <Compile Include="Timing.fs" />
-    <Compile Include="HostCancellation.fs" />
-    <Compile Include="Debounce.fs" />
     <Compile Include="Diagnostics.fs" />
     <Compile Include="CmdDiagnostics.fs" />
     <Compile Include="Models.fs" />
@@ -40,8 +38,10 @@
     <Compile Include="Git\Parsing.fs" />
     <Compile Include="Git\Internal\History.fs" />
     <Compile Include="GitService.fs" />
+    <Compile Include="WorkingTreeWatch.fs" />
     <Compile Include="App.fs" />
     <Compile Include="CommitWindow.fs" />
+    <Compile Include="Host.fs" />
     <Compile Include="SelfTestBridge.fs" />
     <Compile Include="SelfTest.fs" />
   </ItemGroup>

@@ -20,8 +20,7 @@ module CommitWindow =
         | StagedList
 
     type Model =
-        { GitEnv: GitService.GitEnv
-          Changes: GitService.WorkingTreeChanges option
+        { Changes: GitService.WorkingTreeChanges option
           /// <summary>The checked-out branch (or a detached HEAD), shown like git gui's "Current Branch".</summary>
           Branch: string
           /// <summary>The list and current path of the file whose diff is shown.</summary>
@@ -69,13 +68,13 @@ module CommitWindow =
         | UndoDiscard
         | OperationFailed of description: string * GitError
 
-    /// Runs a named flow against the current GitEnv, delivered through the app runtime.
-    let private ofFlow name (env: GitService.GitEnv) (work: Flow<GitService.GitEnv, 'error, 'value>) onSuccess onError : Cmd<Msg> =
-        Cmd.OfFlow.either name App.runtime (work |> Flow.localEnv (fun _ -> env)) onSuccess onError
+    /// Runs a named flow on the runtime, against the repository environment it was started with.
+    let private ofFlow (runtime: App.Runtime) name (work: Flow<GitService.GitEnv, 'error, 'value>) onSuccess onError : Cmd<Msg> =
+        Cmd.OfFlow.either name runtime work onSuccess onError
 
     /// Runs a named flow as the latest occupant of a stable key; starting a newer one cancels the previous.
-    let private ofFlowLatest key name (env: GitService.GitEnv) (work: Flow<GitService.GitEnv, 'error, 'value>) onSuccess onError : Cmd<Msg> =
-        Cmd.OfFlow.Latest.either key App.runtime (work |> Flow.localEnv (fun _ -> env)) onSuccess onError
+    let private ofFlowLatest (runtime: App.Runtime) key (_name: string) (work: Flow<GitService.GitEnv, 'error, 'value>) onSuccess onError : Cmd<Msg> =
+        Cmd.OfFlow.Latest.either key runtime work onSuccess onError
 
     /// <summary>A file's current path: the new path, or the old one for a deletion.</summary>
     let pathOf (file: Models.FileDiff) = FileChange.currentPath file.OldPath file.NewPath
@@ -140,9 +139,8 @@ module CommitWindow =
             | _ -> first (match list with UnstagedList -> StagedList | StagedList -> UnstagedList)
         | None -> first UnstagedList |> Option.orElse (first StagedList)
 
-    let init (env: GitService.GitEnv) (draft: string) (contextLines: int) : Model * Cmd<Msg> =
-        { GitEnv = env
-          Changes = None
+    let init (draft: string) (contextLines: int) : Model * Cmd<Msg> =
+        { Changes = None
           Branch = ""
           Selected = None
           Message = draft
@@ -158,27 +156,28 @@ module CommitWindow =
           LastDiscard = None },
         Cmd.ofMsg Rescan
 
-    let private scan (model: Model) =
+    let private scan (runtime: App.Runtime) (model: Model) =
         Cmd.batch
-            [ ofFlowLatest scanKey "commit window scan" model.GitEnv (GitService.fetchWorkingTreeChangesFor model.Amend model.ContextLines) (Ok >> ChangesLoaded) (Error >> ChangesLoaded)
-              ofFlow "current branch" model.GitEnv GitService.fetchCurrentBranch BranchLoaded (fun _ -> BranchLoaded "") ]
+            [ ofFlowLatest runtime scanKey "commit window scan" (GitService.fetchWorkingTreeChangesFor model.Amend model.ContextLines) (Ok >> ChangesLoaded) (Error >> ChangesLoaded)
+              ofFlow runtime "current branch" GitService.fetchCurrentBranch BranchLoaded (fun _ -> BranchLoaded "") ]
 
-    let private operation (model: Model) (description: string) (committed: bool) (work: Flow<GitService.GitEnv, GitError, unit>) =
+    let private operation (runtime: App.Runtime) (model: Model) (description: string) (committed: bool) (work: Flow<GitService.GitEnv, GitError, unit>) =
         { model with Busy = Some description; Status = description + "…"; FailureOutput = None },
-        ofFlowLatest operationKey description model.GitEnv work (fun () -> OperationSucceeded(description, committed)) (fun error -> OperationFailed(description, error))
+        ofFlowLatest runtime operationKey description work (fun () -> OperationSucceeded(description, committed)) (fun error -> OperationFailed(description, error))
 
     /// <summary>A discard, which reports the backup that can undo it.</summary>
-    let private discarding (model: Model) (description: string) (work: Flow<GitService.GitEnv, GitError, Trash.Backup>) =
+    let private discarding (runtime: App.Runtime) (model: Model) (description: string) (work: Flow<GitService.GitEnv, GitError, Trash.Backup>) =
         { model with Busy = Some description; Status = description + "…"; FailureOutput = None },
-        ofFlowLatest operationKey description model.GitEnv work DiscardSucceeded (fun error -> OperationFailed(description, error))
+        ofFlowLatest runtime operationKey description work DiscardSucceeded (fun error -> OperationFailed(description, error))
 
     let private plural (count: int) (noun: string) = if count = 1 then "1 " + noun else $"{count} {noun}s"
     let private fileCount (count: int) = plural count "file"
     let private lineCount (count: int) = plural count "line"
 
-    let update (msg: Msg) (model: Model) : Model * Cmd<Msg> =
+    /// <summary>The commit window's update. Pure: every effect is a command on <paramref name="runtime"/>.</summary>
+    let update (runtime: App.Runtime) (msg: Msg) (model: Model) : Model * Cmd<Msg> =
         match msg with
-        | Rescan -> { model with Busy = model.Busy |> Option.orElse (Some "Scanning") }, scan model
+        | Rescan -> { model with Busy = model.Busy |> Option.orElse (Some "Scanning") }, scan runtime model
         | ChangesLoaded(Ok changes) ->
             let status =
                 match changes.Unstaged.Length + changes.Untracked.Length, changes.Staged.Length with
@@ -196,57 +195,57 @@ module CommitWindow =
         | BranchLoaded branch -> { model with Branch = branch }, Cmd.none
         | Select(list, path) -> { model with Selected = Some(list, path) }, Cmd.none
         | StagePaths [] | UnstagePaths [] -> model, Cmd.none
-        | StagePaths paths -> operation { model with LastStagedPatches = [] } $"Staging {fileCount paths.Length}" false (GitService.stageFiles paths)
-        | UnstagePaths paths -> operation { model with LastStagedPatches = [] } $"Unstaging {fileCount paths.Length}" false (GitService.unstageFilesFor model.Amend paths)
+        | StagePaths paths -> operation runtime { model with LastStagedPatches = [] } $"Staging {fileCount paths.Length}" false (GitService.stageFiles paths)
+        | UnstagePaths paths -> operation runtime { model with LastStagedPatches = [] } $"Unstaging {fileCount paths.Length}" false (GitService.unstageFilesFor model.Amend paths)
         | ApplyLines(_, _, []) -> model, Cmd.none
         | ApplyLines(GitService.StageInIndex, path, lines) ->
             let description = $"Staging {lineCount lines.Length} of {path}"
             { model with Busy = Some description; Status = description + "…"; FailureOutput = None },
-            ofFlowLatest operationKey description model.GitEnv
+            ofFlowLatest runtime operationKey description
                 (GitService.stageLinesWithUndoAt model.ContextLines path lines)
                 StagedLinesSucceeded (fun error -> OperationFailed(description, error))
         | ApplyLines(GitService.DiscardFromWorkingTree, path, lines) ->
             // The same context the diff was shown with, or the patch is built against hunks the reader never saw.
-            discarding { model with LastStagedPatches = [] } $"Discarding {lineCount lines.Length} of {path}" (GitService.discardLinesWithBackupAt model.ContextLines path lines)
+            discarding runtime { model with LastStagedPatches = [] } $"Discarding {lineCount lines.Length} of {path}" (GitService.discardLinesWithBackupAt model.ContextLines path lines)
         | ApplyLines(target, path, lines) ->
             let verb =
                 match target with
                 | GitService.StageInIndex -> "Staging"
                 | GitService.UnstageFromIndex -> "Unstaging"
                 | GitService.DiscardFromWorkingTree -> "Discarding"
-            operation { model with LastStagedPatches = [] } $"{verb} {lineCount lines.Length} of {path}" false (GitService.applyLinesWithContext model.ContextLines target path lines)
+            operation runtime { model with LastStagedPatches = [] } $"{verb} {lineCount lines.Length} of {path}" false (GitService.applyLinesWithContext model.ContextLines target path lines)
         | StagedLinesSucceeded patch ->
-            { model with Busy = None; LastStagedPatches = patch :: model.LastStagedPatches; Status = "Staged · u to undo" }, scan model
+            { model with Busy = None; LastStagedPatches = patch :: model.LastStagedPatches; Status = "Staged · u to undo" }, scan runtime model
         | UndoLastStage ->
             match model.Busy, model.LastStagedPatches with
             | Some _, _ -> model, Cmd.none
             | None, [] -> { model with Status = "Nothing to unstage" }, Cmd.none
             | None, patch :: _ ->
                 { model with Busy = Some "Undoing stage"; Status = "Unstaging the last selection…" },
-                ofFlowLatest operationKey "undo last stage" model.GitEnv (GitService.undoStagedPatch patch)
+                ofFlowLatest runtime operationKey "undo last stage" (GitService.undoStagedPatch patch)
                     (fun () -> UndoLastStageSucceeded) (fun error -> OperationFailed("Undo stage", error))
         | UndoLastStageSucceeded ->
             let remaining = match model.LastStagedPatches with _ :: rest -> rest | [] -> []
-            { model with Busy = None; LastStagedPatches = remaining; Status = "Last stage undone" }, scan model
+            { model with Busy = None; LastStagedPatches = remaining; Status = "Last stage undone" }, scan runtime model
         | DiscardPaths([], []) -> model, Cmd.none
         | DiscardPaths(tracked, untracked) ->
-            discarding { model with LastStagedPatches = [] } $"Discarding {fileCount (tracked.Length + untracked.Length)}" (GitService.discardFilesWithBackup tracked untracked)
+            discarding runtime { model with LastStagedPatches = [] } $"Discarding {fileCount (tracked.Length + untracked.Length)}" (GitService.discardFilesWithBackup tracked untracked)
         | DiscardStagedPaths [] -> model, Cmd.none
         | DiscardStagedPaths paths ->
-            discarding { model with LastStagedPatches = [] } $"Discarding {fileCount paths.Length}" (GitService.discardStagedFilesWithBackup model.Amend paths)
+            discarding runtime { model with LastStagedPatches = [] } $"Discarding {fileCount paths.Length}" (GitService.discardStagedFilesWithBackup model.Amend paths)
         | SetMessage message -> { model with Message = message }, Cmd.none
         | SetAmend true when not model.Amend ->
             // Amending shows what the commit will contain, so the staged section is rescanned against its parent.
             let model = { model with Amend = true }
             model,
             Cmd.batch
-                [ ofFlow "last commit message" model.GitEnv GitService.fetchLastCommitMessage AmendMessageLoaded (fun _ -> AmendMessageLoaded "")
-                  scan model ]
+                [ ofFlow runtime "last commit message" GitService.fetchLastCommitMessage AmendMessageLoaded (fun _ -> AmendMessageLoaded "")
+                  scan runtime model ]
         | SetAmend false when model.Amend ->
             // Put back an empty draft if the message is still the one loaded for amending.
             let message = if model.AmendMessage = Some model.Message then "" else model.Message
             let model = { model with Amend = false; AmendMessage = None; Message = message }
-            model, scan model
+            model, scan runtime model
         | SetAmend _ -> model, Cmd.none
         | AmendMessageLoaded loaded when model.Amend ->
             let loaded = loaded.TrimEnd() + "\n"
@@ -259,7 +258,7 @@ module CommitWindow =
             | Some reason -> { model with Status = reason }, Cmd.none
             | None ->
                 let options: GitService.CommitOptions = { Amend = model.Amend; SignOff = model.SignOff }
-                operation model (if model.Amend then "Amending the last commit" else "Committing") true (GitService.commit options (normalizeMessage model.Message))
+                operation runtime model (if model.Amend then "Amending the last commit" else "Committing") true (GitService.commit options (normalizeMessage model.Message))
         | OperationSucceeded(description, committed) ->
             let model = { model with Busy = None }
             if committed then
@@ -270,25 +269,27 @@ module CommitWindow =
                     LastStagedPatches = []
                     Status = $"{description}: done"
                     Commits = model.Commits + 1 },
-                scan model
+                scan runtime model
             else
-                { model with Status = description + ": done" }, scan model
+                { model with Status = description + ": done" }, scan runtime model
         | DiscardSucceeded backup ->
             { model with
                 Busy = None
                 LastDiscard = Some backup
                 Status = $"Discarded {backup.Description} · Ctrl+Z to undo" },
-            scan model
+            scan runtime model
         | UndoDiscard ->
             match model.LastDiscard with
             | None -> { model with Status = "Nothing to undo" }, Cmd.none
             | Some backup ->
                 { model with Busy = Some "Undoing"; Status = "Putting the discarded changes back…"; LastDiscard = None },
-                ofFlowLatest operationKey "undo discard" model.GitEnv (GitService.undoDiscard backup)
+                ofFlowLatest runtime operationKey "undo discard" (GitService.undoDiscard backup)
                     (fun () -> OperationSucceeded($"Restored {backup.Description}", false))
                     (fun error -> OperationFailed("Undo", error))
         | OperationFailed(description, error) ->
-            { model with Busy = None; Status = $"{description} failed"; FailureOutput = Some(GitError.describe error) }, scan model
+            { model with Busy = None; Status = $"{description} failed"; FailureOutput = Some(GitError.describe error) }, scan runtime model
 
-    let program (env: GitService.GitEnv) (draft: string) (contextLines: int) =
-        Program.mkProgram (fun () -> init env draft contextLines) update (fun _ _ -> ())
+    /// <summary>The commit window's program on a runtime the host owns: the main window's, or the one `gitkay gui`
+    /// starts for the commit window alone.</summary>
+    let program (runtime: App.Runtime) (draft: string) (contextLines: int) =
+        Program.mkProgram (fun () -> init draft contextLines) (update runtime) (fun _ _ -> ())

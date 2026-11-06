@@ -190,7 +190,7 @@ module FileSystemRecoveryTests =
             let faulty = FaultyFileSystem(inner)
             faulty.ReadAllTextImpl <- Some(fun _ -> raise (FileNotFoundException("File vanished between status and read")))
 
-            let env = { GitService.environmentWithoutCaches root with Files = faulty :> IFileSystem }
+            let env = { gitEnvironment root with Files = faulty :> IFileSystem }
             let result =
                 Flow.run env (GitService.fetchWorkingTreeFile WorkingTree.Untracked FileChange.missing "a.txt")
                 |> Exit.toResult

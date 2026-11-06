@@ -25,7 +25,7 @@ internal static class HotPaths {
 
         Report($"# hotpaths label={label} repo={repo} {DateTime.Now:O}");
 
-        var env = GitService.environment(repo);
+        var env = Fresh(repo);
         var history = Unwrap(Flow.run(env, GitService.fetchHistory(FSharpOption<int>.None, false, FSharpList<GitStartup.StartupTarget>.Empty)));
         var commits = history.ToArray();
 
@@ -40,14 +40,14 @@ internal static class HotPaths {
         Report($"commits={commits.Length} medium={medium.hash[..8]} large={large.hash[..8]} huge={huge.hash[..8]}");
 
         Measure(Report, "history.fetch(all)", 15, () =>
-            Unwrap(Flow.run(GitService.environment(repo), GitService.fetchHistory(FSharpOption<int>.None, false, FSharpList<GitStartup.StartupTarget>.Empty))));
+            Unwrap(Flow.run(Fresh(repo), GitService.fetchHistory(FSharpOption<int>.None, false, FSharpList<GitStartup.StartupTarget>.Empty))));
 
         Measure(Report, "graph.calculateLanes", 60, () => Graph.calculateLanes(history));
 
         foreach (var (name, target) in new[] { ("medium", medium), ("large", large), ("huge", huge) }) {
             var iterations = name == "huge" ? 6 : 15;
             Measure(Report, $"select.cold({name})", iterations, () => {
-                var fresh = GitService.environment(repo);
+                var fresh = Fresh(repo);
                 Unwrap(Flow.run(fresh, GitService.fetchDiffFileList(target.hash)));
                 return Unwrap(Flow.run(fresh, GitService.fetchDiff(3, target.hash)));
             });
@@ -56,7 +56,7 @@ internal static class HotPaths {
         // As the app does on selection: file list and diff start concurrently in a fresh environment.
         foreach (var (name, target) in new[] { ("medium", medium), ("large", large), ("huge", huge) }) {
             Measure(Report, $"select.app({name})", name == "huge" ? 6 : 15, () => {
-                var fresh = GitService.environment(repo);
+                var fresh = Fresh(repo);
                 var list = System.Threading.Tasks.Task.Run(() => Unwrap(Flow.run(fresh, GitService.fetchDiffFileList(target.hash))));
                 var diff = System.Threading.Tasks.Task.Run(() => Unwrap(Flow.run(fresh, GitService.fetchDiff(3, target.hash))));
                 System.Threading.Tasks.Task.WaitAll(list, diff);
@@ -77,7 +77,7 @@ internal static class HotPaths {
         Measure(Report, "expand.project(configured)", 2000, () => DiffExpansion.project(biggest, FSharpOption<Models.FileDiff>.None, FSharpList<DiffExpansion.LineRange>.Empty));
 
         // UI projection: selecting the large and huge commits (a new projection each time; updates are diffed).
-        var (baseModel, _) = App.init(Array.Empty<string>()).ToValueTuple();
+        var (baseModel, _) = App.init(Runtime(repo), App.flags(repo, Array.Empty<string>())).ToValueTuple();
         foreach (var (name, target) in new[] { ("large", large), ("huge", huge) }) {
             var files = Unwrap(Flow.run(env, GitService.fetchDiffFileList(target.hash)));
             var diff = Unwrap(Flow.run(env, GitService.fetchDiff(3, target.hash)));
@@ -105,13 +105,19 @@ internal static class HotPaths {
         File.WriteAllLines(Path.Combine(outDir, $"{label}.txt"), results);
     }
 
+    /// <summary>A runtime on the app's layer; each one has fresh, cold caches. Left running for the process.</summary>
+    internal static Axial.ElmishFlows.ElmishRuntime<GitService.GitEnv> Runtime(string repo) =>
+        GitKay.Core.Host.startDetachedRuntime(GitKay.Core.Host.liveServices, repo);
+
+    internal static GitService.GitEnv Fresh(string repo) => Runtime(repo).Environment;
+
     private static App.Model WithSelection(App.Model model, string hash, FSharpList<GitService.DiffFileSummary> files, FSharpList<Models.FileDiff> diff) =>
-        new(App.StartupSelection.NoStartupSelection, false, model.GitEnv, "Loaded", model.StartupTargets, model.ShowBranchRefs, model.ShowStashes, model.DiffContextLines,
+        new(App.StartupSelection.NoStartupSelection, false, model.RepoPath, model.WorkingDirectory, "Loaded", model.StartupTargets, model.ShowBranchRefs, model.ShowStashes, model.DiffContextLines,
             model.IgnoreWhitespace, model.DiffLayout, model.SearchQuery, model.SearchScopeKey, model.SearchUseRegex, model.SearchResults, model.Commits,
             true, App.Selection.NewCommitSelected(hash), FSharpOption<GitService.RevisionComparison>.None, FSharpOption<string>.Some(hash),
             FSharpOption<FSharpList<GitService.DiffFileSummary>>.Some(files), FSharpOption<FSharpList<Models.FileDiff>>.Some(diff),
             FSharpOption<GitService.DiffFileKey>.None, MapModule.Empty<GitService.DiffFileKey, App.FileExpansion>(), MapModule.Empty<App.WorkingTreeFileKey, App.FileExpansion>(), FSharpOption<App.RenderedMarkdownState>.None, FSharpOption<App.FormattedFileState>.None, FSharpOption<App.WholeFileState>.None,
-            FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, model.WorkingTree, model.WorkingTreeChanges, model.WorkingTreeStartedAtTicks, model.LastDiscard, model.LastStagedPatches, model.StageUndoPending);
+            FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, model.WorkingTree, model.WorkingTreeChanges, model.WorkingTreeStartedAtTicks, model.LastDiscard, model.LastStagedPatches, model.StageUndoPending, model.SearchDebounce, model.SearchGeneration, model.LastRequestId, model.WatchFailures, model.WatchRestarts);
 
     private static T Unwrap<T>(Exit<T, GitError> exit) =>
         exit.IsSuccess ? ((Exit<T, GitError>.Success)exit).Item : throw new InvalidOperationException(exit.ToString());
@@ -160,18 +166,18 @@ internal static class UiInteractions {
         var repo = args.ElementAtOrDefault(0) ?? GitService.tryDiscoverRepositoryPath();
         var hash = args.ElementAtOrDefault(1) ?? "48db7ad8";
         var label = args.ElementAtOrDefault(2) ?? "run";
-        var env = GitService.environment(repo);
+        var env = HotPaths.Fresh(repo);
         var commits = Unwrap(System.Threading.Tasks.Task.Run(() => Flow.run(env, GitService.fetchHistory(FSharpOption<int>.None, false, FSharpList<GitStartup.StartupTarget>.Empty))).Result);
         var full = commits.First(c => c.Hash.StartsWith(hash, StringComparison.Ordinal)).Hash;
         var files = Unwrap(System.Threading.Tasks.Task.Run(() => Flow.run(env, GitService.fetchDiffFileList(full))).Result);
         var diff = Unwrap(System.Threading.Tasks.Task.Run(() => Flow.run(env, GitService.fetchDiff(3, full))).Result);
-        var (baseModel, _) = App.init(Array.Empty<string>()).ToValueTuple();
+        var (baseModel, _) = App.init(HotPaths.Runtime(repo), App.flags(repo, Array.Empty<string>())).ToValueTuple();
         var graph = Graph.calculateLanes(commits);
-        var model = new App.Model(App.StartupSelection.NoStartupSelection, false, baseModel.GitEnv, "Loaded", baseModel.StartupTargets, false, false, 3, false, DiffLayout.Unified, "", "commit", false,
+        var model = new App.Model(App.StartupSelection.NoStartupSelection, false, baseModel.RepoPath, baseModel.WorkingDirectory, "Loaded", baseModel.StartupTargets, false, false, 3, false, DiffLayout.Unified, "", "commit", false,
             FSharpOption<FSharpList<GitSearch.Result>>.None, graph, true, App.Selection.NewCommitSelected(full), FSharpOption<GitService.RevisionComparison>.None, FSharpOption<string>.Some(full),
             FSharpOption<FSharpList<GitService.DiffFileSummary>>.Some(files), FSharpOption<FSharpList<Models.FileDiff>>.Some(diff),
             FSharpOption<GitService.DiffFileKey>.None, MapModule.Empty<GitService.DiffFileKey, App.FileExpansion>(), MapModule.Empty<App.WorkingTreeFileKey, App.FileExpansion>(), FSharpOption<App.RenderedMarkdownState>.None, FSharpOption<App.FormattedFileState>.None, FSharpOption<App.WholeFileState>.None,
-            FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, baseModel.WorkingTree, baseModel.WorkingTreeChanges, baseModel.WorkingTreeStartedAtTicks, baseModel.LastDiscard, baseModel.LastStagedPatches, baseModel.StageUndoPending);
+            FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, baseModel.WorkingTree, baseModel.WorkingTreeChanges, baseModel.WorkingTreeStartedAtTicks, baseModel.LastDiscard, baseModel.LastStagedPatches, baseModel.StageUndoPending, baseModel.SearchDebounce, baseModel.SearchGeneration, baseModel.LastRequestId, baseModel.WatchFailures, baseModel.WatchRestarts);
 
         var projection = new MainProjection();
         var windowWidth = label.Contains("narrow") ? 1100 : 1600;
@@ -213,11 +219,11 @@ internal static class UiInteractions {
             projection.RepositoryPath = repo;
             projection.IsAllFilesMode = label.Contains("allfiles");
             projection.IsDiffFileTreeMode = label.Contains("tree");
-            projection.Update(new App.Model(model.StartupSelection, false, model.GitEnv, "Loaded", model.StartupTargets, false, false, 3, false, DiffLayout.Unified, "", "commit", false,
+            projection.Update(new App.Model(model.StartupSelection, false, model.RepoPath, model.WorkingDirectory, "Loaded", model.StartupTargets, false, false, 3, false, DiffLayout.Unified, "", "commit", false,
                 model.SearchResults, model.Commits, true, App.Selection.WorkingTreeSelected, FSharpOption<GitService.RevisionComparison>.None, FSharpOption<string>.None,
                 FSharpOption<FSharpList<GitService.DiffFileSummary>>.None, FSharpOption<FSharpList<Models.FileDiff>>.None, FSharpOption<GitService.DiffFileKey>.None,
                 model.DiffExpansions, model.WorkingTreeExpansions, FSharpOption<App.RenderedMarkdownState>.None, FSharpOption<App.FormattedFileState>.None, FSharpOption<App.WholeFileState>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None,
-                changes.Entries, FSharpOption<GitService.WorkingTreeChanges>.Some(changes), FSharpOption<long>.None, FSharpOption<GitKay.Core.Trash.Backup>.None, model.LastStagedPatches, model.StageUndoPending));
+                changes.Entries, FSharpOption<GitService.WorkingTreeChanges>.Some(changes), FSharpOption<long>.None, FSharpOption<GitKay.Core.Trash.Backup>.None, model.LastStagedPatches, model.StageUndoPending, model.SearchDebounce, model.SearchGeneration, model.LastRequestId, model.WatchFailures, model.WatchRestarts));
             Pump(window);
             if (label.Contains("expand")) {
                 projection.ToggleDiffFileContextCommand.Execute(projection.SelectedDiffFiles[0]);
@@ -274,9 +280,9 @@ internal static class UiInteractions {
             var searchText = pathDiff ? "path:DiffSurface Typeface" : "font";
             var searchMode = pathDiff ? GitSearch.Mode.Diff : GitSearch.Mode.Commit;
             var results = Unwrap(System.Threading.Tasks.Task.Run(() => Flow.run(env, GitService.searchCommits(3, commits, searchMode, false, searchText))).Result);
-            var searched = new App.Model(App.StartupSelection.NoStartupSelection, false, model.GitEnv, model.Status, model.StartupTargets, false, false, 3, false, DiffLayout.Unified, searchText, GitSearch.modeKey(searchMode), false,
+            var searched = new App.Model(App.StartupSelection.NoStartupSelection, false, model.RepoPath, model.WorkingDirectory, model.Status, model.StartupTargets, false, false, 3, false, DiffLayout.Unified, searchText, GitSearch.modeKey(searchMode), false,
                 FSharpOption<FSharpList<GitSearch.Result>>.Some(results), model.Commits, true, model.Selection, model.RevisionComparison, model.SelectedDiffHash,
-                model.SelectedDiffFiles, model.SelectedDiff, model.SelectedDiffFileKey, model.DiffExpansions, model.WorkingTreeExpansions, FSharpOption<App.RenderedMarkdownState>.None, FSharpOption<App.FormattedFileState>.None, FSharpOption<App.WholeFileState>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, model.WorkingTree, model.WorkingTreeChanges, model.WorkingTreeStartedAtTicks, model.LastDiscard, model.LastStagedPatches, model.StageUndoPending);
+                model.SelectedDiffFiles, model.SelectedDiff, model.SelectedDiffFileKey, model.DiffExpansions, model.WorkingTreeExpansions, FSharpOption<App.RenderedMarkdownState>.None, FSharpOption<App.FormattedFileState>.None, FSharpOption<App.WholeFileState>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<long>.None, FSharpOption<Tuple<int, int>>.None, model.WorkingTree, model.WorkingTreeChanges, model.WorkingTreeStartedAtTicks, model.LastDiscard, model.LastStagedPatches, model.StageUndoPending, model.SearchDebounce, model.SearchGeneration, model.LastRequestId, model.WatchFailures, model.WatchRestarts);
             projection.Update(searched);
             projection.IsAdvancedSearchExpanded = label.Contains("advanced");
             projection.CommitFindQuery = pathDiff ? "" : "Font";
@@ -499,7 +505,7 @@ internal static class UiInteractions {
     /// <summary>The commit window on a repository: scanned, then optionally with the cursor's hunk staged.</summary>
     private static void RunCommitWindow(string repo, string label, string output) {
         if (label.Contains("dark")) Avalonia.Application.Current!.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Dark;
-        var window = new GitKay.UI.CommitWindow(repo, System.IO.Path.GetFileName(repo)) { Width = 1300, Height = 860 };
+        var window = new GitKay.UI.CommitWindow(HotPaths.Runtime(repo), repo, System.IO.Path.GetFileName(repo)) { Width = 1300, Height = 860 };
         window.Show();
         var projection = window.Projection!;
         void Settle() {

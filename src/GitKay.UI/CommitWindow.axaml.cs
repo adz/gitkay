@@ -77,6 +77,9 @@ public sealed partial class CommitWindowProjection : ObservableObject {
     /// <summary>The repository, for reading a file's full context.</summary>
     public string? RepositoryPath { get; set; }
 
+    /// <summary>The runtime the window's program runs on; its own loads (context, file lists) run there too.</summary>
+    public Axial.ElmishFlows.ElmishRuntime<GitKay.Core.GitService.GitEnv>? Runtime { get; set; }
+
     public CommitWindowProjection(string repositoryName) => WindowTitle = $"Commit — {repositoryName}";
 
     public string WindowTitle { get; }
@@ -533,7 +536,7 @@ public sealed partial class CommitWindowProjection : ObservableObject {
 
         var request = ++_expansionRequest;
         Apply(new GitKay.Core.App.FileExpansion(null, revealed, Microsoft.FSharp.Core.FSharpOption<long>.Some(request)));
-        _ = LoadContextAsync(repo, section.Value, row, request);
+        LoadContext(section.Value, row, request);
 
         void Apply(GitKay.Core.App.FileExpansion expansion) {
             _expansion = expansion;
@@ -542,29 +545,23 @@ public sealed partial class CommitWindowProjection : ObservableObject {
         }
     }
 
-    private async Task LoadContextAsync(string repo, GitKay.Core.WorkingTree.Section section, CommitFileRow row, long request) {
-        GitKay.Core.Models.FileDiff? loaded = null;
-        string? error = null;
-        try {
-            var result = await Task.Run(() => GitKay.Core.GitService.loadWorkingTreeFile(repo, section, row.Diff.OldPath, row.Diff.NewPath));
-            if (result.IsOk) loaded = result.ResultValue;
-            else error = GitKay.Core.GitErrorModule.describe(result.ErrorValue);
-        }
-        catch (Exception exception) {
-            error = exception.Message;
-        }
-
-        if (request != _expansionRequest || _shownFile is not { } file || _expansion is not { } current) return;
-        if (loaded == null) {
-            Status = $"Could not read more of {row.Label}: {error}";
-            _expansion = null;
-            file.ApplyExpansion(null);
-        }
-        else {
-            _expansion = new GitKay.Core.App.FileExpansion(loaded, current.Revealed, null);
-            file.ApplyExpansion(_expansion);
-        }
-        RenderRows();
+    private void LoadContext(GitKay.Core.WorkingTree.Section section, CommitFileRow row, long request) {
+        if (Runtime is not { } runtime) return;
+        GitKay.Core.UiFlow.run("commit window context", runtime,
+            GitKay.Core.GitService.fetchWorkingTreeFile(section, row.Diff.OldPath, row.Diff.NewPath),
+            result => {
+                if (request != _expansionRequest || _shownFile is not { } file || _expansion is not { } current) return;
+                if (result.IsError) {
+                    Status = $"Could not read more of {row.Label}: {GitKay.Core.GitErrorModule.describe(result.ErrorValue)}";
+                    _expansion = null;
+                    file.ApplyExpansion(null);
+                }
+                else {
+                    _expansion = new GitKay.Core.App.FileExpansion(result.ResultValue, current.Revealed, null);
+                    file.ApplyExpansion(_expansion);
+                }
+                RenderRows();
+            });
     }
 
     partial void OnSelectedUnstagedChanged(CommitFileRow? value) {
@@ -787,7 +784,9 @@ public partial class CommitWindow : Window, IVimCommands {
 
     private string _repositoryPath = "";
 
-    public CommitWindow(string repositoryPath, string repositoryName) : this() {
+    /// <summary>A commit window on <paramref name="runtime"/>, which the host owns and stops: the main window's, or the
+    /// one <c>gitkay gui</c> starts for this window alone.</summary>
+    public CommitWindow(Axial.ElmishFlows.ElmishRuntime<GitKay.Core.GitService.GitEnv> runtime, string repositoryPath, string repositoryName) : this() {
         _repositoryPath = repositoryPath;
         // The diff here follows the same settings as the history window's: layout, context and the pane chrome.
         var appSettings = GitKay.Core.SettingsModule.normalize(GitKay.Serialization.SettingsStore.loadDefault());
@@ -797,7 +796,7 @@ public partial class CommitWindow : Window, IVimCommands {
         _unstagedVim = new ListBoxVimHost(UnstagedList, this);
         _stagedVim = new ListBoxVimHost(StagedList, this);
 
-        var projection = new CommitWindowProjection(repositoryName) { Surface = Surface, RepositoryPath = repositoryPath };
+        var projection = new CommitWindowProjection(repositoryName) { Surface = Surface, RepositoryPath = repositoryPath, Runtime = runtime };
         projection.ConfirmDiscard = ConfirmAsync;
         DataContext = projection;
         Projection = projection;
@@ -819,9 +818,8 @@ public partial class CommitWindow : Window, IVimCommands {
 
         // The message being written survives closing the window, until it is committed.
         var draft = GitKay.Core.UiStateModule.commitDraft(repositoryPath, GitKay.Serialization.UiStateStore.loadDefault());
-        var env = GitKay.Core.GitService.environmentWithoutCaches(repositoryPath);
         _host = ElmishHost.startAndBind(
-            GitKay.Core.CommitWindow.program(env, draft == null ? "" : draft.Value, appSettings.DiffContextLines),
+            GitKay.Core.CommitWindow.program(runtime, draft == null ? "" : draft.Value, appSettings.DiffContextLines),
             model => projection.Update(model),
             dispatch => projection.SetDispatch(dispatch));
         // Rescan when the user comes back from elsewhere; not on every activation, which focus changes can repeat.
@@ -836,7 +834,6 @@ public partial class CommitWindow : Window, IVimCommands {
         Closed += (_, _) => {
             SaveDraft(projection.Message);
             _host?.Dispose();
-            ((IDisposable)env).Dispose();
         };
         projection.Committed += _ => SaveDraft("");
         // Take keyboard focus as soon as the window is up, so its keys go here and not to the window behind.

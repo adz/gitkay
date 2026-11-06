@@ -2,55 +2,16 @@ namespace GitKay.Core
 
 open Elmish
 open System
-open System.Diagnostics
-open System.Threading
 open Axial
 open Axial.ElmishFlows
+open Axial.FileSystem
 open GitKay.Core.Models
 
 module App =
 
-    let private runtimePost : ((unit -> unit) -> unit) ref = ref (fun callback -> callback ())
-
-    /// Installs the UI-thread post callback the runtime uses to deliver command results. GitKay.UI wires this to
-    /// Elmish.Avalonia.Glue.ElmishHost.post before the first command runs.
-    let configureRuntime (post: Action<Action>) =
-        runtimePost.Value <- fun callback -> post.Invoke(Action(callback))
-
-    /// Shared runtime for every Axial-backed Cmd this program issues. Each command supplies its current GitEnv
-    /// through Flow.localEnv (the per-command environment recipe in the Axial docs); the runtime itself needs no
-    /// authority of its own.
-    let runtime : ElmishRuntime<unit> =
-        ElmishRuntime.start
-            { Post = (fun callback -> runtimePost.Value callback)
-              OnDefect = (fun defect -> CmdDiagnostics.ReportFailure(defect.Name, defect.Rendered))
-              HistoryCapacity = 500
-              Clock = None
-              LogSink = Some LogSink.none }
-            ()
-
-    // Expose the live runtime's registry to the diagnostics windows and hang reports.
-    do CmdDiagnostics.SetRegistry runtime.Registry
-
-    /// Cancellation token for long-lived hosts (the shared watcher debounce and per-window search debounce).
-    let hostToken = HostCancellation.token
-
-    /// Tears down the runtime and long-lived hosts. Call alongside disposing the ElmishHostConnection so no flow
-    /// outlives the window.
-    let stopRuntime () =
-        HostCancellation.cancel ()
-        (runtime :> IDisposable).Dispose()
-
-    let private hostGate = obj ()
-    let mutable private hostsStarted = false
-
-    /// Starts the shared working-tree watcher debounce. Safe to call more than once, so a test or
-    /// a second window shares the one host; stopRuntime interrupts it. Each window starts its own search host.
-    let startHosts () =
-        lock hostGate (fun () ->
-            if not hostsStarted then
-                hostsStarted <- true
-                Debounces.startWatchHost HostCancellation.token |> ignore)
+    /// The runtime every command of the main window runs on. The host starts it with the repository layer
+    /// (`Host.startRepositoryRuntime`), so its environment holds the repository's services and caches.
+    type Runtime = ElmishRuntime<GitService.GitEnv>
 
     let private selectionKey = "selectionJob"
     let private diffKey = "diffJob"
@@ -126,12 +87,35 @@ module App =
           Preview: bool
           Payload: GitService.WholeFilePayload option }
 
+    /// <summary>One debounced search input: the text typed, the scope it runs under, and the generation it belongs to,
+    /// so an explicit search, a cancel or a clear retires one that is still waiting out the quiet period.</summary>
+    type SearchInput = { Query: string; ScopeKey: string; Generation: int64 }
+
+    /// <summary>A running search's progress since its last report: commits checked of the total, and the matches found so
+    /// far in history order when new ones arrived (None when this report found nothing new).</summary>
+    type SearchUpdate = { Checked: int; Total: int; Matches: GitSearch.Result list option }
+
+    /// <summary>What the host knows before the program starts: the launch arguments with their paths already resolved
+    /// against the launch directory, and the repository they open. Reading these is the host's job, so init stays pure.</summary>
+    type Flags =
+        { /// The repository's git directory, or empty when none was found.
+          RepoPath: string
+          /// The repository's working tree, when it has one that exists; the file watcher watches it.
+          WorkingDirectory: string option
+          /// The parsed command line, or why it could not be parsed.
+          StartupOptions: Result<GitStartup.StartupOptions, GitStartup.StartupError>
+          /// How long typing must pause before a queued search runs, from the saved settings.
+          SearchDebounce: TimeSpan }
+
     type Model =
         {
             StartupSelection: StartupSelection
             /// Command-line filters (--author, --grep, ...) ask the list to show only matching commits.
             StartupShowOnlyMatches: bool
-            GitEnv: GitService.GitEnv
+            /// The repository's git directory, or empty when none was found.
+            RepoPath: string
+            /// The working tree the file watcher watches, when there is one.
+            WorkingDirectory: string option
             Status: string
             StartupTargets: GitStartup.StartupTarget list
             ShowBranchRefs: bool
@@ -177,6 +161,19 @@ module App =
             /// Successfully staged line/hunk patches, newest first, for repeated u in the working-tree diff.
             LastStagedPatches: (string * string) list
             StageUndoPending: bool
+            /// How long typing must pause before the search runs; the settings window changes it.
+            SearchDebounce: TimeSpan
+            /// Bumped by every queued, explicit, cancelled or cleared search: a debounced input from an older generation
+            /// is stale when it settles.
+            SearchGeneration: int64
+            /// The last request id update issued itself. Its ids count down from -1, so they never equal an id the UI
+            /// issues (a positive monotonic mark).
+            LastRequestId: int64
+            /// Consecutive failures of the working tree watcher with no change seen in between. Each one restarts it,
+            /// up to a limit; a watcher that cannot start at all gives up instead of retrying forever.
+            WatchFailures: int
+            /// How many times the watcher has been restarted; part of its subscription id, so a restart is a new one.
+            WatchRestarts: int
         }
 
         member model.SelectedCommitHash =
@@ -244,10 +241,18 @@ module App =
         | SetSearchRegex of bool
         | RunSearch of query:string * scopeKey:string * startedAtTicks:int64
         | SearchResultsLoaded of query:string * scopeKey:string * startedAtTicks:int64 * Result<GitSearch.Result list, GitError>
-        /// Commits checked and total, for the search started at startedAtTicks.
-        | SearchProgressed of startedAtTicks:int64 * checkedCount:int * total:int
-        /// Matches found so far, in history order, while the search continues.
-        | SearchPartialResults of startedAtTicks:int64 * GitSearch.Result list
+        /// Progress and the matches found so far, for the search started at startedAtTicks; batched while it runs.
+        | SearchProgressed of startedAtTicks:int64 * SearchUpdate
+        /// The text, scope or regex choice changed: search once typing pauses for the debounce window.
+        | QueueSearch of query:string * scopeKey:string
+        /// A queued search waited out the debounce window.
+        | SearchSettled of SearchInput
+        /// Changes how long typing must pause before a queued search runs.
+        | SetSearchDebounce of TimeSpan
+        /// The working tree, index or HEAD changed on disk, after the watcher's quiet period.
+        | WorkingTreeFilesChanged
+        /// The working tree watcher stopped, with why.
+        | WorkingTreeWatchFailed of string
         /// Stops the running search, keeping its query.
         | CancelSearch
         | CreateTag of hash:string * name:string
@@ -258,27 +263,27 @@ module App =
         | OperationResult of Result<unit, GitError>
         | NoOp
 
-    /// Runs a named flow against the current GitEnv, delivered through the shared runtime.
-    let private ofFlow name (env: GitService.GitEnv) (work: Flow<GitService.GitEnv, 'error, 'value>) onSuccess onError : Cmd<Msg> =
-        Cmd.OfFlow.either name runtime (work |> Flow.localEnv (fun _ -> env)) onSuccess onError
+    /// Runs a named flow on the runtime, against the repository environment it was started with.
+    let private ofFlow name (runtime: Runtime) (work: Flow<GitService.GitEnv, 'error, 'value>) onSuccess onError : Cmd<Msg> =
+        Cmd.OfFlow.either name runtime work onSuccess onError
 
     /// Runs a named flow as the latest occupant of a stable key; starting a newer one cancels the previous.
-    let private ofFlowLatest key name (env: GitService.GitEnv) (work: Flow<GitService.GitEnv, 'error, 'value>) onSuccess onError : Cmd<Msg> =
-        Cmd.OfFlow.Latest.either key runtime (work |> Flow.localEnv (fun _ -> env)) onSuccess onError
+    let private ofFlowLatest key (_name: string) (runtime: Runtime) (work: Flow<GitService.GitEnv, 'error, 'value>) onSuccess onError : Cmd<Msg> =
+        Cmd.OfFlow.Latest.either key runtime work onSuccess onError
 
     /// Cancels whatever a latest-wins key currently holds, as a command.
-    let private cancelLatest key : Cmd<Msg> = Cmd.OfFlow.Latest.cancel key runtime
+    let private cancelLatest (runtime: Runtime) key : Cmd<Msg> = Cmd.OfFlow.Latest.cancel key runtime
 
     /// Cancels every per-file context load still recorded in the expansion map.
-    let private cancelAllContextJobs (model: Model) : Cmd<Msg> =
-        let cancels = model.DiffExpansions |> Map.keys |> Seq.map (contextKey >> cancelLatest) |> List.ofSeq
+    let private cancelAllContextJobs (runtime: Runtime) (model: Model) : Cmd<Msg> =
+        let cancels = model.DiffExpansions |> Map.keys |> Seq.map (contextKey >> cancelLatest runtime) |> List.ofSeq
         match cancels with
         | [] -> Cmd.none
         | _ -> Cmd.batch cancels
 
-    let private loadHistory (env: GitService.GitEnv) (limit: int option) (includeStashes: bool) (targets: GitStartup.StartupTarget list) =
+    let private loadHistory (runtime: Runtime) (limit: int option) (includeStashes: bool) (targets: GitStartup.StartupTarget list) =
         let isFull = limit.IsNone
-        ofFlow (if isFull then "history (full)" else $"history (first {limit.Value})") env (GitService.fetchHistory limit includeStashes targets) (fun r -> HistoryLoaded(isFull, Ok r)) (fun ex -> HistoryLoaded (isFull, Error ex))
+        ofFlow (if isFull then "history (full)" else $"history (first {limit.Value})") runtime (GitService.fetchHistory limit includeStashes targets) (fun r -> HistoryLoaded(isFull, Ok r)) (fun ex -> HistoryLoaded (isFull, Error ex))
 
     let private historyLimit = 1000
 
@@ -287,104 +292,168 @@ module App =
     let private lineCount (count: int) = plural count "line"
 
     /// <summary>Runs a staging, unstaging or discard from the history window, then rereads the working tree.</summary>
-    let private workingTreeOperation (model: Model) (description: string) (work: Flow<GitService.GitEnv, GitError, Trash.Backup option>) =
+    let private workingTreeOperation (runtime: Runtime) (model: Model) (description: string) (work: Flow<GitService.GitEnv, GitError, Trash.Backup option>) =
         { model with Status = description + "…" },
-        ofFlow description model.GitEnv work
+        ofFlow description runtime work
             (fun backup -> WorkingTreeOperationDone(description, Ok backup))
             (fun error -> WorkingTreeOperationDone(description, Error error))
 
-    let private logTiming (message: string) =
-        let line = "[timing] " + message
-        Trace.WriteLine line
+    /// <summary>Issues a request id from update itself, for a load update starts without a UI event to name it.</summary>
+    let private issueRequest (model: Model) =
+        let id = model.LastRequestId - 1L
+        id, { model with LastRequestId = id }
+
+    /// <summary>Logs how long a load took and what it returned. The time is measured inside the flow on the runtime's
+    /// clock, so update never reads a clock; the log goes to the runtime's log sink.</summary>
+    let private timed (label: string) (describe: 'value -> string) (work: Flow<GitService.GitEnv, GitError, 'value>) =
+        flow {
+            let! started = Clock.elapsed
+            let milliseconds () = Clock.elapsed |> Flow.map (fun now -> (now - started).TotalMilliseconds)
+            let! value =
+                work
+                |> Flow.tapError (fun error ->
+                    flow {
+                        let! elapsed = milliseconds ()
+                        do! Log.info $"[timing] {label} error elapsed={elapsed:F1}ms error={GitError.describe error}"
+                    })
+            let! elapsed = milliseconds ()
+            do! Log.info $"[timing] {label} ready elapsed={elapsed:F1}ms {describe value}"
+            return value
+        }
 
     let private loadDiffFilesFlow (hash: string) =
         flow {
             do! Flow.ensureNotCanceled
             return! GitService.fetchDiffFileList hash
         }
+        |> timed $"commit click -> file list hash={hash}" (fun files -> $"files={List.length files}")
 
     let private loadDiffFlow (ignoreWhitespace: bool) (contextLines: int) (hash: string) =
         flow {
             do! Flow.ensureNotCanceled
             return! GitService.fetchDiffWith ignoreWhitespace contextLines hash
         }
+        |> timed $"commit click -> unified diff hash={hash}" (fun files -> $"files={List.length files}")
 
-    let private loadSearchResultsFlow (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (useRegex: bool) progress found =
-        flow {
-            do! Flow.ensureNotCanceled
-            let commitList = commits |> List.map (fun info -> info.Commit)
-            return! GitService.searchCommitsStreaming contextLines commitList (GitSearch.parseMode scopeKey) useRegex query progress found
-        }
-
-
-    let private startDiffFilesLoad (env: GitService.GitEnv) (hash: string) (startedAtTicks: int64) =
-        ofFlowLatest selectionKey $"diff files {hash}" env (loadDiffFilesFlow hash)
+    let private startDiffFilesLoad (runtime: Runtime) (hash: string) (startedAtTicks: int64) =
+        ofFlowLatest selectionKey $"diff files {hash}" runtime (loadDiffFilesFlow hash)
             (fun result -> DiffFilesLoaded(hash, startedAtTicks, Ok result))
             (fun err -> DiffFilesLoaded(hash, startedAtTicks, Error err))
 
-    let private startDiffLoad (env: GitService.GitEnv) (hash: string) (startedAtTicks: int64) (contextLines: int) (ignoreWhitespace: bool) =
-        ofFlowLatest diffKey $"diff {hash}" env (loadDiffFlow ignoreWhitespace contextLines hash)
+    let private startDiffLoad (runtime: Runtime) (hash: string) (startedAtTicks: int64) (contextLines: int) (ignoreWhitespace: bool) =
+        ofFlowLatest diffKey $"diff {hash}" runtime (loadDiffFlow ignoreWhitespace contextLines hash)
             (fun result -> DiffLoaded(hash, startedAtTicks, Ok result))
             (fun err -> DiffLoaded(hash, startedAtTicks, Error err))
 
     let private comparisonId (baseRevision: string) (targetRevision: string) = $"comparison:{baseRevision}...{targetRevision}"
 
-    let private startRevisionComparisonLoad env baseRevision targetRevision startedAtTicks contextLines ignoreWhitespace =
+    let private startRevisionComparisonLoad (runtime: Runtime) baseRevision targetRevision startedAtTicks contextLines ignoreWhitespace =
         let work = flow {
             let! comparison = GitService.resolveRevisionComparison baseRevision targetRevision
             let! diff = GitService.fetchRevisionDiff ignoreWhitespace contextLines comparison
             return comparison, diff
         }
-        ofFlowLatest diffKey $"compare {baseRevision}...{targetRevision}" env work
+        ofFlowLatest diffKey $"compare {baseRevision}...{targetRevision}" runtime work
             (fun result -> RevisionComparisonLoaded(baseRevision, targetRevision, startedAtTicks, Ok result))
             (fun error -> RevisionComparisonLoaded(baseRevision, targetRevision, startedAtTicks, Error error))
 
-    let private startWorkingTreeStatusLoad (env: GitService.GitEnv) =
-        ofFlowLatest workingTreeStatusKey "working tree status" env GitService.fetchWorkingTreeStatus
+    let private startWorkingTreeStatusLoad (runtime: Runtime) =
+        // Without git (or outside a work tree) the status fails and the row simply doesn't appear; the log says why.
+        let work =
+            GitService.fetchWorkingTreeStatus
+            |> Flow.tapError (fun error -> Log.info $"[timing] working tree status error={GitError.describe error}")
+        ofFlowLatest workingTreeStatusKey "working tree status" runtime work
             (fun entries -> WorkingTreeStatusLoaded(Ok entries))
             (fun err -> WorkingTreeStatusLoaded(Error err))
 
-    let private startWorkingTreeChangesLoad (env: GitService.GitEnv) (contextLines: int) (startedAtTicks: int64) =
-        ofFlowLatest workingTreeChangesKey "working tree changes" env (GitService.fetchWorkingTreeChanges contextLines)
+    let private startWorkingTreeChangesLoad (runtime: Runtime) (contextLines: int) (startedAtTicks: int64) =
+        ofFlowLatest workingTreeChangesKey "working tree changes" runtime (GitService.fetchWorkingTreeChanges contextLines)
             (fun changes -> WorkingTreeChangesLoaded(startedAtTicks, Ok changes))
             (fun err -> WorkingTreeChangesLoaded(startedAtTicks, Error err))
 
-    let private startSearchLoad (env: GitService.GitEnv) (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (useRegex: bool) (startedAtTicks: int64) =
-        // Progress dispatches are throttled so a fast search doesn't flood the message queue.
-        Cmd.ofEffect (fun dispatch ->
-            let gate = obj ()
-            let mutable lastReport = 0L
-            let found = ResizeArray<GitSearch.Result>()
-            let mutable foundSinceReport = false
-            let order = commits |> List.mapi (fun index info -> info.Commit.Hash, index) |> dict
+    /// <summary>What a running search reports, in the order its workers report it.</summary>
+    type private SearchEvent =
+        | Progressed of checkedCount: int * total: int
+        | Found of GitSearch.Result
+        | Finished of GitSearch.Result list
 
-            // Matches stream in with progress reports: sorted into history order, at most every 200ms.
-            let report checkedCount total force =
-                let now = Timing.mark()
-                lock gate (fun () ->
-                    if force || checkedCount = total || (Timing.elapsedBetween lastReport now).TotalMilliseconds >= 200.0 then
-                        lastReport <- now
-                        if foundSinceReport then
-                            foundSinceReport <- false
-                            let snapshot = found |> Seq.sortBy (fun result -> order.[result.Commit.Hash]) |> List.ofSeq
-                            dispatch (SearchPartialResults(startedAtTicks, snapshot))
-                        dispatch (SearchProgressed(startedAtTicks, checkedCount, total)))
+    /// <summary>Runs a search, reporting (commits checked, total) and each match as found, from any thread.</summary>
+    type SearchRun = (int -> int -> unit) -> (GitSearch.Result -> unit) -> Flow<GitService.GitEnv, GitError, GitSearch.Result list>
 
-            let progress checkedCount total = report checkedCount total false
-            let onFound (result: GitSearch.Result) =
-                lock gate (fun () ->
-                    found.Add result
-                    foundSinceReport <- true)
+    /// <summary>A search as a stream of its events. The search runs in a fiber the stream owns: its worker callbacks
+    /// offer to an unbounded queue (they must not block or drop a match), and ending or interrupting the stream
+    /// interrupts the search.</summary>
+    let private searchEvents (search: SearchRun) : FlowStream<GitService.GitEnv, GitError, SearchEvent> =
+        let acquire =
+            flow {
+                let! (events: Queue<Result<SearchEvent, GitError>>) = Queue.unbounded ()
+                let offer event = Queue.tryOffer event events |> ignore
+                let search =
+                    search
+                        (fun checkedCount total -> offer (Ok(Progressed(checkedCount, total))))
+                        (fun result -> offer (Ok(Found result)))
+                let producer : Flow<GitService.GitEnv, Never, unit> =
+                    flow {
+                        let! outcome = search |> Flow.map Ok |> Flow.recover (Error >> Flow.succeed)
+                        offer (outcome |> Result.map Finished)
+                        do! Dequeue.shutdown events
+                    }
+                let! searching = Flow.forkNamed "search producer" producer
+                return events, searching
+            }
+        let release (_, searching) = Fiber.interrupt searching |> Flow.ignore
+        FlowStream.using (Resource.create acquire release) (fun (events, _) ->
+            FlowStream.fromDequeue events
+            |> FlowStream.mapFlow (function
+                | Ok event -> Flow.succeed event
+                | Error error -> Flow.fail error))
 
-            let command =
-                ofFlowLatest searchKey $"search [{scopeKey}] {query}" env (loadSearchResultsFlow contextLines commits query scopeKey useRegex progress onFound)
-                    (fun result -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Ok result))
-                    (fun err -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Error err))
+    /// <summary>How often a running search reports: at most one progress message per window, however fast workers find
+    /// matches, so a quick search can't flood the UI dispatcher.</summary>
+    let searchReportWindow = TimeSpan.FromMilliseconds 200.0
 
-            for effect in command do
-                effect dispatch)
+    type private SearchReports =
+        { Found: GitSearch.Result list
+          Progress: (int * int) option
+          Report: Msg option }
 
-    let private startDiffFileContextLoad (env: GitService.GitEnv) (comparison: GitService.RevisionComparison option) (hash: string) (key: GitService.DiffFileKey) (requestId: int64) =
+    /// <summary>The search's messages: batched progress with the matches so far in history order, then its results.
+    /// A typed failure ends it with an error result.</summary>
+    let searchMessages (search: SearchRun) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (startedAtTicks: int64)
+        : FlowStream<GitService.GitEnv, GitError, Msg> =
+        let order = commits |> List.mapi (fun index info -> info.Commit.Hash, index) |> dict
+        let report (state: SearchReports) (batch: SearchEvent list) =
+            let found = batch |> List.choose (function Found result -> Some result | _ -> None)
+            let progress =
+                batch
+                |> List.choose (function Progressed(checkedCount, total) -> Some(checkedCount, total) | _ -> None)
+                |> List.tryLast
+                |> Option.orElse state.Progress
+            let all = state.Found @ found
+            let finished = batch |> List.tryPick (function Finished results -> Some results | _ -> None)
+            let message =
+                match finished, progress with
+                | Some results, _ -> Some(SearchResultsLoaded(query, scopeKey, startedAtTicks, Ok results))
+                | None, Some(checkedCount, total) ->
+                    let matches = if found.IsEmpty then None else Some(all |> List.sortBy (fun result -> order.[result.Commit.Hash]))
+                    Some(SearchProgressed(startedAtTicks, { Checked = checkedCount; Total = total; Matches = matches }))
+                | None, None -> None
+            { Found = all; Progress = progress; Report = message }
+
+        searchEvents search
+        |> FlowStream.groupedWithin 4096 searchReportWindow
+        |> FlowStream.scan report { Found = []; Progress = None; Report = None }
+        |> FlowStream.choose _.Report
+
+    let private startSearchLoad (runtime: Runtime) (contextLines: int) (commits: Graph.CommitGraphInfo list) (query: string) (scopeKey: string) (useRegex: bool) (startedAtTicks: int64) =
+        let commitList = commits |> List.map (fun info -> info.Commit)
+        let search = GitService.searchCommitsStreaming contextLines commitList (GitSearch.parseMode scopeKey) useRegex query
+        Cmd.OfFlowStream.latest searchKey runtime
+            (searchMessages search commits query scopeKey startedAtTicks)
+            id
+            (fun err -> SearchResultsLoaded(query, scopeKey, startedAtTicks, Error err))
+
+    let private startDiffFileContextLoad (runtime: Runtime) (comparison: GitService.RevisionComparison option) (hash: string) (key: GitService.DiffFileKey) (requestId: int64) =
         let workflow =
             flow {
                 do! Flow.ensureNotCanceled
@@ -393,18 +462,18 @@ module App =
                 | None -> return! GitService.fetchDiffFileFullContext hash key.OldPath key.NewPath
             }
 
-        ofFlowLatest (contextKey key) $"full context {hash} {key.NewPath}" env workflow
+        ofFlowLatest (contextKey key) $"full context {hash} {key.NewPath}" runtime workflow
             (fun result -> DiffFileContextLoaded(hash, key, requestId, Ok result))
             (fun err -> DiffFileContextLoaded(hash, key, requestId, Error err))
 
-    let private startWorkingTreeContextLoad (env: GitService.GitEnv) (key: WorkingTreeFileKey) (requestId: int64) =
+    let private startWorkingTreeContextLoad (runtime: Runtime) (key: WorkingTreeFileKey) (requestId: int64) =
         let workflow =
             flow {
                 do! Flow.ensureNotCanceled
                 return! GitService.fetchWorkingTreeFile key.Section key.OldPath key.NewPath
             }
 
-        ofFlowLatest workingTreeContextKey $"working tree context {key.NewPath}" env workflow
+        ofFlowLatest workingTreeContextKey $"working tree context {key.NewPath}" runtime workflow
             (fun result -> WorkingTreeFileContextLoaded(key, requestId, Ok result))
             (fun err -> WorkingTreeFileContextLoaded(key, requestId, Error err))
 
@@ -418,7 +487,7 @@ module App =
         files
         |> List.tryFind (fun file -> file.OldPath = key.OldPath && file.NewPath = key.NewPath)
 
-    let private historyLoadSelection (model: Model) (commits: Graph.CommitGraphInfo list) =
+    let private historyLoadSelection (runtime: Runtime) (model: Model) (commits: Graph.CommitGraphInfo list) =
         let selectionExistsInHistory =
             match model.SelectedCommitHash with
             | Some hash -> commits |> List.exists (fun info -> info.Commit.Hash = hash)
@@ -444,11 +513,12 @@ module App =
             | Some hash, Some diffHash, Some _ when hash = diffHash && model.SelectedDiff.IsSome -> true
             | _ -> false
 
-        let nextSelectionStartedAtTicks =
+        let nextSelectionStartedAtTicks, model =
             if selectedHash.IsSome && not diffReadyForSelection then
-                Some(Timing.mark())
+                let requestId, model = issueRequest model
+                Some requestId, model
             else
-                None
+                None, model
 
         let nextDiffStartedAtTicks =
             if diffReadyForSelection then None
@@ -480,17 +550,17 @@ module App =
         let cmd =
             match selectedHash, nextSelectionStartedAtTicks with
             | Some hash, Some startedAtTicks ->
-                Cmd.batch [ startDiffFilesLoad model.GitEnv hash startedAtTicks; startDiffLoad model.GitEnv hash startedAtTicks model.DiffContextLines model.IgnoreWhitespace ]
+                Cmd.batch [ startDiffFilesLoad runtime hash startedAtTicks; startDiffLoad runtime hash startedAtTicks model.DiffContextLines model.IgnoreWhitespace ]
             | _ when keepsWorkingTree -> Cmd.none
             | _ ->
                 if not diffReadyForSelection then
-                    Cmd.batch [ cancelLatest selectionKey; cancelLatest diffKey; cancelAllContextJobs model ]
+                    Cmd.batch [ cancelLatest runtime selectionKey; cancelLatest runtime diffKey; cancelAllContextJobs runtime model ]
                 else
-                    cancelLatest selectionKey
+                    cancelLatest runtime selectionKey
 
         nextModel, cmd
 
-    let private revealDiffRange (model: Model) (hash: string) (key: GitService.DiffFileKey) (range: DiffExpansion.LineRange option) (requestedAtTicks: int64) =
+    let private revealDiffRange (runtime: Runtime) (model: Model) (hash: string) (key: GitService.DiffFileKey) (range: DiffExpansion.LineRange option) (requestedAtTicks: int64) =
         let fileIsSelected =
             model.SelectedDiffHash = Some hash
             && model.SelectedDiffFiles |> Option.exists (tryFindDiffFileSummary key >> Option.isSome)
@@ -508,7 +578,7 @@ module App =
             | None, None ->
                 let expansion = { revealed with PendingRequestId = Some requestedAtTicks }
                 { model with DiffExpansions = model.DiffExpansions |> Map.add key expansion },
-                startDiffFileContextLoad model.GitEnv model.RevisionComparison hash key requestedAtTicks
+                startDiffFileContextLoad runtime model.RevisionComparison hash key requestedAtTicks
             | _ ->
                 { model with DiffExpansions = model.DiffExpansions |> Map.add key revealed }, Cmd.none
         | _ ->
@@ -525,71 +595,78 @@ module App =
             { model with Status = $"Commit {hash.Substring(0, min 8 hash.Length)} isn't in the loaded history"; StartupSelection = NoStartupSelection }
         | _ -> model
 
-    let init (startupArgs: string array) : Model * Cmd<Msg> =
-        let repoPath = GitService.tryDiscoverRepositoryPath ()
-        let gitEnv = GitService.environment repoPath
+    /// <summary>Flags for a program whose command line needs no path resolution (no repository-relative paths are
+    /// looked up): tests, and the self-test. The desktop host resolves paths with <c>Host.flags</c>.</summary>
+    let flags (repoPath: string) (startupArgs: string array) : Flags =
+        { RepoPath = repoPath
+          WorkingDirectory = None
+          StartupOptions = GitStartup.parseStartupOptions startupArgs
+          SearchDebounce = TimeSpan.FromSeconds Settings.defaults.SearchDebounceSeconds }
 
-        match GitStartup.parseStartupOptions startupArgs with
+    let private blankModel (flags: Flags) : Model =
+        {
+            StartupSelection = NoStartupSelection
+            StartupShowOnlyMatches = false
+            RepoPath = flags.RepoPath
+            WorkingDirectory = flags.WorkingDirectory
+            Status = ""
+            StartupTargets = []
+            ShowBranchRefs = false
+            ShowStashes = false
+            DiffContextLines = 3
+            IgnoreWhitespace = false
+            DiffLayout = Settings.defaults.DiffLayout
+            SearchQuery = ""
+            SearchScopeKey = "commit"
+            SearchUseRegex = false
+            SearchResults = None
+            Commits = []
+            HasFullHistory = false
+            Selection = NoSelection
+            RevisionComparison = None
+            SelectedDiffHash = None
+            SelectedDiffFiles = None
+            SelectedDiff = None
+            SelectedDiffFileKey = None
+            DiffExpansions = Map.empty
+            WorkingTreeExpansions = Map.empty
+            RenderedMarkdown = None
+            FormattedFile = None
+            WholeFile = None
+            SelectionStartedAtTicks = None
+            SelectedDiffStartedAtTicks = None
+            SearchStartedAtTicks = None
+            SearchProgress = None
+            WorkingTree = []
+            WorkingTreeChanges = None
+            WorkingTreeStartedAtTicks = None
+            LastDiscard = None
+            LastStagedPatches = []
+            StageUndoPending = false
+            SearchDebounce = flags.SearchDebounce
+            SearchGeneration = 0L
+            LastRequestId = 0L
+            WatchFailures = 0
+            WatchRestarts = 0
+        }
+
+    let init (runtime: Runtime) (flags: Flags) : Model * Cmd<Msg> =
+        match flags.StartupOptions with
         | Error err ->
-            {
-                StartupSelection = NoStartupSelection
-                StartupShowOnlyMatches = false
-                GitEnv = gitEnv
-                Status = "Error: " + GitStartup.describeError err
-                StartupTargets = []
-                ShowBranchRefs = false
-                ShowStashes = false
-                DiffContextLines = 3
-                IgnoreWhitespace = false
-                DiffLayout = Settings.defaults.DiffLayout
-                SearchQuery = ""
-                SearchScopeKey = "commit"
-                SearchUseRegex = false
-                SearchResults = None
-                Commits = []
-                HasFullHistory = false
-                Selection = NoSelection
-                RevisionComparison = None
-                SelectedDiffHash = None
-                SelectedDiffFiles = None
-                SelectedDiff = None
-                SelectedDiffFileKey = None
-                DiffExpansions = Map.empty
-                WorkingTreeExpansions = Map.empty
-                RenderedMarkdown = None
-                FormattedFile = None
-                WholeFile = None
-                SelectionStartedAtTicks = None
-                SelectedDiffStartedAtTicks = None
-                SearchStartedAtTicks = None
-                SearchProgress = None
-                WorkingTree = []
-                WorkingTreeChanges = None
-                WorkingTreeStartedAtTicks = None
-                LastDiscard = None
-                LastStagedPatches = []
-                StageUndoPending = false
-            },
-            Cmd.none
+            { blankModel flags with Status = "Error: " + GitStartup.describeError err }, Cmd.none
         | Ok startupOptions ->
-            let startupOptions =
-                { startupOptions with
-                    StartupTargets =
-                        GitService.resolvePathArguments gitEnv.RepoPath Environment.CurrentDirectory startupOptions.StartupTargets }
             let model =
-                {
+                { blankModel flags with
                     StartupSelection =
                         match startupOptions.SelectedCommitHash with
                         | Some revision -> ResolvingSelection revision
                         | None -> NoStartupSelection
                     StartupShowOnlyMatches = startupOptions.ShowOnlyMatches
-                    GitEnv = gitEnv
                     Status = "Loading history..."
                     StartupTargets = startupOptions.StartupTargets
                     ShowBranchRefs = startupOptions.ShowBranchRefs
                     ShowStashes = startupOptions.ShowStashes
                     DiffContextLines = startupOptions.DiffContextLines
-                    IgnoreWhitespace = false
                     DiffLayout = startupOptions.DiffLayout
                     SearchQuery = startupOptions.SearchQuery
                     SearchScopeKey = startupOptions.SearchScopeKey
@@ -597,147 +674,126 @@ module App =
                     Selection =
                         match startupOptions.SelectedCommitHash with
                         | Some revision -> CommitSelected revision
-                        | None -> NoSelection
-                    SearchResults = None
-                    Commits = []
-                    HasFullHistory = false
-                    RevisionComparison = None
-                    SelectedDiffHash = None
-                    SelectedDiffFiles = None
-                    SelectedDiff = None
-                    SelectedDiffFileKey = None
-                    DiffExpansions = Map.empty
-                    WorkingTreeExpansions = Map.empty
-                    RenderedMarkdown = None
-                    FormattedFile = None
-                    WholeFile = None
-                    SelectionStartedAtTicks = None
-                    SelectedDiffStartedAtTicks = None
-                    SearchStartedAtTicks = None
-                    SearchProgress = None
-                    WorkingTree = []
-                    WorkingTreeChanges = None
-                    WorkingTreeStartedAtTicks = None
-                    LastDiscard = None
-                    LastStagedPatches = []
-                    StageUndoPending = false
-                }
+                        | None -> NoSelection }
 
-            if String.IsNullOrEmpty gitEnv.RepoPath then
+            if String.IsNullOrEmpty flags.RepoPath then
                 { model with Status = "Error: Could not locate a Git repository." }, Cmd.none
             else
                 let resolveSelection =
                     match startupOptions.SelectedCommitHash with
                     | Some revision ->
-                        ofFlow $"resolve {revision}" gitEnv (GitService.resolveCommit revision)
+                        ofFlow $"resolve {revision}" runtime (GitService.resolveCommit revision)
                             (fun hash -> SelectionRevisionResolved(revision, Ok hash))
                             (fun err -> SelectionRevisionResolved(revision, Error err))
                     | None -> Cmd.none
 
                 model,
                 Cmd.batch
-                    [ loadHistory gitEnv (Some historyLimit) startupOptions.ShowStashes startupOptions.StartupTargets
-                      startWorkingTreeStatusLoad gitEnv
+                    [ loadHistory runtime (Some historyLimit) startupOptions.ShowStashes startupOptions.StartupTargets
+                      startWorkingTreeStatusLoad runtime
                       resolveSelection ]
 
-    let private startRenderedMarkdownLoad (model: Model) (key: GitService.DiffFileKey) section allowRemoteImages requestId =
-        let load () =
+    let private startRenderedMarkdownLoad (runtime: Runtime) (model: Model) (key: GitService.DiffFileKey) section allowRemoteImages requestId =
+        let load (env: GitService.GitEnv) =
             if model.IsWorkingTreeSelected then
                 match WorkingTree.tryParseSection section with
-                | Some parsed -> GitService.loadWorkingTreeRenderedMarkdown model.GitEnv.RepoPath parsed key.OldPath key.NewPath allowRemoteImages
+                | Some parsed -> GitService.loadWorkingTreeRenderedMarkdown env parsed key.OldPath key.NewPath allowRemoteImages
                 | None -> Error(GitError.OperationFailed("Render Markdown", $"Unknown working-tree section: {section}"))
             else
                 match model.RevisionComparison, model.SelectedDiffHash with
-                | Some comparison, _ -> GitService.loadRevisionRenderedMarkdown model.GitEnv.RepoPath comparison key.OldPath key.NewPath allowRemoteImages
-                | None, Some hash -> GitService.loadCommitRenderedMarkdown model.GitEnv.RepoPath hash key.OldPath key.NewPath allowRemoteImages
+                | Some comparison, _ -> GitService.loadRevisionRenderedMarkdown model.RepoPath comparison key.OldPath key.NewPath allowRemoteImages
+                | None, Some hash -> GitService.loadCommitRenderedMarkdown model.RepoPath hash key.OldPath key.NewPath allowRemoteImages
                 | _ -> Error(GitError.OperationFailed("Render Markdown", "No revision is selected"))
-        ofFlowLatest renderedMarkdownKey $"render markdown {key.NewPath}" model.GitEnv
+        ofFlowLatest renderedMarkdownKey $"render markdown {key.NewPath}" runtime
             // LibGit2Sharp blob reads do not accept cancellation; latest-slot cancellation still rejects stale results.
-            (Flow.delay (fun () -> Flow.fromResult (load ())) |> Flow.runOn RunOn.DedicatedThread)
+            (Flow.env |> Flow.bind (fun env -> Flow.fromResult (load env)) |> Flow.runOn RunOn.DedicatedThread)
             (fun content -> RenderedMarkdownLoaded(key, section, requestId, Ok content))
             (fun error -> RenderedMarkdownLoaded(key, section, requestId, Error error))
 
-    let private startFormattedFileLoad (model: Model) (key: GitService.DiffFileKey) section requestId =
+    let private startFormattedFileLoad (runtime: Runtime) (model: Model) (key: GitService.DiffFileKey) section requestId =
         let previewPath = FileChange.currentPath key.OldPath key.NewPath
         let isImage = (Markdown.previewKind previewPath).IsImagePreview
-        let load () =
+        let load (env: GitService.GitEnv) =
             if model.IsWorkingTreeSelected then
                 match WorkingTree.tryParseSection section with
                 | Some parsed ->
-                    if isImage then GitService.loadWorkingTreePreviewImage model.GitEnv.RepoPath parsed key.OldPath key.NewPath |> Result.map PreviewImage
-                    else GitService.loadWorkingTreeFormattedFile model.DiffContextLines model.GitEnv.RepoPath parsed key.OldPath key.NewPath |> Result.map FormattedText
+                    if isImage then GitService.loadWorkingTreePreviewImage model.RepoPath parsed key.OldPath key.NewPath |> Result.map PreviewImage
+                    else GitService.loadWorkingTreeFormattedFile model.DiffContextLines env parsed key.OldPath key.NewPath |> Result.map FormattedText
                 | None -> Error(GitError.OperationFailed("Preview", $"Unknown working-tree section: {section}"))
             else
                 match model.RevisionComparison, model.SelectedDiffHash with
                 | Some comparison, _ ->
-                    if isImage then GitService.loadRevisionPreviewImage model.GitEnv.RepoPath comparison key.OldPath key.NewPath |> Result.map PreviewImage
-                    else GitService.loadRevisionFormattedFile model.DiffContextLines model.GitEnv.RepoPath comparison key.OldPath key.NewPath |> Result.map FormattedText
+                    if isImage then GitService.loadRevisionPreviewImage model.RepoPath comparison key.OldPath key.NewPath |> Result.map PreviewImage
+                    else GitService.loadRevisionFormattedFile model.DiffContextLines model.RepoPath comparison key.OldPath key.NewPath |> Result.map FormattedText
                 | None, Some hash ->
-                    if isImage then GitService.loadCommitPreviewImage model.GitEnv.RepoPath hash key.OldPath key.NewPath |> Result.map PreviewImage
-                    else GitService.loadCommitFormattedFile model.DiffContextLines model.GitEnv.RepoPath hash key.OldPath key.NewPath |> Result.map FormattedText
+                    if isImage then GitService.loadCommitPreviewImage model.RepoPath hash key.OldPath key.NewPath |> Result.map PreviewImage
+                    else GitService.loadCommitFormattedFile model.DiffContextLines model.RepoPath hash key.OldPath key.NewPath |> Result.map FormattedText
                 | _ -> Error(GitError.OperationFailed("Preview", "No revision is selected"))
-        ofFlowLatest formattedFileKey $"format file {key.NewPath}" model.GitEnv
+        ofFlowLatest formattedFileKey $"format file {key.NewPath}" runtime
             // LibGit2Sharp blob reads do not accept cancellation; latest-slot cancellation still rejects stale results.
-            (Flow.delay (fun () -> Flow.fromResult (load ())) |> Flow.runOn RunOn.DedicatedThread)
+            (Flow.env |> Flow.bind (fun env -> Flow.fromResult (load env)) |> Flow.runOn RunOn.DedicatedThread)
             (fun content -> FormattedFileLoaded(key, section, requestId, Ok content))
             (fun error -> FormattedFileLoaded(key, section, requestId, Error error))
 
-    let private startWholeFileLoad (model: Model) (key: GitService.DiffFileKey) section allowRemoteImages requestId =
-        let load () =
+    let private startWholeFileLoad (runtime: Runtime) (model: Model) (key: GitService.DiffFileKey) section allowRemoteImages requestId =
+        let load (env: GitService.GitEnv) =
             if model.IsWorkingTreeSelected then
                 if String.IsNullOrWhiteSpace section then
-                    GitService.loadCommitWholeFilePayload model.GitEnv.RepoPath "HEAD" key.OldPath key.NewPath allowRemoteImages
+                    GitService.loadCommitWholeFilePayload model.RepoPath "HEAD" key.OldPath key.NewPath allowRemoteImages
                 else
                     match WorkingTree.tryParseSection section with
-                    | Some parsed -> GitService.loadWorkingTreeWholeFilePayload model.GitEnv.RepoPath parsed key.OldPath key.NewPath allowRemoteImages
+                    | Some parsed -> GitService.loadWorkingTreeWholeFilePayload env parsed key.OldPath key.NewPath allowRemoteImages
                     | None -> Error(GitError.OperationFailed("Open file", $"Unknown working-tree section: {section}"))
             else
                 match model.RevisionComparison, model.SelectedDiffHash with
                 | Some comparison, _ ->
-                    GitService.loadRevisionWholeFilePayload model.GitEnv.RepoPath comparison key.OldPath key.NewPath allowRemoteImages
+                    GitService.loadRevisionWholeFilePayload model.RepoPath comparison key.OldPath key.NewPath allowRemoteImages
                 | None, Some hash ->
-                    GitService.loadCommitWholeFilePayload model.GitEnv.RepoPath hash key.OldPath key.NewPath allowRemoteImages
+                    GitService.loadCommitWholeFilePayload model.RepoPath hash key.OldPath key.NewPath allowRemoteImages
                 | _ -> Error(GitError.OperationFailed("Open file", "No commit revision is selected"))
-        ofFlowLatest wholeFileKey $"whole file {key.NewPath}" model.GitEnv
+        ofFlowLatest wholeFileKey $"whole file {key.NewPath}" runtime
             // LibGit2Sharp reads have no cancellation overload; the latest slot rejects stale completion.
-            (Flow.delay (fun () -> Flow.fromResult (load ())) |> Flow.runOn RunOn.DedicatedThread)
+            (Flow.env |> Flow.bind (fun env -> Flow.fromResult (load env)) |> Flow.runOn RunOn.DedicatedThread)
             (fun payload -> WholeFileLoaded(key, section, requestId, Ok payload))
             (fun error -> WholeFileLoaded(key, section, requestId, Error error))
 
-    let private startRemoteMarkdownImageLoad (model: Model) source =
-        ofFlowLatest remoteMarkdownImageKey $"remote markdown image {source}" model.GitEnv
+    let private startRemoteMarkdownImageLoad (runtime: Runtime) (model: Model) source =
+        ofFlowLatest remoteMarkdownImageKey $"remote markdown image {source}" runtime
             (GitService.loadRemoteMarkdownImage source)
             (fun bytes -> RemoteMarkdownImageLoaded(source, Ok bytes))
             (fun error -> RemoteMarkdownImageLoaded(source, Error error))
 
-    let update msg model : Model * Cmd<Msg> =
+    /// <summary>The program's update. Pure: every effect is a command on <paramref name="runtime"/>, and a queued search
+    /// goes to <paramref name="searchInbox"/>, which <c>subscriptions</c> debounces.</summary>
+    let rec update (runtime: Runtime) (searchInbox: Inbox<SearchInput>) (msg: Msg) (model: Model) : Model * Cmd<Msg> =
+        let runSearch query scopeKey requestId model = update runtime searchInbox (RunSearch(query, scopeKey, requestId)) model
         match msg with
         | RereadRefs ->
             let nextModel = { model with Status = "Refreshing..."; HasFullHistory = false }
-            nextModel, Cmd.batch [ cancelLatest searchKey; loadHistory model.GitEnv (Some historyLimit) model.ShowStashes model.StartupTargets; startWorkingTreeStatusLoad model.GitEnv ]
+            nextModel, Cmd.batch [ cancelLatest runtime searchKey; loadHistory runtime (Some historyLimit) model.ShowStashes model.StartupTargets; startWorkingTreeStatusLoad runtime ]
         | RefreshWorkingTree ->
-            model, startWorkingTreeStatusLoad model.GitEnv
+            model, startWorkingTreeStatusLoad runtime
         | StageWorkingTree [] | UnstageWorkingTree [] | DiscardWorkingTree([], []) | ApplyWorkingTreeLines(_, _, []) ->
             model, Cmd.none
         | StageWorkingTree paths ->
-            workingTreeOperation { model with LastStagedPatches = [] } $"Staged {fileCount paths.Length}" (GitService.stageFiles paths |> Flow.map (fun () -> None))
+            workingTreeOperation runtime { model with LastStagedPatches = [] } $"Staged {fileCount paths.Length}" (GitService.stageFiles paths |> Flow.map (fun () -> None))
         | UnstageWorkingTree paths ->
-            workingTreeOperation { model with LastStagedPatches = [] } $"Unstaged {fileCount paths.Length}" (GitService.unstageFiles paths |> Flow.map (fun () -> None))
+            workingTreeOperation runtime { model with LastStagedPatches = [] } $"Unstaged {fileCount paths.Length}" (GitService.unstageFiles paths |> Flow.map (fun () -> None))
         | DiscardWorkingTree(tracked, untracked) ->
-            workingTreeOperation { model with LastStagedPatches = [] } $"Discarded {fileCount (tracked.Length + untracked.Length)}"
+            workingTreeOperation runtime { model with LastStagedPatches = [] } $"Discarded {fileCount (tracked.Length + untracked.Length)}"
                 (GitService.discardFilesWithBackup tracked untracked |> Flow.map Some)
         | ApplyWorkingTreeLines(GitService.DiscardFromWorkingTree, path, lines) ->
-            workingTreeOperation { model with LastStagedPatches = [] } $"Discarded {lineCount lines.Length} of {path}"
+            workingTreeOperation runtime { model with LastStagedPatches = [] } $"Discarded {lineCount lines.Length} of {path}"
                 (GitService.discardLinesWithBackupAt model.DiffContextLines path lines |> Flow.map Some)
         | ApplyWorkingTreeLines(GitService.StageInIndex, path, lines) ->
             let description = $"Staging {lineCount lines.Length} of {path}"
             { model with Status = description + "…" },
-            ofFlow description model.GitEnv (GitService.stageLinesWithUndoAt model.DiffContextLines path lines)
+            ofFlow description runtime (GitService.stageLinesWithUndoAt model.DiffContextLines path lines)
                 (fun patch -> WorkingTreeLinesStaged(path, patch))
                 (fun error -> WorkingTreeOperationDone(description, Error error))
         | ApplyWorkingTreeLines(target, path, lines) ->
             let verb = if target = GitService.StageInIndex then "Staged" else "Unstaged"
-            workingTreeOperation { model with LastStagedPatches = [] } $"{verb} {lineCount lines.Length} of {path}"
+            workingTreeOperation runtime { model with LastStagedPatches = [] } $"{verb} {lineCount lines.Length} of {path}"
                 (GitService.applyLinesWithContext model.DiffContextLines target path lines |> Flow.map (fun () -> None))
         | WorkingTreeLinesStaged(path, patch) ->
             { model with LastStagedPatches = (path, patch) :: model.LastStagedPatches; Status = "Staged · u to undo" }, Cmd.ofMsg RefreshWorkingTree
@@ -747,7 +803,7 @@ module App =
             | false, [] -> { model with Status = "Nothing to unstage" }, Cmd.none
             | false, (_, patch) :: _ ->
                 { model with StageUndoPending = true; Status = "Unstaging the last selection…" },
-                ofFlow "undo last stage" model.GitEnv (GitService.undoStagedPatch patch)
+                ofFlow "undo last stage" runtime (GitService.undoStagedPatch patch)
                     (fun () -> LastWorkingTreeStageUndone)
                     (fun error -> WorkingTreeOperationDone("Undo stage", Error error))
         | LastWorkingTreeStageUndone ->
@@ -758,7 +814,7 @@ module App =
             | None -> { model with Status = "Nothing to undo" }, Cmd.none
             | Some backup ->
                 { model with LastDiscard = None },
-                ofFlow "undo discard" model.GitEnv (GitService.undoDiscard backup |> Flow.map (fun () -> None))
+                ofFlow "undo discard" runtime (GitService.undoDiscard backup |> Flow.map (fun () -> None))
                     (fun _ -> WorkingTreeOperationDone($"Restored {backup.Description}", Ok None))
                     (fun error -> WorkingTreeOperationDone("Undo", Error error))
         | WorkingTreeOperationDone(description, Ok backup) ->
@@ -777,19 +833,21 @@ module App =
                 // Everything was committed or discarded: the row goes, so select the newest commit instead.
                 let nextModel = { model with WorkingTree = []; WorkingTreeChanges = None; WorkingTreeStartedAtTicks = None; Selection = NoSelection }
                 match model.Commits with
-                | first :: _ -> nextModel, Cmd.ofMsg (SelectCommit(first.Commit.Hash, Timing.mark()))
+                | first :: _ ->
+                    let requestId, nextModel = issueRequest nextModel
+                    nextModel, Cmd.ofMsg (SelectCommit(first.Commit.Hash, requestId))
                 | [] -> nextModel, Cmd.none
             elif model.IsWorkingTreeSelected && changed then
-                let startedAtTicks = Timing.mark()
+                let startedAtTicks, model = issueRequest model
                 { model with WorkingTree = entries; WorkingTreeStartedAtTicks = Some startedAtTicks },
-                startWorkingTreeChangesLoad model.GitEnv model.DiffContextLines startedAtTicks
+                startWorkingTreeChangesLoad runtime model.DiffContextLines startedAtTicks
             elif changed then
                 { model with WorkingTree = entries }, Cmd.none
             else
                 model, Cmd.none
         | WorkingTreeStatusLoaded (Error err) ->
-            // Without git (or outside a work tree) the row simply doesn't appear.
-            logTiming $"working tree status error={GitError.describe err}"
+            // Without git (or outside a work tree) the row simply doesn't appear; the load logged why.
+            ignore err
             { model with WorkingTree = [] }, Cmd.none
         | SelectWorkingTree startedAtTicks ->
             { model with
@@ -806,12 +864,12 @@ module App =
                 SelectedDiffStartedAtTicks = None
                 WorkingTreeStartedAtTicks = Some startedAtTicks },
             Cmd.batch
-                [ cancelLatest selectionKey
-                  cancelLatest diffKey
-                  cancelAllContextJobs model
-                  cancelLatest renderedMarkdownKey
-                  cancelLatest formattedFileKey
-                  startWorkingTreeChangesLoad model.GitEnv model.DiffContextLines startedAtTicks ]
+                [ cancelLatest runtime selectionKey
+                  cancelLatest runtime diffKey
+                  cancelAllContextJobs runtime model
+                  cancelLatest runtime renderedMarkdownKey
+                  cancelLatest runtime formattedFileKey
+                  startWorkingTreeChangesLoad runtime model.DiffContextLines startedAtTicks ]
         | WorkingTreeChangesLoaded (startedAtTicks, result) when model.IsWorkingTreeSelected && model.WorkingTreeStartedAtTicks = Some startedAtTicks ->
             match result with
             | Ok changes ->
@@ -845,7 +903,7 @@ module App =
             model, Cmd.none
         | SetHistoryTargets targets ->
             let nextModel = { model with StartupTargets = targets; Status = "Loading history..."; HasFullHistory = false }
-            nextModel, Cmd.batch [ cancelLatest searchKey; loadHistory model.GitEnv (Some historyLimit) model.ShowStashes targets ]
+            nextModel, Cmd.batch [ cancelLatest runtime searchKey; loadHistory runtime (Some historyLimit) model.ShowStashes targets ]
         | SetShowBranchRefs showBranchRefs ->
             { model with ShowBranchRefs = showBranchRefs }, Cmd.none
         | SetShowStashes showStashes ->
@@ -857,26 +915,27 @@ module App =
                         HasFullHistory = false
                 }
 
-            nextModel, Cmd.batch [ cancelLatest searchKey; loadHistory model.GitEnv (Some historyLimit) showStashes model.StartupTargets ]
+            nextModel, Cmd.batch [ cancelLatest runtime searchKey; loadHistory runtime (Some historyLimit) showStashes model.StartupTargets ]
         | SetIgnoreWhitespace ignoreWhitespace ->
             if ignoreWhitespace = model.IgnoreWhitespace then
                 model, Cmd.none
             else
                 // The diff itself changes, so whatever is shown is reread the way the context-line choice rereads it.
+                let requestId, issued = issueRequest model
                 let nextModel =
-                    { model with
+                    { issued with
                         IgnoreWhitespace = ignoreWhitespace
                         SelectedDiff = None
-                        SelectedDiffStartedAtTicks = model.SelectedCommitHash |> Option.map (fun _ -> Timing.mark()) }
+                        SelectedDiffStartedAtTicks = model.SelectedCommitHash |> Option.map (fun _ -> requestId) }
 
                 match model.RevisionComparison, model.Selection with
                 | Some comparison, _ ->
-                    let startedAtTicks = Timing.mark()
+                    let startedAtTicks = requestId
                     { nextModel with SelectedDiffStartedAtTicks = Some startedAtTicks },
-                    startRevisionComparisonLoad model.GitEnv comparison.BaseRevision comparison.TargetRevision startedAtTicks model.DiffContextLines ignoreWhitespace
+                    startRevisionComparisonLoad runtime comparison.BaseRevision comparison.TargetRevision startedAtTicks model.DiffContextLines ignoreWhitespace
                 | None, CommitSelected hash ->
                     let startedAtTicks = nextModel.SelectedDiffStartedAtTicks.Value
-                    nextModel, startDiffLoad model.GitEnv hash startedAtTicks model.DiffContextLines ignoreWhitespace
+                    nextModel, startDiffLoad runtime hash startedAtTicks model.DiffContextLines ignoreWhitespace
                 | None, (WorkingTreeSelected | NoSelection) -> nextModel, Cmd.none
         | SetDiffContextLines diffContextLines ->
             let normalizedContextLines = max 0 diffContextLines
@@ -884,35 +943,36 @@ module App =
             if normalizedContextLines = model.DiffContextLines then
                 model, Cmd.none
             else
+                let requestId, issued = issueRequest model
                 let nextModel =
                     {
-                        model with
+                        issued with
                             DiffContextLines = normalizedContextLines
                             SelectedDiff = None
-                            SelectedDiffStartedAtTicks = model.SelectedCommitHash |> Option.map (fun _ -> Timing.mark())
+                            SelectedDiffStartedAtTicks = model.SelectedCommitHash |> Option.map (fun _ -> requestId)
                     }
 
                 match model.RevisionComparison, model.Selection with
                 | Some comparison, _ ->
-                    let startedAtTicks = Timing.mark()
+                    let startedAtTicks = requestId
                     { nextModel with SelectedDiffStartedAtTicks = Some startedAtTicks },
-                    startRevisionComparisonLoad model.GitEnv comparison.BaseRevision comparison.TargetRevision startedAtTicks normalizedContextLines model.IgnoreWhitespace
+                    startRevisionComparisonLoad runtime comparison.BaseRevision comparison.TargetRevision startedAtTicks normalizedContextLines model.IgnoreWhitespace
                 | None, CommitSelected hash ->
                     let startedAtTicks = nextModel.SelectedDiffStartedAtTicks.Value
-                    nextModel, startDiffLoad model.GitEnv hash startedAtTicks normalizedContextLines model.IgnoreWhitespace
+                    nextModel, startDiffLoad runtime hash startedAtTicks normalizedContextLines model.IgnoreWhitespace
                 | None, WorkingTreeSelected ->
-                    let startedAtTicks = Timing.mark()
+                    let startedAtTicks = requestId
                     { nextModel with WorkingTreeStartedAtTicks = Some startedAtTicks },
-                    startWorkingTreeChangesLoad model.GitEnv normalizedContextLines startedAtTicks
+                    startWorkingTreeChangesLoad runtime normalizedContextLines startedAtTicks
                 | None, NoSelection ->
-                    nextModel, cancelLatest diffKey
+                    nextModel, cancelLatest runtime diffKey
         | SetDiffLayout layout -> { model with DiffLayout = layout }, Cmd.none
         | HistoryLoaded (isFull, Ok commits) ->
             // A path-limited first page scans a bounded number of commits, so few matches doesn't mean it's complete.
             let hasPaths = model.StartupTargets |> List.exists (function GitStartup.StartupTarget.Path _ -> true | _ -> false)
             if isFull || (not hasPaths && commits.Length < historyLimit) then
                 let graphInfo = Graph.calculateLanes commits
-                let nextModel, historyCmd = historyLoadSelection model graphInfo
+                let nextModel, historyCmd = historyLoadSelection runtime model graphInfo
                 // Say what the history is limited to, so a branch or path launch visibly differs from the full history.
                 let revisionNote =
                     match model.StartupTargets |> List.choose (function
@@ -931,9 +991,9 @@ module App =
                 let searchQuery = nextModel.SearchQuery.Trim()
 
                 if String.IsNullOrWhiteSpace searchQuery then
-                    nextModel, Cmd.batch [ cancelLatest searchKey; historyCmd ]
+                    nextModel, Cmd.batch [ cancelLatest runtime searchKey; historyCmd ]
                 else
-                    let startedAtTicks = Timing.mark()
+                    let startedAtTicks, nextModel = issueRequest nextModel
                     let searchModel =
                         {
                             nextModel with
@@ -941,20 +1001,20 @@ module App =
                                 Status = $"Searching {nextModel.SearchQuery}..."
                         }
 
-                    searchModel, Cmd.batch [ cancelLatest searchKey; historyCmd; startSearchLoad model.GitEnv searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey model.SearchUseRegex startedAtTicks ]
+                    searchModel, Cmd.batch [ cancelLatest runtime searchKey; historyCmd; startSearchLoad runtime searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey model.SearchUseRegex startedAtTicks ]
             else
                 // Partial history loaded
                 let graphInfo = Graph.calculateLanes commits
-                let nextModel, historyCmd = historyLoadSelection model graphInfo
+                let nextModel, historyCmd = historyLoadSelection runtime model graphInfo
                 let nextModel = { nextModel with Status = $"Loaded {commits.Length} commits (loading more...)" } |> applyStartupSelectionNotice false
                 
-                let loadFullCmd = loadHistory model.GitEnv None model.ShowStashes model.StartupTargets
+                let loadFullCmd = loadHistory runtime None model.ShowStashes model.StartupTargets
                 
                 let searchQuery = nextModel.SearchQuery.Trim()
                 if String.IsNullOrWhiteSpace searchQuery then
                     nextModel, Cmd.batch [ historyCmd; loadFullCmd ]
                 else
-                    let startedAtTicks = Timing.mark()
+                    let startedAtTicks, nextModel = issueRequest nextModel
                     let searchModel =
                         {
                             nextModel with
@@ -962,7 +1022,7 @@ module App =
                                 Status = $"Searching {nextModel.SearchQuery}..."
                         }
 
-                    searchModel, Cmd.batch [ historyCmd; loadFullCmd; startSearchLoad model.GitEnv searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey model.SearchUseRegex startedAtTicks ]
+                    searchModel, Cmd.batch [ historyCmd; loadFullCmd; startSearchLoad runtime searchModel.DiffContextLines graphInfo nextModel.SearchQuery nextModel.SearchScopeKey model.SearchUseRegex startedAtTicks ]
         | HistoryLoaded (_, Error err) when model.Commits.IsEmpty
                                             && model.StartupTargets |> List.exists (function GitStartup.StartupTarget.Path _ | GitStartup.StartupTarget.All -> false | _ -> true) ->
             // Command-line revisions that don't resolve: fall back to the normal history (keeping any paths) and say so.
@@ -980,9 +1040,9 @@ module App =
                     StartupTargets = fallbackTargets
                     StartupSelection = SelectionNotFound described
                     Status = $"No commit found for '{described}'" }
-            nextModel, loadHistory model.GitEnv (Some historyLimit) model.ShowStashes fallbackTargets
+            nextModel, loadHistory runtime (Some historyLimit) model.ShowStashes fallbackTargets
         | HistoryLoaded (_, Error err) ->
-            { model with Status = "Error: " + GitError.describe err; SearchResults = None; SearchStartedAtTicks = None }, cancelLatest searchKey
+            { model with Status = "Error: " + GitError.describe err; SearchResults = None; SearchStartedAtTicks = None }, cancelLatest runtime searchKey
         | OpenRevisionComparison (baseRevision, targetRevision, startedAtTicks) ->
             { model with
                 Status = $"Comparing {baseRevision}…{targetRevision}…"
@@ -997,12 +1057,12 @@ module App =
                 SelectionStartedAtTicks = None
                 SelectedDiffStartedAtTicks = Some startedAtTicks },
             Cmd.batch
-                [ cancelLatest selectionKey
-                  cancelLatest diffKey
-                  cancelAllContextJobs model
-                  cancelLatest renderedMarkdownKey
-                  cancelLatest formattedFileKey
-                  startRevisionComparisonLoad model.GitEnv baseRevision targetRevision startedAtTicks model.DiffContextLines model.IgnoreWhitespace ]
+                [ cancelLatest runtime selectionKey
+                  cancelLatest runtime diffKey
+                  cancelAllContextJobs runtime model
+                  cancelLatest runtime renderedMarkdownKey
+                  cancelLatest runtime formattedFileKey
+                  startRevisionComparisonLoad runtime baseRevision targetRevision startedAtTicks model.DiffContextLines model.IgnoreWhitespace ]
         | RevisionComparisonLoaded (baseRevision, targetRevision, startedAtTicks, Ok (comparison, diff))
             when model.SelectedDiffStartedAtTicks = Some startedAtTicks ->
             let id = comparisonId baseRevision targetRevision
@@ -1023,7 +1083,9 @@ module App =
         | RevisionComparisonLoaded _ -> model, Cmd.none
         | CloseRevisionComparison ->
             match model.SelectedCommitHash with
-            | Some hash -> model, Cmd.ofMsg (SelectCommit(hash, Timing.mark()))
+            | Some hash ->
+                let requestId, model = issueRequest model
+                model, Cmd.ofMsg (SelectCommit(hash, requestId))
             | None -> { model with RevisionComparison = None }, Cmd.none
         | SelectCommit (hash, startedAtTicks) ->
             let nextModel =
@@ -1046,20 +1108,20 @@ module App =
 
             let cmd =
                 Cmd.batch
-                    [ cancelLatest selectionKey
-                      cancelLatest diffKey
-                      cancelAllContextJobs model
-                      cancelLatest renderedMarkdownKey
-                      cancelLatest formattedFileKey
-                      cancelLatest workingTreeChangesKey
-                      startDiffFilesLoad model.GitEnv hash startedAtTicks
-                      startDiffLoad model.GitEnv hash startedAtTicks model.DiffContextLines model.IgnoreWhitespace ]
+                    [ cancelLatest runtime selectionKey
+                      cancelLatest runtime diffKey
+                      cancelAllContextJobs runtime model
+                      cancelLatest runtime renderedMarkdownKey
+                      cancelLatest runtime formattedFileKey
+                      cancelLatest runtime workingTreeChangesKey
+                      startDiffFilesLoad runtime hash startedAtTicks
+                      startDiffLoad runtime hash startedAtTicks model.DiffContextLines model.IgnoreWhitespace ]
             nextModel, cmd
         | SetSearchQuery query ->
             let trimmed = query.Trim()
 
             if String.IsNullOrWhiteSpace trimmed then
-                { model with SearchQuery = query; SearchResults = None; SearchStartedAtTicks = None }, cancelLatest searchKey
+                { model with SearchQuery = query; SearchResults = None; SearchStartedAtTicks = None }, cancelLatest runtime searchKey
             else
                 { model with SearchQuery = query }, Cmd.none
         | SetSearchScope scopeKey ->
@@ -1067,8 +1129,10 @@ module App =
         | SetSearchRegex useRegex ->
             { model with SearchUseRegex = useRegex }, Cmd.none
         | RunSearch (query, scopeKey, startedAtTicks) ->
+            // An explicit search (or a clear) retires any queued one still waiting out the debounce window.
+            let model = { model with SearchGeneration = model.SearchGeneration + 1L }
             if String.IsNullOrWhiteSpace query then
-                { model with SearchQuery = query; SearchScopeKey = scopeKey; SearchResults = None; SearchStartedAtTicks = None; Status = "Search cleared" }, cancelLatest searchKey
+                { model with SearchQuery = query; SearchScopeKey = scopeKey; SearchResults = None; SearchStartedAtTicks = None; Status = "Search cleared" }, cancelLatest runtime searchKey
             else
                 let nextModel =
                     {
@@ -1080,26 +1144,52 @@ module App =
                             Status = $"Searching {query}..."
                     }
 
-                let cmd = Cmd.batch [ cancelLatest searchKey; startSearchLoad model.GitEnv model.DiffContextLines model.Commits query scopeKey model.SearchUseRegex startedAtTicks ]
+                let cmd = Cmd.batch [ cancelLatest runtime searchKey; startSearchLoad runtime model.DiffContextLines model.Commits query scopeKey model.SearchUseRegex startedAtTicks ]
                 nextModel, cmd
-        | SearchProgressed (startedAtTicks, checkedCount, total) ->
+        | SearchProgressed (startedAtTicks, progress) ->
             match model.SearchStartedAtTicks with
-            | Some current when current = startedAtTicks && checkedCount < total ->
-                { model with
-                    SearchProgress = Some(checkedCount, total)
-                    Status =
-                        let matches = model.SearchResults |> Option.map List.length |> Option.defaultValue 0
-                        $"Searching {model.SearchQuery}... {checkedCount:N0} of {total:N0} commits, {matches:N0} matches so far (Esc to cancel)" },
-                Cmd.none
+            | Some current when current = startedAtTicks ->
+                let model =
+                    match progress.Matches with
+                    | Some results -> { model with SearchResults = Some results }
+                    | None -> model
+                if progress.Checked < progress.Total then
+                    { model with
+                        SearchProgress = Some(progress.Checked, progress.Total)
+                        Status =
+                            let matches = model.SearchResults |> Option.map List.length |> Option.defaultValue 0
+                            $"Searching {model.SearchQuery}... {progress.Checked:N0} of {progress.Total:N0} commits, {matches:N0} matches so far (Esc to cancel)" },
+                    Cmd.none
+                else
+                    model, Cmd.none
             | _ -> model, Cmd.none
-        | SearchPartialResults (startedAtTicks, results) ->
-            match model.SearchStartedAtTicks with
-            | Some current when current = startedAtTicks -> { model with SearchResults = Some results }, Cmd.none
-            | _ -> model, Cmd.none
+        | QueueSearch (query, scopeKey) ->
+            if String.IsNullOrWhiteSpace query then
+                model, Cmd.none
+            else
+                let generation = model.SearchGeneration + 1L
+                { model with SearchGeneration = generation },
+                Inbox.offer { Query = query; ScopeKey = scopeKey; Generation = generation } searchInbox
+        | SearchSettled input ->
+            if input.Generation <> model.SearchGeneration || String.IsNullOrWhiteSpace input.Query then
+                model, Cmd.none
+            else
+                let requestId, model = issueRequest model
+                // Run it as the explicit search would, so the generation moves on and retires nothing newer.
+                runSearch input.Query input.ScopeKey requestId model
+        | SetSearchDebounce window ->
+            { model with SearchDebounce = (if window < TimeSpan.Zero then TimeSpan.Zero else window) }, Cmd.none
+        | WorkingTreeFilesChanged ->
+            { model with WatchFailures = 0 }, startWorkingTreeStatusLoad runtime
+        | WorkingTreeWatchFailed _ ->
+            // Overflowed or broken watchers lose events: reread now, and start a new watcher unless this one keeps failing.
+            { model with WatchFailures = model.WatchFailures + 1; WatchRestarts = model.WatchRestarts + 1 },
+            startWorkingTreeStatusLoad runtime
         | CancelSearch ->
+            let model = { model with SearchGeneration = model.SearchGeneration + 1L }
             match model.SearchStartedAtTicks with
             | Some _ ->
-                { model with SearchStartedAtTicks = None; SearchProgress = None; Status = $"Search cancelled: {model.SearchQuery}" }, cancelLatest searchKey
+                { model with SearchStartedAtTicks = None; SearchProgress = None; Status = $"Search cancelled: {model.SearchQuery}" }, cancelLatest runtime searchKey
             | None -> model, Cmd.none
         | SearchResultsLoaded (query, scopeKey, startedAtTicks, Ok results) ->
             match model.SearchQuery, model.SearchScopeKey, model.SearchStartedAtTicks with
@@ -1118,13 +1208,6 @@ module App =
             | _ ->
                 model, Cmd.none
         | DiffFilesLoaded (hash, startedAtTicks, Ok files) ->
-            match model.SelectedCommitHash, model.SelectionStartedAtTicks with
-            | Some currentHash, Some currentStartedAtTicks when currentHash = hash && currentStartedAtTicks = startedAtTicks ->
-                let elapsed = (Timing.elapsedFrom startedAtTicks)
-                logTiming $"commit click -> file list ready hash={hash} elapsed={elapsed.TotalMilliseconds:F1}ms files={files.Length}"
-            | _ ->
-                ()
-
             if model.SelectedCommitHash = Some hash && model.SelectionStartedAtTicks = Some startedAtTicks then
 
                 let selectedFileSummary =
@@ -1153,39 +1236,16 @@ module App =
             else
                 model, Cmd.none
         | DiffFilesLoaded (hash, startedAtTicks, Error err) ->
-            match model.SelectedCommitHash, model.SelectionStartedAtTicks with
-            | Some currentHash, Some currentStartedAtTicks when currentHash = hash && currentStartedAtTicks = startedAtTicks ->
-                let elapsed = (Timing.elapsedFrom startedAtTicks)
-                logTiming $"commit click -> file list error hash={hash} elapsed={elapsed.TotalMilliseconds:F1}ms error={GitError.describe err}"
-            | _ ->
-                ()
-
             if model.SelectedCommitHash = Some hash && model.SelectionStartedAtTicks = Some startedAtTicks then
-                { model with Status = "Diff Error: " + GitError.describe err; SelectedDiffHash = None; SelectedDiffFiles = None; SelectedDiff = None; SelectedDiffFileKey = None; DiffExpansions = Map.empty; SelectionStartedAtTicks = None; SelectedDiffStartedAtTicks = None }, cancelAllContextJobs model
+                { model with Status = "Diff Error: " + GitError.describe err; SelectedDiffHash = None; SelectedDiffFiles = None; SelectedDiff = None; SelectedDiffFileKey = None; DiffExpansions = Map.empty; SelectionStartedAtTicks = None; SelectedDiffStartedAtTicks = None }, cancelAllContextJobs runtime model
             else
                 model, Cmd.none
         | DiffLoaded (hash, startedAtTicks, Ok diff) ->
-            match model.SelectedCommitHash, model.SelectedDiffStartedAtTicks with
-            | Some currentCommitHash, Some currentStartedAtTicks
-                when currentCommitHash = hash && currentStartedAtTicks = startedAtTicks ->
-                let elapsed = (Timing.elapsedFrom startedAtTicks)
-                logTiming $"commit click -> unified diff ready hash={hash} elapsed={elapsed.TotalMilliseconds:F1}ms files={diff.Length}"
-            | _ ->
-                ()
-
             if model.SelectedCommitHash = Some hash && model.SelectedDiffStartedAtTicks = Some startedAtTicks then
                 { model with SelectedDiff = Some diff; SelectedDiffStartedAtTicks = None }, Cmd.none
             else
                 model, Cmd.none
         | DiffLoaded (hash, startedAtTicks, Error err) ->
-            match model.SelectedCommitHash, model.SelectedDiffStartedAtTicks with
-            | Some currentCommitHash, Some currentStartedAtTicks
-                when currentCommitHash = hash && currentStartedAtTicks = startedAtTicks ->
-                let elapsed = (Timing.elapsedFrom startedAtTicks)
-                logTiming $"commit click -> unified diff error hash={hash} elapsed={elapsed.TotalMilliseconds:F1}ms error={GitError.describe err}"
-            | _ ->
-                ()
-
             if model.SelectedCommitHash = Some hash && model.SelectedDiffStartedAtTicks = Some startedAtTicks then
                 { model with Status = "Diff Error: " + GitError.describe err; SelectedDiff = None; SelectedDiffStartedAtTicks = None }, Cmd.none
             else
@@ -1206,7 +1266,7 @@ module App =
                 { model with FormattedFile = None }, Cmd.none
             else
                 { model with FormattedFile = Some { Key = key; Section = section; RequestId = requestId; Content = None }; Status = "Formatting…" },
-                startFormattedFileLoad model key section requestId
+                startFormattedFileLoad runtime model key section requestId
         | FormattedFileLoaded (key, section, requestId, result) ->
             match model.FormattedFile with
             | Some pending when pending.Key = key && pending.Section = section && pending.RequestId = requestId ->
@@ -1219,7 +1279,7 @@ module App =
                 { model with RenderedMarkdown = None }, Cmd.none
             else
                 { model with RenderedMarkdown = Some { Key = key; Section = section; RequestId = requestId; Content = None }; Status = "Rendering Markdown…" },
-                startRenderedMarkdownLoad model key section allowRemoteImages requestId
+                startRenderedMarkdownLoad runtime model key section allowRemoteImages requestId
         | RenderedMarkdownLoaded (key, section, requestId, result) ->
             match model.RenderedMarkdown with
             | Some pending when pending.Key = key && pending.Section = section && pending.RequestId = requestId ->
@@ -1229,7 +1289,7 @@ module App =
             | _ -> model, Cmd.none
         | OpenWholeFile (key, section, preview, allowRemoteImages, requestId) ->
             { model with WholeFile = Some { Key = key; Section = section; RequestId = requestId; Preview = preview; Payload = None }; Status = "Loading file…" },
-            startWholeFileLoad model key section allowRemoteImages requestId
+            startWholeFileLoad runtime model key section allowRemoteImages requestId
         | WholeFileLoaded (key, section, requestId, result) ->
             match model.WholeFile with
             | Some pending when pending.Key = key && pending.Section = section && pending.RequestId = requestId ->
@@ -1242,7 +1302,7 @@ module App =
             | Some current when current.RequestId = requestId -> { model with WholeFile = None }, Cmd.none
             | _ -> model, Cmd.none
         | LoadRemoteMarkdownImage source ->
-            model, startRemoteMarkdownImageLoad model source
+            model, startRemoteMarkdownImageLoad runtime model source
         | RemoteMarkdownImageLoaded (source, result) ->
             let updateImages images =
                 images |> List.map (fun image ->
@@ -1262,9 +1322,9 @@ module App =
             { model with RenderedMarkdown = renderedMarkdown; WholeFile = wholeFile }, Cmd.none
         | ExpandDiffGap (hash, gap, direction, requestedAtTicks) ->
             let key: GitService.DiffFileKey = { OldPath = gap.OldPath; NewPath = gap.NewPath }
-            revealDiffRange model hash key (DiffExpansion.revealRange direction gap) requestedAtTicks
+            revealDiffRange runtime model hash key (DiffExpansion.revealRange direction gap) requestedAtTicks
         | ExpandDiffFile (hash, key, requestedAtTicks) ->
-            revealDiffRange model hash key (Some { Start = 1; End = Int32.MaxValue }) requestedAtTicks
+            revealDiffRange runtime model hash key (Some { Start = 1; End = Int32.MaxValue }) requestedAtTicks
         | CollapseDiffFileContext (hash, key) ->
             match model.SelectedDiffHash, Map.tryFind key model.DiffExpansions with
             | Some currentHash, Some expansion when currentHash = hash ->
@@ -1296,7 +1356,7 @@ module App =
                 | None, None ->
                     let expansion = { revealed with PendingRequestId = Some requestedAtTicks }
                     { model with WorkingTreeExpansions = model.WorkingTreeExpansions |> Map.add key expansion },
-                    startWorkingTreeContextLoad model.GitEnv key requestedAtTicks
+                    startWorkingTreeContextLoad runtime key requestedAtTicks
                 | _ ->
                     { model with WorkingTreeExpansions = model.WorkingTreeExpansions |> Map.add key revealed }, Cmd.none
             else
@@ -1322,15 +1382,15 @@ module App =
             | _ ->
                 model, Cmd.none
         | CreateTag (hash, name) ->
-            model, ofFlow "create tag" model.GitEnv (GitService.createTag hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, ofFlow "create tag" runtime (GitService.createTag hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | CreateBranch (hash, name) ->
-            model, ofFlow "create branch" model.GitEnv (GitService.createBranch hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, ofFlow "create branch" runtime (GitService.createBranch hash name) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | CherryPick hash ->
-            model, ofFlow "cherry-pick" model.GitEnv (GitService.cherryPick hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, ofFlow "cherry-pick" runtime (GitService.cherryPick hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | ResetTo (hash, hard) ->
-            model, ofFlow "reset" model.GitEnv (GitService.resetTo hash hard) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, ofFlow "reset" runtime (GitService.resetTo hash hard) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | Revert hash ->
-            model, ofFlow "revert" model.GitEnv (GitService.revert hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
+            model, ofFlow "revert" runtime (GitService.revert hash) (fun () -> OperationResult (Ok ())) (fun err -> OperationResult (Error err))
         | OperationResult (Ok _) ->
             model, Cmd.ofMsg RereadRefs
         | OperationResult (Error err) ->
@@ -1342,7 +1402,8 @@ module App =
                 { model with StartupSelection = NoStartupSelection }, Cmd.none
             elif historyHasCommit then
                 // History already loaded (and picked a default): select the requested commit now.
-                { model with StartupSelection = NoStartupSelection }, Cmd.ofMsg (SelectCommit(hash, Timing.mark()))
+                let requestId, model = issueRequest model
+                { model with StartupSelection = NoStartupSelection }, Cmd.ofMsg (SelectCommit(hash, requestId))
             else
                 // History still loading, or the commit is older than the first page: selected when it arrives.
                 { model with StartupSelection = SelectionFound hash }, Cmd.none
@@ -1354,19 +1415,45 @@ module App =
         | NoOp ->
             model, Cmd.none
 
-    /// Records each message and its update time for crash and hang reports.
-    let private instrumentedUpdate msg model =
-        let name =
-            match msg with
-            | RereadRefs -> "RereadRefs"
-            | NoOp -> "NoOp"
-            | _ -> Diagnostics.messageTypeName (box msg)
-        let startedAt = Timing.mark()
-        Diagnostics.beginMessage name
-        try
-            update msg model
-        finally
-            Diagnostics.endMessage name startedAt
+    /// <summary>A message's name for diagnostics breadcrumbs, without reflection. Fieldless cases share the union's
+    /// type, so the ones worth telling apart are named here.</summary>
+    let messageName (msg: Msg) =
+        match msg with
+        | RereadRefs -> "RereadRefs"
+        | NoOp -> "NoOp"
+        | WorkingTreeFilesChanged -> "WorkingTreeFilesChanged"
+        | _ -> Diagnostics.messageTypeName (box msg)
 
-    let program (startupArgs: string array) =
-        Program.mkProgram (fun () -> init startupArgs) instrumentedUpdate (fun _ _ -> ())
+    /// <summary>Restarts after this many watcher failures in a row stop; a watcher that cannot start at all (too many
+    /// directories for inotify, an unreadable tree) gives up rather than retrying forever.</summary>
+    let maxWatchFailures = 3
+
+    /// <summary>The program's long-lived inputs, owned by Elmish: the search debounce and the working tree watcher. The
+    /// debounce window and the watcher's restart count are part of their ids, so changing the window or restarting a
+    /// failed watcher replaces the subscription.</summary>
+    let subscriptions (runtime: Runtime) (searchInbox: Inbox<SearchInput>) (model: Model) : Sub<Msg> =
+        let window = model.SearchDebounce
+        let settled : FlowStream<GitService.GitEnv, Never, Msg> =
+            let inputs = Inbox.stream searchInbox
+            (if window > TimeSpan.Zero then inputs |> FlowStream.debounce window else inputs)
+            |> FlowStream.map SearchSettled
+        let search = Sub.OfFlowStream.subscribe [ "search-debounce"; string window.Ticks ] runtime settled Never.absurd
+
+        let watch =
+            match model.WorkingDirectory with
+            | Some directory when not (String.IsNullOrEmpty model.RepoPath) && model.WatchFailures < maxWatchFailures ->
+                Sub.OfFlowStream.subscribe
+                    [ "working-tree-watch"; directory; string model.WatchRestarts ]
+                    runtime
+                    (WorkingTreeWatch.changes directory model.RepoPath |> FlowStream.map (fun () -> WorkingTreeFilesChanged))
+                    (fun error -> WorkingTreeWatchFailed(error.ToString()))
+            | _ -> Sub.none
+
+        Sub.batch [ search; watch ]
+
+    /// <summary>The main window's program, uninstrumented. The desktop host builds the instrumented one with
+    /// <c>Host.mainProgram</c>.</summary>
+    let program (runtime: Runtime) (flags: Flags) =
+        let searchInbox = Inbox.create 64 runtime
+        Program.mkProgram (fun () -> init runtime flags) (update runtime searchInbox) (fun _ _ -> ())
+        |> Program.withSubscription (subscriptions runtime searchInbox)

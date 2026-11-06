@@ -1063,12 +1063,12 @@ public partial class MainWindow : Window, IVimCommands {
             open.FocusMessage();
             return;
         }
-        if (_projection is not { RepositoryPath: { } repo, WorkingDirectory: { } directory } projection) {
+        if (_projection is not { RepositoryPath: { } repo, WorkingDirectory: { } directory, Runtime: { } runtime } projection) {
             if (_projection != null) _projection.Status = "The commit window needs a repository with a working tree";
             return;
         }
 
-        _commitWindow = new CommitWindow(repo, System.IO.Path.GetFileName(directory));
+        _commitWindow = new CommitWindow(runtime, repo, System.IO.Path.GetFileName(directory));
         _commitWindow.Projection!.Committed += push => {
             projection.RereadRefs();
             projection.RefreshWorkingTree();

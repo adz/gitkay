@@ -92,40 +92,21 @@ module GitService =
             with get () = fileContentCache.Value
             and set value = fileContentCache <- Some value
 
+    /// The live services a repository environment is built from. The host supplies them, so this module names no
+    /// live implementation and tests can substitute any of them.
+    type GitServices =
+        { Process: IProcess
+          Http: IHttp
+          FileSystem: IFileSystem }
+
+    /// Everything a repository command runs against. Built once by `layer` inside the Elmish runtime's root scope,
+    /// which owns the caches: stopping the runtime releases them, so nothing here is disposed by a window.
     type GitEnv =
         { RepoPath: string
           Processes: IProcess
           HttpClient: IHttp
           Files: IFileSystem
-          Cache: GitCache
-          CacheScope: AppHandle<GitError, unit> option ref }
-        /// Requests the cache scope stop without blocking the caller. Window-close handlers run on the UI
-        /// thread and must not wait on an in-flight diff: the stop is requested here and its completion is
-        /// observed on the thread pool.
-        member this.StopInBackground() =
-            match System.Threading.Interlocked.Exchange(this.CacheScope, None) with
-            | Some handle ->
-                Async.Start(async {
-                    try
-                        let! _ = handle.Stop()
-                        ()
-                    with error ->
-                        System.Diagnostics.Trace.WriteLine("[git-env] cache scope stop failed: " + error.Message)
-                })
-            | None -> ()
-
-        /// Stops the cache scope and waits briefly for it to settle. Used at process exit, where a bounded
-        /// wait is acceptable; a timeout is logged rather than ignored.
-        member this.StopForExit(timeout: TimeSpan) =
-            match System.Threading.Interlocked.Exchange(this.CacheScope, None) with
-            | Some handle ->
-                if not (handle.StopAndWait timeout) then
-                    System.Diagnostics.Trace.WriteLine(
-                        "[git-env] cache scope did not stop within " + timeout.TotalSeconds.ToString("F1") + "s at exit")
-            | None -> ()
-
-        interface IDisposable with
-            member this.Dispose() = this.StopInBackground()
+          Cache: GitCache }
         interface IHasProcess with member this.Process = this.Processes
         interface IHasHttp with member this.Http = this.HttpClient
         interface IHasFileSystem with member this.FileSystem = this.Files
@@ -365,39 +346,30 @@ module GitService =
     // requested concurrently by two separate commands, and both would otherwise run rename detection on the same
     // commit; one cache runs the load once and hands the same result to every caller. A second cache serves per-file
     // content, keyed by commit, path and context. Successes are kept for later commands, failures are not, so a
-    // transient failure retries. Built here, at the repository boundary, so every command that touches this
-    // repository shares them.
-    let private sharedHttpClient = new HttpClient() // axial-allow-AXG001: one shared client at the live service boundary
-
-    let private environmentCore repoPath : GitEnv =
-        let cache = GitCache()
-
-        { RepoPath = repoPath
-          Processes = Process.live FileSystem.live Console.live
-          HttpClient = Http.live sharedHttpClient
-          Files = FileSystem.live
-          Cache = cache
-          CacheScope = ref None }
-
-    let environment repoPath =
-        let env = environmentCore repoPath
-
-        let build = flow {
-            let! diffCache = Cache.make (loadDiffCacheEntryFlow repoPath)
-            let! fileContentCache = Cache.make (fun key -> loadDiffFileContent key.ContextLines key.Hash key.OldPath key.NewPath)
-            return diffCache, fileContentCache
-        }
-        match App.startWith env build |> Async.RunSynchronously with // axial-allow-AXG001: synchronous repository-open boundary; cache scope outlives this call
-        | Ok (handle, (diffCache, fileContentCache)) ->
+    // transient failure retries. Built by the layer, so every command that touches this repository shares them and
+    // the scope that builds them (the Elmish runtime's root scope) releases them.
+    let private environmentFlow (services: GitServices) (repoPath: string) : Flow<'input, Never, GitEnv> =
+        flow {
+            let env =
+                { RepoPath = repoPath
+                  Processes = services.Process
+                  HttpClient = services.Http
+                  Files = services.FileSystem
+                  Cache = GitCache() }
+            // The lookups run against the environment they fill in; it is complete before any command can read it.
+            let! diffCache = Cache.make (fun hash -> loadDiffCacheEntryFlow repoPath hash |> Flow.localEnv (fun _ -> env))
+            let! fileContentCache =
+                Cache.make (fun key ->
+                    loadDiffFileContent key.ContextLines key.Hash key.OldPath key.NewPath |> Flow.localEnv (fun _ -> env))
             env.Cache.DiffCache <- diffCache
             env.Cache.FileContentCache <- fileContentCache
-            env.CacheScope.Value <- Some handle
-        | Error error -> failwith ("Cannot create repository caches: " + GitError.describe error)
-        env
+            return env
+        }
 
-    /// A repository environment without the diff caches or their scope. The commit window only runs
-    /// working-tree commands, so it does not need a cache scope to stop.
-    let environmentWithoutCaches repoPath = environmentCore repoPath
+    /// The repository environment as a layer: start the Elmish runtime with it (`ElmishRuntime.startLayer`) and the
+    /// runtime's root scope owns the caches until the runtime stops.
+    let layer (services: GitServices) (repoPath: string) : Layer<'input, Never, GitEnv> =
+        Layer.fromFlow (environmentFlow services repoPath)
 
     let private loadCommit (repo: Repository) (hash: string) =
         repo.Lookup<LibGit2Sharp.Commit>(hash) |> requireNotNull (GitError.CommitNotFound hash)
@@ -879,9 +851,10 @@ module GitService =
                 | [] -> return { OldPath = oldPath; NewPath = newPath; Hunks = []; NewLineCount = None }
         }
 
-    /// <summary>Runs <see cref="fetchWorkingTreeFile"/> for a repository, for callers outside Elmish.</summary>
-    let loadWorkingTreeFile (repoPath: string) (section: WorkingTree.Section) (oldPath: string) (newPath: string) : Result<FileDiff, GitError> =
-        Flow.run (environment repoPath) (fetchWorkingTreeFile section oldPath newPath) |> Exit.toResult
+    /// <summary>Runs <see cref="fetchWorkingTreeFile"/> synchronously against a repository environment, for the
+    /// synchronous preview loaders below.</summary>
+    let loadWorkingTreeFile (env: GitEnv) (section: WorkingTree.Section) (oldPath: string) (newPath: string) : Result<FileDiff, GitError> =
+        Flow.run env (fetchWorkingTreeFile section oldPath newPath) |> Exit.toResult
 
     // ----- Staging and committing, for the commit window (see dev-docs/commit-window-plan.md) -----
 
@@ -1394,9 +1367,9 @@ module GitService =
         let deleted = FileChange.isDeleted oldPath newPath
         revisionBlobBytes repoPath (if deleted then comparison.BaseHash else comparison.TargetHash) (if deleted then oldPath else newPath)
 
-    let loadWorkingTreeFormattedFile (contextLines: int) (repoPath: string) (section: WorkingTree.Section) (oldPath: string) (newPath: string) : Result<Models.FileDiff, GitError> =
+    let loadWorkingTreeFormattedFile (contextLines: int) (env: GitEnv) (section: WorkingTree.Section) (oldPath: string) (newPath: string) : Result<Models.FileDiff, GitError> =
         result {
-            let! file = loadWorkingTreeFile repoPath section oldPath newPath
+            let! file = loadWorkingTreeFile env section oldPath newPath
             let previewPath = FileChange.currentPath oldPath newPath
             match Markdown.previewKind previewPath with
             | FormattedPreview format -> return! formattedDiff contextLines format oldPath newPath file
@@ -1440,11 +1413,11 @@ module GitService =
             return! renderedMarkdownOf file pair.OldPath pair.NewPath oldSource newSource allowRemote loader
         }
 
-    let loadWorkingTreeRenderedMarkdown (repoPath: string) (section: WorkingTree.Section) (oldPath: string) (newPath: string) (allowRemote: bool) : Result<RenderedMarkdownContent, GitError> =
+    let loadWorkingTreeRenderedMarkdown (env: GitEnv) (section: WorkingTree.Section) (oldPath: string) (newPath: string) (allowRemote: bool) : Result<RenderedMarkdownContent, GitError> =
         result {
-            let! file = loadWorkingTreeFile repoPath section oldPath newPath
+            let! file = loadWorkingTreeFile env section oldPath newPath
             let oldSource, newSource = sidesOf file
-            let loader side path = loadWorkingTreeSideFileBytes repoPath section (side = MarkdownImageSide.Old) path
+            let loader side path = loadWorkingTreeSideFileBytes env.RepoPath section (side = MarkdownImageSide.Old) path
             return! renderedMarkdownOf file oldPath newPath oldSource newSource allowRemote loader
         }
 
@@ -1464,20 +1437,20 @@ module GitService =
                 return { File = file; Rendered = None; ImageBytes = None }
         }
 
-    let loadWorkingTreeWholeFilePayload repoPath section oldPath newPath allowRemote =
+    let loadWorkingTreeWholeFilePayload (env: GitEnv) section oldPath newPath allowRemote =
         result {
             let previewPath = FileChange.currentPath oldPath newPath
             match Markdown.previewKind previewPath with
             | MarkdownPreview ->
-                let! rendered = loadWorkingTreeRenderedMarkdown repoPath section oldPath newPath allowRemote
+                let! rendered = loadWorkingTreeRenderedMarkdown env section oldPath newPath allowRemote
                 return { File = rendered.File; Rendered = Some rendered; ImageBytes = None }
             | ImagePreview _ ->
-                let! file = loadWorkingTreeFile repoPath section oldPath newPath
+                let! file = loadWorkingTreeFile env section oldPath newPath
                 let path = FileChange.currentPath oldPath newPath
-                let! bytes = loadWorkingTreeSideFileBytes repoPath section false path
+                let! bytes = loadWorkingTreeSideFileBytes env.RepoPath section false path
                 return { File = file; Rendered = None; ImageBytes = Some bytes }
             | FormattedPreview _ | SourceOnly ->
-                let! file = loadWorkingTreeFile repoPath section oldPath newPath
+                let! file = loadWorkingTreeFile env section oldPath newPath
                 return { File = file; Rendered = None; ImageBytes = None }
         }
 

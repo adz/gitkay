@@ -122,7 +122,10 @@ public partial class App : Application {
                 return;
             }
 
-            var window = new CommitWindow(repository!, System.IO.Path.GetFileName(directory)) { WindowStartupLocation = Avalonia.Controls.WindowStartupLocation.CenterScreen };
+            // The commit window alone gets the runtime the history window would have: closing it stops the runtime.
+            var runtime = GitKay.Core.Host.startRepositoryRuntime(UiPost, repository!);
+            desktop.Exit += (_, _) => GitKay.Core.Host.stop(runtime, TimeSpan.FromSeconds(2));
+            var window = new CommitWindow(runtime, repository!, System.IO.Path.GetFileName(directory)) { WindowStartupLocation = Avalonia.Controls.WindowStartupLocation.CenterScreen };
             window.OpenInVsCode = (path, line) => {
                 var full = System.IO.Path.GetFullPath(System.IO.Path.Combine(directory, path));
                 try {
@@ -159,7 +162,7 @@ public partial class App : Application {
             await InitializeFolderWindowAsync(desktop, FolderMode.Preview, preview.folder, null);
             return;
         }
-        GitService.GitEnv? repositoryEnv = null;
+        Axial.ElmishFlows.ElmishRuntime<GitService.GitEnv>? runtime = null;
         try {
             var (settingsResult, uiStateResult, repoKey) = await Task.Run(() => {
                 return (GitKay.Serialization.SettingsStore.loadDefaultReporting(), GitKay.Serialization.UiStateStore.loadDefaultReporting(), GitService.tryDiscoverRepositoryPath());
@@ -244,24 +247,18 @@ public partial class App : Application {
             if (failures.Count > 0)
                 await SettingsLoadFailureDialog.ShowAsync(mainWindow, failures);
 
-            GitKay.Core.App.configureRuntime(new Action<Action>(callback =>
-                ElmishHost.post(FuncConvert.ToFSharpFunc<Microsoft.FSharp.Core.Unit>(_ => callback()))));
+            // The runtime is created once the UI dispatcher exists, with the post that delivers to it; the program,
+            // its commands and its subscriptions (the search debounce and the working tree watcher) all run on it.
+            var appRuntime = GitKay.Core.Host.startRepositoryRuntime(UiPost, repoKey ?? "");
+            runtime = appRuntime;
+            projection.Runtime = appRuntime;
+            var flags = GitKay.Core.Host.flags(repoKey ?? "", startupArgs, projection.SearchDebounce);
 
             var host = ElmishHost.startAndBind(
-                GitKay.Core.App.program(startupArgs),
-                model => {
-                    if (!ReferenceEquals(repositoryEnv, model.GitEnv)) {
-                        if (repositoryEnv != null) ((IDisposable)repositoryEnv).Dispose();
-                        repositoryEnv = model.GitEnv;
-                    }
-                    projection.Update(model);
-                },
+                GitKay.Core.Host.mainProgram(appRuntime, flags),
+                model => projection.Update(model),
                 dispatch => projection.SetDispatch(dispatch)
             );
-            GitKay.Core.App.startHosts();
-
-            var watcher = WorkingTreeWatcher.TryStart(projection.WorkingDirectory, repoKey,
-                () => Dispatcher.UIThread.Post(projection.RefreshWorkingTree));
             mainWindow.Activated += (_, _) => projection.RefreshWorkingTree();
 
             desktop.Exit += (s, e) => {
@@ -275,16 +272,19 @@ public partial class App : Application {
                     projection.CaptureViewPreferences().Select(entry => Tuple.Create(entry.Key, entry.Value)),
                     UiStateModule.withRecentSearches(projection.RecentSearches, currentUiState));
                 GitKay.Serialization.UiStateStore.saveDefault(currentUiState);
-                watcher?.Dispose();
                 ((IDisposable)host).Dispose();
-                GitKay.Core.App.stopRuntime();
-                repositoryEnv?.StopForExit(TimeSpan.FromSeconds(2));
+                // Stops the commands, the subscriptions and the repository caches the runtime's layer built.
+                GitKay.Core.Host.stop(appRuntime, TimeSpan.FromSeconds(2));
             };
 
         }
         catch (Exception ex) {
-            if (repositoryEnv != null) ((IDisposable)repositoryEnv).Dispose();
+            if (runtime != null) GitKay.Core.Host.stop(runtime, TimeSpan.FromSeconds(2));
             FatalErrorPresenter.ShowStartupFailure(desktop, ex);
         }
     }
+
+    /// <summary>The runtime's Post: inline when already on the UI thread, otherwise posted to it.</summary>
+    private static readonly Action<Action> UiPost = callback =>
+        ElmishHost.post(FuncConvert.ToFSharpFunc<Microsoft.FSharp.Core.Unit>(_ => callback()));
 }
