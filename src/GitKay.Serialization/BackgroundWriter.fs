@@ -11,6 +11,7 @@ module internal BackgroundWriter =
     let private waiting = System.Collections.Generic.List<System.Threading.Tasks.TaskCompletionSource>()
     let mutable private pending: (unit -> unit) option = None
     let mutable private writerRunning = false
+    let mutable private writer = System.Threading.Tasks.Task.CompletedTask
 
     let private writeWhilePending () =
         let mutable finished = false
@@ -49,7 +50,8 @@ module internal BackgroundWriter =
                     writerRunning <- true
                     true)
 
-        // The loop runs until the queue drains, so the writer is never discarded mid-write.
-        if startWriter then System.Threading.Tasks.Task.Run(writeWhilePending) |> ignore
+        if startWriter then
+            // The writer is retained until it drains, so it is never discarded mid-write.
+            lock pendingGate (fun () -> writer <- System.Threading.Tasks.Task.Run(writeWhilePending))
 
         completion.Task
