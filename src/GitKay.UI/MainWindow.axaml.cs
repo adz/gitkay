@@ -1187,7 +1187,7 @@ public partial class MainWindow : Window, IVimCommands {
             _projection.WholeFileReady += PresentWholeFile;
             _projection.ErrorStatusRaised += PulseStatusBar;
             _projection.FileJumpRequested += file =>
-                Dispatcher.UIThread.Post(() => DiffRowsListBox.ScrollToTop(file.Header), DispatcherPriority.Background);
+                Dispatcher.UIThread.Post(() => DiffRowsListBox.RevealFile(file.Key), DispatcherPriority.Background);
         }
     }
 
@@ -1353,7 +1353,6 @@ public partial class MainWindow : Window, IVimCommands {
 
         var shouldScrollCommit = e.PropertyName is nameof(MainProjection.SelectedCommit) or nameof(MainProjection.Commits);
         var shouldScrollFile = e.PropertyName == nameof(MainProjection.SelectedDiffFile);
-        var shouldScrollDiff = e.PropertyName is nameof(MainProjection.SelectedDiffFile) or nameof(MainProjection.SelectedDiffRow);
 
         Dispatcher.UIThread.Post(() => {
             if (!ReferenceEquals(_projection, projection)) {
@@ -1366,11 +1365,14 @@ public partial class MainWindow : Window, IVimCommands {
 
             if (shouldScrollFile && projection.SelectedDiffFile != null) {
                 DiffFilesListBox.ScrollIntoView(projection.SelectedDiffFile);
+                // The diff shows the file the list just selected, including while that file's own rows are still
+                // loading: the file list and the diff must never name different files.
+                DiffRowsListBox.RevealFile(projection.SelectedDiffFile.Key);
             }
 
-            var target = projection.SelectedDiffRow ?? projection.SelectedDiffFile?.Header;
-            if (shouldScrollDiff && target != null) {
-                // Keyboard movement only brings rows into view; explicit file jumps are handled by FileJumpRequested.
+            if (e.PropertyName == nameof(MainProjection.SelectedDiffRow)
+                && (projection.SelectedDiffRow ?? projection.SelectedDiffFile?.Header) is { } target) {
+                // Keyboard movement only brings rows into view; explicit file jumps are handled by RevealFile.
                 DiffRowsListBox.ScrollIntoView(target);
             }
 

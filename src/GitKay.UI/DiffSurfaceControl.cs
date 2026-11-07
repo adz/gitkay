@@ -324,6 +324,55 @@ public sealed class DiffSurfaceControl : Control, GitKay.Core.Vim.IVimHost, IOve
             RestoreExpansionAnchor();
         else
             RestoreViewportAnchor();
+        // A reveal outranks the anchor: a file the reader selected must be the file on screen, even when the rows above
+        // it changed height as their content arrived.
+        ApplyPendingFileReveal();
+    }
+
+    private DiffFileKey? _pendingFileReveal;
+    private int _revealUserScrolls;
+
+    /// <summary>Scrolls so the file's header is at the top, and keeps it there while its own rows load.</summary>
+    /// <remarks>
+    /// A newly selected commit's file headers arrive before the files' rows, so putting the header at the top once is
+    /// not enough: when the rows above the file grow, the viewport lands in another file while the file list still
+    /// shows the selected one. The request is repeated after each rebuild until the file's content has arrived, and is
+    /// dropped once the reader scrolls somewhere else.
+    /// </remarks>
+    public void RevealFile(DiffFileKey key) {
+        _pendingFileReveal = key;
+        _revealUserScrolls = _userScrolls;
+        ApplyPendingFileReveal();
+    }
+
+    private void ApplyPendingFileReveal() {
+        if (_pendingFileReveal is not { } key) return;
+
+        // A scroll since the request means the reader has moved on, so the file must not be pulled back under the hand.
+        if (_userScrolls != _revealUserScrolls) {
+            _pendingFileReveal = null;
+            return;
+        }
+
+        DiffFileHeaderProjection? header = null;
+
+        foreach (var row in _rows) {
+            if (row is DiffFileHeaderProjection candidate && candidate.File.Key == key) {
+                header = candidate;
+                break;
+            }
+        }
+
+        if (header == null) return;
+
+        // Revealing scrolls the view without the reader's hand on it: keep the request alive across that scroll.
+        _pendingAnchor = null;
+        _anchorTarget = null;
+        ScrollToTop(header);
+        _revealUserScrolls = _userScrolls;
+
+        // Content arrives after the headers; stay with the file until its own rows are in.
+        if (header.File.IsLoaded) _pendingFileReveal = null;
     }
 
     private double? _pendingScrollOffset;

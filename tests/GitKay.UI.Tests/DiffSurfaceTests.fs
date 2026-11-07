@@ -84,7 +84,9 @@ type private DiffFixture(layout: DiffLayout) =
     member _.Scroller = scroller
     member _.Window = window
     member _.Header index = (fst files[index]).Header :> IDiffRowProjection
+    member _.File index = fst files[index]
     member _.Line fileIndex lineIndex = (snd files[fileIndex])[lineIndex]
+    member _.Rows = rows
 
     member _.ViewportTop(row: IDiffRowProjection) =
         let index = rows.IndexOf row
@@ -101,6 +103,28 @@ type private DiffFixture(layout: DiffLayout) =
         Headless.pump ()
 
 module DiffSurfaceTests =
+    [<Fact>]
+    let ``a revealed file stays at the top while its own rows arrive`` () =
+        Headless.run (fun () ->
+            use fixture = new DiffFixture(DiffLayout.Unified)
+            let surface = fixture.Surface
+            let target = fixture.Header 1
+            let targetFile = fixture.File 1
+            // A new commit's rows arrive in two steps: the file headers first, then each file's lines. When the
+            // headers are the only rows, the reveal has nothing below it to scroll past yet.
+            surface.ItemsSource <- AvaloniaList<IDiffRowProjection>([ for index in 0..2 -> fixture.Header index ])
+            Headless.pump ()
+            surface.RevealFile(targetFile.Key)
+            Headless.pump ()
+            // The rows above the file now grow, which is what used to push the viewport into another file.
+            surface.ItemsSource <- fixture.Rows
+            Headless.pump ()
+            fixture.Window.UpdateLayout ()
+            Headless.pump ()
+            let top = fixture.ViewportTop target
+            // The selected file's header is the top of the diff, as the file list says it should be.
+            test <@ Math.Round(top, 1) = 0.0 @>)
+
     let private toggleKeepsHeaderInPlace (headerTop: float) =
         Headless.run (fun () ->
             use fixture = new DiffFixture(DiffLayout.Unified)
