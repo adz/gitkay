@@ -1931,8 +1931,16 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
             }
         }
 
-        return SelectedDiffFiles.FirstOrDefault();
+        // No file chosen yet: the first one the reader sees, which is the tree's first file in tree mode and Git's
+        // first in patch mode. Picking the patch-first file here named a file that is not the top of the diff.
+        return OrderedDiffFiles().FirstOrDefault();
     }
+
+    /// <summary>The files in the order the diff shows them: Git's patch order, or the file tree's order in tree mode.</summary>
+    private IEnumerable<DiffFileProjection> OrderedDiffFiles() =>
+        IsDiffFileTreeMode && !IsAllFilesMode
+            ? DiffFileTree.BuildRows(SelectedDiffFiles, true, new HashSet<string>()).OfType<DiffFileProjection>()
+            : SelectedDiffFiles;
 
     private static GitKay.Core.App.FileExpansion? FindExpansion(
         Microsoft.FSharp.Collections.FSharpMap<GitKay.Core.GitService.DiffFileKey, GitKay.Core.App.FileExpansion>? expansions,
@@ -1999,9 +2007,7 @@ public partial class MainProjection : ObservableObject, IProjection<GitKay.Core.
         var mode = DiffLayout;
         // Patch mode follows Git's diff order. Tree mode follows the same alphabetical folder/file order as the
         // file pane; use an uncollapsed tree so collapsing navigation folders never hides files from the diff.
-        var orderedFiles = IsDiffFileTreeMode && !IsAllFilesMode
-            ? DiffFileTree.BuildRows(SelectedDiffFiles, true, new HashSet<string>()).OfType<DiffFileProjection>()
-            : SelectedDiffFiles;
+        var orderedFiles = OrderedDiffFiles();
         foreach (var section in orderedFiles.GroupBy(file => file.Key.Section)) {
             var sectionCollapsed = false;
             if (section.Key.Length > 0) {

@@ -1873,7 +1873,7 @@ module AppTests =
         test <@ next.Selection = App.WorkingTreeSelected @>
 
     [<Fact>]
-    let ``DiffFilesLoaded should select the first file while the unified diff is still loading`` () =
+    let ``DiffFilesLoaded should list the files and leave the first choice to the file list's order`` () =
         let files =
             [
                 sampleSummary "foo.txt" "foo.txt" "foo.txt"
@@ -1894,7 +1894,9 @@ module AppTests =
         test <@ next.SelectedDiffHash = Some "commit" @>
         test <@ next.SelectedDiffFiles = Some files @>
         test <@ next.SelectedDiff = None @>
-        test <@ next.SelectedDiffFileKey = Some { OldPath = "foo.txt"; NewPath = "foo.txt" } @>
+        // Which file comes first depends on the file list's mode (Git's patch order, or the tree's order), so the
+        // update leaves the key empty and the UI selects the first file it shows.
+        test <@ next.SelectedDiffFileKey = None @>
         test <@ next.SelectionStartedAtTicks = None @>
         test <@ next.SelectedDiffStartedAtTicks = Some 7L @>
 

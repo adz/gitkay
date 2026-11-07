@@ -1215,8 +1215,9 @@ module App =
                     | Some key ->
                         tryFindDiffFileSummary key files
                     | None ->
+                        // No default here: which file comes first depends on the file list's order (patch or tree),
+                        // which only the UI knows. It selects the first file it shows.
                         None
-                    |> Option.orElse (files |> List.tryHead)
 
                 let selectedFileKey: GitService.DiffFileKey option =
                     selectedFileSummary |> Option.map diffFileKeyOfSummary
