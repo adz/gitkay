@@ -21,7 +21,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Axial.Guardrails" Version="0.13.0-local.2" PrivateAssets="all" />
+    <PackageReference Include="Axial.Guardrails" Version="0.13.0" PrivateAssets="all" />
   </ItemGroup>
 
 </Project>

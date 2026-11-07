@@ -61,13 +61,12 @@ jobs:
       - name: Restore
         run: dotnet restore GitKay.slnx
 
-      # Policy review only, not `axial check --full`: the full check requires Guardrails coverage for every F# project
-      # in GitKay.slnx, and only GitKay.Core references Axial.Guardrails. Switch to `dotnet axial check --full
-      # --configuration Release` once the other F# projects are guarded or set AxialGuardrailsEnabled=false.
+      # Every F# project in GitKay.slnx references Axial.Guardrails, so the release holds the whole solution to the
+      # policy: an Error finding fails, and so does an unguarded project.
       - name: Axial Guardrails policy gate
         run: |
           dotnet tool restore
-          dotnet axial policy review --check
+          dotnet axial check --full --configuration Release
 
   # NativeAOT can't cross-compile, so each platform builds on its own runner.
   build:

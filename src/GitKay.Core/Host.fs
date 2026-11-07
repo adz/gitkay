@@ -46,7 +46,6 @@ module Host =
     /// the runtime's root scope, so stopping the runtime releases them. Provisioning only allocates caches and never
     /// waits for the UI dispatcher, so blocking on it here is safe.</summary>
     let private start (post: (unit -> unit) -> unit) (services: GitService.GitServices) (repoPath: string) : App.Runtime =
-       
         match ElmishRuntime.startLayer (options post) (GitService.layer services repoPath) () |> Async.RunSynchronously with
         | Ok runtime -> runtime
         | Error never -> Never.absurd never
